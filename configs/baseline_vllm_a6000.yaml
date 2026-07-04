@@ -1,0 +1,41 @@
+# Baseline benchmark config for local A6000 with vLLM
+# Run a single profile (--config sweep not yet implemented, use CLI args):
+# python -m src.benchmark.runner --url http://localhost:8000/v1/chat/completions \
+#   --model meta-llama/Llama-3.1-8B-Instruct --profile chat-singleturn --concurrency 10 --num-requests 100
+
+engine: vllm
+engine_version: "0.7.3"
+gpu: "NVIDIA RTX A6000"
+num_gpus: 1
+model: "meta-llama/Llama-3.1-8B-Instruct"
+quantization: bfloat16
+max_model_len: 32768
+api_key: test
+server_url: "http://localhost:8000/v1/chat/completions"
+
+# Profiles to sweep
+workload_profiles:
+  - chat-singleturn
+  - coding-singleturn
+  - chat-multiturn
+  - swebench-multiturn
+  - terminalbench-multiturn
+  - osworld-multiturn
+
+arrival_pattern: steady  # steady | poisson | ramp
+
+# Concurrency levels to sweep
+concurrency_sweep: [1, 5, 10, 20, 40]
+
+# Requests per concurrency level
+num_requests: 100
+
+# Warmup requests before each run
+warmup_requests: 5
+
+# Repeat each config N times for statistical significance
+num_runs: 1
+
+notes: >
+  Baseline run on local A6000. Prefix caching disabled.
+  Compare with InferenceX results in results/inferencex_baseline.json.
