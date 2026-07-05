@@ -44,7 +44,22 @@ src/workloads/    profiles, datasets, arrival patterns, distributional replay
 data/distributions/  measured per-profile workload distributions (committed)
 configs/          server launch baselines
 tests/            runner/workload unit tests
+profiling/        GPU kernel + live-server probes and their emitters (opt-in, needs a GPU)
 ```
+
+## Profiling
+
+`profiling/` holds the measurement tools: GPU kernel probes, live-server probes,
+and the emitters that turn raw probe output into curated tables. It is a peer of
+the runner, not part of it. The base install above stays GPU-free; the probes
+need torch and vLLM, kept out of the base install as opt-in extras:
+
+```bash
+pip install -r requirements.txt -r requirements-probe.txt   # on a GPU host
+```
+
+See `profiling/README.md` for the probe list, the raw-to-curated data flow, and
+how to run a probe. The emitter tests run without a GPU: `pytest profiling/tests/`.
 
 ## Data
 
