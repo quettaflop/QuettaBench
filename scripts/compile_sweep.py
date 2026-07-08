@@ -31,6 +31,12 @@ BENCH_JOBS_JSON = HERE / "bench_jobs.json"
 
 PRESET_KEYS = ("max_len", "gpu_mem", "concurrencies", "profiles")
 CELL_REQUIRED = ("host", "model", "tp", "mode", "preset")
+# Machine-readable infeasibility taxonomy shared by known_oom + profile_infeasible.
+#   hw_permanent = the GPU physically can't (arch / compute capability); never fixable.
+#   sw_fixable   = env/software gap (rebuild/upgrade the stack, bump a limit); fixable.
+# Auto VRAM-feasibility skips are hardware limits, so the default is hw_permanent.
+INFEASIBILITY_KINDS = ("hw_permanent", "sw_fixable")
+DEFAULT_INFEASIBILITY_KIND = "hw_permanent"
 SYNTHETIC_PROFILE_MAP = {
     "chat-singleturn": "chat-singleturn-synth",
     "chat-multiturn": "chat-multiturn-synth",
@@ -86,6 +92,15 @@ def validate(m: dict) -> None:
             raise ValueError(f"profile_infeasible #{i} missing reason")
         if "profiles" not in rule and "profile" not in rule:
             raise ValueError(f"profile_infeasible #{i} must specify profile or profiles")
+        if "kind" in rule and rule["kind"] not in INFEASIBILITY_KINDS:
+            raise ValueError(
+                f"profile_infeasible #{i}: kind must be one of {INFEASIBILITY_KINDS}, got {rule['kind']!r}"
+            )
+    for i, entry in enumerate(m.get("known_oom", [])):
+        if "kind" in entry and entry["kind"] not in INFEASIBILITY_KINDS:
+            raise ValueError(
+                f"known_oom #{i}: kind must be one of {INFEASIBILITY_KINDS}, got {entry['kind']!r}"
+            )
 
 
 def resolve(cell: dict, manifest: dict) -> dict:
@@ -119,6 +134,18 @@ def is_known_oom(cell: dict, manifest: dict) -> str | None:
     return None
 
 
+def known_oom_kind(cell: dict, manifest: dict) -> str | None:
+    """Infeasibility kind of the matching known_oom entry (default hw_permanent).
+
+    Sibling of is_known_oom(): returns None when the cell is not known_oom, else
+    the entry's `kind` (hw_permanent when the entry omits it).
+    """
+    for entry in manifest.get("known_oom", []):
+        if matches_known_oom(cell, entry):
+            return str(entry.get("kind", DEFAULT_INFEASIBILITY_KIND))
+    return None
+
+
 def feasibility_reason(cell: dict, manifest: dict) -> str | None:
     host = manifest["hosts"][cell["host"]]
     model = manifest["models"][cell["model"]]
@@ -129,6 +156,11 @@ def feasibility_reason(cell: dict, manifest: dict) -> str | None:
         have_gb = host["vram_gb_per_gpu"] * cell["tp"]
         return f"needs >={min_gb} GB VRAM (weights {model['weights_gb']} GB); this config has {have_gb} GB"
     return None
+
+
+def feasibility_kind(cell: dict | None = None, manifest: dict | None = None) -> str:
+    """VRAM-feasibility skips are always a hardware limit (won't physically fit)."""
+    return DEFAULT_INFEASIBILITY_KIND
 
 
 def _as_set(value) -> set[str]:
@@ -181,6 +213,22 @@ def profile_infeasible_reasons(cell: dict, manifest: dict, *, ignore_max_len_rul
                 reasons[str(profile)] = str(rule["reason"])
                 break
     return reasons
+
+
+def profile_infeasible_kinds(cell: dict, manifest: dict, *, ignore_max_len_rules: bool = False) -> dict[str, str]:
+    """Parallel to profile_infeasible_reasons(): {profile: kind} for the matching
+    rule (default hw_permanent when a rule omits `kind`). Same matching logic so
+    the kind lines up 1:1 with the reason for each blocked profile."""
+    resolved = resolve(cell, manifest)
+    kinds: dict[str, str] = {}
+    for profile in resolved["profiles"]:
+        for rule in manifest.get("profile_infeasible", []):
+            if ignore_max_len_rules and any(str(key).startswith("max_len_") for key in rule):
+                continue
+            if _matches_rule(cell, resolved, rule, str(profile)):
+                kinds[str(profile)] = str(rule.get("kind", DEFAULT_INFEASIBILITY_KIND))
+                break
+    return kinds
 
 
 def _extra_env_value(extra_env: str, key: str) -> str | None:

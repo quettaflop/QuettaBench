@@ -30,7 +30,7 @@ from pathlib import Path
 import yaml
 
 from compile_sweep import cell_data_scope as manifest_cell_data_scope
-from compile_sweep import cell_for_output_scope, dashboard_scope_for, matches_known_oom, profile_infeasible_reasons, profiles_for_output_scope, resolve, result_scope_for
+from compile_sweep import DEFAULT_INFEASIBILITY_KIND, cell_for_output_scope, dashboard_scope_for, matches_known_oom, profile_infeasible_kinds, profile_infeasible_reasons, profiles_for_output_scope, resolve, result_scope_for
 
 HERE = Path(__file__).resolve().parent
 SWEEP_YAML = HERE / "sweep.yaml"
@@ -215,10 +215,17 @@ def build_state(manifest: dict) -> dict:
             manifest,
             ignore_max_len_rules=data_scope == "synthetic_distributional",
         )
+        source_profile_kinds = profile_infeasible_kinds(
+            source_cell,
+            manifest,
+            ignore_max_len_rules=data_scope == "synthetic_distributional",
+        )
         profile_reasons = {}
+        profile_kinds = {}
         for profile, reason in source_profile_reasons.items():
             for output_profile in profiles_for_output_scope([profile], source_scope):
                 profile_reasons[output_profile] = reason
+                profile_kinds[output_profile] = source_profile_kinds.get(profile, DEFAULT_INFEASIBILITY_KIND)
         runnable_profiles = [
             str(profile) for profile in resolved["profiles"]
             if str(profile) not in profile_reasons
@@ -245,6 +252,7 @@ def build_state(manifest: dict) -> dict:
                 "profile": profile,
                 "max_len": int(resolved["max_len"]),
                 "reason": reason,
+                "kind": profile_kinds.get(profile, DEFAULT_INFEASIBILITY_KIND),
             })
 
         cells.append({
@@ -279,11 +287,13 @@ def build_state(manifest: dict) -> dict:
         model = str(entry["model"])
         mode = str(entry.get("mode", "single"))
         backend = str(entry.get("backend", "vllm"))
+        kind = str(entry.get("kind", DEFAULT_INFEASIBILITY_KIND))
         matched = False
         for c in cells:
             if matches_known_oom(c, entry):
                 c["status"] = "known_oom"
                 c["reason"] = entry["reason"]
+                c["kind"] = kind
                 matched = True
         if not matched:
             cells.append({
@@ -303,6 +313,7 @@ def build_state(manifest: dict) -> dict:
                 "concurrencies": [],
                 "max_len_override": None,
                 "reason": entry["reason"],
+                "kind": kind,
                 "updated_at": None,
             })
 

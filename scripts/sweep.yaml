@@ -144,16 +144,26 @@ feasibility_ratio: 0.90
 # These cells are skipped by the compiler AND flagged as "OOM" on the dashboard
 # with the given reason. Use this for stack-level bugs (e.g. vLLM kernel issues)
 # that won't be fixed by config tuning.
+#
+# `kind: hw_permanent | sw_fixable` classifies WHY the cell can't run so the
+# dashboard can color a permanent hardware limit (blue/slate) differently from a
+# fixable software/env gap (yellow):
+#   hw_permanent = the GPU physically can't (arch / compute capability; never fixable).
+#   sw_fixable   = env/software gap (rebuild/upgrade the stack, bump a limit).
+# Omitting `kind` defaults to hw_permanent (auto VRAM-feasibility skips are
+# hardware limits).
 known_oom:
-  - { host: a100, model: Qwen3.5-27B, tp: 2, backend: vllm, reason: "hybrid-attn triton" }
-  - { host: a100, model: Qwen3.5-27B, tp: 4, backend: vllm, reason: "hybrid-attn triton" }
+  # A100 is sm80 (Ampere) and fully capable; the hybrid-attn Triton kernel fault
+  # is a stack-level bug fixable by a vLLM upgrade, not a hardware limit.
+  - { host: a100, model: Qwen3.5-27B, tp: 2, backend: vllm, reason: "hybrid-attn triton", kind: sw_fixable }
+  - { host: a100, model: Qwen3.5-27B, tp: 4, backend: vllm, reason: "hybrid-attn triton", kind: sw_fixable }
   # gpt-oss-* is natively MXFP4-quantized; MXFP4 kernels require sm80+ (Ampere).
   # 2080Ti is Turing (sm75) — no hardware support. Dequantizing to bf16 would
   # make it a different artifact (40 GB vs 12 GB) that wouldn't fit tp1 anyway.
-  - { host: 2080ti, model: gpt-oss-20b, tp: 1, reason: "MXFP4 needs sm80+; 2080Ti is sm75 (Turing, no hw support)" }
-  - { host: 2080ti, model: gpt-oss-20b, tp: 2, reason: "MXFP4 needs sm80+; 2080Ti is sm75 (Turing, no hw support)" }
-  - { host: 2080ti, model: gpt-oss-20b, tp: 4, reason: "MXFP4 needs sm80+; 2080Ti is sm75 (Turing, no hw support)" }
-  - { host: 2080ti, model: gpt-oss-120b, tp: 4, reason: "MXFP4 needs sm80+; 2080Ti is sm75 (Turing, no hw support)" }
+  - { host: 2080ti, model: gpt-oss-20b, tp: 1, reason: "MXFP4 needs sm80+; 2080Ti is sm75 (Turing, no hw support)", kind: hw_permanent }
+  - { host: 2080ti, model: gpt-oss-20b, tp: 2, reason: "MXFP4 needs sm80+; 2080Ti is sm75 (Turing, no hw support)", kind: hw_permanent }
+  - { host: 2080ti, model: gpt-oss-20b, tp: 4, reason: "MXFP4 needs sm80+; 2080Ti is sm75 (Turing, no hw support)", kind: hw_permanent }
+  - { host: 2080ti, model: gpt-oss-120b, tp: 4, reason: "MXFP4 needs sm80+; 2080Ti is sm75 (Turing, no hw support)", kind: hw_permanent }
 
 # --------------------------------------------------------------------------
 # Profile-level infeasible combos
@@ -162,11 +172,17 @@ known_oom:
 # the affected coverage cells as N/A. Use this when a profile is structurally
 # impossible for a launch shape even though other profiles in the same
 # host/model/tp/mode/backend cell are runnable.
+#
+# `kind: hw_permanent | sw_fixable` classifies WHY each rule blocks (same
+# semantics as known_oom above): hw_permanent = GPU arch limit (blue/slate on
+# the dashboard); sw_fixable = env/software gap fixable by a rebuild/upgrade or a
+# bigger max_len (yellow). Omitting `kind` defaults to hw_permanent.
 profile_infeasible:
   - profiles: [swebench-multiturn, terminalbench-multiturn]
     mode: multi
     max_len_lt: 32768
     reason: "context too short for long multi-turn traces; requires max_len=32768"
+    kind: sw_fixable
 
   # sglang 0.5.9 custom CUDA ops (RMSNorm, GemmaRMSNorm, CUDA graphs)
   # have no sm75 (Turing) kernel images. 2080Ti sglang is fundamentally
@@ -181,6 +197,7 @@ profile_infeasible:
       - terminalbench-multiturn
       - osworld-multiturn
     reason: "sglang 0.5.9 custom ops lack sm75 (Turing) kernels; rebuild from source required"
+    kind: sw_fixable
 
   # vLLM 0.19 fails H100/gpt-oss-20b/tp1 startup in the MXFP4 MoE Triton
   # profile run before any request is served:
@@ -196,6 +213,7 @@ profile_infeasible:
       - terminalbench-multiturn
       - osworld-multiturn
     reason: "vLLM 0.19 gpt-oss MXFP4 MoE Triton startup crash on H100 tp1"
+    kind: sw_fixable
 
 # --------------------------------------------------------------------------
 # Active sweep cells
