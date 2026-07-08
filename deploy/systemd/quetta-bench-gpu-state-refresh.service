@@ -10,4 +10,5 @@ Environment=BENCH_STATE_ROOT=/mnt/100g/agent-bench/state
 Environment=BENCH_JOBS_SCOPE=synthetic_distributional
 Environment=BENCH_ARTIFACT_DIR=/mnt/100g/agent-bench/artifacts
 Environment=DASHBOARD_DIR=/root/QuettaBoard
+Environment=GPU_STATE_REPORT=/tmp/quetta-gpu-state-latest.md
 ExecStart=/usr/bin/env bash /root/QuettaBench/scripts/refresh-gpu-state.sh
