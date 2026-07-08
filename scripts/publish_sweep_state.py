@@ -36,7 +36,9 @@ HERE = Path(__file__).resolve().parent
 SWEEP_YAML = HERE / "sweep.yaml"
 STATE_DIR = Path(os.environ.get("BENCH_STATE_ROOT", "/mnt/100g/agent-bench/state"))
 LEGACY_STATE_DIR = Path(os.environ.get("BENCH_LEGACY_STATE_ROOT", "/tmp/bench_jobs/state"))
-OUTPUT_FILE = HERE.parent / "dashboard" / "public" / "sweep-state.json"
+# Dashboard-JSON artifact output lands in the neutral artifact dir (env-overridable);
+# the dashboard tree now lives in the separate QuettaBoard repo.
+OUTPUT_FILE = Path(os.environ.get("BENCH_ARTIFACT_DIR", "/mnt/100g/agent-bench/artifacts")) / "sweep-state.json"
 
 R2_ENDPOINT_DEFAULT = "https://b33fe7347f25479b27ec9680eff19b78.r2.cloudflarestorage.com"
 R2_BUCKET_DEFAULT = "agent-bench"

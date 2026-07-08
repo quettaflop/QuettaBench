@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh QuettaBench GPU state every minute
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+AccuracySec=10s
+Persistent=true
+Unit=quetta-bench-gpu-state-refresh.service
+
+[Install]
+WantedBy=timers.target

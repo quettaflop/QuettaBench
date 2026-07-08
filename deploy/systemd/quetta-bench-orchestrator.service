@@ -1,0 +1,24 @@
+[Unit]
+Description=Run one QuettaBench GPU benchmark orchestration tick
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/QuettaBench
+Environment=BENCH_STATE_ROOT=/mnt/100g/agent-bench/state
+Environment=BENCH_RESULTS_ROOT=/mnt/100g/agent-bench/results
+Environment=BENCH_JOBS_SCOPE=synthetic_distributional
+Environment=BENCH_SYNC_GPU_CODE=1
+Environment=BENCH_SYNC_REQUIRED=0
+Environment=BENCH_REMOTE_ROOT=/tmp/inference-benchmark
+Environment=BENCH_H100_REMOTE_TMP=/data48/tmp
+Environment=BENCH_H100_REMOTE_ROOT=/data48/tmp/inference-benchmark
+Environment=BENCH_RECONCILE_COVERAGE_BEFORE_DISPATCH=1
+Environment=BENCH_COVERAGE_RESET_STATUSES=done,skipped,failed,known_oom
+Environment=BENCH_COVERAGE_MAX_REQUEUES=1
+Environment=BENCH_RECLAIM_BEFORE_DISPATCH=1
+Environment=BENCH_RECLAIM_EXECUTE=1
+Environment=BENCH_ARTIFACT_DIR=/mnt/100g/agent-bench/artifacts
+Environment=DASHBOARD_DIR=/root/QuettaBoard
+ExecStart=/usr/bin/env bash /root/QuettaBench/scripts/run-bench-orchestrator-service.sh

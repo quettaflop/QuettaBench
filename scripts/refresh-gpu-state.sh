@@ -7,10 +7,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BENCH_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # TODO(phase-1): the dashboard now lives in the separate QuettaBoard repo.
 DASHBOARD_DIR="${DASHBOARD_DIR:-/root/QuettaBoard}"
+# gpu-state.json is a dashboard-JSON artifact; it lands in the neutral artifact dir.
+BENCH_ARTIFACT_DIR="${BENCH_ARTIFACT_DIR:-/mnt/100g/agent-bench/artifacts}"
 
 STATE_ROOT="${BENCH_STATE_ROOT:-/mnt/100g/agent-bench/state}"
 LIVE_DIST="${DASHBOARD_LIVE_DIST:-$DASHBOARD_DIR/dist}"
-GPU_STATE_OUT="${GPU_STATE_OUT:-$LIVE_DIST/gpu-state.json}"
+GPU_STATE_OUT="${GPU_STATE_OUT:-$BENCH_ARTIFACT_DIR/gpu-state.json}"
 GPU_STATE_REPORT="${GPU_STATE_REPORT:-/tmp/agentic-serve-gpu-state-latest.md}"
 GPU_STATE_SSH_TIMEOUT="${GPU_STATE_SSH_TIMEOUT:-8}"
 GPU_STATE_HOSTS="${GPU_STATE_HOSTS:-}"

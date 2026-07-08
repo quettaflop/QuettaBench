@@ -28,7 +28,9 @@ HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent.parent
 KERNEL_CSV = REPO_ROOT / "llm_predict_legacy" / "training" / "per_kernel" / "data" / "kernels_labeled.csv"
 PEROP_CSV = REPO_ROOT / "llm_predict_legacy" / "training" / "per_op" / "data" / "per_op_labeled.csv"
-OUTPUT_FILE = HERE.parent / "dashboard" / "public" / "predictor-coverage.json"
+# Dashboard-JSON artifact output lands in the neutral artifact dir (env-overridable);
+# the dashboard tree now lives in the separate QuettaBoard repo.
+OUTPUT_FILE = Path(os.environ.get("BENCH_ARTIFACT_DIR", "/mnt/100g/agent-bench/artifacts")) / "predictor-coverage.json"
 
 R2_ENDPOINT_DEFAULT = "https://b33fe7347f25479b27ec9680eff19b78.r2.cloudflarestorage.com"
 R2_BUCKET_DEFAULT = "agent-bench"

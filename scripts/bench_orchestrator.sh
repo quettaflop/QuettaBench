@@ -11,7 +11,13 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-JOBS_CONFIG="${BENCH_JOBS_CONFIG:-$REPO_ROOT/inference-benchmark/scripts/sweep.yaml}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Dashboard-JSON artifacts (data.json, sweep-state.json, coverage-blockers, gpu-state,
+# profiling-state, predictor-coverage) are read from and written to this neutral dir.
+# The dashboard tree now lives in the separate QuettaBoard repo, so nothing lands in
+# a repo-relative dashboard/public or dashboard/dist path anymore. Env wins over default.
+BENCH_ARTIFACT_DIR="${BENCH_ARTIFACT_DIR:-/mnt/100g/agent-bench/artifacts}"
+JOBS_CONFIG="${BENCH_JOBS_CONFIG:-$SCRIPT_DIR/sweep.yaml}"
 EXPLICIT_JOBS_FILE="${BENCH_JOBS_FILE:-}"
 JOBS_CACHE_DIR="${BENCH_JOBS_CACHE_DIR:-/tmp/bench_jobs}"
 JOBS_MANIFEST="${BENCH_JOBS_MANIFEST:-}"
@@ -40,7 +46,7 @@ MAX_DISPATCHES="${BENCH_ORCHESTRATOR_MAX_DISPATCHES:-0}"
 DISPATCHES=0
 RECLAIM_BEFORE_DISPATCH="${BENCH_RECLAIM_BEFORE_DISPATCH:-0}"
 RECLAIM_EXECUTE="${BENCH_RECLAIM_EXECUTE:-0}"
-RECLAIM_CONFIG="${BENCH_RECLAIM_CONFIG:-$REPO_ROOT/inference-benchmark/scripts/gpu_cleanup.json}"
+RECLAIM_CONFIG="${BENCH_RECLAIM_CONFIG:-$SCRIPT_DIR/gpu_cleanup.json}"
 RECONCILE_COVERAGE_BEFORE_DISPATCH="${BENCH_RECONCILE_COVERAGE_BEFORE_DISPATCH:-1}"
 COVERAGE_RESET_STATUSES="${BENCH_COVERAGE_RESET_STATUSES:-done,skipped,failed,known_oom}"
 COVERAGE_MAX_REQUEUES="${BENCH_COVERAGE_MAX_REQUEUES:-1}"
@@ -141,12 +147,12 @@ if [[ -z "$JOBS_FILE" ]]; then
     JOBS_FILE="$JOBS_CACHE_DIR/bench_jobs.${SAFE_SCOPE}.txt"
     JOBS_MANIFEST="${JOBS_MANIFEST:-$JOBS_CACHE_DIR/bench_jobs.${SAFE_SCOPE}.json}"
     mkdir -p "$(dirname "$JOBS_FILE")" "$(dirname "$JOBS_MANIFEST")"
-    if ! python3 "$REPO_ROOT/inference-benchmark/scripts/compile_sweep.py" \
+    if ! python3 "$SCRIPT_DIR/compile_sweep.py" \
         --yaml "$JOBS_CONFIG" --scope "$REQUESTED_JOBS_SCOPE" --format text --out "$JOBS_FILE" >> "$LOG" 2>&1; then
         log "failed to compile job rows from $JOBS_CONFIG scope=$REQUESTED_JOBS_SCOPE"
         exit 1
     fi
-    if ! python3 "$REPO_ROOT/inference-benchmark/scripts/compile_sweep.py" \
+    if ! python3 "$SCRIPT_DIR/compile_sweep.py" \
         --yaml "$JOBS_CONFIG" --scope "$REQUESTED_JOBS_SCOPE" --format json --out "$JOBS_MANIFEST" >> "$LOG" 2>&1; then
         log "failed to compile job manifest from $JOBS_CONFIG scope=$REQUESTED_JOBS_SCOPE"
         exit 1
@@ -185,30 +191,30 @@ mapfile -t JOB_HOSTS < <(awk -F'|' '!/^#/ && NF >= 10 {gsub(/[[:space:]]/, "", $
 if truthy "$RECONCILE_COVERAGE_BEFORE_DISPATCH"; then
     case "$STATE_SCOPE" in
         synthetic_distributional)
-            DEFAULT_COVERAGE_DATA="$REPO_ROOT/inference-benchmark/dashboard/public/data.synthetic_distributional.json"
+            DEFAULT_COVERAGE_DATA="$BENCH_ARTIFACT_DIR/data.synthetic_distributional.json"
             ;;
         trace_replay)
-            DEFAULT_COVERAGE_DATA="$REPO_ROOT/inference-benchmark/dashboard/public/data.trace_replay.json"
+            DEFAULT_COVERAGE_DATA="$BENCH_ARTIFACT_DIR/data.trace_replay.json"
             ;;
         archived)
-            DEFAULT_COVERAGE_DATA="$REPO_ROOT/inference-benchmark/dashboard/public/data.archived.json"
+            DEFAULT_COVERAGE_DATA="$BENCH_ARTIFACT_DIR/data.archived.json"
             ;;
         *)
-            DEFAULT_COVERAGE_DATA="$REPO_ROOT/inference-benchmark/dashboard/public/data.json"
+            DEFAULT_COVERAGE_DATA="$BENCH_ARTIFACT_DIR/data.json"
             ;;
     esac
     COVERAGE_DATA="${BENCH_COVERAGE_DATA:-$DEFAULT_COVERAGE_DATA}"
     COVERAGE_REPORT="${BENCH_COVERAGE_REPORT:-/tmp/sweep-coverage-reconcile-${STATE_SCOPE}.md}"
     COVERAGE_MISSING_JOBS="${BENCH_COVERAGE_MISSING_JOBS:-/tmp/bench_jobs/missing_${STATE_SCOPE}_bench_jobs.txt}"
-    COVERAGE_BLOCKERS_JSON="${BENCH_COVERAGE_BLOCKERS_JSON:-$REPO_ROOT/inference-benchmark/dashboard/dist/coverage-blockers.${STATE_SCOPE}.json}"
-    COVERAGE_SWEEP_STATE_OUT="${BENCH_COVERAGE_SWEEP_STATE_OUT:-$REPO_ROOT/inference-benchmark/dashboard/public/sweep-state.json}"
+    COVERAGE_BLOCKERS_JSON="${BENCH_COVERAGE_BLOCKERS_JSON:-$BENCH_ARTIFACT_DIR/coverage-blockers.${STATE_SCOPE}.json}"
+    COVERAGE_SWEEP_STATE_OUT="${BENCH_COVERAGE_SWEEP_STATE_OUT:-$BENCH_ARTIFACT_DIR/sweep-state.json}"
     if dry_run; then
         log "dry-run: skipping coverage reconcile preflight"
     elif [[ ! -s "$COVERAGE_DATA" ]]; then
         log "coverage reconcile preflight skipped: missing data file $COVERAGE_DATA"
     else
         log "running coverage reconcile preflight data=$COVERAGE_DATA reset_statuses=$COVERAGE_RESET_STATUSES max_requeues=$COVERAGE_MAX_REQUEUES"
-        if ! python3 "$REPO_ROOT/inference-benchmark/scripts/reconcile_sweep_coverage.py" \
+        if ! python3 "$SCRIPT_DIR/reconcile_sweep_coverage.py" \
             --scope "$STATE_SCOPE" \
             --data "$COVERAGE_DATA" \
             --sweep-yaml "$JOBS_CONFIG" \
@@ -234,7 +240,7 @@ if truthy "$RECLAIM_BEFORE_DISPATCH"; then
         RECLAIM_MODE=(--execute)
     fi
     log "running GPU reclaim preflight mode=${RECLAIM_MODE[*]} config=$RECLAIM_CONFIG"
-    if ! python3 "$REPO_ROOT/inference-benchmark/scripts/clean_orphan_gpus.py" \
+    if ! python3 "$SCRIPT_DIR/clean_orphan_gpus.py" \
         --config "$RECLAIM_CONFIG" \
         --jobs-file "$JOBS_FILE" \
         --scope "$STATE_SCOPE" \
@@ -797,7 +803,7 @@ declare -A HOST_BLOCKED_GPUS
 
 while IFS='=' read -r host count; do
     [[ -n "$host" && "$count" =~ ^[0-9]+$ ]] && HOST_GPU_COUNT[$host]="$count"
-done < <(python3 "$REPO_ROOT/inference-benchmark/scripts/compile_sweep.py" --yaml "$JOBS_CONFIG" --list-host-gpu-counts 2>/dev/null || true)
+done < <(python3 "$SCRIPT_DIR/compile_sweep.py" --yaml "$JOBS_CONFIG" --list-host-gpu-counts 2>/dev/null || true)
 
 load_blocked_gpus
 
@@ -1322,7 +1328,7 @@ else
     # Publish sweep-state.json to R2 so the dashboard reflects the latest cell
     # status (pending/running/done/skipped/known_oom). Non-fatal — if this
     # fails, the tick still succeeds; the next tick will republish.
-    python3 "$REPO_ROOT/inference-benchmark/scripts/publish_sweep_state.py" \
+    python3 "$SCRIPT_DIR/publish_sweep_state.py" \
         --state-dir "$STATE_ROOT" \
         --endpoint "$EP" --bucket "$BUCKET" --profile "$PROFILE" \
         >> "$LOG" 2>&1 || log "publish_sweep_state.py failed"

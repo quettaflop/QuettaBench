@@ -26,9 +26,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-# scripts/ is inside inference-benchmark/ ; so HERE.parent is inference-benchmark/.
-MANIFEST = HERE.parent.parent / "llm_predict_legacy" / "training" / "per_kernel" / "profiling_manifest.yaml"
-OUTPUT_FILE = HERE.parent / "dashboard" / "public" / "profiling-state.json"
+# TODO(phase-1): the per-kernel profiling manifest producer (llm_predict_legacy) is
+# not yet ported into QuettaBench. Until it is, point PROFILING_MANIFEST at an
+# externally-produced profiling_manifest.yaml; the legacy path below is only a
+# best-effort fallback and will typically not exist in this repo layout.
+MANIFEST = Path(
+    os.environ.get(
+        "PROFILING_MANIFEST",
+        str(HERE.parent.parent / "llm_predict_legacy" / "training" / "per_kernel" / "profiling_manifest.yaml"),
+    )
+)
+# Dashboard-JSON artifact output lands in the neutral artifact dir (env-overridable).
+OUTPUT_FILE = Path(os.environ.get("BENCH_ARTIFACT_DIR", "/mnt/100g/agent-bench/artifacts")) / "profiling-state.json"
 
 R2_ENDPOINT_DEFAULT = "https://b33fe7347f25479b27ec9680eff19b78.r2.cloudflarestorage.com"
 R2_BUCKET_DEFAULT = "agent-bench"
