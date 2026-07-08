@@ -1,0 +1,123 @@
+{
+  "enabled": true,
+  "dry_run": true,
+  "min_age_seconds": 900,
+  "required_observations": 2,
+  "allowed_statuses": [
+    "same-user-orphan"
+  ],
+  "allowed_process_kinds": [
+    "same-user-orphan"
+  ],
+  "allowed_orphan_reasons": [
+    "process parent is init",
+    "vLLM engine parent is orphaned under init"
+  ],
+  "allowed_parent_commands": [
+    "VLLM::EngineCore"
+  ],
+  "allow_direct_init_processes": true,
+  "term_wait_seconds": 20,
+  "allow_sigkill": true,
+  "ssh_timeout_seconds": 12,
+  "reclaim_same_user_nonsweep": {
+    "enabled": true,
+    "min_age_seconds": 3600,
+    "required_observations": 2,
+    "allowed_statuses": [
+      "same-user-nonsweep"
+    ],
+    "allowed_process_kinds": [
+      "same-user-nonsweep"
+    ],
+    "managed_ports": [
+      "8089",
+      "8090",
+      "8091",
+      "8092",
+      "8093",
+      "8094",
+      "8095",
+      "8096"
+    ],
+    "protected_ports": [],
+    "protected_pids": [],
+    "allowed_server_markers": [
+      "vllm::worker",
+      "vllm::enginecore",
+      "sglang",
+      "sglang.launch_server",
+      "vllm.entrypoints.openai.api_server"
+    ]
+  },
+  "reclaim_stale_sweep_servers": {
+    "enabled": true,
+    "min_age_seconds": 3600,
+    "required_observations": 2,
+    "allowed_statuses": [
+      "sweep"
+    ],
+    "allowed_process_kinds": [
+      "sweep"
+    ],
+    "managed_ports": [
+      "8089",
+      "8090",
+      "8091",
+      "8092",
+      "8093",
+      "8094",
+      "8095",
+      "8096"
+    ],
+    "protected_ports": [],
+    "protected_pids": [],
+    "allowed_server_markers": [
+      "vllm::worker",
+      "vllm::enginecore",
+      "sglang",
+      "sglang.launch_server",
+      "vllm.entrypoints.openai.api_server"
+    ]
+  },
+  "reclaim_drained_sweep_servers": {
+    "enabled": true,
+    "min_age_seconds": 21600,
+    "required_observations": 2,
+    "allowed_statuses": [
+      "sweep"
+    ],
+    "allowed_process_kinds": [
+      "sweep"
+    ],
+    "managed_ports": [
+      "8089",
+      "8090",
+      "8091",
+      "8092",
+      "8093",
+      "8094",
+      "8095",
+      "8096"
+    ],
+    "protected_ports": [],
+    "protected_pids": [],
+    "max_gpu_util_pct": 0,
+    "allowed_server_markers": [
+      "vllm::worker",
+      "vllm::enginecore",
+      "sglang",
+      "sglang.launch_server",
+      "vllm.entrypoints.openai.api_server"
+    ]
+  },
+  "hosts": [
+    "a100",
+    "3090",
+    "2080ti",
+    "h100",
+    "h100-2"
+  ],
+  "audit_log": "/mnt/100g/agent-bench/state/gpu-cleanup-events.jsonl",
+  "observation_store": "/mnt/100g/agent-bench/state/gpu-orphan-observations.json"
+}
