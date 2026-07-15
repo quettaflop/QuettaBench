@@ -1,0 +1,4 @@
+aiohttp>=3.9
+numpy>=1.24
+datasets>=2.18       # ShareGPT loading
+transformers>=4.40   # tokenizer for random token profiles (stress-test mode)

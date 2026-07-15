@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+results/
+.venv/
+
+# Large datasets live on R2 (see scripts/fetch_data.sh), not in git.
+data/*.jsonl
+.omc/
