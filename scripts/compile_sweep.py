@@ -59,7 +59,17 @@ DERIVED_SCOPE_SOURCE = {
     "synthetic": "fixed",
     "synthetic-distributional": "fixed",
     "synthetic_distributional": "fixed",
+    # EP-on MoE variant: derives from the same `fixed` cells and the same
+    # synthetic launch shape as synthetic_distributional, but restricted to MoE
+    # models at tp>1 on the EP hosts and with expert-parallelism enabled. Kept a
+    # separate scope so its coverage never collides with the EP-off runs.
+    "moe_ep": "fixed",
 }
+# Scopes that use the synthetic (distributional) launch shape: base profiles are
+# remapped to their -synth variants and expanded onto the dense concurrency grid.
+SYNTHETIC_SHAPE_SCOPES = {"synthetic_distributional", "moe_ep"}
+# EP-on coverage is scoped to these hosts (the user's MoE/EP focus).
+MOE_EP_HOSTS = {"h100", "h100-2", "a100", "3090"}
 
 
 def load_manifest(path: Path) -> dict:
@@ -103,6 +113,19 @@ def validate(m: dict) -> None:
             )
 
 
+# sglang's --mem-fraction-static reserves weights + KV pool and wants a higher
+# fraction than vllm's --gpu-memory-utilization (sglang's own default is ~0.9).
+# Bump every sglang run to at least this floor; higher explicit values are kept.
+SGLANG_GPU_MEM_FLOOR = 0.92
+
+# EP-on multi-turn sessions accumulate KV across turns, so the high-concurrency
+# tail OOMs at the default budget. The EP-on derivation gets the full memory
+# ceiling (reconcile's MAX_GPU_MEM_UTIL); the EP-off run of the same physical
+# cell keeps its own gpu_mem. Applied only in the moe_ep scope (see
+# cell_for_output_scope) so it never re-shapes an EP-off job.
+EP_MULTI_GPU_MEM_FLOOR = 0.95
+
+
 def resolve(cell: dict, manifest: dict) -> dict:
     """Merge preset defaults with cell overrides; return concrete launch params."""
     preset = manifest["presets"][cell["preset"]]
@@ -110,6 +133,8 @@ def resolve(cell: dict, manifest: dict) -> dict:
     for k in PRESET_KEYS + ("extra_env",):
         if k in cell:
             out[k] = cell[k]
+    if str(cell.get("backend", "")) == "sglang":
+        out["gpu_mem"] = max(float(out["gpu_mem"]), SGLANG_GPU_MEM_FLOOR)
     return out
 
 
@@ -260,6 +285,37 @@ def _set_extra_env(extra_env: str, key: str, value: str) -> str:
     return " ".join(kept)
 
 
+def ep_enabled(cell: dict) -> bool:
+    """Expert-parallelism flag for a cell (default off).
+
+    EP-on jobs get a distinct `_ep` suffix on their job id and result dir (see
+    publish_sweep_state.job_id + bench_orchestrator.sh) so an EP-on run never
+    collides with its EP-off sibling. The flag is mirrored into the launch env
+    as ENABLE_EP=1 so the remote launcher can add the expert-parallel server
+    args, and so the orchestrator/reconcile can recover it from a compiled row.
+    """
+    return str(cell.get("ep", "")).strip().lower() in {"1", "true", "on", "yes"}
+
+
+def ep_enabled_extra_env(extra_env: str) -> bool:
+    """EP flag recovered from a compiled row's EXTRA_ENV (ENABLE_EP=1)."""
+    return str(_extra_env_value(extra_env, "ENABLE_EP") or "").strip().lower() in {"1", "true", "on", "yes"}
+
+
+def is_moe_model(model: str, manifest: dict) -> bool:
+    """Whether a model is a mixture-of-experts model (models.<name>.moe: true)."""
+    return bool(manifest.get("models", {}).get(model, {}).get("moe"))
+
+
+def uses_synthetic_shape(scope: str) -> bool:
+    """Scopes that remap profiles to -synth variants on the dense grid."""
+    return dashboard_scope_for(scope) in SYNTHETIC_SHAPE_SCOPES
+
+
+def is_moe_ep_scope(scope: str) -> bool:
+    return dashboard_scope_for(scope) == "moe_ep"
+
+
 def dashboard_scope_for(scope: str) -> str:
     if scope in {"latest", "synthetic", "synthetic-distributional", "synthetic_distributional"}:
         return "synthetic_distributional"
@@ -291,6 +347,9 @@ def job_record(cell: dict, manifest: dict) -> dict[str, Any]:
     source_scope = cell_data_scope(cell)
     extra_env = _set_extra_env(str(extra_env), "DASHBOARD_SCOPE", dashboard_scope_for(source_scope))
     extra_env = _set_extra_env(extra_env, "RESULT_SCOPE", result_scope_for(source_scope))
+    ep = ep_enabled(cell)
+    if ep:
+        extra_env = _set_extra_env(extra_env, "ENABLE_EP", "1")
     backend = str(cell.get("backend", "vllm"))
     python_key = "python_sglang" if backend == "sglang" else "python"
     python_bin = str(host.get(python_key) or "")
@@ -301,6 +360,7 @@ def job_record(cell: dict, manifest: dict) -> dict[str, Any]:
         "short": str(cell["model"]),
         "mode": str(cell["mode"]),
         "backend": backend,
+        "ep": ep,
         "max_len": int(resolved["max_len"]),
         "gpu_mem": resolved["gpu_mem"],
         "concurrencies": [int(c) for c in resolved["concurrencies"]],
@@ -362,7 +422,7 @@ def cell_matches_requested_scope(cell_scope: str, requested_scope: str) -> bool:
 
 
 def profiles_for_output_scope(profiles, requested_scope: str) -> list[str]:
-    if dashboard_scope_for(requested_scope) != "synthetic_distributional":
+    if not uses_synthetic_shape(requested_scope):
         return [str(profile) for profile in profiles]
     return [
         SYNTHETIC_PROFILE_MAP[str(profile)]
@@ -377,7 +437,7 @@ def cell_for_output_scope(cell: dict, requested_scope: str, manifest: dict | Non
     if requested_scope not in DERIVED_SCOPE_SOURCE:
         return out
     out["data_scope"] = dashboard_scope_for(requested_scope)
-    if dashboard_scope_for(requested_scope) == "synthetic_distributional":
+    if uses_synthetic_shape(requested_scope):
         profiles = out.get("profiles")
         if profiles is None:
             if manifest is None:
@@ -388,6 +448,18 @@ def cell_for_output_scope(cell: dict, requested_scope: str, manifest: dict | Non
         for key, value in SYNTHETIC_EXTRA_ENV.items():
             extra_env = _ensure_extra_env(extra_env, key, value)
         out["extra_env"] = extra_env
+        if is_moe_ep_scope(requested_scope):
+            # Expert-parallelism on. ep_enabled(out) -> True, so job_record
+            # injects ENABLE_EP=1 for the launcher and the cell is labelled EP-on.
+            out["ep"] = "on"
+            # KV-heavy multi-turn: raise only the EP-on derivation to the full
+            # memory ceiling so the high-concurrency tail stops OOMing. Scoped
+            # here so the EP-off run of the same cell keeps its gpu_mem (its job
+            # signature is unchanged, so it is not re-queued).
+            if str(out["mode"]) == "multi":
+                if manifest is None:
+                    raise ValueError("manifest is required to raise EP-on multi gpu_mem")
+                out["gpu_mem"] = max(float(resolve(cell, manifest)["gpu_mem"]), EP_MULTI_GPU_MEM_FLOOR)
         mode = str(out["mode"])
         if synthetic_concurrencies is not None:
             out["concurrencies"] = [int(c) for c in synthetic_concurrencies]
@@ -400,8 +472,15 @@ def compile_jobs(manifest: dict, scope: str = "all"):
     emitted: list[tuple[dict, str]] = []
     skipped: list[tuple[dict, str, str]] = []  # (cell, status, reason)
 
+    moe_ep = is_moe_ep_scope(scope)
     for cell in manifest["cells"]:
         if not cell_matches_requested_scope(cell_data_scope(cell), scope):
+            continue
+        if moe_ep and not (
+            is_moe_model(str(cell["model"]), manifest)
+            and int(cell["tp"]) > 1
+            and str(cell["host"]) in MOE_EP_HOSTS
+        ):
             continue
         reason = is_known_oom(cell, manifest)
         if reason:
@@ -417,7 +496,7 @@ def compile_jobs(manifest: dict, scope: str = "all"):
         profile_reasons = profile_infeasible_reasons(
             cell,
             manifest,
-            ignore_max_len_rules=dashboard_scope_for(scope) == "synthetic_distributional",
+            ignore_max_len_rules=uses_synthetic_shape(scope),
         )
         if profile_reasons:
             resolved = resolve(cell, manifest)
@@ -516,6 +595,7 @@ def scope_choices() -> tuple[str, ...]:
         "current",
         "fixed",
         "mse",
+        "moe_ep",
     )
 
 

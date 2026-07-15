@@ -30,7 +30,7 @@ from pathlib import Path
 import yaml
 
 from compile_sweep import cell_data_scope as manifest_cell_data_scope
-from compile_sweep import DEFAULT_INFEASIBILITY_KIND, cell_for_output_scope, dashboard_scope_for, matches_known_oom, profile_infeasible_kinds, profile_infeasible_reasons, profiles_for_output_scope, resolve, result_scope_for
+from compile_sweep import DEFAULT_INFEASIBILITY_KIND, MOE_EP_HOSTS, cell_for_output_scope, dashboard_scope_for, ep_enabled, is_moe_ep_scope, is_moe_model, matches_known_oom, profile_infeasible_kinds, profile_infeasible_reasons, profiles_for_output_scope, resolve, result_scope_for
 
 HERE = Path(__file__).resolve().parent
 SWEEP_YAML = HERE / "sweep.yaml"
@@ -44,7 +44,7 @@ R2_ENDPOINT_DEFAULT = "https://b33fe7347f25479b27ec9680eff19b78.r2.cloudflaresto
 R2_BUCKET_DEFAULT = "agent-bench"
 R2_KEY = "json/current/sweep-state.json"
 LEGACY_STATE_FALLBACK = os.environ.get("BENCH_STATE_LEGACY_FALLBACK", "1") != "0"
-DERIVED_STATE_SCOPES = ("synthetic_distributional",)
+DERIVED_STATE_SCOPES = ("synthetic_distributional", "moe_ep")
 ACTIVE_RUN_STATUSES = {"dispatching", "running"}
 
 
@@ -53,10 +53,17 @@ def hw_label(host_cfg: dict, tp: int) -> str:
     return base if tp == 1 else f"{base}x{tp}"
 
 
-def job_id(host: str, model: str, tp: int, mode: str, backend: str = "vllm") -> str:
+def job_id(host: str, model: str, tp: int, mode: str, backend: str = "vllm", ep: bool = False) -> str:
     jid = f"{host}_{model}_tp{tp}_{mode}"
     if backend != "vllm":
         jid += f"_{backend}"
+    # NOTE: no `_ep` suffix. EP-on runs are already isolated from their EP-off
+    # siblings by the per-scope state/result dirs (state/moe_ep/ vs
+    # state/synthetic_distributional/), and the orchestrator writes those files
+    # WITHOUT an _ep suffix. Appending one here made the reader look for
+    # `<jid>_ep.status`, miss every EP job's state, treat it as pending, and drop
+    # all failure dispositions (coverage showed 0 na/todo/failed). `ep` is kept
+    # in the signature for call-site compatibility.
     return jid
 
 
@@ -189,8 +196,15 @@ def build_state(manifest: dict) -> dict:
     # as the rows emitted by compile_sweep.py.
     state_cells: list[tuple[dict, dict]] = [(cell, cell) for cell in manifest["cells"]]
     for scope in DERIVED_STATE_SCOPES:
+        moe_ep = is_moe_ep_scope(scope)
         for source_cell in manifest["cells"]:
             if manifest_cell_data_scope(source_cell) != "fixed":
+                continue
+            if moe_ep and not (
+                is_moe_model(str(source_cell["model"]), manifest)
+                and int(source_cell["tp"]) > 1
+                and str(source_cell["host"]) in MOE_EP_HOSTS
+            ):
                 continue
             derived_cell = cell_for_output_scope(source_cell, scope, manifest)
             if not resolve(derived_cell, manifest)["profiles"]:
@@ -204,21 +218,22 @@ def build_state(manifest: dict) -> dict:
         mode = str(cell["mode"])
         model = str(cell["model"])
         backend = str(cell.get("backend", "vllm"))
+        ep = ep_enabled(cell)
         source_scope = cell_data_scope(cell)
         data_scope = dashboard_scope_for(source_scope)
         state_scope = result_scope_for(source_scope)
-        jid = job_id(host_name, model, tp, mode, backend)
+        jid = job_id(host_name, model, tp, mode, backend, ep=ep)
         rt = read_state(jid, state_scope)
         resolved = resolve(cell, manifest)
         source_profile_reasons = profile_infeasible_reasons(
             source_cell,
             manifest,
-            ignore_max_len_rules=data_scope == "synthetic_distributional",
+            ignore_max_len_rules=data_scope in ("synthetic_distributional", "moe_ep"),
         )
         source_profile_kinds = profile_infeasible_kinds(
             source_cell,
             manifest,
-            ignore_max_len_rules=data_scope == "synthetic_distributional",
+            ignore_max_len_rules=data_scope in ("synthetic_distributional", "moe_ep"),
         )
         profile_reasons = {}
         profile_kinds = {}
@@ -264,6 +279,7 @@ def build_state(manifest: dict) -> dict:
             "tp": tp,
             "mode": mode,
             "backend": backend,
+            "ep": ep,
             "status": rt["status"],
             "attempt": rt["attempt"],
             "max_len": int(resolved["max_len"]),
@@ -287,6 +303,7 @@ def build_state(manifest: dict) -> dict:
         model = str(entry["model"])
         mode = str(entry.get("mode", "single"))
         backend = str(entry.get("backend", "vllm"))
+        ep = ep_enabled(entry)
         kind = str(entry.get("kind", DEFAULT_INFEASIBILITY_KIND))
         matched = False
         for c in cells:
@@ -305,6 +322,7 @@ def build_state(manifest: dict) -> dict:
                 "tp": tp,
                 "mode": mode,
                 "backend": backend,
+                "ep": ep,
                 "status": "known_oom",
                 "attempt": 0,
                 "max_len": None,
