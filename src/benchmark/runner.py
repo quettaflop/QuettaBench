@@ -585,6 +585,7 @@ def get_args():
             "fixed",
             "fixed-grid",
             "mse",
+            "moe_ep",
         ],
         default=None,
         help="Dashboard scope override (default: *-synth→synthetic_distributional, active→archived, inactive→trace_replay)",
@@ -680,11 +681,18 @@ if __name__ == "__main__":
         scope = "synthetic_distributional" if profile_name.endswith("-synth") else ("archived" if profile.active else "trace_replay")
     else:
         scope = normalize_dashboard_scope(scope)
+    # Expert parallelism is enabled by the launcher via ENABLE_EP (moe_ep scope).
+    # Record it explicitly so EP-on runs are labelled in the result data itself,
+    # not just inferred from the scope. ep_size mirrors the launcher's --ep-size $TP.
+    enable_ep = str(os.environ.get("ENABLE_EP", "")).strip().lower() in {"1", "true", "on", "yes"}
+    ep_size = args.tensor_parallel_size if enable_ep else 1
     config = {
         **vars(args),
         "profile": profile_name,
         "mode": args.mode or profile.mode,
         "dashboard_scope": scope,
+        "enable_ep": enable_ep,
+        "ep_size": ep_size,
         "profile_metadata": {
             "dataset": profile.dataset,
             "agent_type": profile.agent_type,

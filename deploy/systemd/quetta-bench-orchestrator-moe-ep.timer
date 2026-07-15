@@ -1,0 +1,14 @@
+[Unit]
+Description=Run QuettaBench MoE EP-on orchestration every 10 minutes (offset from the main tick)
+
+[Timer]
+# Offset 5min from quetta-bench-orchestrator.timer so the two scopes interleave
+# rather than colliding on the shared /tmp/bench_orchestrator.lock flock.
+OnBootSec=10min
+OnUnitActiveSec=10min
+RandomizedDelaySec=60s
+Persistent=true
+Unit=quetta-bench-orchestrator-moe-ep.service
+
+[Install]
+WantedBy=timers.target

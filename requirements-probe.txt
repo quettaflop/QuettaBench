@@ -1,0 +1,18 @@
+# requirements-probe.txt
+# GPU deps for the profiling probes in profiling/probes/. These are NOT needed to
+# run the base QuettaBench runner (src/). The base install stays CPU-only and
+# GPU-free; install these only on a profiling host.
+#
+#   pip install -r requirements.txt -r requirements-probe.txt
+#
+# System prerequisites (not pip-installable):
+#   - NVIDIA driver + CUDA toolkit
+#   - NVIDIA Nsight Systems (nsys) for the cuda_events trace probes
+#
+# Pin torch and vllm to the versions your serving stack actually runs. The
+# kernel probes call vLLM's own kernels (vllm.vllm_flash_attn, custom all-reduce)
+# so the measured numbers only match production if the versions match.
+torch>=2.1
+vllm>=0.6
+# aiohttp and numpy already come from the base requirements.txt; the live-server
+# probes reuse them, so they are not repeated here.

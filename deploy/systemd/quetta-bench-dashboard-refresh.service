@@ -1,0 +1,17 @@
+[Unit]
+Description=Rebuild QuettaBench dashboard artifacts from local benchmark results
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/QuettaBench
+Environment=BENCHMARK_RESULTS_DIR=/mnt/100g/agent-bench/results
+Environment=BENCH_STATE_ROOT=/mnt/100g/agent-bench/state
+Environment=DASHBOARD_JSON_BASE=/agentic-serve
+Environment=BENCH_ARTIFACT_DIR=/mnt/100g/agent-bench/artifacts
+Environment=DASHBOARD_DIR=/root/QuettaBoard
+Environment=MIRROR_R2=1
+Environment=GPU_STATE_REPORT=/tmp/quetta-gpu-state-latest.md
+Environment=DASHBOARD_LOCK_FILE=/tmp/quetta-dashboard-artifacts.lock
+ExecStart=/usr/bin/env bash /root/QuettaBench/scripts/rebuild-local-dashboard.sh

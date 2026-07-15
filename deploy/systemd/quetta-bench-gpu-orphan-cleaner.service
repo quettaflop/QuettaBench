@@ -1,0 +1,13 @@
+[Unit]
+Description=Reclaim QuettaBench orphan GPU cleanup candidates
+After=network-online.target quetta-bench-gpu-state-refresh.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/QuettaBench
+Environment=BENCH_STATE_ROOT=/mnt/100g/agent-bench/state
+Environment=BENCH_JOBS_SCOPE=synthetic_distributional
+Environment=BENCH_ARTIFACT_DIR=/mnt/100g/agent-bench/artifacts
+Environment=DASHBOARD_DIR=/root/QuettaBoard
+ExecStart=/usr/bin/env python3 /root/QuettaBench/scripts/clean_orphan_gpus.py --config /root/QuettaBench/scripts/gpu_cleanup.json --jobs-config /root/QuettaBench/scripts/sweep.yaml --scope synthetic_distributional --state-dir /mnt/100g/agent-bench/state --execute
