@@ -116,6 +116,10 @@ class JobCoverage:
     failure_metadata: dict[str, Any] | None = None
     expected: set[PointKey] = field(default_factory=set)
     present: set[PointKey] = field(default_factory=set)
+    # Set by reset_stale_jobs when the job has hit the coverage requeue cap: its
+    # still-missing cells have been retried the maximum number of times and still
+    # can't be filled, so their 'todo' disposition is demoted to 'failed'.
+    requeue_exhausted: bool = False
 
     @property
     def missing(self) -> set[PointKey]:
@@ -244,7 +248,7 @@ def expected_by_job(
         hw_label = str(cell.get("hw_label", ""))
         status = str(cell.get("status") or "pending")
         reason = cell.get("reason")
-        jid = publish_sweep_state.job_id(host, model, tp, mode, backend)
+        jid = publish_sweep_state.job_id(host, model, tp, mode, backend, ep=compile_sweep.ep_enabled(cell))
         if runnable_job_ids is not None and jid not in runnable_job_ids:
             continue
 
@@ -311,7 +315,8 @@ def parse_bench_jobs(path: Path) -> dict[str, str]:
             tp_i = int(tp)
         except ValueError:
             continue
-        jid = publish_sweep_state.job_id(host.strip(), short.strip(), tp_i, mode.strip(), backend.strip())
+        ep = compile_sweep.ep_enabled_extra_env(parts[10]) if len(parts) >= 11 else False
+        jid = publish_sweep_state.job_id(host.strip(), short.strip(), tp_i, mode.strip(), backend.strip(), ep=ep)
         rows[jid] = raw
     return rows
 
@@ -329,6 +334,7 @@ def compiled_bench_jobs(manifest: dict[str, Any]) -> tuple[dict[str, str], dict[
             int(cell["tp"]),
             str(cell["mode"]),
             backend,
+            ep=compile_sweep.ep_enabled(cell),
         )
         rows[jid] = row
         rows_by_scope[compile_sweep.dashboard_scope_for(publish_sweep_state.cell_data_scope(cell))][jid] = row
@@ -341,8 +347,21 @@ def compiled_bench_jobs(manifest: dict[str, Any]) -> tuple[dict[str, str], dict[
             int(cell["tp"]),
             str(cell["mode"]),
             backend,
+            ep=compile_sweep.ep_enabled(cell),
         )
         rows_by_scope["synthetic_distributional"][jid] = row
+    moe_ep_emitted, _moe_ep_skipped = compile_sweep.compile_jobs(manifest, "moe_ep")
+    for cell, row in moe_ep_emitted:
+        backend = str(cell.get("backend", "vllm"))
+        jid = publish_sweep_state.job_id(
+            str(cell["host"]),
+            str(cell["model"]),
+            int(cell["tp"]),
+            str(cell["mode"]),
+            backend,
+            ep=compile_sweep.ep_enabled(cell),
+        )
+        rows_by_scope["moe_ep"][jid] = row
     return rows, rows_by_scope, compile_sweep.render_file(emitted), len(skipped)
 
 
@@ -440,6 +459,7 @@ def reset_stale_jobs(
                 max_requeues=max_requeues,
                 reason=reason,
             )
+            cov.requeue_exhausted = True
             outcome.exhausted.append(cov)
             continue
 
@@ -697,9 +717,16 @@ def coverage_disposition(cov: JobCoverage) -> str | None:
     if not cov.missing or cov.status not in BLOCKING_STATUSES:
         return None
     fp = failure_payload(cov) or {}
-    return disposition_for_class(
+    disposition = disposition_for_class(
         str(fp.get("failure_class") or "unknown"), fp.get("evidence") or {}, cov.status
     )
+    # Exhausted the coverage requeue cap: retried the maximum number of times and
+    # still can't fill these cells, so they are no longer freely-fillable 'todo'
+    # work -- surface as 'failed' (needs inspection) instead of advertising them
+    # as queueable on the coverage page.
+    if disposition == "todo" and cov.requeue_exhausted:
+        return "failed"
+    return disposition
 
 
 def coverage_disposition_label(cov: JobCoverage, disposition: str | None) -> str:
@@ -751,7 +778,10 @@ def cell_disposition(cov: JobCoverage, point: PointKey) -> str | None:
         return None
     fc = cell_failure_class(cov, point[4], point[5])
     if fc in PER_CELL_OVERRIDE_CLASSES:
-        return disposition_for_class(fc, _evidence_for(cov.failure_metadata or {}), cov.status)
+        disposition = disposition_for_class(fc, _evidence_for(cov.failure_metadata or {}), cov.status)
+        if disposition == "todo" and cov.requeue_exhausted:
+            return "failed"
+        return disposition
     return coverage_disposition(cov)
 
 
@@ -1088,6 +1118,28 @@ def write_blockers_json(
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 
+def narrow_row_to_missing(row: str, cov: JobCoverage) -> str:
+    """Narrow a compiled bench-jobs row to only the profiles/concurrencies still
+    missing for this job, so a coverage re-queue re-runs the missing cells rather
+    than the whole grid. The row packs concs and profiles as separate space-lists,
+    so the tightest expressible subset is {missing profiles} x {missing concs} --
+    a superset of the exact missing cells but far smaller than the full grid.
+    Falls back to the original row on an unexpected format or empty intersection
+    (e.g. a never-run job whose whole grid is missing stays the full row)."""
+    parts = row.split("|")
+    if len(parts) < 11:
+        return row
+    missing_profiles = {str(p[4]) for p in cov.missing}
+    missing_concs = {str(p[5]) for p in cov.missing}
+    concs = [c for c in parts[8].split() if c in missing_concs]
+    profiles = [p for p in parts[9].split() if p in missing_profiles]
+    if not concs or not profiles:
+        return row
+    parts[8] = " ".join(concs)
+    parts[9] = " ".join(profiles)
+    return "|".join(parts)
+
+
 def write_missing_bench_jobs(path: Path, missing_jobs: list[JobCoverage], compiled_rows: dict[str, str], scope: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
@@ -1100,7 +1152,7 @@ def write_missing_bench_jobs(path: Path, missing_jobs: list[JobCoverage], compil
     for cov in sorted(missing_jobs, key=lambda c: (c.host, c.hw_label, c.model, c.tp, c.backend, c.mode)):
         row = compiled_rows.get(cov.job_id)
         if row:
-            lines.append(row)
+            lines.append(narrow_row_to_missing(row, cov))
     path.write_text("\n".join(lines) + "\n")
 
 
@@ -1119,6 +1171,7 @@ def main() -> int:
             "fixed",
             "mse",
             "archive",
+            "moe_ep",
             "all",
         ),
         default="synthetic_distributional",

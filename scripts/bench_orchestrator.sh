@@ -260,8 +260,8 @@ host_prefix() {
 }
 
 host_python() {
-    # args: host [backend]
-    local host="$1" backend="${2:-vllm}"
+    # args: host [backend] [model]
+    local host="$1" backend="${2:-vllm}" model="${3:-}"
     if [[ "$backend" == "sglang" ]]; then
         case "$host" in
             a100)       echo "/data/kevinlau/miniconda3/envs/sglang/bin/python" ;;
@@ -270,6 +270,18 @@ host_python() {
             h100-2)      echo "/home/kevinlau/miniconda3/envs/sglang/bin/python" ;;
         esac
     else
+        # gpt-oss (MXFP4-MoE) crashes vLLM 0.19.0 at EngineCore init with
+        # "Bitmatrix.__init__() got an unexpected keyword argument 'dtype'"
+        # (triton_kernels API mismatch). vLLM 0.19.1 fixes it, so gpt-oss runs
+        # on the 0.19.1 interpreter where present (h100 system python3); every
+        # other model keeps the pinned 0.19.0 conda env for comparability. The
+        # per-run _engine_version.txt records the actual build used.
+        if [[ "$model" == *gpt-oss* ]]; then
+            case "$host" in
+                h100|h100-2) echo "/usr/bin/python3"; return ;;
+                a100|3090)   echo "/home/kevinlau/miniconda3/envs/vllm-gptoss/bin/python"; return ;;
+            esac
+        fi
         case "$host" in
             a100)       echo "/data/kevinlau/miniconda3/bin/python" ;;
             3090|2080ti) echo "/home/kevinlau/miniconda3/envs/vllm/bin/python" ;;
@@ -963,6 +975,25 @@ while IFS='|' read -r HOST MODEL_PATH TP SHORT MODE BACKEND MAX_LEN GPU_MEM CONC
     log "$JID: reserving recorded running slot on $HOST port=$JOB_PORT gpus=[$JOB_GPUS] age=${AGE}s"
 done < "$JOBS_FILE"
 
+# Coverage-targeted re-run: reconcile's preflight writes a per-job subset of only
+# the still-missing (profile x concurrency) cells (see narrow_row_to_missing in
+# reconcile_sweep_coverage.py). Load it so a re-queued job re-runs just those
+# cells instead of the whole grid. A fresh never-run job has its entire grid
+# missing, so its subset IS the full row -- no behavior change.
+declare -A MISSING_CONCS=()
+declare -A MISSING_PROFILES=()
+MISSING_JOBS_FILE="${BENCH_COVERAGE_MISSING_JOBS:-/tmp/bench_jobs/missing_${STATE_SCOPE}_bench_jobs.txt}"
+if [[ -f "$MISSING_JOBS_FILE" ]]; then
+    while IFS='|' read -r M_HOST _ M_TP M_SHORT M_MODE M_BACKEND _ _ M_CONCS M_PROFILES _ || [[ -n "$M_HOST" ]]; do
+        M_HOST=$(echo "$M_HOST" | tr -d ' ')
+        [[ -z "$M_HOST" || "${M_HOST:0:1}" == "#" ]] && continue
+        : "${M_BACKEND:=vllm}"
+        M_JID=$(job_id "$M_HOST" "$M_SHORT" "$M_TP" "$M_MODE" "$M_BACKEND")
+        MISSING_CONCS["$M_JID"]="$M_CONCS"
+        MISSING_PROFILES["$M_JID"]="$M_PROFILES"
+    done < "$MISSING_JOBS_FILE"
+fi
+
 # Phase 2: scan jobs, decide actions.
 while IFS='|' read -r HOST MODEL_PATH TP SHORT MODE BACKEND MAX_LEN GPU_MEM CONCS PROFILES EXTRA_ENV || [[ -n "$HOST" ]]; do
     HOST=$(echo "$HOST" | tr -d ' ')
@@ -992,6 +1023,16 @@ while IFS='|' read -r HOST MODEL_PATH TP SHORT MODE BACKEND MAX_LEN GPU_MEM CONC
         remove_state_file "$JID" max_len_override
         remove_state_file "$JID" reason
         remove_state_file "$JID" failure.json
+    fi
+    # Launch only the still-missing cells for this job (reconcile's narrowed
+    # subset). Full CONCS/PROFILES stay in JOB_SIGNATURE + the done-check above,
+    # so a re-queue makes progress without drifting the job shape or being marked
+    # done early. Absent from the map (or fresh job) -> launch the full grid.
+    LAUNCH_CONCS="$CONCS"
+    LAUNCH_PROFILES="$PROFILES"
+    if [[ -n "${MISSING_CONCS[$JID]:-}" ]]; then
+        LAUNCH_CONCS="${MISSING_CONCS[$JID]}"
+        LAUNCH_PROFILES="${MISSING_PROFILES[$JID]}"
     fi
     PREFIX=$(host_prefix "$HOST")
     RESULT_DIR_NAME="${PREFIX}_${SHORT}_tp${TP}_${BACKEND}"
@@ -1266,7 +1307,7 @@ while IFS='|' read -r HOST MODEL_PATH TP SHORT MODE BACKEND MAX_LEN GPU_MEM CONC
             RUN_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
             PY=$(extra_env_value "PYTHON_BIN" "$EXTRA_ENV")
-            [[ -z "$PY" ]] && PY=$(host_python "$HOST" "$BACKEND")
+            [[ -z "$PY" ]] && PY=$(host_python "$HOST" "$BACKEND" "$SHORT")
             if [[ "$BACKEND" == "sglang" ]]; then
                 SCRIPT="sweep_all_profiles_sglang.sh"
                 [[ "$MODE" == "multi" ]] && SCRIPT="sweep_multiturn_profiles_sglang.sh"
@@ -1284,6 +1325,9 @@ while IFS='|' read -r HOST MODEL_PATH TP SHORT MODE BACKEND MAX_LEN GPU_MEM CONC
             remove_state_file "$JID" failure.json
 
             log "$JID: dispatching run_id=$RUN_ID on $HOST:$SLOT_PORT gpus=[$SLOT_GPUS] ($BACKEND, scope=$ROW_DASHBOARD_SCOPE, storage=$ROW_STORAGE_SCOPE, max_len=$RUN_MAX_LEN, mode=$MODE)"
+            if [[ "$LAUNCH_CONCS" != "$CONCS" || "$LAUNCH_PROFILES" != "$PROFILES" ]]; then
+                log "$JID: coverage-targeted re-run of missing cells only (concs=[$LAUNCH_CONCS] profiles=[$LAUNCH_PROFILES])"
+            fi
             write_status "$JID" running
 
             # Build env with the scheduler's chosen slot. Strip legacy
@@ -1294,7 +1338,7 @@ while IFS='|' read -r HOST MODEL_PATH TP SHORT MODE BACKEND MAX_LEN GPU_MEM CONC
 
             CMD="$SLOT_ENV BENCH_REMOTE_TMP=${REMOTE_TMP_FOR_HOST} BENCH_REMOTE_ROOT=${REMOTE_CODE_FOR_HOST} ${LAUNCH_EXTRA_ENV} RESULT_SCOPE=${ROW_STORAGE_SCOPE} DASHBOARD_SCOPE=${ROW_DASHBOARD_SCOPE} bash ${REMOTE_CODE_FOR_HOST}/scripts/${SCRIPT} \
                 ${MODEL_PATH} ${TP} ${SHORT} ${BACKEND} ${OUT_DIR_REMOTE} \
-                ${PY} ${GPU_MEM} ${RUN_MAX_LEN} \"${CONCS}\" \"${PROFILES}\""
+                ${PY} ${GPU_MEM} ${RUN_MAX_LEN} \"${LAUNCH_CONCS}\" \"${LAUNCH_PROFILES}\""
             REMOTE_LOG="$REMOTE_TMP_FOR_HOST/bench_${SHORT}_tp${TP}_${MODE}_${BACKEND}_p${SLOT_PORT}.log"
             write_run_record "$RUN_ID" "$JID" "dispatching" "$HOST" "$SLOT_GPUS" "$SLOT_PORT" "$BACKEND" \
                 "$ROW_STORAGE_SCOPE" "$ROW_DASHBOARD_SCOPE" "$MODEL_PATH" "$TP" "$SHORT" "$MODE" \
