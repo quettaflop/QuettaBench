@@ -693,6 +693,9 @@ if __name__ == "__main__":
         "dashboard_scope": scope,
         "enable_ep": enable_ep,
         "ep_size": ep_size,
+        # Canonical parallelism-strategy label (tp / tp+ep). ep / pp / ep+pp
+        # are not wired in the launcher yet. Mirrors compile_sweep.parallelism_label.
+        "parallelism": "tp+ep" if enable_ep else "tp",
         "profile_metadata": {
             "dataset": profile.dataset,
             "agent_type": profile.agent_type,

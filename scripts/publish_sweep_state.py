@@ -30,7 +30,7 @@ from pathlib import Path
 import yaml
 
 from compile_sweep import cell_data_scope as manifest_cell_data_scope
-from compile_sweep import DEFAULT_INFEASIBILITY_KIND, MOE_EP_HOSTS, cell_for_output_scope, dashboard_scope_for, ep_enabled, is_moe_ep_scope, is_moe_model, matches_known_oom, profile_infeasible_kinds, profile_infeasible_reasons, profiles_for_output_scope, resolve, result_scope_for
+from compile_sweep import DEFAULT_INFEASIBILITY_KIND, MOE_EP_HOSTS, cell_for_output_scope, dashboard_scope_for, ep_enabled, is_moe_ep_scope, is_moe_model, matches_known_oom, parallelism_label, profile_infeasible_kinds, profile_infeasible_reasons, profiles_for_output_scope, resolve, result_scope_for
 
 HERE = Path(__file__).resolve().parent
 SWEEP_YAML = HERE / "sweep.yaml"
@@ -280,6 +280,7 @@ def build_state(manifest: dict) -> dict:
             "mode": mode,
             "backend": backend,
             "ep": ep,
+            "parallelism": parallelism_label(ep),
             "status": rt["status"],
             "attempt": rt["attempt"],
             "max_len": int(resolved["max_len"]),
@@ -323,6 +324,7 @@ def build_state(manifest: dict) -> dict:
                 "mode": mode,
                 "backend": backend,
                 "ep": ep,
+                "parallelism": parallelism_label(ep),
                 "status": "known_oom",
                 "attempt": 0,
                 "max_len": None,

@@ -302,6 +302,18 @@ def ep_enabled_extra_env(extra_env: str) -> bool:
     return str(_extra_env_value(extra_env, "ENABLE_EP") or "").strip().lower() in {"1", "true", "on", "yes"}
 
 
+def parallelism_label(ep: bool) -> str:
+    """Canonical parallelism-strategy label for a run.
+
+    The launcher today only expresses tensor-parallel and expert-parallel over
+    the TP ranks, so a run is "tp" (EP off) or "tp+ep" (EP on). The other
+    strategies -- "ep" (expert-parallel without tensor, via data-parallel),
+    "pp" (pipeline), and "ep+pp" -- are not wired yet; when they are, this is
+    where they compose.
+    """
+    return "tp+ep" if ep else "tp"
+
+
 def is_moe_model(model: str, manifest: dict) -> bool:
     """Whether a model is a mixture-of-experts model (models.<name>.moe: true)."""
     return bool(manifest.get("models", {}).get(model, {}).get("moe"))
@@ -361,6 +373,7 @@ def job_record(cell: dict, manifest: dict) -> dict[str, Any]:
         "mode": str(cell["mode"]),
         "backend": backend,
         "ep": ep,
+        "parallelism": parallelism_label(ep),
         "max_len": int(resolved["max_len"]),
         "gpu_mem": resolved["gpu_mem"],
         "concurrencies": [int(c) for c in resolved["concurrencies"]],
