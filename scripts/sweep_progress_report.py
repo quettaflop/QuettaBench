@@ -210,6 +210,7 @@ class HostSnapshot:
     host: str
     ok: bool
     remote_user: str = ""
+    ip: str = ""
     gpus: list[GpuInfo] | None = None
     processes: list[GpuProcess] | None = None
     ports: list[str] | None = None
@@ -563,7 +564,27 @@ def load_job_states(jobs: Iterable[Job], state_dir: Path) -> list[JobState]:
     return states
 
 
+def resolve_host_ip(host: str) -> str:
+    """Resolve a host alias to its configured address via `ssh -G` (reads
+    ~/.ssh/config locally, no network). Returns "" if it cannot be resolved."""
+    try:
+        proc = subprocess.run(
+            ["ssh", "-G", host],
+            check=False,
+            text=True,
+            capture_output=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    for line in proc.stdout.splitlines():
+        if line.startswith("hostname "):
+            return line.split(None, 1)[1].strip()
+    return ""
+
+
 def ssh_snapshot(host: str, timeout: int) -> HostSnapshot:
+    ip = resolve_host_ip(host)
     command = f"bash -lc {shlex.quote(REMOTE_SNAPSHOT_SCRIPT)}"
     try:
         proc = subprocess.run(
@@ -574,10 +595,12 @@ def ssh_snapshot(host: str, timeout: int) -> HostSnapshot:
             timeout=timeout,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        return HostSnapshot(host=host, ok=False, error=str(exc))
+        return HostSnapshot(host=host, ok=False, error=str(exc), ip=ip)
     if proc.returncode != 0 and not proc.stdout:
-        return HostSnapshot(host=host, ok=False, error=(proc.stderr or f"ssh exit {proc.returncode}").strip())
-    return parse_host_snapshot(host, proc.stdout, proc.stderr)
+        return HostSnapshot(host=host, ok=False, error=(proc.stderr or f"ssh exit {proc.returncode}").strip(), ip=ip)
+    snapshot = parse_host_snapshot(host, proc.stdout, proc.stderr)
+    snapshot.ip = ip
+    return snapshot
 
 
 def parse_host_snapshot(host: str, stdout: str, stderr: str) -> HostSnapshot:
@@ -1312,6 +1335,7 @@ def build_gpu_state_json(args: argparse.Namespace, progress: dict[str, Any] | No
             "host": snapshot.host,
             "ok": snapshot.ok,
             "remote_user": snapshot.remote_user,
+            "ip": snapshot.ip,
             "error": snapshot.error,
             "drained": snapshot.host in drained_hosts,
             "blocked_gpus": sort_gpu_indices(blocked_by_host.get(snapshot.host, set())),
