@@ -302,16 +302,21 @@ def ep_enabled_extra_env(extra_env: str) -> bool:
     return str(_extra_env_value(extra_env, "ENABLE_EP") or "").strip().lower() in {"1", "true", "on", "yes"}
 
 
-def parallelism_label(ep: bool) -> str:
+def parallelism_label(ep: bool, tp: int) -> str:
     """Canonical parallelism-strategy label for a run.
 
-    The launcher today only expresses tensor-parallel and expert-parallel over
-    the TP ranks, so a run is "tp" (EP off) or "tp+ep" (EP on). The other
-    strategies -- "ep" (expert-parallel without tensor, via data-parallel),
-    "pp" (pipeline), and "ep+pp" -- are not wired yet; when they are, this is
-    where they compose.
+    Composed from the active parallel axes: tensor-parallel when tp > 1, plus
+    expert-parallel when ep is on. A single-GPU run (tp == 1, no ep) has no
+    parallelism and is labelled "1gpu". So the current set is "1gpu", "tp",
+    "tp+ep" (and "ep" for the not-yet-wired expert-without-tensor case, tp == 1
+    + data-parallel). Pipeline (pp) composes in here once it is wired.
     """
-    return "tp+ep" if ep else "tp"
+    axes = []
+    if int(tp) > 1:
+        axes.append("tp")
+    if ep:
+        axes.append("ep")
+    return "+".join(axes) if axes else "1gpu"
 
 
 def is_moe_model(model: str, manifest: dict) -> bool:
@@ -373,7 +378,7 @@ def job_record(cell: dict, manifest: dict) -> dict[str, Any]:
         "mode": str(cell["mode"]),
         "backend": backend,
         "ep": ep,
-        "parallelism": parallelism_label(ep),
+        "parallelism": parallelism_label(ep, int(cell["tp"])),
         "max_len": int(resolved["max_len"]),
         "gpu_mem": resolved["gpu_mem"],
         "concurrencies": [int(c) for c in resolved["concurrencies"]],

@@ -686,6 +686,10 @@ if __name__ == "__main__":
     # not just inferred from the scope. ep_size mirrors the launcher's --ep-size $TP.
     enable_ep = str(os.environ.get("ENABLE_EP", "")).strip().lower() in {"1", "true", "on", "yes"}
     ep_size = args.tensor_parallel_size if enable_ep else 1
+    # Canonical parallelism-strategy label composed from the active axes:
+    # "1gpu" (single GPU), "tp", "tp+ep". Mirrors compile_sweep.parallelism_label.
+    _par_axes = (["tp"] if args.tensor_parallel_size > 1 else []) + (["ep"] if enable_ep else [])
+    parallelism = "+".join(_par_axes) or "1gpu"
     config = {
         **vars(args),
         "profile": profile_name,
@@ -693,9 +697,7 @@ if __name__ == "__main__":
         "dashboard_scope": scope,
         "enable_ep": enable_ep,
         "ep_size": ep_size,
-        # Canonical parallelism-strategy label (tp / tp+ep). ep / pp / ep+pp
-        # are not wired in the launcher yet. Mirrors compile_sweep.parallelism_label.
-        "parallelism": "tp+ep" if enable_ep else "tp",
+        "parallelism": parallelism,
         "profile_metadata": {
             "dataset": profile.dataset,
             "agent_type": profile.agent_type,
