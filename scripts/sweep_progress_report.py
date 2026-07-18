@@ -35,8 +35,8 @@ DEFAULT_HOSTS = ("a100", "3090", "2080ti", "h100", "h100-2")
 PORTS = tuple(range(8089, 8097))
 IDLE_MEMORY_USED_THRESHOLD_MIB = 512
 LEGACY_STATE_FALLBACK = os.environ.get("BENCH_STATE_LEGACY_FALLBACK") == "1"
-ORCHESTRATOR_SERVICE = "agentic-serve-bench-orchestrator.service"
-ORCHESTRATOR_TIMER = "agentic-serve-bench-orchestrator.timer"
+ORCHESTRATOR_SERVICE = "quetta-bench-orchestrator.service"
+ORCHESTRATOR_TIMER = "quetta-bench-orchestrator.timer"
 ACTIVE_RUN_STATUSES = {"dispatching", "running"}
 
 REMOTE_SNAPSHOT_SCRIPT = r"""

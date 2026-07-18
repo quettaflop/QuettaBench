@@ -4,7 +4,7 @@
 # Defaults:
 #   raw results: /mnt/100g/agent-bench/results
 #   state root:  /mnt/100g/agent-bench/state
-#   JSON base:   /agentic-serve
+#   JSON base:   /quettaboard
 #
 # This is the freshness path for the Tailscale dashboard. R2 mirroring is
 # optional and happens only after local artifacts validate.
@@ -22,7 +22,7 @@ BENCH_ARTIFACT_DIR="${BENCH_ARTIFACT_DIR:-/mnt/100g/agent-bench/artifacts}"
 
 RESULTS_DIR="${BENCHMARK_RESULTS_DIR:-/mnt/100g/agent-bench/results}"
 STATE_ROOT="${BENCH_STATE_ROOT:-/mnt/100g/agent-bench/state}"
-JSON_BASE="${DASHBOARD_JSON_BASE:-/agentic-serve}"
+JSON_BASE="${DASHBOARD_JSON_BASE:-/quettaboard}"
 LIVE_DIST="$DASHBOARD_DIR/dist"
 NEXT_DIST="${DASHBOARD_NEXT_DIST:-$DASHBOARD_DIR/dist.next}"
 PREV_DIST="${DASHBOARD_PREV_DIST:-$DASHBOARD_DIR/dist.prev}"
@@ -43,7 +43,7 @@ usage() {
 Options:
   --results-dir PATH   Raw benchmark results root
   --state-root PATH    Orchestrator state root
-  --json-base PATH     Dashboard JSON base URL (default: /agentic-serve)
+  --json-base PATH     Dashboard JSON base URL (default: /quettaboard)
   --mirror-r2          Best-effort upload of validated JSON artifacts to R2
   --no-mirror-r2       Disable R2 JSON artifact upload
 EOF
