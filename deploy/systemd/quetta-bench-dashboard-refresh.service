@@ -8,7 +8,7 @@ Type=oneshot
 WorkingDirectory=/root/QuettaBench
 Environment=BENCHMARK_RESULTS_DIR=/mnt/100g/agent-bench/results
 Environment=BENCH_STATE_ROOT=/mnt/100g/agent-bench/state
-Environment=DASHBOARD_JSON_BASE=/agentic-serve
+Environment=DASHBOARD_JSON_BASE=/quettaboard
 Environment=BENCH_ARTIFACT_DIR=/mnt/100g/agent-bench/artifacts
 Environment=DASHBOARD_DIR=/root/QuettaBoard
 Environment=MIRROR_R2=1
