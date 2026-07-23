@@ -65,13 +65,29 @@ class RequestResult:
     def tpot(self) -> Optional[float]:
         """Time per output token (mean ITL), excluding first token.
 
-        Falls back to (e2el - ttft) / output_tokens when ITL data is
-        missing (e.g. models that don't stream token-by-token).
+        mean(ITL) is only inter-TOKEN when the stream delivered ~one counted
+        chunk per token. When coverage is incomplete (a server streaming
+        channels the client didn't count, or multi-token chunks), mean(ITL)
+        is inter-CHUNK and can be inflated by an order of magnitude -- in
+        that case, and when ITL is missing entirely (models that don't
+        stream token-by-token), fall back to the wall-clock formula
+        (e2el - ttft) / (output_tokens - 1).
         """
+        wall_clock_ok = (
+            self.e2el is not None and self.ttft is not None
+            and self.output_tokens > 1
+        )
         if self.itl:
+            # Coverage guard: expect ~(output_tokens - 1) ITL entries.
+            incomplete = (
+                self.output_tokens > 1
+                and len(self.itl) < 0.8 * (self.output_tokens - 1)
+            )
+            if incomplete and wall_clock_ok:
+                return (self.e2el - self.ttft) / (self.output_tokens - 1)
             return sum(self.itl) / len(self.itl)
         # Fallback: compute from e2el and ttft
-        if self.e2el is not None and self.ttft is not None and self.output_tokens > 1:
+        if wall_clock_ok:
             decode_time = self.e2el - self.ttft
             return decode_time / (self.output_tokens - 1)
         return None

@@ -30,8 +30,9 @@ async def send_request(
     """
     Send a single streaming chat completion request and record metrics.
 
-    Parses SSE stream: each `data: {...}` line with choices[0].delta.content
-    is one token. First = TTFT. Subsequent = ITL entries.
+    Parses SSE stream: each `data: {...}` line whose choices[0].delta carries a
+    generated payload (content, reasoning_content/reasoning, or tool_calls) is
+    one token. First = TTFT. Subsequent = ITL entries.
     """
     headers = {
         "Content-Type": "application/json",
@@ -101,9 +102,21 @@ async def send_request(
                     continue
 
                 delta = choices[0].get("delta", {})
-                content = delta.get("content")
-
-                if content is None:
+                # A chunk is a token event if it carries ANY generated payload,
+                # not just `content`. Reasoning models (e.g. gpt-oss harmony on
+                # vLLM) stream analysis-channel tokens as `reasoning_content`
+                # (older) / `reasoning` (newer) with content=None, and tool-call
+                # argument deltas arrive under `tool_calls` with content=None.
+                # Skipping those coalesced whole reasoning phases into single
+                # ITL gaps and inflated tpot up to ~13x (see QuettaSim
+                # tools/GT_QUALITY_FLAGS.md, Finding 1).
+                has_payload = (
+                    delta.get("content") is not None
+                    or delta.get("reasoning_content") is not None
+                    or delta.get("reasoning") is not None
+                    or bool(delta.get("tool_calls"))
+                )
+                if not has_payload:
                     continue
 
                 # Real token received
