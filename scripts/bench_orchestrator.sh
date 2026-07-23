@@ -259,6 +259,22 @@ host_prefix() {
     esac
 }
 
+# Single source of truth for a job's result DIRECTORY NAME -- the flat identity
+# key <gpu>_<model>_tp<N>[_ep<N>]_<backend> that configs.json, QuettaSim's
+# parse_gt_dir_name, and the dashboard series/dedupe keys all treat as an ID.
+# EP-on rows (ENABLE_EP=1 in extra_env) carry an explicit ep token; EP degree
+# equals TP on every fleet config. Any future store re-layout (e.g. nesting by
+# gpu) should change the PATH assembly where this is consumed (scope prefixes),
+# never this name.
+result_dir_name() {
+    local prefix="$1" short="$2" tp="$3" backend="$4" extra_env="${5:-}"
+    if [[ " $extra_env " == *"ENABLE_EP=1"* ]]; then
+        echo "${prefix}_${short}_tp${tp}_ep${tp}_${backend}"
+    else
+        echo "${prefix}_${short}_tp${tp}_${backend}"
+    fi
+}
+
 host_python() {
     # args: host [backend] [model]
     local host="$1" backend="${2:-vllm}" model="${3:-}"
@@ -1035,7 +1051,7 @@ while IFS='|' read -r HOST MODEL_PATH TP SHORT MODE BACKEND MAX_LEN GPU_MEM CONC
         LAUNCH_PROFILES="${MISSING_PROFILES[$JID]}"
     fi
     PREFIX=$(host_prefix "$HOST")
-    RESULT_DIR_NAME="${PREFIX}_${SHORT}_tp${TP}_${BACKEND}"
+    RESULT_DIR_NAME="$(result_dir_name "$PREFIX" "$SHORT" "$TP" "$BACKEND" "$EXTRA_ENV")"
     REMOTE_TMP_FOR_HOST="$(remote_tmp_root "$HOST")"
     REMOTE_CODE_FOR_HOST="$(remote_code_root "$HOST")"
     REMOTE_RESULTS_FOR_HOST="$(remote_results_root "$HOST")"
