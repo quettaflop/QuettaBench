@@ -621,7 +621,10 @@ cells:
   - { host: h100, model: Qwen3.5-9B, tp: 1, mode: single, preset: fixed_single, gpu_mem: 0.9 }
   - { host: h100, model: Qwen3.5-9B, tp: 1, mode: multi, preset: fixed_multi, gpu_mem: 0.9 }
   - { host: h100, model: gpt-oss-20b, tp: 1, mode: single, preset: fixed_single, gpu_mem: 0.9, max_len: 8192 }
-  - { host: h100, model: gpt-oss-20b, tp: 1, mode: multi, preset: fixed_multi, gpu_mem: 0.9, max_len: 8192, extra_env: "VLLM_ENFORCE_EAGER=1" }
+  # 2026-07-22: dropped VLLM_ENFORCE_EAGER=1 -- it produced the flat ~44ms tpot GT
+  # (QuettaSim GT_QUALITY_FLAGS Finding 2). 0.19.1 starts fine with CUDA graphs
+  # (the :8089 singleturn server measured 4.1ms on the same GPU).
+  - { host: h100, model: gpt-oss-20b, tp: 1, mode: multi, preset: fixed_multi, gpu_mem: 0.9, max_len: 8192 }
   - { host: h100, model: Mixtral-8x7B, tp: 1, mode: single, preset: fixed_single, gpu_mem: 0.9, max_len: 8192 }
   - { host: h100, model: Mixtral-8x7B, tp: 1, mode: multi, preset: fixed_multi, gpu_mem: 0.9, max_len: 8192 }
   - { host: h100, model: Llama-3.1-70B, tp: 4, mode: multi, preset: fixed_multi, gpu_mem: 0.9 }

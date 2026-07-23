@@ -44,7 +44,11 @@ from ..workloads.arrival import make_arrival_times
 
 
 SUPPORTED_BACKENDS = ["openai", "vllm", "sglang", "trtllm"]
-BENCHMARK_SCHEMA_VERSION = 3
+# v4 (2026-07-22): streaming client counts reasoning_content/reasoning/tool_calls
+# deltas as token events, and tpot falls back to wall-clock when ITL chunk
+# coverage is incomplete. v3 and earlier vllm gpt-oss results carry inter-chunk
+# tpot (see QuettaSim tools/GT_QUALITY_FLAGS.md Finding 1).
+BENCHMARK_SCHEMA_VERSION = 4
 WORKLOAD_SCHEMA_VERSION = "distributional-synthetic-v1"
 TRACE_REQUEST_ID_PREFIX = "agenticbench"
 
@@ -395,6 +399,11 @@ def _load_source_session_ids(path: str | None) -> list[str] | None:
 def save_results(summary, results, output_path: str, config: dict):
     """Save summary + per-request data to JSON."""
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    # Stamp the schema version so result files are self-describing (v4 =
+    # fixed streaming client + coverage-guarded tpot). setdefault keeps any
+    # explicitly provided value.
+    config = dict(config)
+    config.setdefault("benchmark_schema_version", BENCHMARK_SCHEMA_VERSION)
     output = {
         "config": config,
         "summary": summary.to_dict(),

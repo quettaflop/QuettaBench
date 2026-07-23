@@ -346,6 +346,11 @@ def dashboard_scope_for(scope: str) -> str:
 def result_scope_for(scope: str) -> str:
     if scope in {"latest", "synthetic", "synthetic-distributional", "synthetic_distributional"}:
         return "synthetic_distributional"
+    if scope in {"moe_ep"}:
+        # 2026-07-22 merge: EP-on runs store alongside their EP-off twins; the
+        # orchestrator adds an _ep<N> dir-name token. dashboard_scope stays
+        # moe_ep (cell configs carry it; build-data keys EP scope off the config).
+        return "synthetic_distributional"
     if scope in {"archive", "trace_replay"}:
         return "trace_replay"
     if scope in {"canonical"}:
