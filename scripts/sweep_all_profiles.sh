@@ -184,8 +184,14 @@ for PROFILE in $PROFILES; do
             min_loaded_nreq=$(( CONC * 2 ))
             [[ "$local_nreq" -lt "$min_loaded_nreq" ]] && local_nreq="$min_loaded_nreq"
         fi
+        # Warmup is profile-shaped and runs at the cell's concurrency, so size
+        # it with the concurrency instead of a flat 2. Capped to bound cost:
+        # fully warming decode at batch width C needs warmup >= C, which is a
+        # whole extra wave. This warms the large-prefill path and mid widths.
+        local_warmup="$CONC"
+        [[ "$local_warmup" -gt 16 ]] && local_warmup=16
         echo ""
-        echo "=== profile=$PROFILE conc=$CONC nreq=$local_nreq ==="
+        echo "=== profile=$PROFILE conc=$CONC nreq=$local_nreq warmup=$local_warmup ==="
         OPENAI_API_KEY="$API_KEY" "$PY" -m src.benchmark.runner \
             --url        "http://localhost:$PORT/v1/chat/completions" \
             --model      "$MODEL_PATH" \
@@ -201,7 +207,7 @@ for PROFILE in $PROFILES; do
             --gpu-memory-utilization "$GPU_MEM" \
             --tensor-parallel-size "$TP" \
             --reset-prefix-cache \
-            --warmup     2 \
+            --warmup     "$local_warmup" \
             --timeout    300 \
             --api-key    "$API_KEY" \
             --scope      "$DASHBOARD_SCOPE" \

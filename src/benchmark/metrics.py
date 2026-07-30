@@ -31,6 +31,9 @@ class RequestResult:
     # True once the server sent a usage block. Without it input/output token
     # counts are 0 and every throughput number is meaningless.
     usage_reported: bool = False
+    # Set for requests held out of the summary via --discard-first. They stay in
+    # per_request for inspection; they just do not feed the percentiles.
+    excluded_from_summary: bool = False
 
     # Client-side request shape/timing. These do not replace TTFT/TPOT/E2EL;
     # they explain scheduler pressure and workload shape for later predictors.
@@ -200,6 +203,13 @@ class BenchmarkSummary:
     num_requests: int = 0
     duration_s: float = 0.0
 
+    # Wall-clock window the summary actually describes. Equals duration_s
+    # normally; with --discard-first it is the span of the KEPT requests, so
+    # throughput is not divided by time belonging to held-out warmup.
+    measured_window_s: float = 0.0
+    # Requests held out of the summary by --discard-first.
+    excluded_requests: int = 0
+
     # Request counts
     successful_requests: int = 0
     failed_requests: int = 0
@@ -358,12 +368,20 @@ def aggregate(results, duration_s: float, model: str = "", profile: str = "", co
         profile: workload profile name for labeling
         concurrency: concurrency level used
     """
+    # Held-out requests (--discard-first) are excluded from every statistic
+    # below, including busy time: they are warmup by declaration, so letting
+    # their intervals into the denominator would credit the server with work
+    # the summary does not count in the numerator.
+    excluded = sum(1 for r in results if r.excluded_from_summary)
+    results = [r for r in results if not r.excluded_from_summary]
+
     summary = BenchmarkSummary(
         model=model,
         profile=profile,
         concurrency=concurrency,
         num_requests=len(results),
         duration_s=duration_s,
+        excluded_requests=excluded,
     )
 
     ttfts = []
@@ -401,13 +419,26 @@ def aggregate(results, duration_s: float, model: str = "", profile: str = "", co
             if r.error:
                 summary.errors.append(r.error)
 
-    if duration_s > 0:
-        summary.request_throughput = summary.successful_requests / duration_s
-        summary.input_token_throughput = summary.total_input_tokens / duration_s
-        summary.output_token_throughput = summary.total_output_tokens / duration_s
+    # With held-out requests, total duration covers work the numerator no
+    # longer counts, so measure the span of what is actually being summarised.
+    window_s = duration_s
+    if excluded:
+        spans = [
+            (r.semaphore_acquired_at_s, r.completed_at_s)
+            for r in results
+            if r.semaphore_acquired_at_s is not None and r.completed_at_s is not None
+        ]
+        if spans:
+            window_s = max(e for _, e in spans) - min(s for s, _ in spans)
+    summary.measured_window_s = window_s
+
+    if window_s > 0:
+        summary.request_throughput = summary.successful_requests / window_s
+        summary.input_token_throughput = summary.total_input_tokens / window_s
+        summary.output_token_throughput = summary.total_output_tokens / window_s
         summary.total_token_throughput = (
             summary.total_input_tokens + summary.total_output_tokens
-        ) / duration_s
+        ) / window_s
 
     busy_s, mean_inflight, max_inflight = _busy_time_and_load(results)
     summary.busy_time_s = busy_s
@@ -611,8 +642,11 @@ def print_summary(s: BenchmarkSummary) -> None:
     print(f" Model:                    {s.model}")
     print(f" Duration:                 {s.duration_s:.2f}s")
     print(f" Requests:                 {s.successful_requests} ok / {s.failed_requests} failed")
-    busy_pct = (f" ({100.0 * s.busy_time_s / s.duration_s:.1f}% of duration)"
-                if s.duration_s > 0 else "")
+    if s.excluded_requests:
+        print(f" Held out (--discard-first): {s.excluded_requests} request(s); "
+              f"window {s.measured_window_s:.2f}s")
+    busy_pct = (f" ({100.0 * s.busy_time_s / s.measured_window_s:.1f}% of window)"
+                if s.measured_window_s > 0 else "")
     print(f" Busy time:                {s.busy_time_s:.2f}s{busy_pct}")
     print(f" Mean in-flight requests:  {s.mean_inflight_requests:.1f} "
           f"(peak {s.max_inflight_requests})")

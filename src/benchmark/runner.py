@@ -67,6 +67,85 @@ async def _no_limit():
     yield
 
 
+async def _warmup_with_profile(
+    session,
+    backend,
+    dataset,
+    *,
+    url: str,
+    model: str,
+    api_key: str,
+    concurrency: int,
+    count: int,
+    ignore_eos: bool,
+    temperature: float,
+    sampling_seed: int | None,
+    exact_output_length: bool,
+) -> tuple[int, int]:
+    """Warm the server with real profile requests at the real concurrency.
+
+    The old warmup sent a handful of "Hello" prompts at max_tokens=10 over a
+    throwaway ClientSession. That warms nothing the benchmark then measures:
+    not the first large-ISL prefill, not decode at real batch width, and not
+    the benchmark session's own TCP connections -- so those one-time costs
+    landed inside the first measured requests' TTFT instead.
+
+    Requests are drawn from the live dataset, so for single-turn profiles the
+    warmup prompts are consumed and the measured run sees different ones.
+    Results are discarded, but failures are counted: a warmup where nothing
+    succeeds means the server is not usable and the run should not proceed.
+
+    Returns (successful, attempted).
+    """
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async def one():
+        request = dataset.get_next_request()
+        async with semaphore:
+            return await backend.send_request(
+                session=session,
+                url=url,
+                model=model,
+                messages=request.messages,
+                max_tokens=request.max_tokens,
+                api_key=api_key,
+                ignore_eos=ignore_eos or exact_output_length,
+                temperature=temperature,
+                seed=sampling_seed,
+                min_tokens=request.max_tokens if exact_output_length else 0,
+            )
+
+    results = await asyncio.gather(*[one() for _ in range(count)], return_exceptions=True)
+    ok = sum(
+        1 for r in results
+        if not isinstance(r, BaseException) and r is not None and r.success
+    )
+    return ok, len(results)
+
+
+def _warn_if_transient_dominated(num_requests: int, concurrency: int) -> None:
+    """Warn when the run is too short to contain a steady-state regime.
+
+    A closed-loop run is one synchronized wave of `concurrency` requests, then
+    backfill as each completes, then a drain to zero. Settling takes several
+    generations of turnover (one generation == `concurrency` completions).
+    Below ~4 the run is all startup convoy and drain, and -- importantly --
+    discarding cannot fix it, because there is no settled middle left to keep.
+    """
+    if concurrency <= 1 or num_requests <= 0:
+        return
+    per_slot = num_requests / concurrency
+    if per_slot >= 4:
+        return
+    print(f"WARNING: only {per_slot:.1f} requests per concurrency slot "
+          f"({num_requests} requests at concurrency {concurrency}).")
+    print(f"         The run is dominated by the startup wave and the drain tail, "
+          f"with no")
+    print(f"         steady-state middle. --discard-first cannot recover it; raise "
+          f"--num-requests")
+    print(f"         to at least {concurrency * 8} for a settled measurement.")
+
+
 def make_trace_request_id(
     *,
     profile_name: str,
@@ -142,11 +221,24 @@ async def run_benchmark(
     client_timeout = aiohttp.ClientTimeout(total=timeout)
 
     async with aiohttp.ClientSession(connector=connector, timeout=client_timeout) as session:
-        # Warmup
+        # Warmup: real profile requests at the real concurrency, over THIS
+        # session so its TCP connections are established before timing starts.
         if warmup_requests > 0:
-            print(f"Warming up with {warmup_requests} requests...")
-            await backend.run_warmup(url, model, api_key, warmup_requests, timeout)
-            print("Warmup done.")
+            print(f"Warming up with {warmup_requests} profile requests "
+                  f"at concurrency {concurrency}...")
+            ok, attempted = await _warmup_with_profile(
+                session, backend, dataset,
+                url=url, model=model, api_key=api_key,
+                concurrency=concurrency, count=warmup_requests,
+                ignore_eos=ignore_eos, temperature=temperature,
+                sampling_seed=sampling_seed,
+                exact_output_length=exact_output_length,
+            )
+            print(f"Warmup done: {ok}/{attempted} succeeded.")
+            if ok == 0:
+                print("ABORT: every warmup request failed. The server is not serving "
+                      "this profile; check the server log before benchmarking.")
+                sys.exit(1)
 
         # Reset AFTER warmup so the run starts from a genuinely cold cache
         # regardless of what warmup left behind.
@@ -291,9 +383,32 @@ async def run_multi_turn_benchmark(
     async with aiohttp.ClientSession(connector=connector, timeout=client_timeout) as session_http:
         # Warmup
         if warmup_requests > 0:
-            print(f"Warming up with {warmup_requests} requests...")
-            await backend.run_warmup(url, model, api_key, warmup_requests, timeout)
-            print("Warmup done.")
+            # Multi-turn datasets serve get_next_request() from a flat iterator
+            # that is independent of `sessions`, so warmup prompts DUPLICATE
+            # measured ones rather than consuming them. That pre-warms the
+            # prefix cache for the measured run unless it is reset afterwards.
+            if not reset_prefix_cache_first:
+                print("WARNING: multi-turn warmup replays prompts the measured run will "
+                      "also send,")
+                print("         so the cache starts warm and turn-1 TTFT is understated. "
+                      "Pass")
+                print("         --reset-prefix-cache (or --warmup 0) to measure a cold "
+                      "first turn.")
+            print(f"Warming up with {warmup_requests} profile requests "
+                  f"at concurrency {concurrency}...")
+            ok, attempted = await _warmup_with_profile(
+                session_http, backend, dataset,
+                url=url, model=model, api_key=api_key,
+                concurrency=concurrency, count=warmup_requests,
+                ignore_eos=ignore_eos, temperature=temperature,
+                sampling_seed=sampling_seed,
+                exact_output_length=exact_output_length,
+            )
+            print(f"Warmup done: {ok}/{attempted} succeeded.")
+            if ok == 0:
+                print("ABORT: every warmup request failed. The server is not serving "
+                      "this profile; check the server log before benchmarking.")
+                sys.exit(1)
 
         # Reset AFTER warmup so the run starts cold. Intra-run prefix reuse --
         # the thing multi-turn profiles exist to measure -- is unaffected.
@@ -503,6 +618,7 @@ def save_results(summary, results, output_path: str, config: dict):
                 "error": r.error,
                 **({"error_kind": r.error_kind} if r.error_kind is not None else {}),
                 "usage_reported": r.usage_reported,
+                **({"excluded_from_summary": True} if r.excluded_from_summary else {}),
                 **({"request_index": r.request_index}
                    if r.request_index is not None else {}),
                 **({"max_tokens_requested": r.max_tokens_requested}
@@ -656,6 +772,11 @@ def get_args():
                         help="POST the server's prefix-cache reset endpoint before the run. "
                              "Sweeps replay byte-identical prompts across cells, so without "
                              "this every cell after the first is measured warm.")
+    parser.add_argument("--discard-first", type=int, default=0, metavar="N",
+                        help="Hold the first N requests out of the summary (they stay in "
+                             "per_request). Removes the startup wave. Only meaningful once "
+                             "--num-requests is several times --concurrency; at 2x there is "
+                             "no settled middle left to keep. Single-turn only.")
     parser.add_argument("--allow-missing-usage", action="store_true",
                         help="Permit a run where no response carried a usage block. Token "
                              "counts and throughputs will be zero-filled, not measured.")
@@ -815,6 +936,18 @@ if __name__ == "__main__":
 
     profile = get_profile(args.profile)
     profile_name = profile.name
+    if args.discard_first < 0:
+        print(f"Error: --discard-first must be >= 0, got {args.discard_first}.")
+        sys.exit(1)
+    if args.discard_first and profile.mode == "multi-turn":
+        print(f"Error: --discard-first is not supported for multi-turn profile "
+              f"'{profile_name}'. Every turn has its own barrier transient, so a global "
+              f"first-N has no consistent meaning; use the per-turn breakdown instead.")
+        sys.exit(1)
+    if args.discard_first >= args.num_requests and profile.mode != "multi-turn":
+        print(f"Error: --discard-first {args.discard_first} would hold out every request "
+              f"of {args.num_requests}.")
+        sys.exit(1)
     if args.load_mode == "open-loop" and profile.mode == "multi-turn":
         print(f"Error: --open-loop is not supported for multi-turn profile '{profile_name}'. "
               f"Multi-turn scheduling is a per-turn barrier over sessions, which has no "
@@ -875,6 +1008,11 @@ if __name__ == "__main__":
             "output_length_controlled": args.exact_output_length,
         },
         "prefix_cache_reset_before_run": args.reset_prefix_cache,
+        "warmup_style": "profile_shaped_at_concurrency" if args.warmup else "none",
+        "discard_first": args.discard_first,
+        "requests_per_concurrency_slot": (
+            round(args.num_requests / args.concurrency, 2) if args.concurrency else None
+        ),
         "profile_metadata": {
             "dataset": profile.dataset,
             "agent_type": profile.agent_type,
@@ -991,6 +1129,13 @@ if __name__ == "__main__":
             reset_prefix_cache_first=args.reset_prefix_cache,
         ))
 
+        # Hold out the startup wave by dispatch order. Requests keep their data
+        # in per_request; they simply stop feeding the summary.
+        if args.discard_first:
+            for r in results[:args.discard_first]:
+                if r is not None:
+                    r.excluded_from_summary = True
+
         summary = aggregate(
             results=[r for r in results if r is not None],
             duration_s=duration,
@@ -1000,6 +1145,7 @@ if __name__ == "__main__":
         )
 
         print_summary(summary)
+        _warn_if_transient_dominated(args.num_requests, args.concurrency)
         _check_success_rate(summary, args.min_success_rate)
         _check_usage_reported(summary, args.allow_missing_usage)
         save_results(summary, results, args.output, config)

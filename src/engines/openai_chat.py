@@ -175,22 +175,6 @@ async def send_request(
         )
 
 
-async def run_warmup(
-    url: str,
-    model: str,
-    api_key: str,
-    num_requests: int = 3,
-    timeout: int = 60,
-) -> None:
-    """Send warmup requests and discard results."""
-    warmup_messages = [{"role": "user", "content": "Hello"}]
-    connector = aiohttp.TCPConnector(limit=num_requests)
-    async with aiohttp.ClientSession(
-        connector=connector,
-        timeout=aiohttp.ClientTimeout(total=timeout),
-    ) as session:
-        tasks = [
-            send_request(session, url, model, warmup_messages, max_tokens=10, api_key=api_key)
-            for _ in range(num_requests)
-        ]
-        await asyncio.gather(*tasks)
+# Warmup lives in the runner (_warmup_with_profile): it needs the dataset and
+# the benchmark's own ClientSession to warm the shapes and connections that are
+# actually measured. A backend-local "Hello" warmup warmed neither.

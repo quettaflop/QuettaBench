@@ -1,5 +1,5 @@
 """
-Backend registry. Maps backend name → (send_request, run_warmup) functions.
+Backend registry. Maps backend name → module exposing send_request().
 
 Supported backends:
   openai       — any OpenAI-compatible /v1/chat/completions (vLLM, SGLang, lmdeploy)
@@ -25,7 +25,6 @@ def get_backend(name: str):
     Usage:
         backend = get_backend("vllm")
         result = await backend.send_request(session, url, model, messages, max_tokens)
-        await backend.run_warmup(url, model, api_key, num_requests)
     """
     name = name.lower()
     if name not in _BACKENDS:

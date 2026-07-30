@@ -133,6 +133,39 @@ class TestFailureTaxonomy(unittest.TestCase):
         self.assertEqual(s.error_kinds, {"unknown": 1})
 
 
+class TestDiscardFirst(unittest.TestCase):
+    def _run(self):
+        """10 sequential 1s requests; the first 3 are held out."""
+        results = [_req(i, i + 1) for i in range(10)]
+        for r in results[:3]:
+            r.excluded_from_summary = True
+        return results
+
+    def test_held_out_requests_leave_the_summary(self):
+        s = aggregate(self._run(), duration_s=10.0, concurrency=1)
+        self.assertEqual(s.excluded_requests, 3)
+        self.assertEqual(s.num_requests, 7)
+        self.assertEqual(s.successful_requests, 7)
+
+    def test_window_excludes_the_held_out_span(self):
+        """Throughput must not be divided by time the numerator no longer counts."""
+        s = aggregate(self._run(), duration_s=10.0, concurrency=1)
+        # Kept requests span t=3..t=10.
+        self.assertAlmostEqual(s.measured_window_s, 7.0)
+        self.assertAlmostEqual(s.request_throughput, 1.0)
+        # Against the full 10s duration this would have read 0.7 req/s.
+        self.assertNotAlmostEqual(s.successful_requests / 10.0, s.request_throughput)
+
+    def test_held_out_intervals_leave_busy_time(self):
+        s = aggregate(self._run(), duration_s=10.0, concurrency=1)
+        self.assertAlmostEqual(s.busy_time_s, 7.0)
+
+    def test_no_exclusions_keeps_reported_duration(self):
+        s = aggregate([_req(0, 1), _req(1, 2)], duration_s=5.0, concurrency=1)
+        self.assertEqual(s.excluded_requests, 0)
+        self.assertAlmostEqual(s.measured_window_s, 5.0)
+
+
 class TestUsageAccounting(unittest.TestCase):
     def test_missing_usage_is_visible_in_the_summary(self):
         results = [_req(0, 1, usage_reported=False, input_tokens=0, output_tokens=0)]
