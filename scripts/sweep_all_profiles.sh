@@ -200,6 +200,7 @@ for PROFILE in $PROFILES; do
             --context-safety-margin-tokens "$CONTEXT_SAFETY_MARGIN_TOKENS" \
             --gpu-memory-utilization "$GPU_MEM" \
             --tensor-parallel-size "$TP" \
+            --reset-prefix-cache \
             --warmup     2 \
             --timeout    300 \
             --api-key    "$API_KEY" \

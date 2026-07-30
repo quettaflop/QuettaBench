@@ -23,6 +23,14 @@ class RequestResult:
     input_tokens: int = 0
     output_tokens: int = 0
     error: Optional[str] = None
+    # Failure taxonomy. "timeout" specifically means the client cut the stream
+    # off, which truncates the SLOWEST requests -- the ones that carry the tail
+    # of the latency distribution. Aggregates stay success-only, but a run whose
+    # failures are timeouts has a censored tail and must not be read as clean.
+    error_kind: Optional[str] = None      # "timeout" | "http_error" | "client_error"
+    # True once the server sent a usage block. Without it input/output token
+    # counts are 0 and every throughput number is meaningless.
+    usage_reported: bool = False
 
     # Client-side request shape/timing. These do not replace TTFT/TPOT/E2EL;
     # they explain scheduler pressure and workload shape for later predictors.
@@ -195,12 +203,41 @@ class BenchmarkSummary:
     # Request counts
     successful_requests: int = 0
     failed_requests: int = 0
+    # Failure taxonomy. timeout_requests > 0 means the latency tail is censored:
+    # the client killed the slowest requests and they are absent from every
+    # percentile below. Treat such a cell as suspect regardless of success rate.
+    timeout_requests: int = 0
+    error_kinds: dict = field(default_factory=dict)
+    # Requests whose failure still yielded a usable TTFT before the stream died.
+    failed_with_partial_ttft: int = 0
+    # Successful requests that carried a usage block. If this is 0, all token
+    # counts and throughputs below are zero-filled, not measured.
+    usage_reported_requests: int = 0
 
-    # Throughput
+    # Throughput over total wall clock. For schedules with idle stretches (an
+    # open-loop run below saturation) this measures the offered rate, not what
+    # the server could sustain.
     request_throughput: float = 0.0     # req/s
     input_token_throughput: float = 0.0  # input tok/s
     output_token_throughput: float = 0.0  # output tok/s
     total_token_throughput: float = 0.0   # (input + output) tok/s
+
+    # Throughput over busy time (union of in-flight intervals), which excludes
+    # genuinely idle wall clock. Prefer these when asking what the server did
+    # rather than what the schedule asked of it.
+    busy_time_s: float = 0.0
+    busy_request_throughput: float = 0.0
+    busy_input_token_throughput: float = 0.0
+    busy_output_token_throughput: float = 0.0
+    busy_total_token_throughput: float = 0.0
+
+    # Time-weighted in-flight request count over the busy window. This is the
+    # load the server actually saw. When it sits well below the nominal
+    # concurrency the run spent much of its time draining (the multi-turn
+    # per-turn barrier does exactly this), and every throughput figure above
+    # describes the schedule rather than the hardware.
+    mean_inflight_requests: float = 0.0
+    max_inflight_requests: int = 0
 
     # Token counts
     total_input_tokens: int = 0
@@ -240,6 +277,60 @@ class BenchmarkSummary:
 
     def to_json(self) -> str:
         return json.dumps(self.to_dict(), indent=2)
+
+
+def _busy_time_and_load(results) -> tuple[float, float, int]:
+    """Return (busy_time_s, mean_inflight_requests, max_inflight_requests).
+
+    busy_time is the union of the in-flight intervals -- wall-clock time during
+    which at least one request was outstanding. Dividing throughput by this
+    instead of total duration removes genuinely idle stretches, which matters
+    for open-loop runs whose arrival rate leaves the server waiting.
+
+    It does NOT rescue the multi-turn per-turn barrier. During a turn's drain
+    the server is busy, just underutilized, so the interval union still covers
+    it. mean_inflight is the metric that exposes that: since the integral of
+    the concurrency step function equals the sum of request durations,
+    mean_inflight = sum(durations) / busy_time. A cell whose mean_inflight sits
+    far below its nominal concurrency spent much of the run draining, and its
+    throughput is a property of the schedule rather than of the server.
+
+    Failed requests are included -- a timed-out request occupied the server.
+    """
+    intervals = [
+        (r.semaphore_acquired_at_s, r.completed_at_s)
+        for r in results
+        if r.semaphore_acquired_at_s is not None
+        and r.completed_at_s is not None
+        and r.completed_at_s > r.semaphore_acquired_at_s
+    ]
+    if not intervals:
+        return 0.0, 0.0, 0
+
+    intervals.sort()
+    busy = 0.0
+    cur_start, cur_end = intervals[0]
+    for start, end in intervals[1:]:
+        if start > cur_end:          # genuine idle gap
+            busy += cur_end - cur_start
+            cur_start, cur_end = start, end
+        else:
+            cur_end = max(cur_end, end)
+    busy += cur_end - cur_start
+
+    total_request_time = sum(end - start for start, end in intervals)
+    mean_inflight = total_request_time / busy if busy > 0 else 0.0
+
+    # Sweep line for the peak.
+    events = [(s, 1) for s, _ in intervals] + [(e, -1) for _, e in intervals]
+    events.sort(key=lambda ev: (ev[0], ev[1]))
+    inflight = 0
+    max_inflight = 0
+    for _, delta in events:
+        inflight += delta
+        max_inflight = max(max_inflight, inflight)
+
+    return busy, mean_inflight, max_inflight
 
 
 def _percentile(data: list[float], p: float) -> float:
@@ -285,6 +376,8 @@ def aggregate(results, duration_s: float, model: str = "", profile: str = "", co
             summary.successful_requests += 1
             summary.total_input_tokens += r.input_tokens
             summary.total_output_tokens += r.output_tokens
+            if r.usage_reported:
+                summary.usage_reported_requests += 1
 
             if r.ttft is not None:
                 ttfts.append(r.ttft * 1000)  # convert to ms
@@ -295,7 +388,16 @@ def aggregate(results, duration_s: float, model: str = "", profile: str = "", co
             if r.e2el is not None:
                 e2els.append(r.e2el * 1000)
         else:
+            # Failed requests stay out of every percentile -- their timings are
+            # partial by definition. They are counted and classified here so a
+            # censored tail is visible instead of silently missing.
             summary.failed_requests += 1
+            kind = r.error_kind or "unknown"
+            summary.error_kinds[kind] = summary.error_kinds.get(kind, 0) + 1
+            if kind == "timeout":
+                summary.timeout_requests += 1
+            if r.ttft is not None:
+                summary.failed_with_partial_ttft += 1
             if r.error:
                 summary.errors.append(r.error)
 
@@ -306,6 +408,18 @@ def aggregate(results, duration_s: float, model: str = "", profile: str = "", co
         summary.total_token_throughput = (
             summary.total_input_tokens + summary.total_output_tokens
         ) / duration_s
+
+    busy_s, mean_inflight, max_inflight = _busy_time_and_load(results)
+    summary.busy_time_s = busy_s
+    summary.mean_inflight_requests = mean_inflight
+    summary.max_inflight_requests = max_inflight
+    if busy_s > 0:
+        summary.busy_request_throughput = summary.successful_requests / busy_s
+        summary.busy_input_token_throughput = summary.total_input_tokens / busy_s
+        summary.busy_output_token_throughput = summary.total_output_tokens / busy_s
+        summary.busy_total_token_throughput = (
+            summary.total_input_tokens + summary.total_output_tokens
+        ) / busy_s
 
     if ttfts:
         summary.mean_ttft_ms = statistics.mean(ttfts)
@@ -497,16 +611,46 @@ def print_summary(s: BenchmarkSummary) -> None:
     print(f" Model:                    {s.model}")
     print(f" Duration:                 {s.duration_s:.2f}s")
     print(f" Requests:                 {s.successful_requests} ok / {s.failed_requests} failed")
-    print(f" Request throughput:       {s.request_throughput:.2f} req/s")
-    print(f" Input token throughput:   {s.input_token_throughput:.0f} tok/s")
-    print(f" Output token throughput:  {s.output_token_throughput:.0f} tok/s")
-    print(f" Total token throughput:   {s.total_token_throughput:.0f} tok/s")
+    busy_pct = (f" ({100.0 * s.busy_time_s / s.duration_s:.1f}% of duration)"
+                if s.duration_s > 0 else "")
+    print(f" Busy time:                {s.busy_time_s:.2f}s{busy_pct}")
+    print(f" Mean in-flight requests:  {s.mean_inflight_requests:.1f} "
+          f"(peak {s.max_inflight_requests})")
+    print(f" Request throughput:       {s.request_throughput:.2f} req/s "
+          f"(busy: {s.busy_request_throughput:.2f})")
+    print(f" Input token throughput:   {s.input_token_throughput:.0f} tok/s "
+          f"(busy: {s.busy_input_token_throughput:.0f})")
+    print(f" Output token throughput:  {s.output_token_throughput:.0f} tok/s "
+          f"(busy: {s.busy_output_token_throughput:.0f})")
+    print(f" Total token throughput:   {s.total_token_throughput:.0f} tok/s "
+          f"(busy: {s.busy_total_token_throughput:.0f})")
+    if s.concurrency and s.mean_inflight_requests < 0.7 * s.concurrency:
+        print(f" NOTE: mean in-flight ({s.mean_inflight_requests:.1f}) is well below "
+              f"concurrency ({s.concurrency}).")
+        print(f"       The server was idle or draining for much of the run, so the")
+        print(f"       throughput above reflects the schedule, not its capacity.")
     print(f"{'─' * 52}")
     print(f" TTFT  mean/p50/p90/p99:   {s.mean_ttft_ms:.1f} / {s.median_ttft_ms:.1f} / {s.p90_ttft_ms:.1f} / {s.p99_ttft_ms:.1f} ms")
     print(f" TPOT  mean/p50/p90/p99:   {s.mean_tpot_ms:.1f} / {s.median_tpot_ms:.1f} / {s.p90_tpot_ms:.1f} / {s.p99_tpot_ms:.1f} ms")
     print(f" ITL   mean/p50/p90/p99:   {s.mean_itl_ms:.1f} / {s.median_itl_ms:.1f} / {s.p90_itl_ms:.1f} / {s.p99_itl_ms:.1f} ms")
     print(f" E2EL  mean/p50/p90/p99:   {s.mean_e2el_ms:.1f} / {s.median_e2el_ms:.1f} / {s.p90_e2el_ms:.1f} / {s.p99_e2el_ms:.1f} ms")
     print(f"{'=' * 52}\n")
+    if s.timeout_requests:
+        pct = 100.0 * s.timeout_requests / s.num_requests if s.num_requests else 0.0
+        print(f" WARNING: {s.timeout_requests} request(s) ({pct:.1f}%) hit the client "
+              f"timeout and were cut off.")
+        print(f"          The percentiles above EXCLUDE them, so the latency tail is")
+        print(f"          censored and biased low. Raise --timeout or lower the load")
+        print(f"          before treating this cell as ground truth.\n")
+    if s.successful_requests and not s.usage_reported_requests:
+        print(f" WARNING: no successful request carried a usage block. Token counts")
+        print(f"          and all throughput figures above are zero-filled, not measured.\n")
+    if s.error_kinds:
+        kinds = ", ".join(f"{k}={v}" for k, v in sorted(s.error_kinds.items()))
+        print(f" Failure kinds: {kinds}")
+        if s.failed_with_partial_ttft:
+            print(f" ({s.failed_with_partial_ttft} failed request(s) recorded a partial "
+                  f"TTFT; see per_request in the result JSON)")
     if s.errors:
         print(f" Errors ({len(s.errors)} total, first {min(3,len(s.errors))}):")
         for e in s.errors[:3]:

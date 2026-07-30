@@ -191,6 +191,7 @@ for PROFILE in $PROFILES; do
             --max-model-len "$MAX_LEN" \
             --gpu-memory-utilization "$GPU_MEM" \
             --tensor-parallel-size "$TP" \
+            --reset-prefix-cache \
             --warmup     "$WARMUP" \
             --timeout    300 \
             --api-key    "$API_KEY" \

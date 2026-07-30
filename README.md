@@ -1,7 +1,7 @@
 # QuettaBench
 
 LLM inference benchmarking for production-representative workloads, across
-vLLM, SGLang, and TensorRT-LLM. Real prompts, prefix caching on, and proper
+vLLM and SGLang. Real prompts, prefix caching on, and proper
 multi-turn KV cache reuse measurement — ported from `agentic-serve`'s
 `inference-benchmark`.
 
@@ -38,7 +38,7 @@ distribution JSONs in `data/distributions/` from the raw trajectory datasets.
 
 ```
 src/benchmark/    async runner, metrics (p50/p90/p99 TTFT/TPOT/E2EL), SSE client
-src/engines/      vLLM/SGLang OpenAI-compatible + TRT-LLM endpoints
+src/engines/      vLLM/SGLang OpenAI-compatible endpoints
 src/modes/        stress_test / single_turn / multi_turn
 src/workloads/    profiles, datasets, arrival patterns, distributional replay
 data/distributions/  measured per-profile workload distributions (committed)

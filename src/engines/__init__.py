@@ -5,16 +5,14 @@ Supported backends:
   openai       — any OpenAI-compatible /v1/chat/completions (vLLM, SGLang, lmdeploy)
   vllm         — alias for openai
   sglang       — alias for openai
-  trtllm       — NVIDIA TensorRT-LLM /generate_stream
 """
 
-from . import openai_chat, trtllm
+from . import openai_chat
 
 _BACKENDS = {
     "openai": openai_chat,
     "vllm": openai_chat,
     "sglang": openai_chat,
-    "trtllm": trtllm,
 }
 
 SUPPORTED_BACKENDS = list(_BACKENDS.keys())

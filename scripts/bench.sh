@@ -7,7 +7,7 @@
 # Examples:
 #   ./scripts/bench.sh
 #   ./scripts/bench.sh --profile coding-singleturn --concurrency 20
-#   ./scripts/bench.sh --backend trtllm --url http://localhost:8000/generate_stream
+#   ./scripts/bench.sh --backend sglang --tensor-parallel-size 2
 #
 set -euo pipefail
 
@@ -34,7 +34,7 @@ PREFIX_CACHING_STATE="${PREFIX_CACHING_STATE:-auto}"
 CHUNKED_PREFILL="${CHUNKED_PREFILL:-auto}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-}"
 GPU_MEM="${GPU_MEM:-}"
-TP="${TP:-}"
+TP="${TP:-1}"
 
 usage() {
   grep '^#' "$0" | sed 's/^# \{0,1\}//'
