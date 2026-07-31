@@ -254,6 +254,12 @@ class BenchmarkSummary:
     # describes the schedule rather than the hardware.
     mean_inflight_requests: float = 0.0
     max_inflight_requests: int = 0
+    # Stationarity: mean in-flight over the first vs second half of the run.
+    # Rising => the queue is growing and the averages above depend on when the
+    # run was stopped. Unlike Little's Law (an identity given how
+    # mean_inflight_requests is computed), this can actually fail.
+    mean_inflight_first_half: float = 0.0
+    mean_inflight_second_half: float = 0.0
 
     # Token counts
     total_input_tokens: int = 0
@@ -347,6 +353,47 @@ def _busy_time_and_load(results) -> tuple[float, float, int]:
         max_inflight = max(max_inflight, inflight)
 
     return busy, mean_inflight, max_inflight
+
+
+def _inflight_halves(results) -> tuple[float, float]:
+    """Return time-weighted mean in-flight over the first and second half of the run.
+
+    This is the stationarity test that mean_inflight alone cannot provide.
+    mean_inflight is defined as sum(durations)/busy_time, which makes
+    "busy_throughput x mean_duration == mean_inflight" an algebraic identity --
+    Little's Law is satisfied by construction and validates nothing. Splitting
+    the window uses the TIME ORDERING that mean_inflight discards, so it can
+    actually fail.
+
+    Rising in-flight means arrivals are outrunning departures: the queue is
+    growing, the run never reached steady state, and its averages depend on when
+    you stopped measuring. Falling in-flight means the run is drain-dominated.
+    """
+    intervals = [
+        (r.semaphore_acquired_at_s, r.completed_at_s)
+        for r in results
+        if r.semaphore_acquired_at_s is not None
+        and r.completed_at_s is not None
+        and r.completed_at_s > r.semaphore_acquired_at_s
+    ]
+    if len(intervals) < 2:
+        return 0.0, 0.0
+
+    t0 = min(s for s, _ in intervals)
+    t1 = max(e for _, e in intervals)
+    if t1 <= t0:
+        return 0.0, 0.0
+    tm = (t0 + t1) / 2.0
+
+    def mean_over(a: float, b: float) -> float:
+        span = b - a
+        if span <= 0:
+            return 0.0
+        # Integral of the concurrency step function == summed interval overlap.
+        area = sum(max(0.0, min(e, b) - max(s, a)) for s, e in intervals)
+        return area / span
+
+    return mean_over(t0, tm), mean_over(tm, t1)
 
 
 def _percentile(data: list[float], p: float) -> float:
@@ -462,6 +509,9 @@ def aggregate(
     summary.busy_time_s = busy_s
     summary.mean_inflight_requests = mean_inflight
     summary.max_inflight_requests = max_inflight
+    first_half, second_half = _inflight_halves(results)
+    summary.mean_inflight_first_half = first_half
+    summary.mean_inflight_second_half = second_half
     if busy_s > 0:
         summary.busy_request_throughput = summary.successful_requests / busy_s
         summary.busy_input_token_throughput = summary.total_input_tokens / busy_s
@@ -667,7 +717,9 @@ def print_summary(s: BenchmarkSummary) -> None:
                 if s.measured_window_s > 0 else "")
     print(f" Busy time:                {s.busy_time_s:.2f}s{busy_pct}")
     print(f" Mean in-flight requests:  {s.mean_inflight_requests:.1f} "
-          f"(peak {s.max_inflight_requests})")
+          f"(peak {s.max_inflight_requests}; "
+          f"1st half {s.mean_inflight_first_half:.1f} -> "
+          f"2nd half {s.mean_inflight_second_half:.1f})")
     print(f" Request throughput:       {s.request_throughput:.2f} req/s "
           f"(busy: {s.busy_request_throughput:.2f})")
     print(f" Input token throughput:   {s.input_token_throughput:.0f} tok/s "
@@ -697,6 +749,29 @@ def print_summary(s: BenchmarkSummary) -> None:
               f"concurrency ({s.concurrency}).")
         print(f"       The server was idle or draining for much of the run, so the")
         print(f"       throughput above reflects the schedule, not its capacity.")
+
+    # Stationarity. A growing in-flight population means arrivals outran
+    # departures for the whole run, so every average above is a function of when
+    # measurement stopped rather than a property of the server.
+    _f, _s2 = s.mean_inflight_first_half, s.mean_inflight_second_half
+    if _f > 0.5 and _s2 > 1.5 * _f:
+        print(f" WARNING: in-flight grew {_f:.1f} -> {_s2:.1f} across the run "
+              f"({_s2 / _f:.1f}x).")
+        print(f"          The queue never stabilised, so these averages depend on run")
+        print(f"          length and are not a steady-state measurement. Lower the")
+        print(f"          offered load, or run long enough to reach equilibrium.")
+
+    # Stall detector. Steady decode gives TPOT mean ~= median. A mean well above
+    # the median means most tokens were fast but something intermittently froze
+    # the engine -- kernel JIT, preemption, host hiccups. Measured on DeepSeek
+    # V4: 91.6/15.1 ms (JIT mid-run) vs 10.1/10.3 ms once warm.
+    if s.median_tpot_ms > 0 and s.mean_tpot_ms > 2.0 * s.median_tpot_ms:
+        print(f" WARNING: TPOT mean ({s.mean_tpot_ms:.1f} ms) is "
+              f"{s.mean_tpot_ms / s.median_tpot_ms:.1f}x its median "
+              f"({s.median_tpot_ms:.1f} ms).")
+        print(f"          Decode was intermittently stalled rather than uniformly slow.")
+        print(f"          Usual causes: kernel JIT at an unwarmed batch shape, scheduler")
+        print(f"          preemption, or host stalls. The median is the reliable figure.")
 
     # Kernel JIT (e.g. DeepSeek V4's TileLang MHC kernels) compiles per batch
     # shape. Any width beyond what warmup exercised compiles DURING measurement,

@@ -215,6 +215,49 @@ class TestWarmupWidthCoverage(unittest.TestCase):
         self.assertLessEqual(s.max_inflight_requests, s.warmup_concurrency)
 
 
+class TestStationarity(unittest.TestCase):
+    """Splitting the window is the only non-circular stationarity test we have.
+
+    Little's Law cannot serve: mean_inflight is defined as
+    sum(durations)/busy_time, so busy_throughput x mean_duration == mean_inflight
+    identically. Halving the window uses the time ordering that definition
+    discards, so it can actually fail.
+    """
+
+    def test_steady_run_shows_no_drift(self):
+        results = [_req(i * 1.0, i * 1.0 + 2.0) for i in range(20)]
+        s = aggregate(results, duration_s=21.0)
+        self.assertAlmostEqual(s.mean_inflight_first_half,
+                               s.mean_inflight_second_half, delta=0.3)
+
+    def test_growing_queue_is_visible_in_halves(self):
+        results = [_req(i * 1.0, i * 1.0 + 1.0 + i * 0.8) for i in range(20)]
+        s = aggregate(results, duration_s=40.0)
+        self.assertGreater(s.mean_inflight_second_half, s.mean_inflight_first_half)
+
+    def test_drain_dominated_run_falls(self):
+        """Closed-loop burst then drain: second half must be much lower."""
+        results = [_req(0.0, 1.0 + i * 1.0) for i in range(20)]
+        s = aggregate(results, duration_s=21.0)
+        self.assertLess(s.mean_inflight_second_half, s.mean_inflight_first_half * 0.6)
+
+    def test_littles_law_is_an_identity_not_a_check(self):
+        """Pin the reason we do NOT ship a Little's Law validation."""
+        results = [_req(i * 0.5, i * 0.5 + 2.0) for i in range(30)]
+        s = aggregate(results, duration_s=20.0)
+        mean_duration = s.busy_time_s * s.mean_inflight_requests / s.successful_requests
+        self.assertAlmostEqual(
+            s.busy_request_throughput * mean_duration,
+            s.mean_inflight_requests, places=6,
+            msg="Little's Law holds by construction here, so it validates nothing",
+        )
+
+    def test_single_request_does_not_crash(self):
+        s = aggregate([_req(0.0, 1.0)], duration_s=1.0)
+        self.assertEqual(s.mean_inflight_first_half, 0.0)
+        self.assertEqual(s.mean_inflight_second_half, 0.0)
+
+
 class TestUsageAccounting(unittest.TestCase):
     def test_missing_usage_is_visible_in_the_summary(self):
         results = [_req(0, 1, usage_reported=False, input_tokens=0, output_tokens=0)]
