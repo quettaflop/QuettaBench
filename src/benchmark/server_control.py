@@ -18,12 +18,24 @@ from typing import Optional
 from urllib.parse import urlsplit, urlunsplit
 
 
-# Endpoint verified against the vLLM build in use:
-# vllm/entrypoints/serve/cache/api_router.py -> @router.post("/reset_prefix_cache")
+# Endpoint verified against the vLLM builds in use (0.19.1 and 0.26.0):
+#   0.19.1: vllm/entrypoints/serve/cache/api_router.py
+#   0.26.0: vllm/entrypoints/serve/dev/cache/api_router.py
+# In BOTH, the router is mounted only under dev mode:
+#   def attach_router(app):
+#       if not envs.VLLM_SERVER_DEV_MODE: return
+# so the server must be launched with VLLM_SERVER_DEV_MODE=1 or this 404s.
 _RESET_ENDPOINTS = {
     "vllm": "/reset_prefix_cache",
     "openai": "/reset_prefix_cache",
 }
+
+_DEV_MODE_HINT = (
+    "The endpoint is gated behind dev mode in every vLLM build checked "
+    "(0.19.1 and 0.26.0): serve/**/cache/api_router.py returns early from "
+    "attach_router() unless VLLM_SERVER_DEV_MODE=1. Relaunch the server with "
+    "VLLM_SERVER_DEV_MODE=1 in its environment."
+)
 
 
 class PrefixCacheResetError(RuntimeError):
@@ -77,8 +89,9 @@ async def reset_prefix_cache(
         ) as resp:
             if resp.status != 200:
                 body = (await resp.text())[:200]
+                hint = f" {_DEV_MODE_HINT}" if resp.status == 404 else ""
                 raise PrefixCacheResetError(
-                    f"POST {reset_url} returned HTTP {resp.status}: {body}"
+                    f"POST {reset_url} returned HTTP {resp.status}: {body}.{hint}"
                 )
     except PrefixCacheResetError:
         raise

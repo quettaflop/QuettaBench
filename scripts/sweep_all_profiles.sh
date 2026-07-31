@@ -18,6 +18,13 @@ set -euo pipefail
 # vLLM's default in v0.19+.
 export VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1
 
+# /reset_prefix_cache (used by the runner's --reset-prefix-cache) is only
+# mounted when dev mode is on: vllm/entrypoints/serve/cache/api_router.py
+#   def attach_router(app):
+#       if not envs.VLLM_SERVER_DEV_MODE: return
+# Without this the endpoint 404s and every cell aborts on the reset.
+export VLLM_SERVER_DEV_MODE=1
+
 truthy() {
     [[ "${1:-}" == "1" || "${1:-}" == "true" || "${1:-}" == "yes" || "${1:-}" == "on" ]]
 }
