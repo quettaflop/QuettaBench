@@ -200,6 +200,12 @@ class BenchmarkSummary:
     model: str = ""
     profile: str = ""
     concurrency: int = 0
+    # Load model this run was driven under. The diagnostics below mean different
+    # things per mode: under closed loop `concurrency` is a real in-flight cap,
+    # under open loop it caps nothing and only sizes warmup.
+    load_mode: str = ""
+    target_rate: float = 0.0        # open loop: offered req/s
+    warmup_concurrency: int = 0     # batch width the warmup actually exercised
     num_requests: int = 0
     duration_s: float = 0.0
 
@@ -357,7 +363,16 @@ def _percentile(data: list[float], p: float) -> float:
     return sorted_data[lo] * (1 - frac) + sorted_data[hi] * frac
 
 
-def aggregate(results, duration_s: float, model: str = "", profile: str = "", concurrency: int = 0) -> BenchmarkSummary:
+def aggregate(
+    results,
+    duration_s: float,
+    model: str = "",
+    profile: str = "",
+    concurrency: int = 0,
+    load_mode: str = "",
+    target_rate: float = 0.0,
+    warmup_concurrency: int = 0,
+) -> BenchmarkSummary:
     """
     Aggregate a list of RequestResult into a BenchmarkSummary.
 
@@ -382,6 +397,9 @@ def aggregate(results, duration_s: float, model: str = "", profile: str = "", co
         num_requests=len(results),
         duration_s=duration_s,
         excluded_requests=excluded,
+        load_mode=load_mode,
+        target_rate=target_rate,
+        warmup_concurrency=warmup_concurrency,
     )
 
     ttfts = []
@@ -658,11 +676,37 @@ def print_summary(s: BenchmarkSummary) -> None:
           f"(busy: {s.busy_output_token_throughput:.0f})")
     print(f" Total token throughput:   {s.total_token_throughput:.0f} tok/s "
           f"(busy: {s.busy_total_token_throughput:.0f})")
-    if s.concurrency and s.mean_inflight_requests < 0.7 * s.concurrency:
+    # Mode-aware load diagnosis. Comparing mean in-flight against --concurrency
+    # is only meaningful under closed loop, where it IS the in-flight cap. Under
+    # open loop it caps nothing (it only sizes warmup), so the honest question
+    # there is whether the server kept up with the offered arrival rate.
+    if s.load_mode == "open-loop":
+        if s.target_rate > 0 and s.request_throughput < 0.9 * s.target_rate:
+            print(f" NOTE: served {s.request_throughput:.2f} req/s against an offered "
+                  f"{s.target_rate:.2f} req/s.")
+            print(f"       The server could not keep up; arrivals queued and the latency")
+            print(f"       figures above include that backlog. This is a saturation point.")
+        elif s.target_rate > 0:
+            print(f" NOTE: served {s.request_throughput:.2f} req/s ~= offered "
+                  f"{s.target_rate:.2f} req/s (mean in-flight "
+                  f"{s.mean_inflight_requests:.1f}).")
+            print(f"       The run is arrival-limited, so this measures latency at that")
+            print(f"       rate, NOT capacity. Raise --target-rate to find saturation.")
+    elif s.concurrency and s.mean_inflight_requests < 0.7 * s.concurrency:
         print(f" NOTE: mean in-flight ({s.mean_inflight_requests:.1f}) is well below "
               f"concurrency ({s.concurrency}).")
         print(f"       The server was idle or draining for much of the run, so the")
         print(f"       throughput above reflects the schedule, not its capacity.")
+
+    # Kernel JIT (e.g. DeepSeek V4's TileLang MHC kernels) compiles per batch
+    # shape. Any width beyond what warmup exercised compiles DURING measurement,
+    # which shows up as huge TTFT and a TPOT mean far above its median.
+    if s.warmup_concurrency and s.max_inflight_requests > s.warmup_concurrency:
+        print(f" WARNING: peak in-flight ({s.max_inflight_requests}) exceeded the warmup "
+              f"width ({s.warmup_concurrency}).")
+        print(f"          Batch shapes past the warmup width may have compiled during")
+        print(f"          measurement. Re-run with --warmup-concurrency "
+              f">= {s.max_inflight_requests}.")
     print(f"{'─' * 52}")
     print(f" TTFT  mean/p50/p90/p99:   {s.mean_ttft_ms:.1f} / {s.median_ttft_ms:.1f} / {s.p90_ttft_ms:.1f} / {s.p99_ttft_ms:.1f} ms")
     print(f" TPOT  mean/p50/p90/p99:   {s.mean_tpot_ms:.1f} / {s.median_tpot_ms:.1f} / {s.p90_tpot_ms:.1f} / {s.p99_tpot_ms:.1f} ms")

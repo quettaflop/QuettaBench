@@ -166,6 +166,55 @@ class TestDiscardFirst(unittest.TestCase):
         self.assertAlmostEqual(s.measured_window_s, 5.0)
 
 
+class TestLoadModeDiagnostics(unittest.TestCase):
+    """`concurrency` means different things per mode, so diagnosis must too.
+
+    Under closed loop it is the in-flight cap, so mean-inflight << concurrency
+    means draining. Under open loop it caps nothing (it only sizes warmup), so
+    that comparison is meaningless -- the real question is whether the server
+    kept up with the offered arrival rate.
+    """
+
+    def test_open_loop_records_mode_and_offered_rate(self):
+        s = aggregate([_req(i, i + 1) for i in range(10)], duration_s=10.0,
+                      concurrency=40, load_mode="open-loop", target_rate=2.0)
+        self.assertEqual(s.load_mode, "open-loop")
+        self.assertAlmostEqual(s.target_rate, 2.0)
+
+    def test_open_loop_keeping_up_is_arrival_limited_not_draining(self):
+        """Regression: mean-inflight 5.8 vs concurrency 40 previously read as
+        'draining' even though the server was matching the offered rate."""
+        results = [_req(i * 0.5, i * 0.5 + 1) for i in range(20)]
+        s = aggregate(results, duration_s=10.0, concurrency=40,
+                      load_mode="open-loop", target_rate=2.0)
+        self.assertAlmostEqual(s.request_throughput, 2.0)
+        # Well under concurrency=40, which under open loop implies nothing.
+        self.assertLess(s.mean_inflight_requests, 40 * 0.7)
+
+    def test_closed_loop_still_flags_draining(self):
+        s = aggregate([_req(0, 10)], duration_s=10.0, concurrency=40,
+                      load_mode="closed-loop")
+        self.assertEqual(s.load_mode, "closed-loop")
+        self.assertLess(s.mean_inflight_requests, 40 * 0.7)
+
+
+class TestWarmupWidthCoverage(unittest.TestCase):
+    def test_peak_inflight_beyond_warmup_width_is_recorded(self):
+        """The DeepSeek-V4 failure: warmup at width 8, run peaked at 39, so
+        unseen batch shapes JIT-compiled mid-measurement."""
+        results = [_req(0, 5) for _ in range(39)]
+        s = aggregate(results, duration_s=5.0, concurrency=8,
+                      load_mode="open-loop", target_rate=2.0, warmup_concurrency=8)
+        self.assertEqual(s.max_inflight_requests, 39)
+        self.assertGreater(s.max_inflight_requests, s.warmup_concurrency)
+
+    def test_adequate_warmup_width_leaves_no_gap(self):
+        results = [_req(0, 5) for _ in range(39)]
+        s = aggregate(results, duration_s=5.0, concurrency=8,
+                      load_mode="open-loop", target_rate=2.0, warmup_concurrency=64)
+        self.assertLessEqual(s.max_inflight_requests, s.warmup_concurrency)
+
+
 class TestUsageAccounting(unittest.TestCase):
     def test_missing_usage_is_visible_in_the_summary(self):
         results = [_req(0, 1, usage_reported=False, input_tokens=0, output_tokens=0)]

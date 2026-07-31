@@ -82,7 +82,14 @@ async def _warmup_with_profile(
     sampling_seed: int | None,
     exact_output_length: bool,
 ) -> tuple[int, int]:
-    """Warm the server with real profile requests at the real concurrency.
+    """Warm the server with real profile requests at a given batch width.
+
+    `concurrency` here is the WARMUP width, which is not always the run's
+    --concurrency: under open loop that flag caps nothing, so warmup sized from
+    it can miss the batch shapes the run actually reaches. Engines that JIT
+    kernels per shape (DeepSeek V4's TileLang MHC kernels, Triton) then compile
+    mid-measurement, which inflates TTFT and pushes the TPOT mean far above its
+    median. See --warmup-concurrency.
 
     The old warmup sent a handful of "Hello" prompts at max_tokens=10 over a
     throwaway ClientSession. That warms nothing the benchmark then measures:
@@ -185,6 +192,7 @@ async def run_benchmark(
     sampling_seed: int | None = None,
     exact_output_length: bool = False,
     reset_prefix_cache_first: bool = False,
+    warmup_concurrency: int | None = None,
 ):
     """
     Run a benchmark and return (results, duration).
@@ -229,7 +237,7 @@ async def run_benchmark(
             ok, attempted = await _warmup_with_profile(
                 session, backend, dataset,
                 url=url, model=model, api_key=api_key,
-                concurrency=concurrency, count=warmup_requests,
+                concurrency=(warmup_concurrency or concurrency), count=warmup_requests,
                 ignore_eos=ignore_eos, temperature=temperature,
                 sampling_seed=sampling_seed,
                 exact_output_length=exact_output_length,
@@ -335,6 +343,7 @@ async def run_multi_turn_benchmark(
     sampling_seed: int | None = None,
     exact_output_length: bool = False,
     reset_prefix_cache_first: bool = False,
+    warmup_concurrency: int | None = None,
 ):
     """
     Run a multi-turn benchmark with interleaved round-robin scheduling.
@@ -399,7 +408,7 @@ async def run_multi_turn_benchmark(
             ok, attempted = await _warmup_with_profile(
                 session_http, backend, dataset,
                 url=url, model=model, api_key=api_key,
-                concurrency=concurrency, count=warmup_requests,
+                concurrency=(warmup_concurrency or concurrency), count=warmup_requests,
                 ignore_eos=ignore_eos, temperature=temperature,
                 sampling_seed=sampling_seed,
                 exact_output_length=exact_output_length,
@@ -772,6 +781,12 @@ def get_args():
                         help="POST the server's prefix-cache reset endpoint before the run. "
                              "Sweeps replay byte-identical prompts across cells, so without "
                              "this every cell after the first is measured warm.")
+    parser.add_argument("--warmup-concurrency", type=int, default=None, metavar="N",
+                        help="Batch width to warm at. Defaults to --concurrency under "
+                             "closed loop (where that IS the in-flight cap), and to "
+                             "min(--num-requests, 64) under open loop (where it is not). "
+                             "Engines that JIT kernels per batch shape compile mid-run for "
+                             "any width warmup missed.")
     parser.add_argument("--discard-first", type=int, default=0, metavar="N",
                         help="Hold the first N requests out of the summary (they stay in "
                              "per_request). Removes the startup wave. Only meaningful once "
@@ -912,6 +927,19 @@ if __name__ == "__main__":
               f"remove the cap, or use --arrival steady.")
         sys.exit(1)
 
+    # Warmup width. Under closed loop --concurrency is the real in-flight cap, so
+    # it is the right width. Under open loop it caps nothing, so sizing warmup
+    # from it can miss the batch shapes the run reaches -- default to the upper
+    # bound on in-flight (num_requests), capped to keep warmup affordable.
+    if args.warmup_concurrency is None:
+        if args.load_mode == "open-loop":
+            args.warmup_concurrency = max(1, min(args.num_requests, 64))
+        else:
+            args.warmup_concurrency = args.concurrency
+    elif args.warmup_concurrency < 1:
+        print(f"Error: --warmup-concurrency must be >= 1, got {args.warmup_concurrency}.")
+        sys.exit(1)
+
     # -1 is the explicit opt-out; otherwise the sampler shares the workload seed
     # so identical prompts produce identical generations.
     if args.sampling_seed is None:
@@ -1010,6 +1038,7 @@ if __name__ == "__main__":
         "prefix_cache_reset_before_run": args.reset_prefix_cache,
         "warmup_style": "profile_shaped_at_concurrency" if args.warmup else "none",
         "discard_first": args.discard_first,
+        "warmup_concurrency": args.warmup_concurrency,
         "requests_per_concurrency_slot": (
             round(args.num_requests / args.concurrency, 2) if args.concurrency else None
         ),
@@ -1076,6 +1105,7 @@ if __name__ == "__main__":
             sampling_seed=args.sampling_seed,
             exact_output_length=args.exact_output_length,
             reset_prefix_cache_first=args.reset_prefix_cache,
+            warmup_concurrency=args.warmup_concurrency,
         ))
 
         summary = aggregate(
@@ -1084,6 +1114,9 @@ if __name__ == "__main__":
             model=args.model,
             profile=profile_name,
             concurrency=args.concurrency,
+            load_mode=args.load_mode,
+            target_rate=args.target_rate if args.load_mode == "open-loop" else 0.0,
+            warmup_concurrency=args.warmup_concurrency if args.warmup else 0,
         )
 
         turn_summaries = aggregate_per_turn(results_by_turn)
@@ -1127,6 +1160,7 @@ if __name__ == "__main__":
             sampling_seed=args.sampling_seed,
             exact_output_length=args.exact_output_length,
             reset_prefix_cache_first=args.reset_prefix_cache,
+            warmup_concurrency=args.warmup_concurrency,
         ))
 
         # Hold out the startup wave by dispatch order. Requests keep their data
@@ -1142,6 +1176,9 @@ if __name__ == "__main__":
             model=args.model,
             profile=profile_name,
             concurrency=args.concurrency,
+            load_mode=args.load_mode,
+            target_rate=args.target_rate if args.load_mode == "open-loop" else 0.0,
+            warmup_concurrency=args.warmup_concurrency if args.warmup else 0,
         )
 
         print_summary(summary)
