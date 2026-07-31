@@ -204,7 +204,12 @@ class BenchmarkSummary:
     # things per mode: under closed loop `concurrency` is a real in-flight cap,
     # under open loop it caps nothing and only sizes warmup.
     load_mode: str = ""
-    target_rate: float = 0.0        # open loop: offered req/s
+    # Open-loop offered rate. UNITS DEPEND ON MODE: sessions/s for multi-turn
+    # (where the arrival process drives sessions, not turns), requests/s for
+    # single-turn. Compare against the matching served rate, never across.
+    target_rate: float = 0.0
+    sessions_completed: int = 0
+    session_throughput: float = 0.0
     warmup_concurrency: int = 0     # batch width the warmup actually exercised
     num_requests: int = 0
     duration_s: float = 0.0
@@ -497,6 +502,15 @@ def aggregate(
             window_s = max(e for _, e in spans) - min(s for s, _ in spans)
     summary.measured_window_s = window_s
 
+    # Multi-turn open loop offers SESSIONS, so the like-for-like served rate is
+    # session completions, not turn completions. Comparing turns/s against
+    # sessions/s overstates throughput by the turns-per-session factor (~29x on
+    # swebench), which made a correctly arrival-limited run print "13.12 ~= 0.50".
+    session_ids = {r.session_id for r in results if r.session_id is not None}
+    summary.sessions_completed = len(session_ids)
+    if session_ids and window_s > 0:
+        summary.session_throughput = len(session_ids) / window_s
+
     if window_s > 0:
         summary.request_throughput = summary.successful_requests / window_s
         summary.input_token_throughput = summary.total_input_tokens / window_s
@@ -732,18 +746,29 @@ def print_summary(s: BenchmarkSummary) -> None:
     # is only meaningful under closed loop, where it IS the in-flight cap. Under
     # open loop it caps nothing (it only sizes warmup), so the honest question
     # there is whether the server kept up with the offered arrival rate.
-    if s.load_mode == "open-loop":
-        if s.target_rate > 0 and s.request_throughput < 0.9 * s.target_rate:
-            print(f" NOTE: served {s.request_throughput:.2f} req/s against an offered "
-                  f"{s.target_rate:.2f} req/s.")
-            print(f"       The server could not keep up; arrivals queued and the latency")
-            print(f"       figures above include that backlog. This is a saturation point.")
-        elif s.target_rate > 0:
-            print(f" NOTE: served {s.request_throughput:.2f} req/s ~= offered "
-                  f"{s.target_rate:.2f} req/s (mean in-flight "
-                  f"{s.mean_inflight_requests:.1f}).")
-            print(f"       The run is arrival-limited, so this measures latency at that")
-            print(f"       rate, NOT capacity. Raise --target-rate to find saturation.")
+    if s.load_mode == "open-loop" and s.target_rate > 0:
+        # Match units to what the arrival process actually offered.
+        if s.sessions_completed:
+            served, unit = s.session_throughput, "sess/s"
+        else:
+            served, unit = s.request_throughput, "req/s"
+        # Whether the server kept up is a question about BACKLOG, not about the
+        # served/offered ratio. That ratio divides completions by total
+        # duration, which always includes the post-arrival drain, so a healthy
+        # run reads low by roughly one session-duration -- enough to cross any
+        # fixed tolerance on a short run. Growing in-flight is the real signal.
+        growing = (s.mean_inflight_first_half > 0.5
+                   and s.mean_inflight_second_half > 1.5 * s.mean_inflight_first_half)
+        print(f" NOTE: offered {s.target_rate:.2f} {unit}, served {served:.2f} {unit} "
+              f"(mean in-flight {s.mean_inflight_requests:.1f}).")
+        if growing:
+            print(f"       In-flight grew through the run, so the server did NOT keep up:")
+            print(f"       arrivals queued and the latency figures include that backlog.")
+            print(f"       This is a saturation point, not a steady-state latency figure.")
+        else:
+            print(f"       In-flight stayed bounded, so the run is arrival-limited: this")
+            print(f"       measures latency at that rate, NOT capacity. Raise")
+            print(f"       --target-rate to find saturation.")
     elif s.concurrency and s.mean_inflight_requests < 0.7 * s.concurrency:
         print(f" NOTE: mean in-flight ({s.mean_inflight_requests:.1f}) is well below "
               f"concurrency ({s.concurrency}).")

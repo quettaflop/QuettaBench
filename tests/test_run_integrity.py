@@ -198,6 +198,38 @@ class TestLoadModeDiagnostics(unittest.TestCase):
         self.assertLess(s.mean_inflight_requests, 40 * 0.7)
 
 
+class TestOpenLoopUnits(unittest.TestCase):
+    """--target-rate is sessions/s for multi-turn but requests/s for single-turn.
+
+    Regression: a correctly arrival-limited swebench run printed
+    "served 13.12 req/s ~= offered 0.50 req/s" because turn completions were
+    compared against a session arrival rate -- 26x apart at ~29 turns/session.
+    """
+
+    def _multi_turn(self, n_sessions=4, turns_each=5):
+        out = []
+        for sid in range(n_sessions):
+            for t in range(turns_each):
+                r = _req(sid * 1.0 + t * 0.1, sid * 1.0 + t * 0.1 + 0.5)
+                r.session_id, r.turn_index = sid, t
+                out.append(r)
+        return out
+
+    def test_session_throughput_counts_sessions_not_turns(self):
+        s = aggregate(self._multi_turn(), duration_s=10.0,
+                      load_mode="open-loop", target_rate=0.4)
+        self.assertEqual(s.sessions_completed, 4)
+        self.assertAlmostEqual(s.session_throughput, 0.4)
+        # Turn-level throughput is 5x higher; comparing it to target would lie.
+        self.assertAlmostEqual(s.request_throughput, 2.0)
+
+    def test_single_turn_has_no_sessions_so_falls_back_to_requests(self):
+        s = aggregate([_req(i, i + 1) for i in range(10)], duration_s=10.0,
+                      load_mode="open-loop", target_rate=1.0)
+        self.assertEqual(s.sessions_completed, 0)
+        self.assertAlmostEqual(s.request_throughput, 1.0)
+
+
 class TestWarmupWidthCoverage(unittest.TestCase):
     def test_peak_inflight_beyond_warmup_width_is_recorded(self):
         """The DeepSeek-V4 failure: warmup at width 8, run peaked at 39, so

@@ -16,6 +16,7 @@ Usage:
 
 import asyncio
 import argparse
+import itertools
 import json
 import sys
 import time
@@ -344,13 +345,25 @@ async def run_multi_turn_benchmark(
     exact_output_length: bool = False,
     reset_prefix_cache_first: bool = False,
     warmup_concurrency: int | None = None,
+    load_mode: str = "closed-loop",
+    arrival_pattern: str = "steady",
+    target_rate: float = 1.0,
 ):
     """
-    Run a multi-turn benchmark with interleaved round-robin scheduling.
+    Run a multi-turn benchmark.
 
-    Scheduling: [A1, B1, C1, A2, B2, C2, ...] where A1 = session A turn 1.
-    This forces KV cache eviction between turns of the same session,
-    testing prefix cache reuse under realistic memory pressure.
+    CLOSED LOOP (default) -- interleaved round-robin with a per-turn barrier:
+    [A1, B1, C1, A2, B2, C2, ...]. Every session's turn N completes before any
+    turn N+1 starts, which forces KV eviction between a session's turns and
+    tests prefix reuse under memory pressure. The barrier is an artifact of the
+    harness, not of real serving, and a simulator has to model it explicitly.
+
+    OPEN LOOP -- SESSIONS arrive on the clock at `target_rate` sessions/sec and
+    each session runs its turns back-to-back (turn N+1 issued only once turn N
+    returns). No barrier and no concurrency cap, so sessions overlap naturally
+    and a server that falls behind builds a real backlog instead of having it
+    hidden by client-side pacing. This is much closer to how agentic traffic
+    actually arrives.
 
     Returns (results_by_turn, duration) where results_by_turn is a dict
     mapping turn_index → list[RequestResult].
@@ -365,6 +378,7 @@ async def run_multi_turn_benchmark(
     )
 
     backend = get_backend(backend_name)
+    open_loop = load_mode == "open-loop"
     profile = get_profile(profile_name)
     dataset = make_dataset(
         profile,
@@ -437,9 +451,10 @@ async def run_multi_turn_benchmark(
             t_idx: int,
             previous_context_tokens: int,
             request_index: int,
+            scheduled_at_s: float | None = None,
         ):
             dispatch_started_at_s = time.perf_counter() - benchmark_start
-            async with semaphore:
+            async with (_no_limit() if open_loop else semaphore):
                 semaphore_acquired_at_s = time.perf_counter() - benchmark_start
                 result = await backend.send_request(
                     session=session_http,
@@ -469,7 +484,7 @@ async def run_multi_turn_benchmark(
                 result,
                 request_index=request_index,
                 request=request,
-                scheduled_at_s=None,
+                scheduled_at_s=scheduled_at_s,
                 dispatch_started_at_s=dispatch_started_at_s,
                 semaphore_acquired_at_s=semaphore_acquired_at_s,
                 completed_at_s=completed_at_s,
@@ -483,8 +498,56 @@ async def run_multi_turn_benchmark(
             )
             return session_id, t_idx, result
 
+        if open_loop:
+            arrivals = make_arrival_times(
+                pattern=arrival_pattern,
+                num_requests=len(sessions),
+                concurrency=concurrency,
+                target_rate=target_rate,
+                seed=seed,
+            )
+            counter = itertools.count()
+
+            async def run_session(conv_session, arrive_at_s: float):
+                delay = arrive_at_s - (time.perf_counter() - benchmark_start)
+                if delay > 0:
+                    await asyncio.sleep(delay)
+                previous_context = 0
+                for t_idx, request in enumerate(conv_session.turns):
+                    if max_turn_index is not None and t_idx > max_turn_index:
+                        break
+                    _, _, result = await dispatch(
+                        conv_session.session_id,
+                        request,
+                        t_idx,
+                        previous_context,
+                        request_index=next(counter),
+                        # Only turn 1 has a scheduled arrival; later turns are
+                        # emitted by the session itself, so their timing is a
+                        # consequence of service, not of the arrival process.
+                        scheduled_at_s=arrive_at_s if t_idx == 0 else None,
+                    )
+                    results_by_turn[t_idx].append(result)
+                    if result.success and result.input_tokens > 0:
+                        previous_context = int(result.input_tokens)
+
+            print(f"  Open loop: {len(sessions)} sessions arriving at "
+                  f"{target_rate} sess/s ({arrival_pattern}); "
+                  f"turns sequential within a session, no barrier")
+            await asyncio.gather(*[
+                run_session(cs, t) for cs, t in zip(sessions, arrivals)
+            ])
+            done = [r for v in results_by_turn.values() for r in v if r is not None]
+            if done and not any(r.success for r in done):
+                print(f"ABORT: all {len(done)} requests failed. "
+                      f"Server may not be functional.")
+                sys.exit(1)
+            turn_iter = []
+        else:
+            turn_iter = range(max_turns)
+
         # Interleaved round-robin: process all sessions' turn N before turn N+1
-        for turn_idx in range(max_turns):
+        for turn_idx in turn_iter:
             if max_turn_index is not None and turn_idx > max_turn_index:
                 break
             turn_requests = []
@@ -976,11 +1039,6 @@ if __name__ == "__main__":
         print(f"Error: --discard-first {args.discard_first} would hold out every request "
               f"of {args.num_requests}.")
         sys.exit(1)
-    if args.load_mode == "open-loop" and profile.mode == "multi-turn":
-        print(f"Error: --open-loop is not supported for multi-turn profile '{profile_name}'. "
-              f"Multi-turn scheduling is a per-turn barrier over sessions, which has no "
-              f"open-loop arrival process. Use --closed-loop.")
-        sys.exit(1)
     if args.multi_turn_sessions is not None and args.multi_turn_sessions <= 0:
         print("Error: --multi-turn-sessions must be positive when provided.")
         sys.exit(1)
@@ -1101,6 +1159,9 @@ if __name__ == "__main__":
             source_session_ids=source_session_ids,
             max_turn_index=args.max_turn_index,
             trace_request_ids=args.trace_request_ids,
+            load_mode=args.load_mode,
+            arrival_pattern=args.arrival,
+            target_rate=args.target_rate,
             temperature=args.temperature,
             sampling_seed=args.sampling_seed,
             exact_output_length=args.exact_output_length,
