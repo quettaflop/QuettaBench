@@ -757,13 +757,33 @@ def print_summary(s: BenchmarkSummary) -> None:
         # duration, which always includes the post-arrival drain, so a healthy
         # run reads low by roughly one session-duration -- enough to cross any
         # fixed tolerance on a short run. Growing in-flight is the real signal.
+        # TWO signals, because each is blind to a case the other catches.
+        #
+        # Backlog growth catches sustained overload, but ONLY while arrivals
+        # continue: with a finite session population, in-flight necessarily
+        # falls once the last one has arrived, however far behind the server
+        # is. A 2.0 sess/s swebench rung that took 984s to drain an 80s arrival
+        # window showed in-flight 125.6 -> 91.7 and looked "bounded".
+        #
+        # The served/offered ratio catches that, and is only biased by the
+        # drain -- which costs at most about one session duration, so it reads
+        # slightly low rather than wildly low. A tolerance near 0.75 separates
+        # a healthy rung (0.82-0.89) from a saturated one (0.08) with room to
+        # spare; 0.9 was tight enough to trip on the drain alone.
         growing = (s.mean_inflight_first_half > 0.5
                    and s.mean_inflight_second_half > 1.5 * s.mean_inflight_first_half)
+        rate_short = served < 0.75 * s.target_rate
         print(f" NOTE: offered {s.target_rate:.2f} {unit}, served {served:.2f} {unit} "
-              f"(mean in-flight {s.mean_inflight_requests:.1f}).")
-        if growing:
-            print(f"       In-flight grew through the run, so the server did NOT keep up:")
-            print(f"       arrivals queued and the latency figures include that backlog.")
+              f"({served / s.target_rate * 100:.0f}% of offered; mean in-flight "
+              f"{s.mean_inflight_requests:.1f}).")
+        if rate_short or growing:
+            why = []
+            if rate_short:
+                why.append("served rate fell short of offered")
+            if growing:
+                why.append("in-flight grew through the run")
+            print(f"       The server did NOT keep up ({'; '.join(why)}).")
+            print(f"       Arrivals queued and the latency figures include that backlog.")
             print(f"       This is a saturation point, not a steady-state latency figure.")
         else:
             print(f"       In-flight stayed bounded, so the run is arrival-limited: this")

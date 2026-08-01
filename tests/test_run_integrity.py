@@ -230,6 +230,40 @@ class TestOpenLoopUnits(unittest.TestCase):
         self.assertAlmostEqual(s.request_throughput, 1.0)
 
 
+class TestSaturationVerdict(unittest.TestCase):
+    """Saturation needs BOTH signals; each is blind to a case the other sees.
+
+    Real swebench rungs (Llama-3.1-8B tp1, 80s arrival window):
+      0.5 sess/s -> served 0.447, in-flight 9.8->4.4,   duration  89.5s  healthy
+      1.0 sess/s -> served 0.82,  in-flight 22.5->26.7, duration  98.0s  healthy
+      2.0 sess/s -> served 0.16,  in-flight 125.6->91.7, duration 984.5s SATURATED
+
+    The 2.0 rung is 12x behind, yet in-flight FELL -- with a finite session
+    population, in-flight always falls once the last session has arrived,
+    however far behind the server is. Only the rate ratio catches it.
+    """
+
+    @staticmethod
+    def _verdict(offered, served, first, second):
+        growing = first > 0.5 and second > 1.5 * first
+        return (served < 0.75 * offered) or growing
+
+    def test_healthy_rungs_are_not_flagged(self):
+        self.assertFalse(self._verdict(0.5, 0.447, 9.8, 4.4))
+        self.assertFalse(self._verdict(1.0, 0.82, 22.5, 26.7))
+
+    def test_saturated_rung_caught_by_rate_despite_falling_inflight(self):
+        self.assertTrue(self._verdict(2.0, 0.16, 125.6, 91.7))
+
+    def test_growing_backlog_caught_even_when_rate_looks_fine(self):
+        """Sustained arrivals: rate can look healthy while backlog builds."""
+        self.assertTrue(self._verdict(1.0, 0.95, 10.0, 40.0))
+
+    def test_drain_alone_does_not_trip_the_rate_check(self):
+        """A healthy run reads low by ~one session duration, not by 25%."""
+        self.assertFalse(self._verdict(0.5, 0.447, 9.8, 4.4))
+
+
 class TestWarmupWidthCoverage(unittest.TestCase):
     def test_peak_inflight_beyond_warmup_width_is_recorded(self):
         """The DeepSeek-V4 failure: warmup at width 8, run peaked at 39, so
