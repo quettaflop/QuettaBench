@@ -29,6 +29,14 @@ TRAJECTORY_SOURCES = {
     "swebench_multiturn": DATA_DIR / "swebench_trajectories.jsonl",
     "terminalbench_multiturn": DATA_DIR / "terminalbench_trajectories.jsonl",
     "osworld_multiturn": DATA_DIR / "osworld_trajectories.jsonl",
+    # Chat now has a captured source too (scripts/build_chat_trajectories.py, from
+    # ShareGPT), so it can be trajectory-derived like the three above instead of
+    # dashboard-derived. Deliberately a SEPARATE name from chat_multiturn: the key is
+    # the output filename, so writing "chat_multiturn" here would overwrite the
+    # in-use distribution and silently change the workload for every future run,
+    # breaking comparability with all existing GT. Point the chat-multiturn* profiles
+    # at this file when you want to adopt it (see --skip-chat for the legacy path).
+    "chat_multiturn_sharegpt": DATA_DIR / "chat_trajectories.jsonl",
 }
 
 CHAT_RESULT_PROFILES = {
