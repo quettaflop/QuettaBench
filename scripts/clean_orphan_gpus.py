@@ -30,7 +30,15 @@ import sweep_progress_report as progress_report  # noqa: E402
 
 
 DEFAULT_CONFIG_PATH = HERE / "gpu_cleanup.json"
-DEFAULT_STATE_DIR = Path("/mnt/100g/agent-bench/state")
+# Host-specific. BENCH_STATE_ROOT is what the systemd units set; the literal is a
+# last-resort fallback for the original orchestrator box, whose /mnt/100g does not
+# exist elsewhere. The audit log and observation store are DERIVED from it rather
+# than pinned in gpu_cleanup.json: pinning them there put an absolute /mnt/100g
+# path in tracked config that no env var could override, so on any other host this
+# died with `PermissionError: [Errno 13] Permission denied: '/mnt/100g'` while
+# every other path resolved correctly. Override individually with
+# --audit-log / --observation-store if they must live off the state root.
+DEFAULT_STATE_DIR = Path(os.environ.get("BENCH_STATE_ROOT", "/mnt/100g/agent-bench/state"))
 DEFAULT_AUDIT_LOG = DEFAULT_STATE_DIR / "gpu-cleanup-events.jsonl"
 DEFAULT_OBSERVATION_STORE = DEFAULT_STATE_DIR / "gpu-orphan-observations.json"
 

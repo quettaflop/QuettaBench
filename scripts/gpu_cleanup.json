@@ -117,7 +117,5 @@
     "2080ti",
     "h100",
     "h100-2"
-  ],
-  "audit_log": "/mnt/100g/agent-bench/state/gpu-cleanup-events.jsonl",
-  "observation_store": "/mnt/100g/agent-bench/state/gpu-orphan-observations.json"
+  ]
 }

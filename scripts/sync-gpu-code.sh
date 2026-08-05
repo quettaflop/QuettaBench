@@ -139,6 +139,14 @@ fi
 
 RSYNC_ARGS=(
     -az
+    # The GPU hosts run the tree, they never need its history. Excluding .git also
+    # avoids a hard failure when the sender is a git SUBMODULE checkout: there .git
+    # is a FILE ("gitdir: ..."), while a previous sync from a normal clone left a
+    # .git DIRECTORY on the remote. rsync then tries to replace a directory with a
+    # file and aborts the whole host with "cannot delete non-empty directory: .git"
+    # (code 23) -- note there is no --delete here, so it is the file/dir type clash,
+    # not a deletion policy. Seen on every reachable host 2026-08-05.
+    --exclude .git/
     --exclude dashboard/node_modules/
     --exclude dashboard/dist/
     --exclude dashboard/.omc/
