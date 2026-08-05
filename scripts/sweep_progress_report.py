@@ -43,12 +43,23 @@ REMOTE_SNAPSHOT_SCRIPT = r"""
 set -uo pipefail
 echo "__WHOAMI__"
 whoami 2>/dev/null || true
+# nvidia-smi can take 10-14 s per invocation on a host whose driver has gone cold
+# (measured on h100, all GPUs idle; per-GPU timing decays 9.5 s -> 0.13 s as it warms).
+# Two defences so that cannot blow the per-host SSH budget and blank the host:
+#   1. cap each call with `timeout`, so a pathological call yields empty output and we
+#      still return the sections that did work, instead of the probe dying wholesale;
+#   2. call --query-compute-apps ONCE and reuse it for the pid list, instead of a
+#      second identical query (that third invocation paid the cold-start tax again
+#      for data we already had).
 echo "__GPU__"
-nvidia-smi --query-gpu=index,uuid,name,memory.used,memory.total,utilization.gpu --format=csv,noheader,nounits 2>&1 || true
+timeout 20 nvidia-smi --query-gpu=index,uuid,name,memory.used,memory.total,utilization.gpu --format=csv,noheader,nounits 2>&1 || true
 echo "__PROC__"
-nvidia-smi --query-compute-apps=gpu_uuid,pid,process_name,used_memory --format=csv,noheader,nounits 2>/dev/null || true
+proc_rows=$(timeout 20 nvidia-smi --query-compute-apps=gpu_uuid,pid,process_name,used_memory --format=csv,noheader,nounits 2>/dev/null || true)
+# only emit when non-empty: bare nvidia-smi prints nothing when no compute apps are
+# running, and a stray blank line here would be parsed as a row.
+[ -n "$proc_rows" ] && printf '%s\n' "$proc_rows"
 echo "__PS__"
-pids=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits 2>/dev/null | awk 'NF {print $1}' | sort -nu | tr '\n' ',')
+pids=$(printf '%s\n' "$proc_rows" | awk -F', *' 'NF > 1 {print $2}' | sort -nu | tr '\n' ',')
 parents=""
 grandparents=""
 if [ -n "$pids" ]; then
@@ -588,7 +599,19 @@ def ssh_snapshot(host: str, timeout: int) -> HostSnapshot:
     command = f"bash -lc {shlex.quote(REMOTE_SNAPSHOT_SCRIPT)}"
     try:
         proc = subprocess.run(
-            ["ssh", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes", host, command],
+            # ControlPath=none: do NOT use SSH connection multiplexing here, even if
+            # root's ~/.ssh/config enables ControlMaster for these hosts. Multiplexing
+            # is a large win interactively (0.46 s vs 5.75 s per connect) but it made
+            # this timer non-deterministic: when a master dies mid-session -- which
+            # happens whenever a long-running ssh client is killed -- the socket file
+            # survives, and the next probe blocks on a dead master until the subprocess
+            # timeout instead of connecting. That is what produced TimeoutExpired for
+            # EVERY host at once (visible as "mux_client_request_session: read from
+            # master failed: Broken pipe"), and it happened at both the 8 s and 45 s
+            # budgets, so it looked like a timeout-tuning problem and was not.
+            # A fresh connection costs ~5 s here; the measured remote payload is ~0.4 s.
+            ["ssh", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes",
+             "-o", "ControlPath=none", host, command],
             check=False,
             text=True,
             capture_output=True,

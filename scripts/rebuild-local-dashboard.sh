@@ -183,6 +183,7 @@ if [[ "$MIRROR_R2" == "1" ]]; then
             data.json \
             data.trace_replay.json \
             data.synthetic_distributional.json \
+            data.moe_ep.json \
             data.archived.json \
             sweep-state.json \
             gemm-eval.json \
