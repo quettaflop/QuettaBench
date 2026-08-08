@@ -134,8 +134,6 @@ def load_single(filepath: Path) -> Optional[dict]:
     fname_lower = filepath.stem.lower()
     if fname_lower.startswith("sglang"):
         backend = "sglang"
-    elif fname_lower.startswith("trtllm") or fname_lower.startswith("trt_llm"):
-        backend = "trtllm"
     profile = summary.get("profile") or config.get("profile", "unknown")
     arrival = config.get("arrival", "steady")
     ignore_eos = config.get("ignore_eos", False)
@@ -230,8 +228,6 @@ def _load_single_from_dict(data: dict, filepath: str, filename: str) -> Optional
     fname_lower = Path(filename).stem.lower()
     if fname_lower.startswith("sglang"):
         backend = "sglang"
-    elif fname_lower.startswith("trtllm") or fname_lower.startswith("trt_llm"):
-        backend = "trtllm"
     profile = summary.get("profile") or config.get("profile", "unknown")
     arrival = config.get("arrival", "steady")
     ignore_eos = config.get("ignore_eos", False)

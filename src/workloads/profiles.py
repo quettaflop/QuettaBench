@@ -185,6 +185,41 @@ PROFILES: dict[str, WorkloadProfile] = {
         data_source="distributional",
     ),
 
+    # Claw-Eval general-agent sessions. Distinct from the three above in two
+    # ways worth knowing before comparing against them:
+    #   1. Context sizes are MEASURED (server-reported usage per turn), not
+    #      word-ratio estimated -- diagnostics report estimated_context_turns=0.
+    #   2. Captured under DeepSeek-V4-Flash "Think Max", so output_tokens include
+    #      reasoning tokens. Output is correspondingly heavy-tailed: p50 279 but
+    #      max 17,258, against swebench-synth's flat osl_tokens=2000.
+    # Bounds below are the measured extremes of the 300-session capture, not
+    # round numbers: turns 1..39, context max 323,695, output max 17,258.
+    "claweval-multiturn-synth": WorkloadProfile(
+        name="claweval-multiturn-synth",
+        isl_tokens=323695,
+        osl_tokens=17258,
+        isl_stddev=0.0,
+        description=(
+            "APC-aware Claw-Eval general-agent sessions (300 tasks, 2449 turns) "
+            "captured from DeepSeek-V4-Flash-0731 in Think Max; measured token counts"
+        ),
+        dataset="distributional-multi-turn",
+        file_path="data/distributions/claweval_multiturn.json",
+        system_prompt="",
+        mode="multi-turn",
+        prefix_caching_required=True,
+        min_turns=1,
+        max_turns=39,
+        num_sessions=1,
+        # Tool mix is productivity/assistant rather than pure coding or CLI:
+        # Bash 1113, web_fetch 678, web_search 400, plus mock gmail/contacts/
+        # crm/helpdesk services. "computer-use" is the closest existing bucket.
+        agent_type="computer-use",
+        turn_style="multi-turn",
+        serving_style="not-disaggregated",
+        data_source="distributional",
+    ),
+
     "osworld-multiturn-synth": WorkloadProfile(
         name="osworld-multiturn-synth",
         isl_tokens=65536,

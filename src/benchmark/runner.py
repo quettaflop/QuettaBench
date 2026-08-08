@@ -9,26 +9,21 @@ Usage:
         --profile chat-singleturn \
         --concurrency 10 \
         --num-requests 100 \
+        --tensor-parallel-size 1 \
         --api-key test \
         --output results/run_001.json
-
-    # TRT-LLM (point URL at /generate_stream):
-    python -m src.benchmark.runner \
-        --url http://localhost:8000/generate_stream \
-        --model meta-llama/Llama-3.1-8B-Instruct \
-        --backend trtllm \
-        --profile chat-singleturn \
-        --concurrency 10 \
-        --num-requests 100
 """
 
 import asyncio
 import argparse
+import itertools
 import json
 import sys
 import time
 import os
 from pathlib import Path
+
+from contextlib import asynccontextmanager
 
 from .metrics import (
     aggregate,
@@ -38,19 +33,125 @@ from .metrics import (
     print_summary,
     print_multi_turn_summary,
 )
+from .server_control import PrefixCacheResetError, reset_prefix_cache
 from ..workloads.profiles import get_profile
 from ..workloads.dataset import make_dataset
 from ..workloads.arrival import make_arrival_times
 
 
-SUPPORTED_BACKENDS = ["openai", "vllm", "sglang", "trtllm"]
+SUPPORTED_BACKENDS = ["openai", "vllm", "sglang"]
 # v4 (2026-07-22): streaming client counts reasoning_content/reasoning/tool_calls
 # deltas as token events, and tpot falls back to wall-clock when ITL chunk
 # coverage is incomplete. v3 and earlier vllm gpt-oss results carry inter-chunk
 # tpot (see QuettaSim tools/GT_QUALITY_FLAGS.md Finding 1).
-BENCHMARK_SCHEMA_VERSION = 4
+# v5 (2026-07-30): sampling is pinned (greedy by default + forwarded seed) so
+# output lengths are reproducible; failed requests keep their partial timings
+# and carry an error_kind; runs can reset the server prefix cache first. v4 and
+# earlier used temperature=1.0 with no seed, so their OSL varies run to run.
+BENCHMARK_SCHEMA_VERSION = 5
 WORKLOAD_SCHEMA_VERSION = "distributional-synthetic-v1"
 TRACE_REQUEST_ID_PREFIX = "agenticbench"
+
+# Closed loop: a fixed population of `concurrency` in-flight requests, each
+# replaced only when the previous one finishes. Offered load is a consequence of
+# server speed, so the server can never fall behind.
+# Open loop: requests arrive on a clock at --target-rate regardless of whether
+# the server keeps up, so queues can grow without bound. This is the one that
+# exposes saturation.
+LOAD_MODES = ("closed-loop", "open-loop")
+OPEN_LOOP_ARRIVALS = ("poisson", "ramp")
+
+
+@asynccontextmanager
+async def _no_limit():
+    """Stand-in for the concurrency semaphore when running open loop."""
+    yield
+
+
+async def _warmup_with_profile(
+    session,
+    backend,
+    dataset,
+    *,
+    url: str,
+    model: str,
+    api_key: str,
+    concurrency: int,
+    count: int,
+    ignore_eos: bool,
+    temperature: float,
+    sampling_seed: int | None,
+    exact_output_length: bool,
+) -> tuple[int, int]:
+    """Warm the server with real profile requests at a given batch width.
+
+    `concurrency` here is the WARMUP width, which is not always the run's
+    --concurrency: under open loop that flag caps nothing, so warmup sized from
+    it can miss the batch shapes the run actually reaches. Engines that JIT
+    kernels per shape (DeepSeek V4's TileLang MHC kernels, Triton) then compile
+    mid-measurement, which inflates TTFT and pushes the TPOT mean far above its
+    median. See --warmup-concurrency.
+
+    The old warmup sent a handful of "Hello" prompts at max_tokens=10 over a
+    throwaway ClientSession. That warms nothing the benchmark then measures:
+    not the first large-ISL prefill, not decode at real batch width, and not
+    the benchmark session's own TCP connections -- so those one-time costs
+    landed inside the first measured requests' TTFT instead.
+
+    Requests are drawn from the live dataset, so for single-turn profiles the
+    warmup prompts are consumed and the measured run sees different ones.
+    Results are discarded, but failures are counted: a warmup where nothing
+    succeeds means the server is not usable and the run should not proceed.
+
+    Returns (successful, attempted).
+    """
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async def one():
+        request = dataset.get_next_request()
+        async with semaphore:
+            return await backend.send_request(
+                session=session,
+                url=url,
+                model=model,
+                messages=request.messages,
+                max_tokens=request.max_tokens,
+                api_key=api_key,
+                ignore_eos=ignore_eos or exact_output_length,
+                temperature=temperature,
+                seed=sampling_seed,
+                min_tokens=request.max_tokens if exact_output_length else 0,
+            )
+
+    results = await asyncio.gather(*[one() for _ in range(count)], return_exceptions=True)
+    ok = sum(
+        1 for r in results
+        if not isinstance(r, BaseException) and r is not None and r.success
+    )
+    return ok, len(results)
+
+
+def _warn_if_transient_dominated(num_requests: int, concurrency: int) -> None:
+    """Warn when the run is too short to contain a steady-state regime.
+
+    A closed-loop run is one synchronized wave of `concurrency` requests, then
+    backfill as each completes, then a drain to zero. Settling takes several
+    generations of turnover (one generation == `concurrency` completions).
+    Below ~4 the run is all startup convoy and drain, and -- importantly --
+    discarding cannot fix it, because there is no settled middle left to keep.
+    """
+    if concurrency <= 1 or num_requests <= 0:
+        return
+    per_slot = num_requests / concurrency
+    if per_slot >= 4:
+        return
+    print(f"WARNING: only {per_slot:.1f} requests per concurrency slot "
+          f"({num_requests} requests at concurrency {concurrency}).")
+    print(f"         The run is dominated by the startup wave and the drain tail, "
+          f"with no")
+    print(f"         steady-state middle. --discard-first cannot recover it; raise "
+          f"--num-requests")
+    print(f"         to at least {concurrency * 8} for a settled measurement.")
 
 
 def make_trace_request_id(
@@ -87,14 +188,26 @@ async def run_benchmark(
     max_context_tokens: int | None = None,
     context_safety_margin_tokens: int = 256,
     trace_request_ids: bool = False,
+    load_mode: str = "closed-loop",
+    temperature: float = 0.0,
+    sampling_seed: int | None = None,
+    exact_output_length: bool = False,
+    reset_prefix_cache_first: bool = False,
+    warmup_concurrency: int | None = None,
 ):
     """
     Run a benchmark and return (results, duration).
+
+    load_mode="closed-loop" holds `concurrency` requests in flight and dispatches
+    everything at t=0; load_mode="open-loop" lets arrivals fire on the schedule
+    from `arrival_pattern`/`target_rate` with no client-side cap, so an
+    overloaded server builds a real queue instead of back-pressuring the client.
     """
     import aiohttp
     from ..engines import get_backend
 
     backend = get_backend(backend_name)
+    open_loop = load_mode == "open-loop"
     profile = get_profile(profile_name)
     dataset = make_dataset(
         profile,
@@ -111,15 +224,36 @@ async def run_benchmark(
         seed=seed,
     )
 
-    connector = aiohttp.TCPConnector(limit=concurrency + 10)
+    # Open loop must not cap connections: a connector limit would silently
+    # become the concurrency cap we just removed.
+    connector = aiohttp.TCPConnector(limit=0 if open_loop else concurrency + 10)
     client_timeout = aiohttp.ClientTimeout(total=timeout)
 
     async with aiohttp.ClientSession(connector=connector, timeout=client_timeout) as session:
-        # Warmup
+        # Warmup: real profile requests at the real concurrency, over THIS
+        # session so its TCP connections are established before timing starts.
         if warmup_requests > 0:
-            print(f"Warming up with {warmup_requests} requests...")
-            await backend.run_warmup(url, model, api_key, warmup_requests, timeout)
-            print("Warmup done.")
+            print(f"Warming up with {warmup_requests} profile requests "
+                  f"at concurrency {concurrency}...")
+            ok, attempted = await _warmup_with_profile(
+                session, backend, dataset,
+                url=url, model=model, api_key=api_key,
+                concurrency=(warmup_concurrency or concurrency), count=warmup_requests,
+                ignore_eos=ignore_eos, temperature=temperature,
+                sampling_seed=sampling_seed,
+                exact_output_length=exact_output_length,
+            )
+            print(f"Warmup done: {ok}/{attempted} succeeded.")
+            if ok == 0:
+                print("ABORT: every warmup request failed. The server is not serving "
+                      "this profile; check the server log before benchmarking.")
+                sys.exit(1)
+
+        # Reset AFTER warmup so the run starts from a genuinely cold cache
+        # regardless of what warmup left behind.
+        if reset_prefix_cache_first:
+            status = await reset_prefix_cache(session, url, backend_name, api_key, timeout)
+            print(f"Prefix cache: {status}")
 
         # Schedule requests
         semaphore = asyncio.Semaphore(concurrency)
@@ -134,7 +268,7 @@ async def run_benchmark(
 
             request = dataset.get_next_request()
             dispatch_started_at_s = time.perf_counter() - benchmark_start
-            async with semaphore:
+            async with (_no_limit() if open_loop else semaphore):
                 semaphore_acquired_at_s = time.perf_counter() - benchmark_start
                 result = await backend.send_request(
                     session=session,
@@ -143,7 +277,10 @@ async def run_benchmark(
                     messages=request.messages,
                     max_tokens=request.max_tokens,
                     api_key=api_key,
-                    ignore_eos=ignore_eos,
+                    ignore_eos=ignore_eos or exact_output_length,
+                    temperature=temperature,
+                    seed=sampling_seed,
+                    min_tokens=request.max_tokens if exact_output_length else 0,
                     request_id=(
                         make_trace_request_id(
                             profile_name=profile_name,
@@ -203,13 +340,30 @@ async def run_multi_turn_benchmark(
     source_session_ids: list[str] | None = None,
     max_turn_index: int | None = None,
     trace_request_ids: bool = False,
+    temperature: float = 0.0,
+    sampling_seed: int | None = None,
+    exact_output_length: bool = False,
+    reset_prefix_cache_first: bool = False,
+    warmup_concurrency: int | None = None,
+    load_mode: str = "closed-loop",
+    arrival_pattern: str = "steady",
+    target_rate: float = 1.0,
 ):
     """
-    Run a multi-turn benchmark with interleaved round-robin scheduling.
+    Run a multi-turn benchmark.
 
-    Scheduling: [A1, B1, C1, A2, B2, C2, ...] where A1 = session A turn 1.
-    This forces KV cache eviction between turns of the same session,
-    testing prefix cache reuse under realistic memory pressure.
+    CLOSED LOOP (default) -- interleaved round-robin with a per-turn barrier:
+    [A1, B1, C1, A2, B2, C2, ...]. Every session's turn N completes before any
+    turn N+1 starts, which forces KV eviction between a session's turns and
+    tests prefix reuse under memory pressure. The barrier is an artifact of the
+    harness, not of real serving, and a simulator has to model it explicitly.
+
+    OPEN LOOP -- SESSIONS arrive on the clock at `target_rate` sessions/sec and
+    each session runs its turns back-to-back (turn N+1 issued only once turn N
+    returns). No barrier and no concurrency cap, so sessions overlap naturally
+    and a server that falls behind builds a real backlog instead of having it
+    hidden by client-side pacing. This is much closer to how agentic traffic
+    actually arrives.
 
     Returns (results_by_turn, duration) where results_by_turn is a dict
     mapping turn_index → list[RequestResult].
@@ -224,6 +378,7 @@ async def run_multi_turn_benchmark(
     )
 
     backend = get_backend(backend_name)
+    open_loop = load_mode == "open-loop"
     profile = get_profile(profile_name)
     dataset = make_dataset(
         profile,
@@ -251,9 +406,38 @@ async def run_multi_turn_benchmark(
     async with aiohttp.ClientSession(connector=connector, timeout=client_timeout) as session_http:
         # Warmup
         if warmup_requests > 0:
-            print(f"Warming up with {warmup_requests} requests...")
-            await backend.run_warmup(url, model, api_key, warmup_requests, timeout)
-            print("Warmup done.")
+            # Multi-turn datasets serve get_next_request() from a flat iterator
+            # that is independent of `sessions`, so warmup prompts DUPLICATE
+            # measured ones rather than consuming them. That pre-warms the
+            # prefix cache for the measured run unless it is reset afterwards.
+            if not reset_prefix_cache_first:
+                print("WARNING: multi-turn warmup replays prompts the measured run will "
+                      "also send,")
+                print("         so the cache starts warm and turn-1 TTFT is understated. "
+                      "Pass")
+                print("         --reset-prefix-cache (or --warmup 0) to measure a cold "
+                      "first turn.")
+            print(f"Warming up with {warmup_requests} profile requests "
+                  f"at concurrency {concurrency}...")
+            ok, attempted = await _warmup_with_profile(
+                session_http, backend, dataset,
+                url=url, model=model, api_key=api_key,
+                concurrency=(warmup_concurrency or concurrency), count=warmup_requests,
+                ignore_eos=ignore_eos, temperature=temperature,
+                sampling_seed=sampling_seed,
+                exact_output_length=exact_output_length,
+            )
+            print(f"Warmup done: {ok}/{attempted} succeeded.")
+            if ok == 0:
+                print("ABORT: every warmup request failed. The server is not serving "
+                      "this profile; check the server log before benchmarking.")
+                sys.exit(1)
+
+        # Reset AFTER warmup so the run starts cold. Intra-run prefix reuse --
+        # the thing multi-turn profiles exist to measure -- is unaffected.
+        if reset_prefix_cache_first:
+            status = await reset_prefix_cache(session_http, url, backend_name, api_key, timeout)
+            print(f"Prefix cache: {status}")
 
         semaphore = asyncio.Semaphore(concurrency)
         # results_by_turn[turn_idx] = list of RequestResult
@@ -267,9 +451,10 @@ async def run_multi_turn_benchmark(
             t_idx: int,
             previous_context_tokens: int,
             request_index: int,
+            scheduled_at_s: float | None = None,
         ):
             dispatch_started_at_s = time.perf_counter() - benchmark_start
-            async with semaphore:
+            async with (_no_limit() if open_loop else semaphore):
                 semaphore_acquired_at_s = time.perf_counter() - benchmark_start
                 result = await backend.send_request(
                     session=session_http,
@@ -278,7 +463,10 @@ async def run_multi_turn_benchmark(
                     messages=request.messages,
                     max_tokens=request.max_tokens,
                     api_key=api_key,
-                    ignore_eos=ignore_eos,
+                    ignore_eos=ignore_eos or exact_output_length,
+                    temperature=temperature,
+                    seed=sampling_seed,
+                    min_tokens=request.max_tokens if exact_output_length else 0,
                     request_id=(
                         make_trace_request_id(
                             profile_name=profile_name,
@@ -296,7 +484,7 @@ async def run_multi_turn_benchmark(
                 result,
                 request_index=request_index,
                 request=request,
-                scheduled_at_s=None,
+                scheduled_at_s=scheduled_at_s,
                 dispatch_started_at_s=dispatch_started_at_s,
                 semaphore_acquired_at_s=semaphore_acquired_at_s,
                 completed_at_s=completed_at_s,
@@ -310,8 +498,56 @@ async def run_multi_turn_benchmark(
             )
             return session_id, t_idx, result
 
+        if open_loop:
+            arrivals = make_arrival_times(
+                pattern=arrival_pattern,
+                num_requests=len(sessions),
+                concurrency=concurrency,
+                target_rate=target_rate,
+                seed=seed,
+            )
+            counter = itertools.count()
+
+            async def run_session(conv_session, arrive_at_s: float):
+                delay = arrive_at_s - (time.perf_counter() - benchmark_start)
+                if delay > 0:
+                    await asyncio.sleep(delay)
+                previous_context = 0
+                for t_idx, request in enumerate(conv_session.turns):
+                    if max_turn_index is not None and t_idx > max_turn_index:
+                        break
+                    _, _, result = await dispatch(
+                        conv_session.session_id,
+                        request,
+                        t_idx,
+                        previous_context,
+                        request_index=next(counter),
+                        # Only turn 1 has a scheduled arrival; later turns are
+                        # emitted by the session itself, so their timing is a
+                        # consequence of service, not of the arrival process.
+                        scheduled_at_s=arrive_at_s if t_idx == 0 else None,
+                    )
+                    results_by_turn[t_idx].append(result)
+                    if result.success and result.input_tokens > 0:
+                        previous_context = int(result.input_tokens)
+
+            print(f"  Open loop: {len(sessions)} sessions arriving at "
+                  f"{target_rate} sess/s ({arrival_pattern}); "
+                  f"turns sequential within a session, no barrier")
+            await asyncio.gather(*[
+                run_session(cs, t) for cs, t in zip(sessions, arrivals)
+            ])
+            done = [r for v in results_by_turn.values() for r in v if r is not None]
+            if done and not any(r.success for r in done):
+                print(f"ABORT: all {len(done)} requests failed. "
+                      f"Server may not be functional.")
+                sys.exit(1)
+            turn_iter = []
+        else:
+            turn_iter = range(max_turns)
+
         # Interleaved round-robin: process all sessions' turn N before turn N+1
-        for turn_idx in range(max_turns):
+        for turn_idx in turn_iter:
             if max_turn_index is not None and turn_idx > max_turn_index:
                 break
             turn_requests = []
@@ -371,9 +607,44 @@ def _check_success_rate(summary, min_rate: float):
         sys.exit(1)
     rate = summary.successful_requests / summary.num_requests
     if rate < min_rate:
+        kinds = ", ".join(f"{k}={v}" for k, v in sorted(summary.error_kinds.items()))
         print(f"ABORT: Success rate {rate:.1%} below minimum {min_rate:.0%} "
-              f"({summary.successful_requests}/{summary.num_requests})")
+              f"({summary.successful_requests}/{summary.num_requests}); failures: {kinds}")
         sys.exit(1)
+
+
+def _run(coro):
+    """asyncio.run with a clean exit for cache-reset failures.
+
+    A failed reset is fatal by design: continuing would silently produce the
+    warm-cache contamination the flag exists to prevent.
+    """
+    try:
+        return asyncio.run(coro)
+    except PrefixCacheResetError as e:
+        coro.close()
+        print(f"ABORT: prefix cache reset failed: {e}")
+        sys.exit(1)
+
+
+def _check_usage_reported(summary, allow_missing: bool):
+    """Exit if no response carried a usage block.
+
+    Without usage, input_tokens/output_tokens stay 0 for every request, so the
+    summary records 0 tok/s and 0 total tokens while still looking like a valid
+    run. That silently poisons any downstream ISL/OSL or throughput comparison.
+    """
+    if summary.successful_requests == 0 or summary.usage_reported_requests > 0:
+        return
+    if allow_missing:
+        print("WARNING: no usage block in any response; token counts and throughputs "
+              "are zero-filled. Continuing because --allow-missing-usage was passed.")
+        return
+    print("ABORT: no response carried a usage block, so every token count and "
+          "throughput in this run would be 0 rather than measured. The server must "
+          "honour stream_options.include_usage. Pass --allow-missing-usage to record "
+          "the run anyway (latency metrics stay valid; token metrics do not).")
+    sys.exit(1)
 
 
 def _load_source_session_ids(path: str | None) -> list[str] | None:
@@ -417,6 +688,9 @@ def save_results(summary, results, output_path: str, config: dict):
                 "input_tokens": r.input_tokens,
                 "output_tokens": r.output_tokens,
                 "error": r.error,
+                **({"error_kind": r.error_kind} if r.error_kind is not None else {}),
+                "usage_reported": r.usage_reported,
+                **({"excluded_from_summary": True} if r.excluded_from_summary else {}),
                 **({"request_index": r.request_index}
                    if r.request_index is not None else {}),
                 **({"max_tokens_requested": r.max_tokens_requested}
@@ -531,7 +805,7 @@ def get_args():
     parser.add_argument("--url", required=False, help="Server endpoint URL")
     parser.add_argument("--model", required=False)
     parser.add_argument("--backend", default="vllm", choices=SUPPORTED_BACKENDS,
-                        help="Backend type (vllm/sglang/openai → /v1/chat/completions, trtllm → /generate_stream)")
+                        help="Backend type (vllm/sglang/openai → /v1/chat/completions)")
     parser.add_argument("--profile", default="chat-singleturn", help="Workload profile name")
     parser.add_argument("--concurrency", type=int, default=10)
     parser.add_argument("--multi-turn-sessions", type=int, default=None,
@@ -544,6 +818,46 @@ def get_args():
     parser.add_argument("--api-key", default="test")
     parser.add_argument("--arrival", default="steady", choices=["steady", "poisson", "ramp"])
     parser.add_argument("--target-rate", type=float, default=10.0, help="req/s for poisson/ramp")
+    load_group = parser.add_mutually_exclusive_group()
+    load_group.add_argument(
+        "--closed-loop", dest="load_mode", action="store_const", const="closed-loop",
+        help="Closed loop (default): hold --concurrency requests in flight, each replaced "
+             "only when the previous finishes. Offered load is capped by server speed, so "
+             "the server can never fall behind. Implies --arrival steady.")
+    load_group.add_argument(
+        "--open-loop", dest="load_mode", action="store_const", const="open-loop",
+        help="Open loop: fire arrivals on a clock at --target-rate with NO client-side "
+             "concurrency cap, so an overloaded server queues instead of back-pressuring "
+             "the client. Requires --arrival poisson|ramp. Single-turn profiles only.")
+    parser.set_defaults(load_mode="closed-loop")
+    parser.add_argument("--temperature", type=float, default=0.0,
+                        help="Sampling temperature. Default 0.0 (greedy) so output lengths "
+                             "are reproducible across runs.")
+    parser.add_argument("--sampling-seed", type=int, default=None,
+                        help="Seed forwarded to the server sampler. Defaults to --seed; "
+                             "pass -1 to omit it entirely.")
+    parser.add_argument("--exact-output-length", action="store_true",
+                        help="Pin generated length to the profile's per-request max_tokens "
+                             "(sends min_tokens=max_tokens and ignore_eos). Makes measured OSL "
+                             "equal planned OSL instead of wherever the model chose to stop.")
+    parser.add_argument("--reset-prefix-cache", action="store_true",
+                        help="POST the server's prefix-cache reset endpoint before the run. "
+                             "Sweeps replay byte-identical prompts across cells, so without "
+                             "this every cell after the first is measured warm.")
+    parser.add_argument("--warmup-concurrency", type=int, default=None, metavar="N",
+                        help="Batch width to warm at. Defaults to --concurrency under "
+                             "closed loop (where that IS the in-flight cap), and to "
+                             "min(--num-requests, 64) under open loop (where it is not). "
+                             "Engines that JIT kernels per batch shape compile mid-run for "
+                             "any width warmup missed.")
+    parser.add_argument("--discard-first", type=int, default=0, metavar="N",
+                        help="Hold the first N requests out of the summary (they stay in "
+                             "per_request). Removes the startup wave. Only meaningful once "
+                             "--num-requests is several times --concurrency; at 2x there is "
+                             "no settled middle left to keep. Single-turn only.")
+    parser.add_argument("--allow-missing-usage", action="store_true",
+                        help="Permit a run where no response carried a usage block. Token "
+                             "counts and throughputs will be zero-filled, not measured.")
     parser.add_argument("--warmup", type=int, default=3)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--timeout", type=int, default=120)
@@ -565,7 +879,8 @@ def get_args():
     parser.add_argument("--gpu-memory-utilization", type=float, default=None,
                         help="Metadata only: server GPU memory utilization target")
     parser.add_argument("--tensor-parallel-size", type=int, default=None,
-                        help="Metadata only: server tensor parallel size")
+                        help="Required: server tensor parallel size. Recorded in the result "
+                             "config and used to compose the parallelism label (1gpu/tp/tp+ep).")
     parser.add_argument("--dtype", default=None,
                         help="Metadata only: server compute dtype")
     parser.add_argument("--kv-cache-dtype", default=None,
@@ -646,6 +961,55 @@ if __name__ == "__main__":
         print("Use --list-profiles to browse profiles without a server.")
         sys.exit(1)
 
+    # --tensor-parallel-size is load-bearing (it composes the parallelism label
+    # recorded in the result config), so refuse to guess it. Silently defaulting
+    # to 1 would mislabel every multi-GPU sweep.
+    if args.tensor_parallel_size is None:
+        print("Error: --tensor-parallel-size is required for benchmark runs "
+              "(pass 1 for single-GPU serving).")
+        sys.exit(1)
+    if args.tensor_parallel_size < 1:
+        print(f"Error: --tensor-parallel-size must be >= 1, got {args.tensor_parallel_size}.")
+        sys.exit(1)
+
+    # Load mode and arrival pattern have to agree. "steady" means every request
+    # is scheduled at t=0 and the semaphore paces them, which is the definition
+    # of closed loop; a rate process only means anything with the cap removed.
+    if args.load_mode == "open-loop":
+        if args.arrival not in OPEN_LOOP_ARRIVALS:
+            print(f"Error: --open-loop requires --arrival {'|'.join(OPEN_LOOP_ARRIVALS)}, "
+                  f"got '{args.arrival}'. 'steady' schedules everything at t=0, which is "
+                  f"closed-loop by construction.")
+            sys.exit(1)
+        if args.target_rate <= 0:
+            print(f"Error: --open-loop requires a positive --target-rate, got {args.target_rate}.")
+            sys.exit(1)
+    elif args.arrival in OPEN_LOOP_ARRIVALS:
+        print(f"Error: --arrival {args.arrival} describes open-loop offered load, but the run "
+              f"is closed-loop, so --concurrency would still cap it. Pass --open-loop to "
+              f"remove the cap, or use --arrival steady.")
+        sys.exit(1)
+
+    # Warmup width. Under closed loop --concurrency is the real in-flight cap, so
+    # it is the right width. Under open loop it caps nothing, so sizing warmup
+    # from it can miss the batch shapes the run reaches -- default to the upper
+    # bound on in-flight (num_requests), capped to keep warmup affordable.
+    if args.warmup_concurrency is None:
+        if args.load_mode == "open-loop":
+            args.warmup_concurrency = max(1, min(args.num_requests, 64))
+        else:
+            args.warmup_concurrency = args.concurrency
+    elif args.warmup_concurrency < 1:
+        print(f"Error: --warmup-concurrency must be >= 1, got {args.warmup_concurrency}.")
+        sys.exit(1)
+
+    # -1 is the explicit opt-out; otherwise the sampler shares the workload seed
+    # so identical prompts produce identical generations.
+    if args.sampling_seed is None:
+        args.sampling_seed = args.seed
+    elif args.sampling_seed < 0:
+        args.sampling_seed = None
+
     if args.mode:
         if args.mode == "multi-turn":
             print("NOTE: multi-turn mode requires server launched with --enable-prefix-caching (vLLM)")
@@ -663,6 +1027,18 @@ if __name__ == "__main__":
 
     profile = get_profile(args.profile)
     profile_name = profile.name
+    if args.discard_first < 0:
+        print(f"Error: --discard-first must be >= 0, got {args.discard_first}.")
+        sys.exit(1)
+    if args.discard_first and profile.mode == "multi-turn":
+        print(f"Error: --discard-first is not supported for multi-turn profile "
+              f"'{profile_name}'. Every turn has its own barrier transient, so a global "
+              f"first-N has no consistent meaning; use the per-turn breakdown instead.")
+        sys.exit(1)
+    if args.discard_first >= args.num_requests and profile.mode != "multi-turn":
+        print(f"Error: --discard-first {args.discard_first} would hold out every request "
+              f"of {args.num_requests}.")
+        sys.exit(1)
     if args.multi_turn_sessions is not None and args.multi_turn_sessions <= 0:
         print("Error: --multi-turn-sessions must be positive when provided.")
         sys.exit(1)
@@ -707,6 +1083,23 @@ if __name__ == "__main__":
         "enable_ep": enable_ep,
         "ep_size": ep_size,
         "parallelism": parallelism,
+        "load_mode": args.load_mode,
+        "sampling": {
+            "temperature": args.temperature,
+            "sampling_seed": args.sampling_seed,
+            "exact_output_length": args.exact_output_length,
+            "ignore_eos": args.ignore_eos or args.exact_output_length,
+            # v4 and earlier ran temperature=1.0 with no seed and no min_tokens,
+            # so their OSL is not reproducible. Recorded for comparability.
+            "output_length_controlled": args.exact_output_length,
+        },
+        "prefix_cache_reset_before_run": args.reset_prefix_cache,
+        "warmup_style": "profile_shaped_at_concurrency" if args.warmup else "none",
+        "discard_first": args.discard_first,
+        "warmup_concurrency": args.warmup_concurrency,
+        "requests_per_concurrency_slot": (
+            round(args.num_requests / args.concurrency, 2) if args.concurrency else None
+        ),
         "profile_metadata": {
             "dataset": profile.dataset,
             "agent_type": profile.agent_type,
@@ -748,7 +1141,7 @@ if __name__ == "__main__":
     }
 
     if profile.mode == "multi-turn":
-        all_results, results_by_turn, duration = asyncio.run(run_multi_turn_benchmark(
+        all_results, results_by_turn, duration = _run(run_multi_turn_benchmark(
             url=args.url,
             model=args.model,
             profile_name=profile_name,
@@ -766,6 +1159,14 @@ if __name__ == "__main__":
             source_session_ids=source_session_ids,
             max_turn_index=args.max_turn_index,
             trace_request_ids=args.trace_request_ids,
+            load_mode=args.load_mode,
+            arrival_pattern=args.arrival,
+            target_rate=args.target_rate,
+            temperature=args.temperature,
+            sampling_seed=args.sampling_seed,
+            exact_output_length=args.exact_output_length,
+            reset_prefix_cache_first=args.reset_prefix_cache,
+            warmup_concurrency=args.warmup_concurrency,
         ))
 
         summary = aggregate(
@@ -774,11 +1175,15 @@ if __name__ == "__main__":
             model=args.model,
             profile=profile_name,
             concurrency=args.concurrency,
+            load_mode=args.load_mode,
+            target_rate=args.target_rate if args.load_mode == "open-loop" else 0.0,
+            warmup_concurrency=args.warmup_concurrency if args.warmup else 0,
         )
 
         turn_summaries = aggregate_per_turn(results_by_turn)
         print_multi_turn_summary(turn_summaries, summary)
         _check_success_rate(summary, args.min_success_rate)
+        _check_usage_reported(summary, args.allow_missing_usage)
         save_results(summary, all_results, args.output, config)
 
         # Also save per-turn breakdown
@@ -794,7 +1199,7 @@ if __name__ == "__main__":
         print(f"Per-turn results saved to: {turn_output}")
 
     else:
-        results, duration = asyncio.run(run_benchmark(
+        results, duration = _run(run_benchmark(
             url=args.url,
             model=args.model,
             profile_name=profile_name,
@@ -811,7 +1216,20 @@ if __name__ == "__main__":
             max_context_tokens=args.max_context_tokens,
             context_safety_margin_tokens=args.context_safety_margin_tokens,
             trace_request_ids=args.trace_request_ids,
+            load_mode=args.load_mode,
+            temperature=args.temperature,
+            sampling_seed=args.sampling_seed,
+            exact_output_length=args.exact_output_length,
+            reset_prefix_cache_first=args.reset_prefix_cache,
+            warmup_concurrency=args.warmup_concurrency,
         ))
+
+        # Hold out the startup wave by dispatch order. Requests keep their data
+        # in per_request; they simply stop feeding the summary.
+        if args.discard_first:
+            for r in results[:args.discard_first]:
+                if r is not None:
+                    r.excluded_from_summary = True
 
         summary = aggregate(
             results=[r for r in results if r is not None],
@@ -819,8 +1237,13 @@ if __name__ == "__main__":
             model=args.model,
             profile=profile_name,
             concurrency=args.concurrency,
+            load_mode=args.load_mode,
+            target_rate=args.target_rate if args.load_mode == "open-loop" else 0.0,
+            warmup_concurrency=args.warmup_concurrency if args.warmup else 0,
         )
 
         print_summary(summary)
+        _warn_if_transient_dominated(args.num_requests, args.concurrency)
         _check_success_rate(summary, args.min_success_rate)
+        _check_usage_reported(summary, args.allow_missing_usage)
         save_results(summary, results, args.output, config)

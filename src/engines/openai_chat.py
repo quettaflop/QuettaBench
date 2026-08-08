@@ -21,11 +21,13 @@ async def send_request(
     model: str,
     messages: list,
     max_tokens: int,
-    temperature: float = 1.0,
+    temperature: float = 0.0,
     api_key: str = "test",
     extra_headers: Optional[dict] = None,
     ignore_eos: bool = False,
     request_id: Optional[str] = None,
+    seed: Optional[int] = None,
+    min_tokens: int = 0,
 ) -> RequestResult:
     """
     Send a single streaming chat completion request and record metrics.
@@ -33,6 +35,14 @@ async def send_request(
     Parses SSE stream: each `data: {...}` line whose choices[0].delta carries a
     generated payload (content, reasoning_content/reasoning, or tool_calls) is
     one token. First = TTFT. Subsequent = ITL entries.
+
+    Sampling is caller-controlled: `temperature` defaults to greedy and `seed`
+    is forwarded, so re-running the same workload produces the same output
+    lengths. `min_tokens` (with ignore_eos) pins the generated length exactly.
+
+    On failure the partial timings collected before the stream died are kept on
+    the result rather than discarded -- a timeout on the slowest request is
+    exactly the datapoint you need to see.
     """
     headers = {
         "Content-Type": "application/json",
@@ -55,6 +65,10 @@ async def send_request(
         payload["ignore_eos"] = True
     if request_id:
         payload["request_id"] = request_id
+    if seed is not None:
+        payload["seed"] = seed
+    if min_tokens > 0:
+        payload["min_tokens"] = min_tokens
 
     start_time = time.perf_counter()
     ttft = None
@@ -62,6 +76,7 @@ async def send_request(
     last_token_time = None
     input_tokens = 0
     output_tokens = 0
+    usage_reported = False
 
     try:
         async with session.post(url, headers=headers, json=payload) as resp:
@@ -71,6 +86,7 @@ async def send_request(
                     success=False,
                     e2el=time.perf_counter() - start_time,
                     error=f"HTTP {resp.status}: {body[:200]}",
+                    error_kind="http_error",
                 )
 
             async for raw_line in resp.content:
@@ -96,6 +112,7 @@ async def send_request(
                     usage = chunk["usage"]
                     input_tokens = usage.get("prompt_tokens", 0)
                     output_tokens = usage.get("completion_tokens", 0)
+                    usage_reported = True
 
                 choices = chunk.get("choices", [])
                 if not choices:
@@ -135,34 +152,29 @@ async def send_request(
             e2el=e2el,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            usage_reported=usage_reported,
         )
 
     except asyncio.CancelledError:
         raise
     except Exception as e:
+        # Keep whatever the stream already delivered. A timeout truncates the
+        # slowest requests, so discarding their partial TTFT/ITL would erase
+        # the only evidence that the tail was cut off.
+        is_timeout = isinstance(e, asyncio.TimeoutError)
         return RequestResult(
             success=False,
+            ttft=ttft,
+            itl=itl,
             e2el=time.perf_counter() - start_time,
-            error=str(e),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            usage_reported=usage_reported,
+            error=f"timeout after {time.perf_counter() - start_time:.1f}s" if is_timeout else str(e),
+            error_kind="timeout" if is_timeout else "client_error",
         )
 
 
-async def run_warmup(
-    url: str,
-    model: str,
-    api_key: str,
-    num_requests: int = 3,
-    timeout: int = 60,
-) -> None:
-    """Send warmup requests and discard results."""
-    warmup_messages = [{"role": "user", "content": "Hello"}]
-    connector = aiohttp.TCPConnector(limit=num_requests)
-    async with aiohttp.ClientSession(
-        connector=connector,
-        timeout=aiohttp.ClientTimeout(total=timeout),
-    ) as session:
-        tasks = [
-            send_request(session, url, model, warmup_messages, max_tokens=10, api_key=api_key)
-            for _ in range(num_requests)
-        ]
-        await asyncio.gather(*tasks)
+# Warmup lives in the runner (_warmup_with_profile): it needs the dataset and
+# the benchmark's own ClientSession to warm the shapes and connections that are
+# actually measured. A backend-local "Hello" warmup warmed neither.

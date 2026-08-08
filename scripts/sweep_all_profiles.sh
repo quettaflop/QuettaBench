@@ -18,6 +18,13 @@ set -euo pipefail
 # vLLM's default in v0.19+.
 export VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1
 
+# /reset_prefix_cache (used by the runner's --reset-prefix-cache) is only
+# mounted when dev mode is on: vllm/entrypoints/serve/cache/api_router.py
+#   def attach_router(app):
+#       if not envs.VLLM_SERVER_DEV_MODE: return
+# Without this the endpoint 404s and every cell aborts on the reset.
+export VLLM_SERVER_DEV_MODE=1
+
 truthy() {
     [[ "${1:-}" == "1" || "${1:-}" == "true" || "${1:-}" == "yes" || "${1:-}" == "on" ]]
 }
@@ -184,8 +191,14 @@ for PROFILE in $PROFILES; do
             min_loaded_nreq=$(( CONC * 2 ))
             [[ "$local_nreq" -lt "$min_loaded_nreq" ]] && local_nreq="$min_loaded_nreq"
         fi
+        # Warmup is profile-shaped and runs at the cell's concurrency, so size
+        # it with the concurrency instead of a flat 2. Capped to bound cost:
+        # fully warming decode at batch width C needs warmup >= C, which is a
+        # whole extra wave. This warms the large-prefill path and mid widths.
+        local_warmup="$CONC"
+        [[ "$local_warmup" -gt 16 ]] && local_warmup=16
         echo ""
-        echo "=== profile=$PROFILE conc=$CONC nreq=$local_nreq ==="
+        echo "=== profile=$PROFILE conc=$CONC nreq=$local_nreq warmup=$local_warmup ==="
         OPENAI_API_KEY="$API_KEY" "$PY" -m src.benchmark.runner \
             --url        "http://localhost:$PORT/v1/chat/completions" \
             --model      "$MODEL_PATH" \
@@ -200,7 +213,8 @@ for PROFILE in $PROFILES; do
             --context-safety-margin-tokens "$CONTEXT_SAFETY_MARGIN_TOKENS" \
             --gpu-memory-utilization "$GPU_MEM" \
             --tensor-parallel-size "$TP" \
-            --warmup     2 \
+            --reset-prefix-cache \
+            --warmup     "$local_warmup" \
             --timeout    300 \
             --api-key    "$API_KEY" \
             --scope      "$DASHBOARD_SCOPE" \
