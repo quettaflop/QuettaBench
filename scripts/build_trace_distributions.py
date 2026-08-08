@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import statistics
 from collections import Counter, defaultdict
 from dataclasses import dataclass
@@ -37,6 +38,12 @@ TRAJECTORY_SOURCES = {
     # breaking comparability with all existing GT. Point the chat-multiturn* profiles
     # at this file when you want to adopt it (see --skip-chat for the legacy path).
     "chat_multiturn_sharegpt": DATA_DIR / "chat_trajectories.jsonl",
+    # Claw-Eval agent sessions (scripts/build_claweval_trajectories.py). Unlike
+    # the three above, every turn carries server-reported usage, so context
+    # tokens are measured rather than word-ratio estimated -- diagnostics should
+    # show estimated_context_turns == 0. New key, so it cannot overwrite an
+    # in-use distribution (see the note on chat_multiturn_sharegpt above).
+    "claweval_multiturn": DATA_DIR / "claweval_trajectories.jsonl",
 }
 
 CHAT_RESULT_PROFILES = {
@@ -88,6 +95,50 @@ def message_tokens(messages: Iterable[dict[str, Any]]) -> int:
     for msg in messages:
         total += estimate_tokens(msg.get("content", ""))
     return total
+
+
+def prompt_text(messages: Iterable[dict[str, Any]] | None) -> str:
+    """Flatten a message list into the text a prefix cache would see.
+
+    Approximate (no chat template), but only ever used to compute the RATIO of
+    shared leading characters between two consecutive prompts, so template
+    overhead cancels to first order.
+    """
+    parts: list[str] = []
+    for msg in messages or []:
+        parts.append(str(msg.get("role", "")))
+        parts.append(str(msg.get("content", "")))
+    return "\n".join(parts)
+
+
+def cached_tokens_for_turn(
+    *,
+    prev_text: str | None,
+    cur_text: str,
+    previous_context: int,
+    total_context: int,
+) -> tuple[int, str]:
+    """Tokens reusable from the previous turn's prompt, and how we know.
+
+    The historical heuristic was `cached = previous_context`, i.e. "if this turn
+    is bigger than the last, the overlap must be a shared prefix". Measured
+    across ~10,700 turn-pairs that is EXACT for append-style agents (swebench,
+    terminalbench, claweval: gap +0.000) and wrong by +0.625 for osworld, whose
+    3-message window has its observation REPLACED each turn.
+
+    So: if the previous prompt really is a prefix of this one, keep the exact
+    token-domain answer (`previous_context`) -- identical to the old behaviour,
+    no re-baselining for those workloads. Only when it is not a true prefix do we
+    fall back to the measured character ratio.
+    """
+    if not cur_text or prev_text is None:
+        return min(previous_context, total_context), "delta_no_text"
+    if cur_text.startswith(prev_text):
+        # True prefix extension: the whole previous prompt is reusable.
+        return min(previous_context, total_context), "measured_prefix_exact"
+    shared = len(os.path.commonprefix([prev_text, cur_text]))
+    frac = max(0.0, min(1.0, shared / len(cur_text)))
+    return int(round(total_context * frac)), "measured_prefix_partial"
 
 
 def percentile(values: list[float], q: float) -> float:
@@ -164,6 +215,10 @@ def _display_path(path: Path) -> str:
 def build_trajectory_distribution(name: str, path: Path) -> dict[str, Any]:
     sessions: list[SessionSample] = []
     skipped = 0
+    # How each turn's reusable-prefix size was determined. Surfaced in
+    # diagnostics so a distribution states whether its cache_hit_rate was
+    # measured or inferred, rather than leaving that to be rediscovered.
+    cache_method_counts: dict[str, int] = {}
     with path.open("r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
@@ -176,7 +231,19 @@ def build_trajectory_distribution(name: str, path: Path) -> dict[str, Any]:
                 continue
 
             raw_turns = row.get("turns") or []
+            # Tagging each turn with its originating session lets
+            # DistributionalSampler group them and sample WHOLE sessions
+            # (`_source_sessions`) instead of rebuilding one turn-by-turn from
+            # per-turn-index marginals. That preserves within-session structure
+            # -- notably the correlation between session length and per-turn
+            # context, which the marginal path destroys. Measured on Claw-Eval:
+            # marginal reconstruction overstates context p50 by 58.6%.
+            #
+            # Only affects distributions REBUILT after this change; existing
+            # committed JSONs keep the marginal path until regenerated.
+            sid = str(row.get("session_id", len(sessions)))
             turns: list[TurnSample] = []
+            prev_text: str | None = None
             previous_context = 0
             context_decrease_turns = 0
             context_non_growth_turns = 0
@@ -199,8 +266,17 @@ def build_trajectory_distribution(name: str, path: Path) -> dict[str, Any]:
                     context_decrease_turns += 1
                 if turns and total_context <= previous_context:
                     context_non_growth_turns += 1
-                new_prefill = max(1, total_context - previous_context)
+                cur_text = prompt_text(messages)
+                cached, how = cached_tokens_for_turn(
+                    prev_text=prev_text,
+                    cur_text=cur_text,
+                    previous_context=previous_context,
+                    total_context=total_context,
+                )
+                cache_method_counts[how] = cache_method_counts.get(how, 0) + 1
+                new_prefill = max(1, total_context - cached)
                 cache_hit_rate = max(0.0, min(1.0, 1.0 - new_prefill / total_context))
+                prev_text = cur_text or None
                 turns.append(
                     TurnSample(
                         turn_index=int(turn.get("turn_idx", idx)),
@@ -208,6 +284,9 @@ def build_trajectory_distribution(name: str, path: Path) -> dict[str, Any]:
                         new_prefill_tokens=new_prefill,
                         output_tokens=max(1, output_tokens),
                         cache_hit_rate=cache_hit_rate,
+                        source_session_id=sid,
+                        token_source=("raw_input_tokens" if total_context_raw is not None
+                                      else "estimated_word_ratio"),
                     )
                 )
                 previous_context = total_context
@@ -226,13 +305,52 @@ def build_trajectory_distribution(name: str, path: Path) -> dict[str, Any]:
                 )
             )
 
-    return build_distribution_json(
+    # Label provenance by what actually happened rather than always claiming the
+    # word-ratio estimator. Trajectory sources differ: swebench/terminalbench/
+    # osworld carry only `messages` and get estimated, while sources that record
+    # server-reported usage per turn (e.g. claw-eval) are measured. Reporting
+    # "estimated" for a fully-measured source understates its fidelity, and
+    # mixing the two silently would be worse.
+    total_turns = sum(len(s.turns) for s in sessions)
+    est_turns = sum(s.estimated_context_turns for s in sessions)
+    if total_turns and est_turns == 0:
+        token_estimator = "raw_input_tokens (server-reported usage, no estimation)"
+        note = (
+            "total_context_tokens comes from per-turn input_tokens reported by the "
+            "serving engine, so it preserves that server's tokenizer and "
+            "chat-template accounting."
+        )
+    elif est_turns == total_turns:
+        token_estimator = "estimated_tokens = int(word_count * 1.35)"
+        note = "No per-turn input_tokens in source; all context sizes are word-ratio estimates."
+    else:
+        token_estimator = (
+            "mixed: raw input_tokens where present, else int(word_count * 1.35) "
+            f"({est_turns}/{total_turns} turns estimated)"
+        )
+        note = "Source mixes measured and estimated context sizes; see diagnostics."
+
+    partial = cache_method_counts.get("measured_prefix_partial", 0)
+    total_pairs = sum(cache_method_counts.values())
+    if partial:
+        note = (note or "") + (
+            f" cache_hit_rate: {partial}/{total_pairs} turns are NOT prefix "
+            f"extensions of their predecessor (replace-style context); their "
+            f"reusable prefix was measured directly rather than inferred from "
+            f"size deltas."
+        )
+
+    payload = build_distribution_json(
         name=name,
         source_kind="trajectory_jsonl",
         source_path=path,
         sessions=sessions,
         skipped_sessions=skipped,
+        token_estimator=token_estimator,
+        note=note,
     )
+    payload["diagnostics"]["cache_hit_method"] = dict(sorted(cache_method_counts.items()))
+    return payload
 
 
 def build_chat_distribution_from_results(name: str, path: Path) -> dict[str, Any] | None:
