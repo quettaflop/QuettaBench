@@ -406,11 +406,23 @@ async def run_multi_turn_benchmark(
             silently shorten every subsequent prompt — a workload change disguised
             as a fidelity improvement.
             """
-            text = result.generated_text
-            if not text:
-                return
             session = sessions_by_id.get(sid)
             if session is None:
+                return
+            if not getattr(session, "assistant_messages", None):
+                # Refuse rather than quietly measuring the unfixed workload. Reply
+                # feedback silently doing nothing looks exactly like it working, and
+                # the only symptom is prefill numbers that are 4.6x too high --
+                # which is the thing this flag exists to remove.
+                raise RuntimeError(
+                    "--reply-feedback was requested but this dataset exposes no "
+                    "assistant placeholders to replace. Only the synthetic "
+                    "distributional sampler builds them; trace-replay datasets take "
+                    "their assistant turns from the trace, where substituting the "
+                    "model's own output would stop them replaying it."
+                )
+            text = result.generated_text
+            if not text:
                 return
             if t_idx < len(session.assistant_messages):
                 session.assistant_messages[t_idx]["content"] = text

@@ -481,6 +481,14 @@ class MultiTurnSession:
     """A single multi-turn conversation: list of requests with growing history."""
     session_id: int
     turns: list[BenchmarkRequest]  # turn[0] = 1 msg, turn[1] = 3 msgs, turn[2] = 5 msgs, ...
+    assistant_messages: list[dict] = field(default_factory=list)
+    """Each turn's assistant message, as the live dict the later turns' lists hold.
+
+    Populated only by the synthetic sampler, whose assistant turns are invented
+    before the run and are therefore the ones `--reply-feedback` replaces with what
+    the engine actually said. Trace-replay datasets leave it empty on purpose: their
+    assistant turns come from the trace, and substituting the model's own output
+    would stop them replaying the trace at all."""
 
 
 class ShareGPTMultiTurnDataset(BaseDataset):
@@ -834,7 +842,8 @@ class DistributionalMultiTurnDataset(BaseDataset):
             else:
                 synthetic_sessions = sampler.sample_sessions(self.num_sessions)
             self._sessions = [
-                MultiTurnSession(session_id=s.session_id, turns=s.turns)
+                MultiTurnSession(session_id=s.session_id, turns=s.turns,
+                                 assistant_messages=s.assistant_messages)
                 for s in synthetic_sessions
                 if s.turns
             ]

@@ -22,8 +22,8 @@ class WhitespaceTokenizer:
         return text.split()
 
 
-def fixture_distribution():
-    payload = {
+def fixture_payload():
+    return {
         "schema_version": 1,
         "name": "fixture_multiturn",
         "source": {"kind": "unit-test"},
@@ -55,7 +55,11 @@ def fixture_distribution():
             ],
         },
     }
-    return parse_trace_distribution(payload, path=Path("fixture.json"))
+
+
+def fixture_distribution():
+    return parse_trace_distribution(fixture_payload(), path=Path("fixture.json"))
+
 
 
 def source_session_fixture_distribution():
@@ -170,6 +174,41 @@ class DistributionalSamplerTests(unittest.TestCase):
         # Every later turn carries it, so every later turn moves.
         for a, b in zip(after[1:], before[1:]):
             self.assertLess(a, b)
+
+    def test_dataset_carries_placeholders_into_multiturnsession(self):
+        """The runner sees `MultiTurnSession`, not `SyntheticSession`.
+
+        Testing the sampler alone is one layer too low, and that gap shipped: the
+        placeholders were added to `SyntheticSession`, the conversion in
+        `DistributionalMultiTurnDataset` dropped them, and every request died with
+        `AttributeError: 'MultiTurnSession' object has no attribute
+        'assistant_messages'` — after a model load and a GPU claim. The runner now
+        refuses when the list is missing rather than measuring the unfixed workload,
+        and this pins the layer it actually reads.
+        """
+        import json
+        import tempfile
+
+        from src.workloads.dataset import DistributionalMultiTurnDataset
+
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
+            json.dump(fixture_payload(), fh)
+            path = fh.name
+
+        dataset = DistributionalMultiTurnDataset(
+            filepath=path, min_turns=1, num_sessions=2, random_seed=7,
+        )
+        sessions = dataset.sessions
+        self.assertTrue(sessions)
+        for session in sessions:
+            self.assertEqual(len(session.assistant_messages), len(session.turns))
+            # The dicts must be the ones the later turns hold, not copies.
+            if len(session.turns) > 1:
+                session.assistant_messages[0]["content"] = "spliced"
+                self.assertIn(
+                    "spliced",
+                    [m.get("content") for m in session.turns[1].messages],
+                )
 
     def test_request_metadata_matches_synthetic_turn_specs(self):
         sampler = DistributionalSampler(fixture_distribution(), seed=7)
