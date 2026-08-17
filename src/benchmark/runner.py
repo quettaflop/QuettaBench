@@ -204,6 +204,7 @@ async def run_multi_turn_benchmark(
     max_turn_index: int | None = None,
     trace_request_ids: bool = False,
     turn_pacing: str = "interleaved",
+    reply_feedback: bool = False,
 ):
     """
     Run a multi-turn benchmark. Two scheduling modes, measuring different things.
@@ -236,6 +237,27 @@ async def run_multi_turn_benchmark(
 
     The mode is recorded in the result metadata, because the two are not comparable
     and a number without it cannot be placed.
+
+    ``reply_feedback`` (default False, unchanged behaviour) decides what the
+    assistant turns of the transcript contain, and it is worth as much as the
+    pacing. Off, every assistant turn is synthetic text planned before the run:
+    the engine never generated it, so it is not in the prefix cache, and turn N+1
+    recomputes the reply as well as the new user message. On, the reply the engine
+    actually produced goes back into the transcript, which is what a chat client
+    sends and what the engine already holds KV for — so turn N+1 recomputes only
+    the new user message.
+
+    Measured on B200/Llama-3.1-8B, chat profile: the synthetic reply is 49-70% of
+    every turn's new prefill, 4.6x over a whole run. Agentic profiles move 2-8%,
+    because there most of a turn's new prefill stands in for a tool result, which a
+    real agent loop must prefill too.
+
+    The cost is determinism. Planned context lengths assume the reply is exactly
+    ``output_tokens`` long; a real reply is whatever the model produced, and stops
+    at EOS unless ``ignore_eos``. So the *shape* of the workload stops being
+    reproducible across models and becomes a property of the run — which is why
+    this is off by default, and why the per-request records report the context that
+    actually happened rather than the plan.
 
     Returns (results_by_turn, duration) where results_by_turn is a dict
     mapping turn_index → list[RequestResult].
@@ -289,6 +311,7 @@ async def run_multi_turn_benchmark(
         # results_by_turn[turn_idx] = list of RequestResult
         results_by_turn: dict[int, list] = {i: [] for i in range(max_turns)}
         previous_context_by_session: dict[int, int] = {}
+        sessions_by_id = {s.session_id: s for s in sessions}
         benchmark_start = time.perf_counter()
 
         async def dispatch(
@@ -309,6 +332,7 @@ async def run_multi_turn_benchmark(
                     max_tokens=request.max_tokens,
                     api_key=api_key,
                     ignore_eos=ignore_eos,
+                    capture_text=reply_feedback,
                     request_id=(
                         make_trace_request_id(
                             profile_name=profile_name,
@@ -349,6 +373,31 @@ async def run_multi_turn_benchmark(
             results_by_turn[t_idx].append(result)
             if result is not None and result.success and result.input_tokens > 0:
                 previous_context_by_session[sid] = int(result.input_tokens)
+            if reply_feedback and result is not None and result.success:
+                _feed_reply_back(sid, t_idx, result)
+
+        def _feed_reply_back(sid: int, t_idx: int, result) -> None:
+            """Put the engine's own reply where the synthetic one was.
+
+            The assistant dict is shared by every later turn's message list
+            (`list(messages)` is a shallow copy), so one assignment fixes the whole
+            remaining transcript. Both pacing modes reach here before the next turn
+            is dispatched: per-session because a session's turns are sequential,
+            interleaved because the barrier waits for all of turn N first.
+
+            An empty reply is left alone rather than written through. A model can
+            legitimately return nothing, and replacing planned text with "" would
+            silently shorten every subsequent prompt — a workload change disguised
+            as a fidelity improvement.
+            """
+            text = result.generated_text
+            if not text:
+                return
+            session = sessions_by_id.get(sid)
+            if session is None:
+                return
+            if t_idx < len(session.assistant_messages):
+                session.assistant_messages[t_idx]["content"] = text
 
         if turn_pacing == "interleaved":
             # All sessions' turn N, barrier, then turn N+1.
@@ -641,6 +690,16 @@ def get_args():
                              "barrier, as a real chat client does. Not "
                              "comparable to each other; see "
                              "run_multi_turn_benchmark.")
+    parser.add_argument("--reply-feedback", action="store_true",
+                        help="multi-turn: put the model's OWN reply into the next "
+                             "turn's transcript instead of synthetic text. What a "
+                             "chat client does, and the engine already holds KV for "
+                             "it, so the next turn recomputes only the new user "
+                             "message. Off, the reply is planned text the engine "
+                             "never generated, and every turn recomputes it: 49-70% "
+                             "of new prefill on the chat profile, 4.6x over a run. "
+                             "Costs reproducibility, since context lengths then "
+                             "depend on what the model actually said.")
     parser.add_argument("--target-rate", type=float, default=10.0, help="req/s for poisson/ramp")
     parser.add_argument("--warmup", type=int, default=3)
     parser.add_argument("--seed", type=int, default=42)
@@ -805,6 +864,12 @@ if __name__ == "__main__":
         "enable_ep": enable_ep,
         "ep_size": ep_size,
         "parallelism": parallelism,
+        # Recorded because each changes what the benchmark measures, and an
+        # unrecorded knob makes old results unidentifiable: telling whether an
+        # earlier run was barriered took the commit date of the flag that
+        # introduced pacing, since the snapshot did not say.
+        "turn_pacing": args.turn_pacing,
+        "reply_feedback": args.reply_feedback,
         "profile_metadata": {
             "dataset": profile.dataset,
             "agent_type": profile.agent_type,
@@ -863,6 +928,7 @@ if __name__ == "__main__":
             num_sessions=effective_num_sessions,
             source_session_ids=source_session_ids,
             turn_pacing=args.turn_pacing,
+            reply_feedback=args.reply_feedback,
             max_turn_index=args.max_turn_index,
             trace_request_ids=args.trace_request_ids,
         ))

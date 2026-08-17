@@ -142,6 +142,35 @@ class DistributionalSamplerTests(unittest.TestCase):
         self.assertAlmostEqual(specs[1].cache_hit_rate, 100 / 150)
         self.assertAlmostEqual(specs[2].cache_hit_rate, 150 / 190)
 
+    def test_assistant_placeholders_are_the_live_dicts(self):
+        """`reply_feedback` assigns through these, so they must be the objects the
+        later turns' message lists hold, not copies.
+
+        The sampler plans a whole conversation up front, assistant turns included,
+        so the engine never sees the reply it generated and turn N+1 recomputes it.
+        Feeding the real reply back is one assignment per turn *only* because
+        `BenchmarkRequest(messages=list(messages))` is a shallow copy. If that ever
+        became a deep copy, reply feedback would stop working silently — no error,
+        just the old prefill numbers back.
+        """
+        sampler = DistributionalSampler(fixture_distribution(), seed=7)
+        session = sampler.sample_session(session_id=3)
+
+        self.assertEqual(len(session.assistant_messages), len(session.turns))
+
+        def chars(messages):
+            return sum(len(str(m.get("content", ""))) for m in messages)
+
+        before = [chars(turn.messages) for turn in session.turns]
+        session.assistant_messages[0]["content"] = "ok."
+        after = [chars(turn.messages) for turn in session.turns]
+
+        # Turn 0's prompt was built before that reply existed.
+        self.assertEqual(after[0], before[0])
+        # Every later turn carries it, so every later turn moves.
+        for a, b in zip(after[1:], before[1:]):
+            self.assertLess(a, b)
+
     def test_request_metadata_matches_synthetic_turn_specs(self):
         sampler = DistributionalSampler(fixture_distribution(), seed=7)
         session = sampler.sample_session(session_id=11)
@@ -565,3 +594,4 @@ class DistributionalMultiTurnDatasetTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -12,7 +12,7 @@ import os
 import random
 import hashlib
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .dataset import BenchmarkRequest
 from .trace_distributions import TraceDistribution, TraceTurnSample
@@ -93,6 +93,25 @@ class SyntheticSession:
     session_id: int
     turns: list[BenchmarkRequest]
     specs: list[SyntheticTurnSpec]
+    assistant_messages: list[dict] = field(default_factory=list)
+    """The synthetic assistant message for each turn, as the live dict object.
+
+    A whole conversation is planned before the run starts, assistant turns
+    included, and the engine never sees the reply it actually generated. That
+    costs a prefix-cache hit a real client would get: the reply IS in the KV
+    cache, because the engine produced it, so a real turn N+1 recomputes only the
+    new user message. Synthesising the reply instead makes turn N+1 recompute the
+    reply too. On the B200 chat profile that is 49-70% of every turn's prefill,
+    and 4.6x over a whole run.
+
+    These are the same dict objects the later turns' message lists hold — turns
+    are built with `list(messages)`, a shallow copy — so assigning
+    `assistant_messages[t]["content"]` fixes turn t+1 and every turn after it.
+    `runner.py` does that when `reply_feedback` is on.
+
+    Agentic profiles are much less affected (2-8%), because there the bulk of a
+    turn's new prefill stands in for a tool result, which a real agent loop does
+    have to prefill: the engine did not generate it either."""
 
 
 class DistributionalSampler:
@@ -236,6 +255,7 @@ class DistributionalSampler:
 
         turns: list[BenchmarkRequest] = []
         specs: list[SyntheticTurnSpec] = []
+        assistant_messages: list[dict] = []
         previous_prompt_context = sum(self._tokenize(str(m.get("content", ""))) for m in messages)
         previous_output_tokens = 0
 
@@ -325,14 +345,17 @@ class DistributionalSampler:
                 f"s{session_id}_t{synthetic_turn_index}_assistant",
                 output_tokens,
             )
-            messages.append({"role": "assistant", "content": assistant_text})
+            assistant_message = {"role": "assistant", "content": assistant_text}
+            messages.append(assistant_message)
+            assistant_messages.append(assistant_message)
             previous_prompt_context = actual_total_context
             previous_output_tokens = output_tokens
 
             if truncated:
                 break
 
-        return SyntheticSession(session_id=session_id, turns=turns, specs=specs)
+        return SyntheticSession(session_id=session_id, turns=turns, specs=specs,
+                                assistant_messages=assistant_messages)
 
     def _prompt_token_budget(self, output_tokens: int) -> int | None:
         """Return max prompt tokens after reserving output and tokenizer headroom."""

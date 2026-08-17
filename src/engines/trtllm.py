@@ -52,6 +52,7 @@ async def send_request(
     api_key: str = "test",
     extra_headers: Optional[dict] = None,
     ignore_eos: bool = False,
+    capture_text: bool = False,
 ) -> RequestResult:
     """
     Send a single streaming request to TRT-LLM and record metrics.

@@ -24,6 +24,14 @@ class RequestResult:
     output_tokens: int = 0
     error: Optional[str] = None
 
+    # The assistant text the model actually produced, kept only when the caller
+    # asks for it (`capture_text=True`). Multi-turn with `reply_feedback` needs it:
+    # the next turn's prompt has to contain the reply the ENGINE generated, or its
+    # KV is not in the prefix cache and the turn recomputes it. Never written to
+    # the result JSON — `runner.py`'s per_request block lists fields explicitly —
+    # because it is transcript content, not a measurement.
+    generated_text: Optional[str] = None
+
     # Client-side request shape/timing. These do not replace TTFT/TPOT/E2EL;
     # they explain scheduler pressure and workload shape for later predictors.
     request_index: Optional[int] = None
