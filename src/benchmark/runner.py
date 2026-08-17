@@ -327,6 +327,10 @@ async def run_multi_turn_benchmark(
         # results_by_turn[turn_idx] = list of RequestResult
         results_by_turn: dict[int, list] = {i: [] for i in range(max_turns)}
         previous_context_by_session: dict[int, int] = {}
+        # How many tokens the engine generated for this session's previous turn.
+        # With reply feedback that output is part of the reusable prefix, because
+        # the engine still holds its KV.
+        previous_output_by_session: dict[int, int] = {}
         sessions_by_id = {s.session_id: s for s in sessions}
         benchmark_start = time.perf_counter()
 
@@ -377,6 +381,8 @@ async def run_multi_turn_benchmark(
                 turn_index=t_idx,
                 previous_context_tokens=previous_context_tokens,
                 cache_block_size=cache_block_size,
+                previous_output_tokens=previous_output_by_session.get(session_id, 0),
+                reply_in_cache=reply_feedback,
             )
             return session_id, t_idx, result
 
@@ -389,6 +395,7 @@ async def run_multi_turn_benchmark(
             results_by_turn[t_idx].append(result)
             if result is not None and result.success and result.input_tokens > 0:
                 previous_context_by_session[sid] = int(result.input_tokens)
+                previous_output_by_session[sid] = int(result.output_tokens or 0)
             if reply_feedback and result is not None and result.success:
                 _feed_reply_back(sid, t_idx, result)
 

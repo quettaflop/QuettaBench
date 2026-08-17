@@ -634,3 +634,50 @@ class DistributionalMultiTurnDatasetTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 
+
+
+class CacheEstimateTests(unittest.TestCase):
+    """What the client is allowed to call cached depends on who wrote the reply.
+
+    The estimate exists because the serving API exposes no prefix-cache telemetry.
+    It was hardcoded to the synthetic case — prefix stops at the previous prompt —
+    and with --reply-feedback that understates the hit by the whole reply, which on
+    the chat profile is most of the column. A run recorded with feedback on and this
+    unfixed reports ~230 newly-prefilled tokens per turn where the engine actually
+    recomputed ~30, i.e. exactly the number the flag was added to change.
+    """
+
+    def _result(self, input_tokens=1000):
+        from src.benchmark.metrics import RequestResult
+        return RequestResult(success=True, input_tokens=input_tokens, output_tokens=200)
+
+    def test_synthetic_reply_is_not_reusable(self):
+        from src.benchmark.metrics import annotate_multi_turn_cache_estimate
+        r = annotate_multi_turn_cache_estimate(
+            self._result(1000), session_id=0, turn_index=1,
+            previous_context_tokens=770, previous_output_tokens=200,
+            reply_in_cache=False)
+        self.assertEqual(r.cached_context_tokens, 770)
+        self.assertEqual(r.new_prefill_tokens, 230)   # reply + new user message
+        self.assertEqual(r.cache_estimate_source, "previous_prompt_tokens")
+
+    def test_the_engines_own_reply_is_reusable(self):
+        from src.benchmark.metrics import annotate_multi_turn_cache_estimate
+        r = annotate_multi_turn_cache_estimate(
+            self._result(1000), session_id=0, turn_index=1,
+            previous_context_tokens=770, previous_output_tokens=200,
+            reply_in_cache=True)
+        self.assertEqual(r.cached_context_tokens, 970)
+        self.assertEqual(r.new_prefill_tokens, 30)    # the new user message alone
+        self.assertEqual(r.cache_estimate_source, "previous_prompt_and_reply_tokens")
+
+    def test_reusable_prefix_cannot_exceed_the_prompt(self):
+        """A reply longer than the next prompt's growth would otherwise produce a
+        negative amount of new work."""
+        from src.benchmark.metrics import annotate_multi_turn_cache_estimate
+        r = annotate_multi_turn_cache_estimate(
+            self._result(800), session_id=0, turn_index=1,
+            previous_context_tokens=770, previous_output_tokens=200,
+            reply_in_cache=True)
+        self.assertEqual(r.cached_context_tokens, 800)
+        self.assertEqual(r.new_prefill_tokens, 0)
