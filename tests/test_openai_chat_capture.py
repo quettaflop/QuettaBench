@@ -74,6 +74,42 @@ def _run(session):
     ))
 
 
+class PinnedOutputTests(unittest.TestCase):
+    """min_tokens has to reach the payload, and per request.
+
+    vLLM's own multi-turn benchmark computes min_tokens and max_tokens from the
+    dataset answer and sets them equal, then never sends min_tokens -- the line is
+    commented out -- so its output length is whatever the model chose after all. The
+    intent is only worth anything if the parameter arrives.
+    """
+
+    def test_min_tokens_is_sent_when_given(self):
+        session = _Session(_sse([_delta("a")]))
+        asyncio.run(send_request(
+            session=session, url="http://stub/v1/chat/completions", model="m",
+            messages=[{"role": "user", "content": "hi"}], max_tokens=120,
+            min_tokens=120))
+        self.assertEqual(session.payload["min_tokens"], 120)
+        self.assertEqual(session.payload["max_tokens"], 120)
+
+    def test_absent_unless_asked(self):
+        session = _Session(_sse([_delta("a")]))
+        asyncio.run(send_request(
+            session=session, url="http://stub/v1/chat/completions", model="m",
+            messages=[{"role": "user", "content": "hi"}], max_tokens=120))
+        self.assertNotIn("min_tokens", session.payload)
+
+    def test_each_turn_keeps_its_own_length(self):
+        """Pinning removes the early stop, not the variation between turns."""
+        for planned in (37, 204, 91):
+            session = _Session(_sse([_delta("a")]))
+            asyncio.run(send_request(
+                session=session, url="http://stub/v1/chat/completions", model="m",
+                messages=[{"role": "user", "content": "hi"}], max_tokens=planned,
+                min_tokens=planned))
+            self.assertEqual(session.payload["min_tokens"], planned)
+
+
 class CaptureTextTests(unittest.TestCase):
     def test_content_deltas_are_joined(self):
         r = _run(_Session(_sse([

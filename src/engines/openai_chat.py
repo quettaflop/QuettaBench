@@ -27,6 +27,7 @@ async def send_request(
     ignore_eos: bool = False,
     request_id: Optional[str] = None,
     capture_text: bool = False,
+    min_tokens: Optional[int] = None,
 ) -> RequestResult:
     """
     Send a single streaming chat completion request and record metrics.
@@ -56,6 +57,13 @@ async def send_request(
         payload["ignore_eos"] = True
     if request_id:
         payload["request_id"] = request_id
+
+    if min_tokens is not None:
+        # vLLM sampling parameter: no EOS until this many tokens have been emitted.
+        # Set equal to max_tokens, it pins the output length instead of leaving it to
+        # wherever the model happens to stop -- which is what makes a planned
+        # workload actually run at its planned size.
+        payload["min_tokens"] = int(min_tokens)
 
     start_time = time.perf_counter()
     ttft = None

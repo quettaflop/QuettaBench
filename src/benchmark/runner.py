@@ -221,6 +221,7 @@ async def run_multi_turn_benchmark(
     trace_request_ids: bool = False,
     turn_pacing: str = "interleaved",
     reply_feedback: bool = False,
+    pin_output_tokens: bool = True,
 ):
     """
     Run a multi-turn benchmark. Two scheduling modes, measuring different things.
@@ -353,6 +354,7 @@ async def run_multi_turn_benchmark(
                     api_key=api_key,
                     ignore_eos=ignore_eos,
                     capture_text=reply_feedback,
+                    min_tokens=request.max_tokens if pin_output_tokens else None,
                     request_id=(
                         make_trace_request_id(
                             profile_name=profile_name,
@@ -726,6 +728,16 @@ def get_args():
                              "barrier, as a real chat client does. Not "
                              "comparable to each other; see "
                              "run_multi_turn_benchmark.")
+    parser.add_argument("--no-pin-output-tokens", dest="pin_output_tokens",
+                        action="store_false",
+                        help="stop sending min_tokens = max_tokens. Pinning is the "
+                             "default: without it the model ends each turn wherever "
+                             "it likes, so the planned context lengths describe a run "
+                             "that did not happen and two runs of one config are not "
+                             "the same workload (195.9 asked vs 185.7 produced on "
+                             "B200/Llama-3.1-8B). Per turn, from that turn's own "
+                             "sample, so the distribution over output lengths is "
+                             "unchanged -- only the early stop is removed.")
     parser.add_argument("--reply-feedback", action="store_true",
                         help="multi-turn: put the model's OWN reply into the next "
                              "turn's transcript instead of synthetic text. What a "
@@ -906,6 +918,7 @@ if __name__ == "__main__":
         # introduced pacing, since the snapshot did not say.
         "turn_pacing": args.turn_pacing,
         "reply_feedback": args.reply_feedback,
+        "pin_output_tokens": args.pin_output_tokens,
         "profile_metadata": {
             "dataset": profile.dataset,
             "agent_type": profile.agent_type,
@@ -965,6 +978,7 @@ if __name__ == "__main__":
             source_session_ids=source_session_ids,
             turn_pacing=args.turn_pacing,
             reply_feedback=args.reply_feedback,
+            pin_output_tokens=args.pin_output_tokens,
             max_turn_index=args.max_turn_index,
             trace_request_ids=args.trace_request_ids,
         ))

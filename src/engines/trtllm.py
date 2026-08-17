@@ -53,6 +53,7 @@ async def send_request(
     extra_headers: Optional[dict] = None,
     ignore_eos: bool = False,
     capture_text: bool = False,
+    min_tokens: Optional[int] = None,
 ) -> RequestResult:
     """
     Send a single streaming request to TRT-LLM and record metrics.
