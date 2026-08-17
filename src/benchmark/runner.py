@@ -220,7 +220,6 @@ async def run_multi_turn_benchmark(
     max_turn_index: int | None = None,
     trace_request_ids: bool = False,
     turn_pacing: str = "interleaved",
-    reply_feedback: bool = True,
     pin_output_tokens: bool = True,
 ):
     """
@@ -255,19 +254,22 @@ async def run_multi_turn_benchmark(
     The mode is recorded in the result metadata, because the two are not comparable
     and a number without it cannot be placed.
 
-    ``reply_feedback`` (default False, unchanged behaviour) decides what the
-    assistant turns of the transcript contain, and it is worth as much as the
-    pacing. Off, every assistant turn is synthetic text planned before the run:
-    the engine never generated it, so it is not in the prefix cache, and turn N+1
-    recomputes the reply as well as the new user message. On, the reply the engine
+    **The assistant turns are the engine's own output.** Whatever it generates for
+    turn N is what turn N+1 sends back, because that is what a chat client does and
+    what the engine already holds KV for -- so turn N+1 recomputes only the new user
+    message. There is no option to send invented assistant text instead: the engine
+    never generated it, so it is not in the prefix cache, and every turn then
+    recomputes a reply a real client would have had cached.
     actually produced goes back into the transcript, which is what a chat client
     sends and what the engine already holds KV for — so turn N+1 recomputes only
     the new user message.
 
-    Measured on B200/Llama-3.1-8B, chat profile: the synthetic reply is 49-70% of
-    every turn's new prefill, 4.6x over a whole run. Agentic profiles move 2-8%,
-    because there most of a turn's new prefill stands in for a tool result, which a
-    real agent loop must prefill too.
+    Measured on B200/Llama-3.1-8B chat, C=1: 41.7 tokens recomputed per turn, against
+    230 when the assistant text was invented -- and 41.7 is the new user message, all
+    of it. Agentic profiles move only 2-8%, because there most of a turn's new prefill
+    stands in for a tool result, which a real agent loop must prefill too: nothing
+    generated it either. That is the one place invented text belongs, and it is still
+    used for it.
 
     The cost is determinism. Planned context lengths assume the reply is exactly
     ``output_tokens`` long; a real reply is whatever the model produced, and stops
@@ -356,7 +358,7 @@ async def run_multi_turn_benchmark(
                     max_tokens=request.max_tokens,
                     api_key=api_key,
                     ignore_eos=ignore_eos,
-                    capture_text=reply_feedback,
+                    capture_text=True,
                     min_tokens=request.max_tokens if pin_output_tokens else None,
                     request_id=(
                         make_trace_request_id(
@@ -387,7 +389,10 @@ async def run_multi_turn_benchmark(
                 previous_context_tokens=previous_context_tokens,
                 cache_block_size=cache_block_size,
                 previous_output_tokens=previous_output_by_session.get(session_id, 0),
-                reply_in_cache=reply_feedback,
+                # Per session, not per run: whether the reply is reusable depends on
+                # whether it was the engine's own, and a trace-replay dataset's is not.
+                reply_in_cache=bool(
+                    getattr(sessions_by_id.get(session_id), "assistant_messages", None)),
             )
             return session_id, t_idx, result
 
@@ -396,13 +401,21 @@ async def run_multi_turn_benchmark(
             last = n_turns - 1
             return last if max_turn_index is None else min(last, max_turn_index)
 
+        # A session whose turn failed has no reply for it, so the transcript from
+        # that point on is missing an assistant message and every later prompt would
+        # be short by it. per-session already breaks its own loop; interleaved needs
+        # to be told.
+        dead_sessions: set[int] = set()
+
         def _record(sid: int, t_idx: int, result) -> None:
             results_by_turn[t_idx].append(result)
             if result is not None and result.success and result.input_tokens > 0:
                 previous_context_by_session[sid] = int(result.input_tokens)
                 previous_output_by_session[sid] = int(result.output_tokens or 0)
-            if reply_feedback and result is not None and result.success:
+            if result is not None and result.success:
                 _feed_reply_back(sid, t_idx, result)
+            else:
+                dead_sessions.add(sid)
 
         def _feed_reply_back(sid: int, t_idx: int, result) -> None:
             """Put the engine's own reply where the synthetic one was.
@@ -448,6 +461,8 @@ async def run_multi_turn_benchmark(
                     break
                 turn_requests = []
                 for conv_session in sessions:
+                    if conv_session.session_id in dead_sessions:
+                        continue
                     if turn_idx < len(conv_session.turns):
                         turn_requests.append(
                             (conv_session.session_id, conv_session.turns[turn_idx])
@@ -743,16 +758,6 @@ def get_args():
                              "B200/Llama-3.1-8B). Per turn, from that turn's own "
                              "sample, so the distribution over output lengths is "
                              "unchanged -- only the early stop is removed.")
-    parser.add_argument("--no-reply-feedback", dest="reply_feedback",
-                        action="store_false",
-                        help="multi-turn: send synthetic assistant text instead of "
-                             "the model's own reply. The default is to feed the real "
-                             "reply back, as vLLM's own multi-turn benchmark does, "
-                             "because the engine holds KV for what it generated and a "
-                             "real chat client sends it back -- so the next turn "
-                             "recomputes only the new user message (41.7 tokens "
-                             "measured, against 230 with synthetic text). Opt out "
-                             "only to reproduce a run recorded the old way.")
     parser.add_argument("--target-rate", type=float, default=10.0, help="req/s for poisson/ramp")
     parser.add_argument("--warmup", type=int, default=3)
     parser.add_argument("--seed", type=int, default=42)
@@ -922,7 +927,6 @@ if __name__ == "__main__":
         # earlier run was barriered took the commit date of the flag that
         # introduced pacing, since the snapshot did not say.
         "turn_pacing": args.turn_pacing,
-        "reply_feedback": args.reply_feedback,
         "pin_output_tokens": args.pin_output_tokens,
         "profile_metadata": {
             "dataset": profile.dataset,
@@ -982,7 +986,6 @@ if __name__ == "__main__":
             num_sessions=effective_num_sessions,
             source_session_ids=source_session_ids,
             turn_pacing=args.turn_pacing,
-            reply_feedback=args.reply_feedback,
             pin_output_tokens=args.pin_output_tokens,
             max_turn_index=args.max_turn_index,
             trace_request_ids=args.trace_request_ids,

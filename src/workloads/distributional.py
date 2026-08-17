@@ -341,11 +341,12 @@ class DistributionalSampler:
                 )
             )
 
-            assistant_text = self._synthetic_text(
-                f"s{session_id}_t{synthetic_turn_index}_assistant",
-                output_tokens,
-            )
-            assistant_message = {"role": "assistant", "content": assistant_text}
+            # Empty on purpose. The engine's own reply is written here before the
+            # next turn is sent, and the planned length is `output_tokens` from the
+            # sample -- it was never read off this text. Inventing assistant prose
+            # only to overwrite it cost a tokenizer round trip per turn and made the
+            # unfixed behaviour look like a supported mode.
+            assistant_message = {"role": "assistant", "content": ""}
             messages.append(assistant_message)
             assistant_messages.append(assistant_message)
             previous_prompt_context = actual_total_context

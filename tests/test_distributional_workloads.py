@@ -162,18 +162,21 @@ class DistributionalSamplerTests(unittest.TestCase):
 
         self.assertEqual(len(session.assistant_messages), len(session.turns))
 
-        def chars(messages):
-            return sum(len(str(m.get("content", ""))) for m in messages)
+        # The placeholders start empty -- the sampler no longer invents assistant
+        # prose, because the engine's own reply overwrites it before the turn that
+        # would carry it is sent. So assert the sharing directly rather than a
+        # direction of change.
+        for message in session.assistant_messages:
+            self.assertEqual(message["content"], "")
 
-        before = [chars(turn.messages) for turn in session.turns]
-        session.assistant_messages[0]["content"] = "ok."
-        after = [chars(turn.messages) for turn in session.turns]
+        session.assistant_messages[0]["content"] = "SPLICED"
 
         # Turn 0's prompt was built before that reply existed.
-        self.assertEqual(after[0], before[0])
-        # Every later turn carries it, so every later turn moves.
-        for a, b in zip(after[1:], before[1:]):
-            self.assertLess(a, b)
+        self.assertNotIn("SPLICED",
+                         [m.get("content") for m in session.turns[0].messages])
+        # Every later turn holds the same dict, so every later turn sees it.
+        for turn in session.turns[1:]:
+            self.assertIn("SPLICED", [m.get("content") for m in turn.messages])
 
     def test_dataset_carries_placeholders_into_multiturnsession(self):
         """The runner sees `MultiTurnSession`, not `SyntheticSession`.
