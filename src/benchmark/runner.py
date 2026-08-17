@@ -185,6 +185,22 @@ async def run_benchmark(
     return results, benchmark_duration
 
 
+def _first_error(results) -> str:
+    """The first recorded error, for an abort message that names a cause.
+
+    Both abort paths used to say only "Server may not be functional", which is a
+    guess and was wrong the one time it mattered: a client-side NameError in the
+    streaming loop was caught by `send_request`'s blanket `except`, turned into
+    `success=False`, and reported as a server problem. The error text is already
+    on every RequestResult; printing it costs nothing and points at the right half
+    of the system.
+    """
+    for r in results:
+        if r is not None and not r.success and r.error:
+            return str(r.error)
+    return "no error text recorded"
+
+
 async def run_multi_turn_benchmark(
     url: str,
     model: str,
@@ -434,8 +450,9 @@ async def run_multi_turn_benchmark(
                 turn_fail = len(completed) - turn_ok
                 if turn_fail == len(completed):
                     print(
-                        f"ABORT: All {len(completed)} requests in turn {turn_idx + 1} "
-                        f"failed. Server may not be functional."
+                        f"ABORT: All {len(completed)} requests in turn "
+                        f"{turn_idx + 1} failed. First error: "
+                        f"{_first_error(r for _, _, r in completed)}"
                     )
                     sys.exit(1)
 
@@ -485,8 +502,8 @@ async def run_multi_turn_benchmark(
             ok = sum(1 for v in results_by_turn.values() for r in v
                      if r is not None and r.success)
             if done and ok == 0:
-                print(f"ABORT: All {done} requests failed. "
-                      f"Server may not be functional.")
+                print(f"ABORT: All {done} requests failed. First error: "
+                      f"{_first_error(r for v in results_by_turn.values() for r in v)}")
                 sys.exit(1)
 
     benchmark_duration = time.perf_counter() - benchmark_start

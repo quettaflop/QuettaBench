@@ -63,6 +63,9 @@ async def send_request(
     last_token_time = None
     input_tokens = 0
     output_tokens = 0
+    # Accumulated only when asked: a 256-session multi-turn run holds every reply
+    # until its session ends, and single-turn benchmarks have no use for any of it.
+    text_parts: list[str] = []
 
     try:
         async with session.post(url, headers=headers, json=payload) as resp:
