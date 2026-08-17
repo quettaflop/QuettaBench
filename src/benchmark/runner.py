@@ -220,7 +220,7 @@ async def run_multi_turn_benchmark(
     max_turn_index: int | None = None,
     trace_request_ids: bool = False,
     turn_pacing: str = "interleaved",
-    reply_feedback: bool = False,
+    reply_feedback: bool = True,
     pin_output_tokens: bool = True,
 ):
     """
@@ -333,6 +333,9 @@ async def run_multi_turn_benchmark(
         # the engine still holds its KV.
         previous_output_by_session: dict[int, int] = {}
         sessions_by_id = {s.session_id: s for s in sessions}
+        # Whether feedback actually happened, so the result can say so rather than
+        # leaving it to be inferred from the flag that was asked for.
+        nonlocal_state = {"warned": False}
         benchmark_start = time.perf_counter()
 
         async def dispatch(
@@ -419,17 +422,19 @@ async def run_multi_turn_benchmark(
             if session is None:
                 return
             if not getattr(session, "assistant_messages", None):
-                # Refuse rather than quietly measuring the unfixed workload. Reply
-                # feedback silently doing nothing looks exactly like it working, and
-                # the only symptom is prefill numbers that are 4.6x too high --
-                # which is the thing this flag exists to remove.
-                raise RuntimeError(
-                    "--reply-feedback was requested but this dataset exposes no "
-                    "assistant placeholders to replace. Only the synthetic "
-                    "distributional sampler builds them; trace-replay datasets take "
-                    "their assistant turns from the trace, where substituting the "
-                    "model's own output would stop them replaying it."
-                )
+                # Degrade, loudly and exactly once. Raising would make every
+                # trajectory profile unrunnable now that this is the default; saying
+                # nothing is worse, because reply feedback doing nothing looks
+                # identical to it working -- the only symptom is prefill numbers 4.6x
+                # too high, which is what the flag exists to remove.
+                if not nonlocal_state["warned"]:
+                    nonlocal_state["warned"] = True
+                    print("WARNING: reply feedback is on but this dataset exposes no "
+                          "assistant placeholders, so replies are NOT fed back. Its "
+                          "assistant turns come from a trace, where substituting the "
+                          "model's output would stop it replaying the trace.",
+                          flush=True)
+                return
             text = result.generated_text
             if not text:
                 return
@@ -738,16 +743,16 @@ def get_args():
                              "B200/Llama-3.1-8B). Per turn, from that turn's own "
                              "sample, so the distribution over output lengths is "
                              "unchanged -- only the early stop is removed.")
-    parser.add_argument("--reply-feedback", action="store_true",
-                        help="multi-turn: put the model's OWN reply into the next "
-                             "turn's transcript instead of synthetic text. What a "
-                             "chat client does, and the engine already holds KV for "
-                             "it, so the next turn recomputes only the new user "
-                             "message. Off, the reply is planned text the engine "
-                             "never generated, and every turn recomputes it: 49-70% "
-                             "of new prefill on the chat profile, 4.6x over a run. "
-                             "Costs reproducibility, since context lengths then "
-                             "depend on what the model actually said.")
+    parser.add_argument("--no-reply-feedback", dest="reply_feedback",
+                        action="store_false",
+                        help="multi-turn: send synthetic assistant text instead of "
+                             "the model's own reply. The default is to feed the real "
+                             "reply back, as vLLM's own multi-turn benchmark does, "
+                             "because the engine holds KV for what it generated and a "
+                             "real chat client sends it back -- so the next turn "
+                             "recomputes only the new user message (41.7 tokens "
+                             "measured, against 230 with synthetic text). Opt out "
+                             "only to reproduce a run recorded the old way.")
     parser.add_argument("--target-rate", type=float, default=10.0, help="req/s for poisson/ramp")
     parser.add_argument("--warmup", type=int, default=3)
     parser.add_argument("--seed", type=int, default=42)

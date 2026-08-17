@@ -590,8 +590,15 @@ class ShareGPTMultiTurnDataset(BaseDataset):
                         max_tokens=osl_est,
                     ))
 
-                    # Append assistant reply for next turn's history
-                    messages_so_far.append({"role": "assistant", "content": assistant_msg})
+                    # Append assistant reply for next turn's history. Held by
+                    # reference so reply feedback can replace it with what the
+                    # engine actually generated -- the dataset's answer was not
+                    # produced by this engine, so its KV is not in the cache and
+                    # sending it makes every turn recompute a reply a real client
+                    # would have had cached.
+                    assistant_message = {"role": "assistant", "content": assistant_msg}
+                    messages_so_far.append(assistant_message)
+                    assistant_messages.append(assistant_message)
                     total_est_tokens += osl_est
 
                 if len(turns) < self.min_turns:
@@ -600,6 +607,7 @@ class ShareGPTMultiTurnDataset(BaseDataset):
                 sessions.append(MultiTurnSession(
                     session_id=len(sessions),
                     turns=turns,
+                    assistant_messages=assistant_messages,
                 ))
 
                 if len(sessions) >= self.num_sessions * 3:
