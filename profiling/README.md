@@ -14,11 +14,12 @@ with no GPU.
 ## Layout
 
 ```
-profiling/probes/     kernel + live-server probes (need a GPU)
-profiling/emit/       emitters: raw CSV/JSONL.gz -> curated tables (no GPU)
-profiling/watch/      schedulers that wait for free GPUs, then fire probes
-profiling/runbooks/   how-to-measure docs and preflight scripts
-profiling/tests/      emitter tests (run against fixtures, no GPU)
+profiling/probes/              live-server + serving-wall probes (need a GPU)
+profiling/kernel_composed/     QuettaSim kernel tables (ncu/ vs cuda_event/ schema)
+profiling/emit/                emitters: raw CSV/JSONL.gz -> curated tables (no GPU)
+profiling/watch/               schedulers that wait for free GPUs, then fire probes
+profiling/runbooks/            how-to-measure docs and preflight scripts
+profiling/tests/               emitter tests (run against fixtures, no GPU)
 ```
 
 ### probes/
@@ -44,6 +45,17 @@ Live-server probes (drive a running vLLM OpenAI server over SSE):
   (new, cached) tokens.
 - `live_split_probe.py`, `live_ttft_probe.py` — cached-host split and c1 TTFT on
   the real serving stack.
+
+### kernel_composed/
+
+Probes that write QuettaSim's `engine/data/kernel_data/` layout (`ncu/` vs
+`cuda_event/`). Separate from the serving-wall probes above; schema is frozen to
+what `kernel_composed` interpolates. Runbook: `profiling/kernel_composed/README.md`.
+
+```bash
+cd profiling/kernel_composed
+QUETTASIM=/path/to/QuettaSim just gpu=A100 profile-gpu
+```
 
 ### emit/
 

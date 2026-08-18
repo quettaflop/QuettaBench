@@ -1,0 +1,116 @@
+# Kernel-composed tables for QuettaSim (`engine/data/kernel_data/`).
+#
+# These probes write the ncu/ vs cuda_event/ layout kernel_composed interpolates.
+# They are a different family from profiling/probes/ (live-server / serving-wall).
+#
+# When QuettaBench is a submodule of QuettaSim, tables land in the parent checkout.
+# Standalone: set QUETTASIM or KERNEL_DATA.
+#
+#   REMOTE_HOST=a100  GPU_ID=0  PYTHON_BIN=~/miniconda3/envs/vllm/bin/python
+#
+#   just gpu-info
+#   just gpu=A100 profile-gpu
+#   just gpu=A100 flash tag=tp1 nh=32 nkv=8 hd=128
+
+sim_root := env_var_or_default("QUETTASIM", justfile_directory() / "../../..")
+kdata := env_var_or_default("KERNEL_DATA", sim_root / "engine/data/kernel_data")
+gpu := "A100"
+py := env_var_or_default("PYTHON_BIN", "python3")
+
+export KDATA := kdata
+export QUETTASIM := sim_root
+
+set dotenv-load := true
+set dotenv-path := "../../../.env"
+
+r2_endpoint := env_var_or_default("R2_ENDPOINT", "")
+r2_bucket := env_var_or_default("R2_BUCKET", "")
+r2_prefix := env_var_or_default("R2_KERNEL_PREFIX", "profiling/kernel_data")
+r2_profile := env_var_or_default("AWS_PROFILE", "r2")
+
+default:
+    @just --list
+
+# Show the GPU(s) this harness will target (local, or REMOTE_HOST if set).
+gpu-info:
+    #!/usr/bin/env bash
+    if [ -n "${REMOTE_HOST:-}" ]; then
+        ssh -o BatchMode=yes "$REMOTE_HOST" nvidia-smi --query-gpu=index,name,memory.used,utilization.gpu --format=csv
+    else
+        nvidia-smi --query-gpu=index,name,memory.used,utilization.gpu --format=csv
+    fi
+
+# Storage is method-explicit: ncu/ = graphed-decode-faithful, cuda_event/ =
+# eager-prefill-faithful. The QuettaSim loader reads decode+gemm+elementwise from
+# ncu/, prefill from cuda_event/.
+
+gemm-cuda-event gpu=gpu:
+    ./run_probe.sh gemm_probe.py --gpu-label {{gpu}}
+
+gemm-cuda-event-wide gpu=gpu:
+    ./run_probe.sh gemm_probe.py --gpu-label {{gpu}} --wide
+
+# NCU GEMM (the STANDARD). Needs a real ncu: NCU_BIN=/opt/nvidia/nsight-compute/.../ncu
+gemm-ncu gpu=gpu:
+    ./run_probe.sh gemm_probe.py --gpu-label {{gpu}} --ncu
+
+gemm-ncu-wide gpu=gpu:
+    ./run_probe.sh gemm_probe.py --gpu-label {{gpu}} --ncu --wide
+
+elementwise gpu=gpu:
+    ./run_probe.sh elementwise_probe.py --gpu-label {{gpu}}
+
+flash gpu=gpu tag="tp1" nh="32" nkv="8" hd="128" layers="32":
+    ./run_probe.sh flash_attn_probe.py --gpu-label {{gpu}} --tag {{tag}} --n-heads {{nh}} --n-kv-heads {{nkv}} --head-dim {{hd}} --layers {{layers}}
+
+flash-ncu gpu=gpu tag="tp1" nh="32" nkv="8" hd="128" layers="32":
+    ./run_probe.sh flash_attn_probe.py --gpu-label {{gpu}} --tag {{tag}} --n-heads {{nh}} --n-kv-heads {{nkv}} --head-dim {{hd}} --layers {{layers}} --ncu
+
+moe gpu=gpu geoms="qwen3-30b-a3b,mixtral-8x7b,gpt-oss-20b,gpt-oss-120b" tp="1,2,4":
+    ./run_probe.sh moe_probe.py --gpu-label {{gpu}} --geometries {{geoms}} --tp {{tp}}
+
+gdn gpu=gpu geom="9b" hv="32" dk="128" dv="128" nlin="24" mode="full":
+    ./run_probe.sh gdn_probe.py --gpu-label {{gpu}} --geometry-tag {{geom}} --hv {{hv}} --dk {{dk}} --dv {{dv}} --n-linear {{nlin}} --mode {{mode}}
+
+gdn-ncu gpu=gpu geom="9b" hv="32" dk="128" dv="128" nlin="24":
+    ./run_probe.sh gdn_probe.py --gpu-label {{gpu}} --geometry-tag {{geom}} --hv {{hv}} --dk {{dk}} --dv {{dv}} --n-linear {{nlin}} --ncu
+
+# NCCL grid -> kernel_data/ncu/collectives/. Also prints a legacy tp_comm: YAML block.
+collectives gpu=gpu world="2" hidden="4096" layers="32" ops="all_reduce,all_gather,reduce_scatter,all_to_all" gpu_ids="0,1":
+    NPROC={{world}} GPU_IDS={{gpu_ids}} ./run_probe.sh collective_probe.py --gpu-label {{gpu}} --hidden {{hidden}} --layers {{layers}} --ops {{ops}}
+
+# Alias: all-reduce microbench used to be a separate probe file.
+tp-comm gpu=gpu tp="2" hidden="4096" layers="32" gpu_ids="0,1":
+    just collectives gpu={{gpu}} world={{tp}} hidden={{hidden}} layers={{layers}} gpu_ids={{gpu_ids}}
+
+_default_model_yaml := sim_root / "engine/device_spec/models/qwen3.5-9b.yaml"
+
+# Live vLLM server -> frontend: + serving: YAML (no GT). GT-fit stays in QuettaSim:
+#   just -f $QUETTASIM/profiling/justfile serving-fit gpu=X model=...
+serving-profile gpu=gpu model="Qwen3.5-9B" model_yaml=_default_model_yaml base_url="http://localhost:8000/v1" tp="1":
+    {{py}} probes/serving_frontend_probe.py --gpu-label {{gpu}} --model {{model}} \
+        --model-yaml {{model_yaml}} --base-url {{base_url}} --tp {{tp}}
+
+profile-gpu gpu=gpu:
+    just gpu={{gpu}} gemm-ncu
+    just gpu={{gpu}} elementwise
+    @echo ""
+    @echo "GPU-generic tables done for {{gpu}}. Head-config-specific next:"
+    @echo "  just gpu={{gpu}} flash tag=tp1 nh=<Hq> nkv=<Hkv> hd=<head_dim>"
+    @echo "  just gpu={{gpu}} gdn  geom=9b     # Qwen3.5 hybrids only"
+    @echo "Then in QuettaSim: just -f profiling/justfile derive-device gpu={{gpu}}"
+
+mirror-preview:
+    aws --profile {{r2_profile}} --endpoint-url {{r2_endpoint}} s3 sync {{kdata}}/ s3://{{r2_bucket}}/{{r2_prefix}}/ --dryrun --exclude '*/__pycache__/*' --exclude '*.pyc'
+
+mirror-up:
+    aws --profile {{r2_profile}} --endpoint-url {{r2_endpoint}} s3 sync {{kdata}}/ s3://{{r2_bucket}}/{{r2_prefix}}/ --exclude '*/__pycache__/*' --exclude '*.pyc' --only-show-errors
+    @echo "kernel_data -> s3://{{r2_bucket}}/{{r2_prefix}}/"
+
+mirror-up-prune:
+    aws --profile {{r2_profile}} --endpoint-url {{r2_endpoint}} s3 sync {{kdata}}/ s3://{{r2_bucket}}/{{r2_prefix}}/ --delete --exclude '*/__pycache__/*' --exclude '*.pyc' --only-show-errors
+    @echo "kernel_data -> s3://{{r2_bucket}}/{{r2_prefix}}/ (pruned)"
+
+mirror-down:
+    aws --profile {{r2_profile}} --endpoint-url {{r2_endpoint}} s3 sync s3://{{r2_bucket}}/{{r2_prefix}}/ {{kdata}}/ --exclude '*/__pycache__/*' --only-show-errors
+    @echo "s3://{{r2_bucket}}/{{r2_prefix}}/ -> kernel_data"
