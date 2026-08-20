@@ -1,4 +1,4 @@
-# Kernel-composed tables for QuettaSim (`engine/data/kernel_data/`).
+# Kernel-composed tables for QuettaSim (`data/kernel_data/`).
 #
 # These probes write the ncu/ vs cuda_event/ layout kernel_composed interpolates.
 # They are a different family from profiling/probes/ (live-server / serving-wall).
@@ -13,7 +13,7 @@
 #   just gpu=A100 flash tag=tp1 nh=32 nkv=8 hd=128
 
 sim_root := env_var_or_default("QUETTASIM", justfile_directory() / "../../..")
-kdata := env_var_or_default("KERNEL_DATA", sim_root / "engine/data/kernel_data")
+kdata := env_var_or_default("KERNEL_DATA", sim_root / "data/kernel_data")
 gpu := "A100"
 py := env_var_or_default("PYTHON_BIN", "python3")
 
@@ -83,10 +83,10 @@ collectives gpu=gpu world="2" hidden="4096" layers="32" ops="all_reduce,all_gath
 tp-comm gpu=gpu tp="2" hidden="4096" layers="32" gpu_ids="0,1":
     just collectives gpu={{gpu}} world={{tp}} hidden={{hidden}} layers={{layers}} gpu_ids={{gpu_ids}}
 
-_default_model_yaml := sim_root / "engine/device_spec/models/qwen3.5-9b.yaml"
+_default_model_yaml := sim_root / "device_spec/models/qwen3.5-9b.yaml"
 
 # Live vLLM server -> frontend: + serving: YAML (no GT). GT-fit stays in QuettaSim:
-#   just -f $QUETTASIM/profiling/justfile serving-fit gpu=X model=...
+#   just -f $QUETTASIM/justfile serving-fit X model=...
 serving-profile gpu=gpu model="Qwen3.5-9B" model_yaml=_default_model_yaml base_url="http://localhost:8000/v1" tp="1":
     {{py}} probes/serving_frontend_probe.py --gpu-label {{gpu}} --model {{model}} \
         --model-yaml {{model_yaml}} --base-url {{base_url}} --tp {{tp}}
@@ -98,7 +98,7 @@ profile-gpu gpu=gpu:
     @echo "GPU-generic tables done for {{gpu}}. Head-config-specific next:"
     @echo "  just gpu={{gpu}} flash tag=tp1 nh=<Hq> nkv=<Hkv> hd=<head_dim>"
     @echo "  just gpu={{gpu}} gdn  geom=9b     # Qwen3.5 hybrids only"
-    @echo "Then in QuettaSim: just -f profiling/justfile derive-device gpu={{gpu}}"
+    @echo "Then in QuettaSim: just derive-device {{gpu}}"
 
 mirror-preview:
     aws --profile {{r2_profile}} --endpoint-url {{r2_endpoint}} s3 sync {{kdata}}/ s3://{{r2_bucket}}/{{r2_prefix}}/ --dryrun --exclude '*/__pycache__/*' --exclude '*.pyc'

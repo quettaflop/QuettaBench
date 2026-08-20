@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Live-server probe -> the device-YAML `frontend:` and `serving:` blocks, for a GPU
 that has NO ground-truth serving runs yet (for a GPU that HAS GT, prefer
-QuettaSim's ``profiling/derive_serving_yaml.py``, which fits the same blocks from GT).
+QuettaSim's ``python -m tools.derive serving``, which fits the same blocks from GT).
 
-Same decomposition as derive_serving_yaml.py -- the frontend/host cost is
+Same decomposition as that deriver -- the frontend/host cost is
 (measured latency - kernel-composed compute prediction) -- but the measurements come
 from controlled requests against a live vLLM OpenAI server instead of GT JSONs:
 
@@ -15,7 +15,7 @@ Start vLLM separately (the GT harness does the same), then point this at it:
 
   vllm serve <model> --tensor-parallel-size 1 --port 8000 &
   python serving_frontend_probe.py --gpu-label A100 --model Qwen3.5-9B \
-      --model-yaml $QUETTASIM/engine/device_spec/models/qwen3.5-9b.yaml \
+      --model-yaml $QUETTASIM/device_spec/models/qwen3.5-9b.yaml \
       --base-url http://localhost:8000/v1
 
 Rank/step timing is read from the stream (time-to-first-token). Prints the blocks;
@@ -72,7 +72,7 @@ def main():
     ap.add_argument("--out-dir", default=None, help="unused (kept for run_probe.sh parity)")
     a = ap.parse_args()
 
-    gpu = load_kernel_gpu(ROOT / "engine" / "device_spec" / f"{a.gpu_label.lower()}.yaml")
+    gpu = load_kernel_gpu(ROOT / "device_spec" / f"{a.gpu_label.lower()}.yaml")
     model = load_kernel_model(Path(a.model_yaml))
     cost = KernelComposedCost(model, gpu, tp=a.tp)   # compute-only prediction (frontend off in the raw YAML)
 

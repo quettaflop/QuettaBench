@@ -48,7 +48,7 @@ Live-server probes (drive a running vLLM OpenAI server over SSE):
 
 ### kernel_composed/
 
-Probes that write QuettaSim's `engine/data/kernel_data/` layout (`ncu/` vs
+Probes that write QuettaSim's `data/kernel_data/` layout (`ncu/` vs
 `cuda_event/`). Separate from the serving-wall probes above; schema is frozen to
 what `kernel_composed` interpolates. Runbook: `profiling/kernel_composed/README.md`.
 

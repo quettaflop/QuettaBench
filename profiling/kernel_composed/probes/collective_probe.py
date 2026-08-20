@@ -92,7 +92,7 @@ def main():
     ap.add_argument("--layers", type=int, required=True, help="model n_layers (for prefill rate)")
     ap.add_argument("--out-dir", default=None,
                     help="kernel_data root; the grid lands in <out-dir>/ncu/allreduce/ "
-                         "(default: $KDATA, else engine/data/kernel_data). '-' skips the write.")
+                         "(default: $KDATA, else data/kernel_data). '-' skips the write.")
     ap.add_argument("--prefill-tokens", type=int, default=2048, help="chunk width for the per-token rate")
     ap.add_argument("--ops", default="all_reduce,all_gather,reduce_scatter,all_to_all",
                     help="collectives to sweep (comma-separated). all_reduce is required "

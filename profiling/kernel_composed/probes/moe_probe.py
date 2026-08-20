@@ -49,7 +49,7 @@ from pathlib import Path
 
 import torch
 
-# Per-expert geometry of every MoE model in engine/device_spec/models/.
+# Per-expert geometry of every MoE model in device_spec/models/.
 # (n_experts, top_k, intermediate_per_expert, hidden). `intermediate` is sharded
 # by tp at sweep time.
 #

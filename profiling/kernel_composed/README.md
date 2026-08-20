@@ -13,14 +13,14 @@ just gpu=A100 flash tag=tp1 nh=32 nkv=8 hd=128
 QUETTASIM=/path/to/QuettaSim just gpu=A100 profile-gpu
 ```
 
-Tables land in `$QUETTASIM/engine/data/kernel_data/` (or `KERNEL_DATA`). YAML
+Tables land in `$QUETTASIM/data/kernel_data/` (or `KERNEL_DATA`). YAML
 derivers (`util_flops` / `frontend:` / `serving:`) stay in QuettaSim:
 
 ```bash
-just -f $QUETTASIM/profiling/justfile derive-device gpu=A100
-just -f $QUETTASIM/profiling/justfile serving-fit gpu=A100 model=Qwen3.5-9B
+just -f $QUETTASIM/justfile derive-device A100
+just -f $QUETTASIM/justfile serving-fit A100 Qwen3.5-9B
 ```
 
-See that README for the full "add a GPU" workflow. Schema contract: filenames
+See `$QUETTASIM/device_spec/README.md` for the full "add a GPU" workflow. Schema contract: filenames
 `{gpu}[_tpN].csv`, method split `ncu/` (graphed decode) vs `cuda_event/` (eager
 prefill), columns as the current H100/A100 tables.
