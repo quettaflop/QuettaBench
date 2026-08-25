@@ -147,48 +147,24 @@ class DistributionalSamplerTests(unittest.TestCase):
         self.assertAlmostEqual(specs[2].cache_hit_rate, 150 / 190)
 
     def test_assistant_placeholders_are_the_live_dicts(self):
-        """`reply_feedback` assigns through these, so they must be the objects the
-        later turns' message lists hold, not copies.
-
-        The sampler plans a whole conversation up front, assistant turns included,
-        so the engine never sees the reply it generated and turn N+1 recomputes it.
-        Feeding the real reply back is one assignment per turn *only* because
-        `BenchmarkRequest(messages=list(messages))` is a shallow copy. If that ever
-        became a deep copy, reply feedback would stop working silently — no error,
-        just the old prefill numbers back.
-        """
+        """Placeholders must be the same dicts later turns hold, not copies."""
         sampler = DistributionalSampler(fixture_distribution(), seed=7)
         session = sampler.sample_session(session_id=3)
 
         self.assertEqual(len(session.assistant_messages), len(session.turns))
 
-        # The placeholders start empty -- the sampler no longer invents assistant
-        # prose, because the engine's own reply overwrites it before the turn that
-        # would carry it is sent. So assert the sharing directly rather than a
-        # direction of change.
         for message in session.assistant_messages:
             self.assertEqual(message["content"], "")
 
         session.assistant_messages[0]["content"] = "SPLICED"
 
-        # Turn 0's prompt was built before that reply existed.
         self.assertNotIn("SPLICED",
                          [m.get("content") for m in session.turns[0].messages])
-        # Every later turn holds the same dict, so every later turn sees it.
         for turn in session.turns[1:]:
             self.assertIn("SPLICED", [m.get("content") for m in turn.messages])
 
     def test_dataset_carries_placeholders_into_multiturnsession(self):
-        """The runner sees `MultiTurnSession`, not `SyntheticSession`.
-
-        Testing the sampler alone is one layer too low, and that gap shipped: the
-        placeholders were added to `SyntheticSession`, the conversion in
-        `DistributionalMultiTurnDataset` dropped them, and every request died with
-        `AttributeError: 'MultiTurnSession' object has no attribute
-        'assistant_messages'` — after a model load and a GPU claim. The runner now
-        refuses when the list is missing rather than measuring the unfixed workload,
-        and this pins the layer it actually reads.
-        """
+        """The runner reads MultiTurnSession, so placeholders must survive conversion."""
         import json
         import tempfile
 
@@ -205,7 +181,6 @@ class DistributionalSamplerTests(unittest.TestCase):
         self.assertTrue(sessions)
         for session in sessions:
             self.assertEqual(len(session.assistant_messages), len(session.turns))
-            # The dicts must be the ones the later turns hold, not copies.
             if len(session.turns) > 1:
                 session.assistant_messages[0]["content"] = "spliced"
                 self.assertIn(
@@ -634,21 +609,8 @@ class DistributionalMultiTurnDatasetTests(unittest.TestCase):
             )
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
-
 class CacheEstimateTests(unittest.TestCase):
-    """What the client is allowed to call cached depends on who wrote the reply.
-
-    The estimate exists because the serving API exposes no prefix-cache telemetry.
-    It was hardcoded to the synthetic case — prefix stops at the previous prompt —
-    and with --reply-feedback that understates the hit by the whole reply, which on
-    the chat profile is most of the column. A run recorded with feedback on and this
-    unfixed reports ~230 newly-prefilled tokens per turn where the engine actually
-    recomputed ~30, i.e. exactly the number the flag was added to change.
-    """
+    """Reusable prefix includes the previous reply only when it is the engine's output."""
 
     def _result(self, input_tokens=1000):
         from src.benchmark.metrics import RequestResult
@@ -661,7 +623,7 @@ class CacheEstimateTests(unittest.TestCase):
             previous_context_tokens=770, previous_output_tokens=200,
             reply_in_cache=False)
         self.assertEqual(r.cached_context_tokens, 770)
-        self.assertEqual(r.new_prefill_tokens, 230)   # reply + new user message
+        self.assertEqual(r.new_prefill_tokens, 230)
         self.assertEqual(r.cache_estimate_source, "previous_prompt_tokens")
 
     def test_the_engines_own_reply_is_reusable(self):
@@ -671,12 +633,10 @@ class CacheEstimateTests(unittest.TestCase):
             previous_context_tokens=770, previous_output_tokens=200,
             reply_in_cache=True)
         self.assertEqual(r.cached_context_tokens, 970)
-        self.assertEqual(r.new_prefill_tokens, 30)    # the new user message alone
+        self.assertEqual(r.new_prefill_tokens, 30)
         self.assertEqual(r.cache_estimate_source, "previous_prompt_and_reply_tokens")
 
     def test_reusable_prefix_cannot_exceed_the_prompt(self):
-        """A reply longer than the next prompt's growth would otherwise produce a
-        negative amount of new work."""
         from src.benchmark.metrics import annotate_multi_turn_cache_estimate
         r = annotate_multi_turn_cache_estimate(
             self._result(800), session_id=0, turn_index=1,
@@ -684,3 +644,7 @@ class CacheEstimateTests(unittest.TestCase):
             reply_in_cache=True)
         self.assertEqual(r.cached_context_tokens, 800)
         self.assertEqual(r.new_prefill_tokens, 0)
+
+
+if __name__ == "__main__":
+    unittest.main()

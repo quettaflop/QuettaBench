@@ -94,24 +94,8 @@ class SyntheticSession:
     turns: list[BenchmarkRequest]
     specs: list[SyntheticTurnSpec]
     assistant_messages: list[dict] = field(default_factory=list)
-    """The synthetic assistant message for each turn, as the live dict object.
-
-    A whole conversation is planned before the run starts, assistant turns
-    included, and the engine never sees the reply it actually generated. That
-    costs a prefix-cache hit a real client would get: the reply IS in the KV
-    cache, because the engine produced it, so a real turn N+1 recomputes only the
-    new user message. Synthesising the reply instead makes turn N+1 recompute the
-    reply too. On the B200 chat profile that is 49-70% of every turn's prefill,
-    and 4.6x over a whole run.
-
-    These are the same dict objects the later turns' message lists hold — turns
-    are built with `list(messages)`, a shallow copy — so assigning
-    `assistant_messages[t]["content"]` fixes turn t+1 and every turn after it.
-    `runner.py` does that when `reply_feedback` is on.
-
-    Agentic profiles are much less affected (2-8%), because there the bulk of a
-    turn's new prefill stands in for a tool result, which a real agent loop does
-    have to prefill: the engine did not generate it either."""
+    """Live assistant dicts shared with later turns' message lists. Empty content;
+    the runner writes the engine reply in before the next turn is sent."""
 
 
 class DistributionalSampler:
@@ -341,11 +325,6 @@ class DistributionalSampler:
                 )
             )
 
-            # Empty on purpose. The engine's own reply is written here before the
-            # next turn is sent, and the planned length is `output_tokens` from the
-            # sample -- it was never read off this text. Inventing assistant prose
-            # only to overwrite it cost a tokenizer round trip per turn and made the
-            # unfixed behaviour look like a supported mode.
             assistant_message = {"role": "assistant", "content": ""}
             messages.append(assistant_message)
             assistant_messages.append(assistant_message)

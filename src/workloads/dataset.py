@@ -482,13 +482,8 @@ class MultiTurnSession:
     session_id: int
     turns: list[BenchmarkRequest]  # turn[0] = 1 msg, turn[1] = 3 msgs, turn[2] = 5 msgs, ...
     assistant_messages: list[dict] = field(default_factory=list)
-    """Each turn's assistant message, as the live dict the later turns' lists hold.
-
-    Populated only by the synthetic sampler, whose assistant turns are invented
-    before the run and are therefore the ones `--reply-feedback` replaces with what
-    the engine actually said. Trace-replay datasets leave it empty on purpose: their
-    assistant turns come from the trace, and substituting the model's own output
-    would stop them replaying the trace at all."""
+    """Live assistant dicts later turns hold. Empty for trace replay, which must
+    keep recorded assistant text rather than substituting the engine's output."""
 
 
 class ShareGPTMultiTurnDataset(BaseDataset):
@@ -501,11 +496,8 @@ class ShareGPTMultiTurnDataset(BaseDataset):
       Turn 2: [system, human1, assistant1, human2]                    → max_tokens=osl2
       Turn 3: [system, human1, assistant1, human2, assistant2, human3] → max_tokens=osl3
 
-    Assistant replies come from ShareGPT's pre-recorded GPT responses (Option B design),
-    making requests deterministic and reproducible. The growing context tests prefix cache
-    reuse — the server should recognize the shared prefix from earlier turns.
-
-    Sessions are served round-robin for interleaved scheduling in the runner.
+    Later turns share the assistant message dicts so the runner can replace
+    ShareGPT's recorded reply with what the engine actually generated.
     """
 
     def __init__(
@@ -573,6 +565,7 @@ class ShareGPTMultiTurnDataset(BaseDataset):
 
                 # Build growing-history requests
                 turns = []
+                assistant_messages = []
                 messages_so_far = []
                 if self.system_prompt:
                     messages_so_far.append({"role": "system", "content": self.system_prompt})
@@ -590,12 +583,6 @@ class ShareGPTMultiTurnDataset(BaseDataset):
                         max_tokens=osl_est,
                     ))
 
-                    # Append assistant reply for next turn's history. Held by
-                    # reference so reply feedback can replace it with what the
-                    # engine actually generated -- the dataset's answer was not
-                    # produced by this engine, so its KV is not in the cache and
-                    # sending it makes every turn recompute a reply a real client
-                    # would have had cached.
                     assistant_message = {"role": "assistant", "content": assistant_msg}
                     messages_so_far.append(assistant_message)
                     assistant_messages.append(assistant_message)

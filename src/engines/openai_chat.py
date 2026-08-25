@@ -59,10 +59,6 @@ async def send_request(
         payload["request_id"] = request_id
 
     if min_tokens is not None:
-        # vLLM sampling parameter: no EOS until this many tokens have been emitted.
-        # Set equal to max_tokens, it pins the output length instead of leaving it to
-        # wherever the model happens to stop -- which is what makes a planned
-        # workload actually run at its planned size.
         payload["min_tokens"] = int(min_tokens)
 
     start_time = time.perf_counter()
@@ -71,8 +67,6 @@ async def send_request(
     last_token_time = None
     input_tokens = 0
     output_tokens = 0
-    # Accumulated only when asked: a 256-session multi-turn run holds every reply
-    # until its session ends, and single-turn benchmarks have no use for any of it.
     text_parts: list[str] = []
 
     try:
@@ -132,9 +126,7 @@ async def send_request(
                     continue
 
                 if capture_text:
-                    # `content` only. reasoning_content and tool_calls are
-                    # deliberately dropped: what goes back into the transcript is
-                    # what a chat client would send back, and neither of those is.
+                    # Transcript is content only; reasoning/tool_calls are not sent back.
                     piece = delta.get("content")
                     if piece:
                         text_parts.append(piece)

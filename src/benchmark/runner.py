@@ -186,15 +186,7 @@ async def run_benchmark(
 
 
 def _first_error(results) -> str:
-    """The first recorded error, for an abort message that names a cause.
-
-    Both abort paths used to say only "Server may not be functional", which is a
-    guess and was wrong the one time it mattered: a client-side NameError in the
-    streaming loop was caught by `send_request`'s blanket `except`, turned into
-    `success=False`, and reported as a server problem. The error text is already
-    on every RequestResult; printing it costs nothing and points at the right half
-    of the system.
-    """
+    """First recorded error text, for abort messages that name a cause."""
     for r in results:
         if r is not None and not r.success and r.error:
             return str(r.error)
@@ -222,64 +214,19 @@ async def run_multi_turn_benchmark(
     turn_pacing: str = "interleaved",
     pin_output_tokens: bool = True,
 ):
-    """
-    Run a multi-turn benchmark. Two scheduling modes, measuring different things.
+    """Run a multi-turn benchmark.
 
-    ``turn_pacing="interleaved"`` (default, unchanged behaviour): dispatch every
-    session's turn N, wait for all of them, then turn N+1.
+    ``turn_pacing="interleaved"`` (default): all sessions' turn N, barrier, then N+1.
+    Forces KV eviction between a session's turns; TTFT grows with concurrency.
 
-        [A1, B1, C1] -> barrier -> [A2, B2, C2] -> barrier -> ...
+    ``turn_pacing="per-session"``: each session's turns run back to back, sessions
+    concurrent. Measures warm prefix reuse. The two modes are not comparable.
 
-    A session's turns are separated by every other session's turn, which forces KV
-    eviction in between and so measures prefix reuse under memory pressure. It is
-    also a *barrier*: every turn is a synchronised herd of `concurrency` requests, so
-    queueing delay — and therefore TTFT — grows with concurrency at every turn.
+    Later prompts contain the engine's own reply (shared assistant dicts). Trace
+    replay has no placeholders and keeps recorded assistant text. Output length is
+    pinned with min_tokens=max_tokens unless ``pin_output_tokens`` is false.
 
-    ``turn_pacing="per-session"``: each session runs its own turns back to back, and
-    sessions run concurrently against the semaphore.
-
-        A1 -> A2 -> A3 ...   concurrently with   B1 -> B2 -> B3 ...
-
-    This is what a real chat client does: turn N+1 is sent when *that* session's
-    reply arrives, not when every other session has finished. Consequences to be
-    aware of before comparing the two modes:
-
-      * A session's KV is usually still resident when its next turn arrives, so this
-        measures *warm* prefix reuse rather than reuse after eviction.
-      * There is no herd after turn 0. Arrivals are throttled by completions, so the
-        server rarely sees more than a couple of concurrent prefills and TTFT stops
-        growing with concurrency — the load shows up in TPOT and E2EL instead. A
-        near-flat TTFT curve here is the mode working, not a broken run.
-
-    The mode is recorded in the result metadata, because the two are not comparable
-    and a number without it cannot be placed.
-
-    **The assistant turns are the engine's own output.** Whatever it generates for
-    turn N is what turn N+1 sends back, because that is what a chat client does and
-    what the engine already holds KV for -- so turn N+1 recomputes only the new user
-    message. There is no option to send invented assistant text instead: the engine
-    never generated it, so it is not in the prefix cache, and every turn then
-    recomputes a reply a real client would have had cached.
-    actually produced goes back into the transcript, which is what a chat client
-    sends and what the engine already holds KV for — so turn N+1 recomputes only
-    the new user message.
-
-    Measured on B200/Llama-3.1-8B chat, C=1: 41.7 tokens recomputed per turn, against
-    230 when the assistant text was invented -- and 41.7 is the new user message, all
-    of it. Agentic profiles move only 2-8%, because there most of a turn's new prefill
-    stands in for a tool result, which a real agent loop must prefill too: nothing
-    generated it either. That is the one place invented text belongs, and it is still
-    used for it.
-
-    The cost is determinism. Planned context lengths assume the reply is exactly
-    ``output_tokens`` long; a real reply is whatever the model produced, and stops
-    at EOS unless ``ignore_eos``. So the *shape* of the workload stops being
-    reproducible across models and becomes a property of the run — which is why
-    this is off by default, and why the per-request records report the context that
-    actually happened rather than the plan.
-
-    Returns (results_by_turn, duration) where results_by_turn is a dict
-    mapping turn_index → list[RequestResult].
+    Returns (all_results, results_by_turn, duration).
     """
     if turn_pacing not in ("interleaved", "per-session"):
         raise ValueError(
@@ -330,13 +277,8 @@ async def run_multi_turn_benchmark(
         # results_by_turn[turn_idx] = list of RequestResult
         results_by_turn: dict[int, list] = {i: [] for i in range(max_turns)}
         previous_context_by_session: dict[int, int] = {}
-        # How many tokens the engine generated for this session's previous turn.
-        # With reply feedback that output is part of the reusable prefix, because
-        # the engine still holds its KV.
         previous_output_by_session: dict[int, int] = {}
         sessions_by_id = {s.session_id: s for s in sessions}
-        # Whether feedback actually happened, so the result can say so rather than
-        # leaving it to be inferred from the flag that was asked for.
         nonlocal_state = {"warned": False}
         benchmark_start = time.perf_counter()
 
@@ -389,8 +331,7 @@ async def run_multi_turn_benchmark(
                 previous_context_tokens=previous_context_tokens,
                 cache_block_size=cache_block_size,
                 previous_output_tokens=previous_output_by_session.get(session_id, 0),
-                # Per session, not per run: whether the reply is reusable depends on
-                # whether it was the engine's own, and a trace-replay dataset's is not.
+                # Placeholders mean the engine reply is spliced into later prompts.
                 reply_in_cache=bool(
                     getattr(sessions_by_id.get(session_id), "assistant_messages", None)),
             )
@@ -401,10 +342,7 @@ async def run_multi_turn_benchmark(
             last = n_turns - 1
             return last if max_turn_index is None else min(last, max_turn_index)
 
-        # A session whose turn failed has no reply for it, so the transcript from
-        # that point on is missing an assistant message and every later prompt would
-        # be short by it. per-session already breaks its own loop; interleaved needs
-        # to be told.
+        # Failed turns leave an empty assistant slot; skip the rest of that session.
         dead_sessions: set[int] = set()
 
         def _record(sid: int, t_idx: int, result) -> None:
@@ -418,34 +356,16 @@ async def run_multi_turn_benchmark(
                 dead_sessions.add(sid)
 
         def _feed_reply_back(sid: int, t_idx: int, result) -> None:
-            """Put the engine's own reply where the synthetic one was.
-
-            The assistant dict is shared by every later turn's message list
-            (`list(messages)` is a shallow copy), so one assignment fixes the whole
-            remaining transcript. Both pacing modes reach here before the next turn
-            is dispatched: per-session because a session's turns are sequential,
-            interleaved because the barrier waits for all of turn N first.
-
-            An empty reply is left alone rather than written through. A model can
-            legitimately return nothing, and replacing planned text with "" would
-            silently shorten every subsequent prompt — a workload change disguised
-            as a fidelity improvement.
-            """
+            """Write the engine reply into the shared assistant dict for later turns."""
             session = sessions_by_id.get(sid)
             if session is None:
                 return
             if not getattr(session, "assistant_messages", None):
-                # Degrade, loudly and exactly once. Raising would make every
-                # trajectory profile unrunnable now that this is the default; saying
-                # nothing is worse, because reply feedback doing nothing looks
-                # identical to it working -- the only symptom is prefill numbers 4.6x
-                # too high, which is what the flag exists to remove.
                 if not nonlocal_state["warned"]:
                     nonlocal_state["warned"] = True
-                    print("WARNING: reply feedback is on but this dataset exposes no "
-                          "assistant placeholders, so replies are NOT fed back. Its "
-                          "assistant turns come from a trace, where substituting the "
-                          "model's output would stop it replaying the trace.",
+                    print("WARNING: this dataset has no assistant placeholders; "
+                          "replies are not fed back (trace replay keeps recorded "
+                          "assistant turns).",
                           flush=True)
                 return
             text = result.generated_text
@@ -500,14 +420,7 @@ async def run_multi_turn_benchmark(
                 for sid, t_idx, result in completed:
                     _record(sid, t_idx, result)
         else:
-            # per-session: one coroutine per session, its turns strictly sequential.
-            # No barrier between sessions, so a fast session pulls ahead and the
-            # cohort desynchronises — which is the point.
-            #
-            # request_index is assigned up front rather than from a running count of
-            # completions: with sessions interleaving freely there is no deterministic
-            # completion order, and an index derived from one would not be stable
-            # across runs of the same seed.
+            # request_index is assigned up front: completion order is not stable.
             index_of: dict[tuple[int, int], int] = {}
             nxt = 0
             for conv_session in sessions:
@@ -520,9 +433,6 @@ async def run_multi_turn_benchmark(
             async def run_session(conv_session) -> None:
                 sid = conv_session.session_id
                 for t_idx in range(_last_turn(len(conv_session.turns)) + 1):
-                    # Read the running context *now*: it is set by this session's own
-                    # previous turn, which has already completed because this loop is
-                    # sequential.
                     _sid, _t, result = await dispatch(
                         sid,
                         conv_session.turns[t_idx],
@@ -532,9 +442,6 @@ async def run_multi_turn_benchmark(
                     )
                     _record(_sid, _t, result)
                     if result is None or not result.success:
-                        # The next turn's prompt is this reply's continuation; without
-                        # it the session cannot be extended, so stop rather than
-                        # sending a turn whose prefix never existed.
                         break
 
             await asyncio.gather(*[run_session(s) for s in sessions])
@@ -741,23 +648,13 @@ def get_args():
     parser.add_argument("--arrival", default="steady", choices=["steady", "poisson", "ramp"])
     parser.add_argument("--turn-pacing", default="interleaved",
                         choices=["interleaved", "per-session"],
-                        help="multi-turn scheduling. 'interleaved' (default) "
-                             "barriers every turn across sessions, forcing KV "
-                             "eviction between a session's turns. 'per-session' "
-                             "runs each session's turns back to back with no "
-                             "barrier, as a real chat client does. Not "
-                             "comparable to each other; see "
-                             "run_multi_turn_benchmark.")
+                        help="multi-turn scheduling: 'interleaved' (default) barriers "
+                             "each turn across sessions; 'per-session' runs a session's "
+                             "turns back to back. Not comparable.")
     parser.add_argument("--no-pin-output-tokens", dest="pin_output_tokens",
                         action="store_false",
-                        help="stop sending min_tokens = max_tokens. Pinning is the "
-                             "default: without it the model ends each turn wherever "
-                             "it likes, so the planned context lengths describe a run "
-                             "that did not happen and two runs of one config are not "
-                             "the same workload (195.9 asked vs 185.7 produced on "
-                             "B200/Llama-3.1-8B). Per turn, from that turn's own "
-                             "sample, so the distribution over output lengths is "
-                             "unchanged -- only the early stop is removed.")
+                        help="do not send min_tokens=max_tokens (default pins each "
+                             "turn's output length so the planned size is what ran)")
     parser.add_argument("--target-rate", type=float, default=10.0, help="req/s for poisson/ramp")
     parser.add_argument("--warmup", type=int, default=3)
     parser.add_argument("--seed", type=int, default=42)
@@ -922,12 +819,9 @@ if __name__ == "__main__":
         "enable_ep": enable_ep,
         "ep_size": ep_size,
         "parallelism": parallelism,
-        # Recorded because each changes what the benchmark measures, and an
-        # unrecorded knob makes old results unidentifiable: telling whether an
-        # earlier run was barriered took the commit date of the flag that
-        # introduced pacing, since the snapshot did not say.
         "turn_pacing": args.turn_pacing,
         "pin_output_tokens": args.pin_output_tokens,
+        "reply_feedback": True,
         "profile_metadata": {
             "dataset": profile.dataset,
             "agent_type": profile.agent_type,

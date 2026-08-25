@@ -1,15 +1,4 @@
-"""`send_request` against a stubbed SSE stream, so the streaming loop is exercised
-without a server.
-
-This file exists because it was missing. `capture_text` shipped with its
-accumulator never initialised: every request raised `NameError` inside the
-streaming loop, `send_request`'s blanket `except Exception` turned that into
-`success=False`, and the runner reported "Server may not be functional" — on a
-server that was working. The sweep produced ten failed cells and pointed at the
-wrong half of the system.
-
-Anything in that loop is now reachable from a unit test.
-"""
+"""send_request against a stubbed SSE stream, so the streaming loop needs no server."""
 
 import asyncio
 import json
@@ -75,13 +64,7 @@ def _run(session):
 
 
 class PinnedOutputTests(unittest.TestCase):
-    """min_tokens has to reach the payload, and per request.
-
-    vLLM's own multi-turn benchmark computes min_tokens and max_tokens from the
-    dataset answer and sets them equal, then never sends min_tokens -- the line is
-    commented out -- so its output length is whatever the model chose after all. The
-    intent is only worth anything if the parameter arrives.
-    """
+    """min_tokens must reach the payload, per request."""
 
     def test_min_tokens_is_sent_when_given(self):
         session = _Session(_sse([_delta("a")]))
@@ -121,8 +104,7 @@ class CaptureTextTests(unittest.TestCase):
         self.assertEqual(r.generated_text, "Hello there")
 
     def test_reasoning_and_tool_calls_are_not_transcript_content(self):
-        """They count as tokens — dropping them coalesces ITL gaps — but they are
-        not what a chat client sends back, so they must not enter the reply."""
+        """Reasoning/tool_calls count as token events but are not transcript content."""
         r = _run(_Session(_sse([
             _delta(None, reasoning_content="thinking"),
             _delta("answer"),
@@ -144,9 +126,7 @@ class CaptureTextTests(unittest.TestCase):
         self.assertIsNotNone(r.ttft)
 
     def test_empty_reply_is_not_an_error(self):
-        """A model may legitimately return nothing. The runner leaves the planned
-        text in place rather than writing an empty string through the transcript,
-        so this has to arrive as empty rather than as a failure."""
+        """Empty capture is a success with empty text, not a failure."""
         r = _run(_Session(_sse([_delta(None, tool_calls=[{"index": 0}])])))
         self.assertTrue(r.success, msg=r.error)
         self.assertEqual(r.generated_text, "")
