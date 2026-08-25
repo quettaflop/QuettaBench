@@ -22,8 +22,9 @@ cd "$REPO_ROOT"
 # =============================================================================
 URL="${BENCH_URL:-http://localhost:8000/v1/chat/completions}"
 MODEL="${BENCH_MODEL:-neuralmagic/Meta-Llama-3.1-8B-Instruct-FP8}"
-BACKEND="vllm"          # vllm | sglang | openai | trtllm
+BACKEND="vllm"          # vllm | sglang | openai
 API_KEY="test"
+TP="${BENCH_TP:-1}"     # server tensor-parallel size (recorded in the result config)
 WARMUP=5                # warmup requests (excluded from timing)
 TIMEOUT=300             # per-request timeout in seconds
 
@@ -61,6 +62,7 @@ run() {
         --profile    "$PROFILE" \
         --concurrency "$CONC" \
         --num-requests "$NREQ" \
+        --tensor-parallel-size "$TP" \
         --warmup     "$WARMUP" \
         --timeout    "$TIMEOUT" \
         --api-key    "$API_KEY" \

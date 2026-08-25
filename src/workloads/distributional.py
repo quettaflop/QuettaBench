@@ -243,9 +243,57 @@ class DistributionalSampler:
         previous_prompt_context = sum(self._tokenize(str(m.get("content", ""))) for m in messages)
         previous_output_tokens = 0
 
+        # Text of the prompt as last sent, for the eviction path to slice.
+        prompt_text_so_far = "\n".join(str(m.get("content", "")) for m in messages)
+
         for synthetic_turn_index, sample in enumerate(samples):
             output_tokens = max(1, sample.output_tokens)
             context_before_user = previous_prompt_context + previous_output_tokens
+
+            # --- decide append vs eviction -----------------------------------
+            # The recorded cache_hit_rate says how much of this turn's prompt is
+            # genuinely reusable. Appending can only ever reuse the WHOLE previous
+            # prompt, so it is valid exactly when the recording agrees.
+            #
+            # For append-style agents the builder derives cache_hit as
+            # previous_context/total, so target_cached == previous_prompt_context
+            # and this takes the original path unchanged. For replace-style ones
+            # (osworld: 3-message window, observation swapped each turn) the
+            # measured cache_hit is far lower, appending cannot represent it, and
+            # clamping `new_user_tokens` to >=1 ratchets context upward forever
+            # (+156% by turn 29). Then we evict instead.
+            target_total = max(1, sample.total_context_tokens)
+            target_cached = int(round(sample.cache_hit_rate * target_total))
+            target_cached = max(0, min(target_cached, previous_prompt_context))
+            use_eviction = (
+                synthetic_turn_index > 0
+                and target_cached < previous_prompt_context * 0.98
+            )
+
+            if use_eviction:
+                turn = self._build_evicted_turn(
+                    session_id=session_id,
+                    synthetic_turn_index=synthetic_turn_index,
+                    sample=sample,
+                    output_tokens=output_tokens,
+                    target_total=target_total,
+                    target_cached=target_cached,
+                    prompt_text_so_far=prompt_text_so_far,
+                    shared_prefix_actual_tokens=shared_prefix_actual_tokens,
+                )
+                if turn is None:
+                    break
+                request, spec, messages, prompt_text_so_far = turn
+                turns.append(request)
+                specs.append(spec)
+                assistant_message = {"role": "assistant", "content": ""}
+                messages.append(assistant_message)
+                assistant_messages.append(assistant_message)
+                prompt_text_so_far = prompt_text_so_far + "\n"
+                previous_prompt_context = spec.total_context_tokens
+                previous_output_tokens = output_tokens
+                continue
+
             new_user_tokens = max(1, sample.total_context_tokens - context_before_user)
             desired_total_context = context_before_user + new_user_tokens
             prompt_token_budget = self._prompt_token_budget(output_tokens)
@@ -328,6 +376,7 @@ class DistributionalSampler:
             assistant_message = {"role": "assistant", "content": ""}
             messages.append(assistant_message)
             assistant_messages.append(assistant_message)
+            prompt_text_so_far = "\n".join(str(m.get("content", "")) for m in messages)
             previous_prompt_context = actual_total_context
             previous_output_tokens = output_tokens
 
@@ -336,6 +385,101 @@ class DistributionalSampler:
 
         return SyntheticSession(session_id=session_id, turns=turns, specs=specs,
                                 assistant_messages=assistant_messages)
+
+    def _build_evicted_turn(
+        self,
+        *,
+        session_id: int,
+        synthetic_turn_index: int,
+        sample: TraceTurnSample,
+        output_tokens: int,
+        target_total: int,
+        target_cached: int,
+        prompt_text_so_far: str,
+        shared_prefix_actual_tokens: int,
+    ):
+        """Build a turn that RETAINS only `target_cached` tokens of prior context.
+
+        Models an agent that evicts or replaces history rather than appending to
+        it -- a computer-use loop whose observation is swapped each turn, for
+        instance. The retained slice is a literal character prefix of the previous
+        prompt so real prefix-cache behaviour matches the recorded cache_hit_rate,
+        and the remainder is fresh filler. Because the prompt is rebuilt rather
+        than extended, total context can go DOWN, which the append model cannot
+        express.
+        """
+        prompt_token_budget = self._prompt_token_budget(output_tokens)
+        if prompt_token_budget is not None and target_total > prompt_token_budget:
+            target_total = prompt_token_budget
+            target_cached = min(target_cached, max(0, target_total - 1))
+        if target_total <= 0:
+            return None
+
+        retained_text = self._prefix_with_tokens(prompt_text_so_far, target_cached)
+        cached_actual = self._tokenize(retained_text) if retained_text else 0
+        new_tokens = max(1, target_total - cached_actual)
+        new_text = self._synthetic_text(
+            f"s{session_id}_t{synthetic_turn_index}_evicted_user", new_tokens
+        )
+
+        content = f"{retained_text}\n{new_text}" if retained_text else new_text
+        messages = [{"role": "user", "content": content}]
+        actual_total = cached_actual + new_tokens
+        actual_new_prefill = actual_total - cached_actual
+        cache_hit_rate = cached_actual / actual_total if actual_total > 0 else 0.0
+
+        request = BenchmarkRequest(
+            messages=list(messages),
+            max_tokens=sample.output_tokens,
+            metadata={
+                "synthetic_session_id": session_id,
+                "synthetic_turn_index": synthetic_turn_index,
+                "sampled_turn_index": sample.turn_index,
+                "sampled_source_session_id": sample.source_session_id,
+                "sampled_token_source": sample.token_source,
+                "sampled_total_context_tokens": sample.total_context_tokens,
+                "sampled_new_prefill_tokens": sample.new_prefill_tokens,
+                "planned_new_prefill_tokens": actual_new_prefill,
+                "planned_cached_context_tokens": cached_actual,
+                "planned_total_context_tokens": actual_total,
+                "planned_cache_hit_rate": round(cache_hit_rate, 6),
+                "planned_new_user_tokens": new_tokens,
+                "planned_output_tokens": output_tokens,
+                "planned_total_with_output_tokens": actual_total + output_tokens,
+                "context_window_tokens": self.max_context_tokens,
+                "context_safety_margin_tokens": self.context_safety_margin_tokens,
+                "prompt_token_budget": prompt_token_budget,
+                "truncated_by_context_limit": False,
+                "context_evicted": True,
+                "synthetic_filler_style": self.synthetic_filler_style,
+                "synthetic_target_chars_per_token": self.target_chars_per_token,
+                "prefix_aware_synthetic": self.prefix_aware_synthetic,
+                "shared_prefix_requested_tokens": self.shared_prefix_requested_tokens,
+                "shared_prefix_target_tokens": self.shared_prefix_target_tokens,
+                "shared_prefix_actual_tokens": shared_prefix_actual_tokens,
+                "shared_prefix_block_size": self.prefix_cache_block_size,
+                "shared_prefix_block_aligned": (
+                    shared_prefix_actual_tokens > 0
+                    and shared_prefix_actual_tokens % self.prefix_cache_block_size == 0
+                ),
+            },
+        )
+        spec = SyntheticTurnSpec(
+            turn_index=synthetic_turn_index,
+            sampled_new_prefill_tokens=sample.new_prefill_tokens,
+            actual_new_prefill_tokens=actual_new_prefill,
+            cached_context_tokens=cached_actual,
+            total_context_tokens=actual_total,
+            new_user_tokens=new_tokens,
+            output_tokens=output_tokens,
+            cache_hit_rate=cache_hit_rate,
+            context_window_tokens=self.max_context_tokens,
+            context_safety_margin_tokens=self.context_safety_margin_tokens,
+            prompt_token_budget=prompt_token_budget,
+            planned_total_with_output_tokens=actual_total + output_tokens,
+            truncated_by_context_limit=False,
+        )
+        return request, spec, messages, content
 
     def _prompt_token_budget(self, output_tokens: int) -> int | None:
         """Return max prompt tokens after reserving output and tokenizer headroom."""
@@ -392,6 +536,31 @@ class DistributionalSampler:
         if self.prefix_cache_block_size > 1:
             target = (target // self.prefix_cache_block_size) * self.prefix_cache_block_size
         return max(0, target)
+
+    def _prefix_with_tokens(self, text: str, target_tokens: int) -> str:
+        """Longest leading slice of `text` that is at most `target_tokens` long.
+
+        Used by the eviction path: the retained slice is a LITERAL prefix of the
+        previous prompt, so a prefix cache reuses exactly it and nothing more --
+        which is the property the measured cache_hit_rate describes.
+        """
+        if target_tokens <= 0 or not text:
+            return ""
+        if self._tokenize(text) <= target_tokens:
+            return text
+        lo, hi = 0, len(text)
+        best = ""
+        for _ in range(24):  # binary search on characters
+            if lo >= hi:
+                break
+            mid = (lo + hi) // 2
+            candidate = text[:mid]
+            if self._tokenize(candidate) <= target_tokens:
+                best = candidate
+                lo = mid + 1
+            else:
+                hi = mid
+        return best
 
     def _tokenize(self, text: str) -> int:
         """Return token count for text, using real tokenizer if available."""
