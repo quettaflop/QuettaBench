@@ -481,6 +481,9 @@ class MultiTurnSession:
     """A single multi-turn conversation: list of requests with growing history."""
     session_id: int
     turns: list[BenchmarkRequest]  # turn[0] = 1 msg, turn[1] = 3 msgs, turn[2] = 5 msgs, ...
+    assistant_messages: list[dict] = field(default_factory=list)
+    """Live assistant dicts later turns hold. Empty for trace replay, which must
+    keep recorded assistant text rather than substituting the engine's output."""
 
 
 class ShareGPTMultiTurnDataset(BaseDataset):
@@ -493,11 +496,8 @@ class ShareGPTMultiTurnDataset(BaseDataset):
       Turn 2: [system, human1, assistant1, human2]                    → max_tokens=osl2
       Turn 3: [system, human1, assistant1, human2, assistant2, human3] → max_tokens=osl3
 
-    Assistant replies come from ShareGPT's pre-recorded GPT responses (Option B design),
-    making requests deterministic and reproducible. The growing context tests prefix cache
-    reuse — the server should recognize the shared prefix from earlier turns.
-
-    Sessions are served round-robin for interleaved scheduling in the runner.
+    Later turns share the assistant message dicts so the runner can replace
+    ShareGPT's recorded reply with what the engine actually generated.
     """
 
     def __init__(
@@ -565,6 +565,7 @@ class ShareGPTMultiTurnDataset(BaseDataset):
 
                 # Build growing-history requests
                 turns = []
+                assistant_messages = []
                 messages_so_far = []
                 if self.system_prompt:
                     messages_so_far.append({"role": "system", "content": self.system_prompt})
@@ -582,8 +583,9 @@ class ShareGPTMultiTurnDataset(BaseDataset):
                         max_tokens=osl_est,
                     ))
 
-                    # Append assistant reply for next turn's history
-                    messages_so_far.append({"role": "assistant", "content": assistant_msg})
+                    assistant_message = {"role": "assistant", "content": assistant_msg}
+                    messages_so_far.append(assistant_message)
+                    assistant_messages.append(assistant_message)
                     total_est_tokens += osl_est
 
                 if len(turns) < self.min_turns:
@@ -592,6 +594,7 @@ class ShareGPTMultiTurnDataset(BaseDataset):
                 sessions.append(MultiTurnSession(
                     session_id=len(sessions),
                     turns=turns,
+                    assistant_messages=assistant_messages,
                 ))
 
                 if len(sessions) >= self.num_sessions * 3:
@@ -834,7 +837,8 @@ class DistributionalMultiTurnDataset(BaseDataset):
             else:
                 synthetic_sessions = sampler.sample_sessions(self.num_sessions)
             self._sessions = [
-                MultiTurnSession(session_id=s.session_id, turns=s.turns)
+                MultiTurnSession(session_id=s.session_id, turns=s.turns,
+                                 assistant_messages=s.assistant_messages)
                 for s in synthetic_sessions
                 if s.turns
             ]

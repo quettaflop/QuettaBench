@@ -322,6 +322,14 @@ async def run_benchmark(
     return results, benchmark_duration
 
 
+def _first_error(results) -> str:
+    """First recorded error text, for abort messages that name a cause."""
+    for r in results:
+        if r is not None and not r.success and r.error:
+            return str(r.error)
+    return "no error text recorded"
+
+
 async def run_multi_turn_benchmark(
     url: str,
     model: str,
@@ -340,6 +348,7 @@ async def run_multi_turn_benchmark(
     source_session_ids: list[str] | None = None,
     max_turn_index: int | None = None,
     trace_request_ids: bool = False,
+    turn_pacing: str = "interleaved",
     temperature: float = 0.0,
     sampling_seed: int | None = None,
     exact_output_length: bool = False,
@@ -349,25 +358,24 @@ async def run_multi_turn_benchmark(
     arrival_pattern: str = "steady",
     target_rate: float = 1.0,
 ):
+    """Run a multi-turn benchmark.
+
+    CLOSED LOOP (default): ``turn_pacing="interleaved"`` barriers every turn
+    across sessions. ``turn_pacing="per-session"`` runs a session's turns back
+    to back, sessions concurrent against the semaphore.
+
+    OPEN LOOP: sessions arrive at ``target_rate`` sess/s; turns are sequential
+    within a session, with no barrier and no concurrency cap.
+
+    Later prompts contain the engine's own reply. Trace replay keeps recorded
+    assistant text. ``exact_output_length`` pins min_tokens=max_tokens.
+
+    Returns (all_results, results_by_turn, duration).
     """
-    Run a multi-turn benchmark.
-
-    CLOSED LOOP (default) -- interleaved round-robin with a per-turn barrier:
-    [A1, B1, C1, A2, B2, C2, ...]. Every session's turn N completes before any
-    turn N+1 starts, which forces KV eviction between a session's turns and
-    tests prefix reuse under memory pressure. The barrier is an artifact of the
-    harness, not of real serving, and a simulator has to model it explicitly.
-
-    OPEN LOOP -- SESSIONS arrive on the clock at `target_rate` sessions/sec and
-    each session runs its turns back-to-back (turn N+1 issued only once turn N
-    returns). No barrier and no concurrency cap, so sessions overlap naturally
-    and a server that falls behind builds a real backlog instead of having it
-    hidden by client-side pacing. This is much closer to how agentic traffic
-    actually arrives.
-
-    Returns (results_by_turn, duration) where results_by_turn is a dict
-    mapping turn_index → list[RequestResult].
-    """
+    if turn_pacing not in ("interleaved", "per-session"):
+        raise ValueError(
+            f"turn_pacing must be 'interleaved' or 'per-session', got {turn_pacing!r}"
+        )
     import aiohttp
     from ..engines import get_backend
 
@@ -443,6 +451,9 @@ async def run_multi_turn_benchmark(
         # results_by_turn[turn_idx] = list of RequestResult
         results_by_turn: dict[int, list] = {i: [] for i in range(max_turns)}
         previous_context_by_session: dict[int, int] = {}
+        previous_output_by_session: dict[int, int] = {}
+        sessions_by_id = {s.session_id: s for s in sessions}
+        nonlocal_state = {"warned": False}
         benchmark_start = time.perf_counter()
 
         async def dispatch(
@@ -464,6 +475,7 @@ async def run_multi_turn_benchmark(
                     max_tokens=request.max_tokens,
                     api_key=api_key,
                     ignore_eos=ignore_eos or exact_output_length,
+                    capture_text=True,
                     temperature=temperature,
                     seed=sampling_seed,
                     min_tokens=request.max_tokens if exact_output_length else 0,
@@ -495,8 +507,46 @@ async def run_multi_turn_benchmark(
                 turn_index=t_idx,
                 previous_context_tokens=previous_context_tokens,
                 cache_block_size=cache_block_size,
+                previous_output_tokens=previous_output_by_session.get(session_id, 0),
+                # Placeholders mean the engine reply is spliced into later prompts.
+                reply_in_cache=bool(
+                    getattr(sessions_by_id.get(session_id), "assistant_messages", None)),
             )
             return session_id, t_idx, result
+
+        def _last_turn(n_turns: int) -> int:
+            last = n_turns - 1
+            return last if max_turn_index is None else min(last, max_turn_index)
+
+        dead_sessions: set[int] = set()
+
+        def _record(sid: int, t_idx: int, result) -> None:
+            results_by_turn[t_idx].append(result)
+            if result is not None and result.success and result.input_tokens > 0:
+                previous_context_by_session[sid] = int(result.input_tokens)
+                previous_output_by_session[sid] = int(result.output_tokens or 0)
+            if result is not None and result.success:
+                _feed_reply_back(sid, t_idx, result)
+            else:
+                dead_sessions.add(sid)
+
+        def _feed_reply_back(sid: int, t_idx: int, result) -> None:
+            session = sessions_by_id.get(sid)
+            if session is None:
+                return
+            if not getattr(session, "assistant_messages", None):
+                if not nonlocal_state["warned"]:
+                    nonlocal_state["warned"] = True
+                    print("WARNING: this dataset has no assistant placeholders; "
+                          "replies are not fed back (trace replay keeps recorded "
+                          "assistant turns).",
+                          flush=True)
+                return
+            text = result.generated_text
+            if not text:
+                return
+            if t_idx < len(session.assistant_messages):
+                session.assistant_messages[t_idx]["content"] = text
 
         if open_loop:
             arrivals = make_arrival_times(
@@ -508,84 +558,112 @@ async def run_multi_turn_benchmark(
             )
             counter = itertools.count()
 
-            async def run_session(conv_session, arrive_at_s: float):
+            async def run_open_session(conv_session, arrive_at_s: float):
                 delay = arrive_at_s - (time.perf_counter() - benchmark_start)
                 if delay > 0:
                     await asyncio.sleep(delay)
-                previous_context = 0
                 for t_idx, request in enumerate(conv_session.turns):
                     if max_turn_index is not None and t_idx > max_turn_index:
                         break
-                    _, _, result = await dispatch(
+                    _sid, _t, result = await dispatch(
                         conv_session.session_id,
                         request,
                         t_idx,
-                        previous_context,
+                        previous_context_by_session.get(conv_session.session_id, 0),
                         request_index=next(counter),
-                        # Only turn 1 has a scheduled arrival; later turns are
-                        # emitted by the session itself, so their timing is a
-                        # consequence of service, not of the arrival process.
                         scheduled_at_s=arrive_at_s if t_idx == 0 else None,
                     )
-                    results_by_turn[t_idx].append(result)
-                    if result.success and result.input_tokens > 0:
-                        previous_context = int(result.input_tokens)
+                    _record(_sid, _t, result)
+                    if result is None or not result.success:
+                        break
 
             print(f"  Open loop: {len(sessions)} sessions arriving at "
                   f"{target_rate} sess/s ({arrival_pattern}); "
                   f"turns sequential within a session, no barrier")
             await asyncio.gather(*[
-                run_session(cs, t) for cs, t in zip(sessions, arrivals)
+                run_open_session(cs, t) for cs, t in zip(sessions, arrivals)
             ])
             done = [r for v in results_by_turn.values() for r in v if r is not None]
             if done and not any(r.success for r in done):
-                print(f"ABORT: all {len(done)} requests failed. "
-                      f"Server may not be functional.")
+                print(f"ABORT: all {len(done)} requests failed. First error: "
+                      f"{_first_error(done)}")
                 sys.exit(1)
-            turn_iter = []
-        else:
-            turn_iter = range(max_turns)
-
-        # Interleaved round-robin: process all sessions' turn N before turn N+1
-        for turn_idx in turn_iter:
-            if max_turn_index is not None and turn_idx > max_turn_index:
-                break
-            turn_requests = []
+        elif turn_pacing == "per-session":
+            index_of: dict[tuple[int, int], int] = {}
+            nxt = 0
             for conv_session in sessions:
-                if turn_idx < len(conv_session.turns):
-                    turn_requests.append((conv_session.session_id, conv_session.turns[turn_idx]))
+                for t_idx in range(_last_turn(len(conv_session.turns)) + 1):
+                    index_of[(conv_session.session_id, t_idx)] = nxt
+                    nxt += 1
+            print(f"  Per-session pacing: {len(sessions)} sessions, "
+                  f"{nxt} requests, up to {concurrency} in flight")
 
-            if not turn_requests:
-                continue
+            async def run_session(conv_session) -> None:
+                sid = conv_session.session_id
+                for t_idx in range(_last_turn(len(conv_session.turns)) + 1):
+                    _sid, _t, result = await dispatch(
+                        sid,
+                        conv_session.turns[t_idx],
+                        t_idx,
+                        previous_context_by_session.get(sid, 0),
+                        request_index=index_of[(sid, t_idx)],
+                    )
+                    _record(_sid, _t, result)
+                    if result is None or not result.success:
+                        break
 
-            print(f"  Turn {turn_idx + 1}/{max_turns}: dispatching {len(turn_requests)} requests...")
-
-            request_offset = sum(len(v) for v in results_by_turn.values())
-            tasks = [
-                dispatch(
-                    sid,
-                    req,
-                    turn_idx,
-                    previous_context_by_session.get(sid, 0),
-                    request_index=request_offset + i,
-                )
-                for i, (sid, req) in enumerate(turn_requests)
-            ]
-            completed = await asyncio.gather(*tasks)
-
-            turn_ok = sum(1 for _, _, r in completed if r is not None and r.success)
-            turn_fail = len(completed) - turn_ok
-            if turn_fail == len(completed):
-                print(
-                    f"ABORT: All {len(completed)} requests in turn {turn_idx + 1} "
-                    f"failed. Server may not be functional."
-                )
+            await asyncio.gather(*[run_session(s) for s in sessions])
+            done = sum(len(v) for v in results_by_turn.values())
+            ok = sum(1 for v in results_by_turn.values() for r in v
+                     if r is not None and r.success)
+            if done and ok == 0:
+                print(f"ABORT: All {done} requests failed. First error: "
+                      f"{_first_error(r for v in results_by_turn.values() for r in v)}")
                 sys.exit(1)
+        else:
+            for turn_idx in range(max_turns):
+                if max_turn_index is not None and turn_idx > max_turn_index:
+                    break
+                turn_requests = []
+                for conv_session in sessions:
+                    if conv_session.session_id in dead_sessions:
+                        continue
+                    if turn_idx < len(conv_session.turns):
+                        turn_requests.append(
+                            (conv_session.session_id, conv_session.turns[turn_idx])
+                        )
 
-            for sid, t_idx, result in completed:
-                results_by_turn[t_idx].append(result)
-                if result.success and result.input_tokens > 0:
-                    previous_context_by_session[sid] = int(result.input_tokens)
+                if not turn_requests:
+                    continue
+
+                print(f"  Turn {turn_idx + 1}/{max_turns}: "
+                      f"dispatching {len(turn_requests)} requests...")
+
+                request_offset = sum(len(v) for v in results_by_turn.values())
+                tasks = [
+                    dispatch(
+                        sid,
+                        req,
+                        turn_idx,
+                        previous_context_by_session.get(sid, 0),
+                        request_index=request_offset + i,
+                    )
+                    for i, (sid, req) in enumerate(turn_requests)
+                ]
+                completed = await asyncio.gather(*tasks)
+
+                turn_ok = sum(1 for _, _, r in completed if r is not None and r.success)
+                turn_fail = len(completed) - turn_ok
+                if turn_fail == len(completed):
+                    print(
+                        f"ABORT: All {len(completed)} requests in turn "
+                        f"{turn_idx + 1} failed. First error: "
+                        f"{_first_error(r for _, _, r in completed)}"
+                    )
+                    sys.exit(1)
+
+                for sid, t_idx, result in completed:
+                    _record(sid, t_idx, result)
 
     benchmark_duration = time.perf_counter() - benchmark_start
 
@@ -817,6 +895,11 @@ def get_args():
     parser.add_argument("--num-requests", type=int, default=100)
     parser.add_argument("--api-key", default="test")
     parser.add_argument("--arrival", default="steady", choices=["steady", "poisson", "ramp"])
+    parser.add_argument("--turn-pacing", default="interleaved",
+                        choices=["interleaved", "per-session"],
+                        help="closed-loop multi-turn scheduling: 'interleaved' (default) "
+                             "barriers each turn across sessions; 'per-session' runs a "
+                             "session's turns back to back. Ignored under --open-loop.")
     parser.add_argument("--target-rate", type=float, default=10.0, help="req/s for poisson/ramp")
     load_group = parser.add_mutually_exclusive_group()
     load_group.add_argument(
@@ -1083,14 +1166,14 @@ if __name__ == "__main__":
         "enable_ep": enable_ep,
         "ep_size": ep_size,
         "parallelism": parallelism,
+        "turn_pacing": args.turn_pacing,
+        "reply_feedback": True,
         "load_mode": args.load_mode,
         "sampling": {
             "temperature": args.temperature,
             "sampling_seed": args.sampling_seed,
             "exact_output_length": args.exact_output_length,
             "ignore_eos": args.ignore_eos or args.exact_output_length,
-            # v4 and earlier ran temperature=1.0 with no seed and no min_tokens,
-            # so their OSL is not reproducible. Recorded for comparability.
             "output_length_controlled": args.exact_output_length,
         },
         "prefix_cache_reset_before_run": args.reset_prefix_cache,
@@ -1157,6 +1240,7 @@ if __name__ == "__main__":
             cache_block_size=args.prefix_cache_block_size,
             num_sessions=effective_num_sessions,
             source_session_ids=source_session_ids,
+            turn_pacing=args.turn_pacing,
             max_turn_index=args.max_turn_index,
             trace_request_ids=args.trace_request_ids,
             load_mode=args.load_mode,

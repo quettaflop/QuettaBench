@@ -22,8 +22,8 @@ class WhitespaceTokenizer:
         return text.split()
 
 
-def fixture_distribution():
-    payload = {
+def fixture_payload():
+    return {
         "schema_version": 1,
         "name": "fixture_multiturn",
         "source": {"kind": "unit-test"},
@@ -55,7 +55,11 @@ def fixture_distribution():
             ],
         },
     }
-    return parse_trace_distribution(payload, path=Path("fixture.json"))
+
+
+def fixture_distribution():
+    return parse_trace_distribution(fixture_payload(), path=Path("fixture.json"))
+
 
 
 def source_session_fixture_distribution():
@@ -141,6 +145,48 @@ class DistributionalSamplerTests(unittest.TestCase):
         self.assertEqual([r.max_tokens for r in session.turns], [20, 30, 10])
         self.assertAlmostEqual(specs[1].cache_hit_rate, 100 / 150)
         self.assertAlmostEqual(specs[2].cache_hit_rate, 150 / 190)
+
+    def test_assistant_placeholders_are_the_live_dicts(self):
+        """Placeholders must be the same dicts later turns hold, not copies."""
+        sampler = DistributionalSampler(fixture_distribution(), seed=7)
+        session = sampler.sample_session(session_id=3)
+
+        self.assertEqual(len(session.assistant_messages), len(session.turns))
+
+        for message in session.assistant_messages:
+            self.assertEqual(message["content"], "")
+
+        session.assistant_messages[0]["content"] = "SPLICED"
+
+        self.assertNotIn("SPLICED",
+                         [m.get("content") for m in session.turns[0].messages])
+        for turn in session.turns[1:]:
+            self.assertIn("SPLICED", [m.get("content") for m in turn.messages])
+
+    def test_dataset_carries_placeholders_into_multiturnsession(self):
+        """The runner reads MultiTurnSession, so placeholders must survive conversion."""
+        import json
+        import tempfile
+
+        from src.workloads.dataset import DistributionalMultiTurnDataset
+
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
+            json.dump(fixture_payload(), fh)
+            path = fh.name
+
+        dataset = DistributionalMultiTurnDataset(
+            filepath=path, min_turns=1, num_sessions=2, random_seed=7,
+        )
+        sessions = dataset.sessions
+        self.assertTrue(sessions)
+        for session in sessions:
+            self.assertEqual(len(session.assistant_messages), len(session.turns))
+            if len(session.turns) > 1:
+                session.assistant_messages[0]["content"] = "spliced"
+                self.assertIn(
+                    "spliced",
+                    [m.get("content") for m in session.turns[1].messages],
+                )
 
     def test_request_metadata_matches_synthetic_turn_specs(self):
         sampler = DistributionalSampler(fixture_distribution(), seed=7)
@@ -561,6 +607,43 @@ class DistributionalMultiTurnDatasetTests(unittest.TestCase):
                 [[r.max_tokens for r in s.turns] for s in first.sessions],
                 [[r.max_tokens for r in s.turns] for s in second.sessions],
             )
+
+
+class CacheEstimateTests(unittest.TestCase):
+    """Reusable prefix includes the previous reply only when it is the engine's output."""
+
+    def _result(self, input_tokens=1000):
+        from src.benchmark.metrics import RequestResult
+        return RequestResult(success=True, input_tokens=input_tokens, output_tokens=200)
+
+    def test_synthetic_reply_is_not_reusable(self):
+        from src.benchmark.metrics import annotate_multi_turn_cache_estimate
+        r = annotate_multi_turn_cache_estimate(
+            self._result(1000), session_id=0, turn_index=1,
+            previous_context_tokens=770, previous_output_tokens=200,
+            reply_in_cache=False)
+        self.assertEqual(r.cached_context_tokens, 770)
+        self.assertEqual(r.new_prefill_tokens, 230)
+        self.assertEqual(r.cache_estimate_source, "previous_prompt_tokens")
+
+    def test_the_engines_own_reply_is_reusable(self):
+        from src.benchmark.metrics import annotate_multi_turn_cache_estimate
+        r = annotate_multi_turn_cache_estimate(
+            self._result(1000), session_id=0, turn_index=1,
+            previous_context_tokens=770, previous_output_tokens=200,
+            reply_in_cache=True)
+        self.assertEqual(r.cached_context_tokens, 970)
+        self.assertEqual(r.new_prefill_tokens, 30)
+        self.assertEqual(r.cache_estimate_source, "previous_prompt_and_reply_tokens")
+
+    def test_reusable_prefix_cannot_exceed_the_prompt(self):
+        from src.benchmark.metrics import annotate_multi_turn_cache_estimate
+        r = annotate_multi_turn_cache_estimate(
+            self._result(800), session_id=0, turn_index=1,
+            previous_context_tokens=770, previous_output_tokens=200,
+            reply_in_cache=True)
+        self.assertEqual(r.cached_context_tokens, 800)
+        self.assertEqual(r.new_prefill_tokens, 0)
 
 
 if __name__ == "__main__":

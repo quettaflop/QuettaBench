@@ -12,7 +12,7 @@ import os
 import random
 import hashlib
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .dataset import BenchmarkRequest
 from .trace_distributions import TraceDistribution, TraceTurnSample
@@ -93,6 +93,9 @@ class SyntheticSession:
     session_id: int
     turns: list[BenchmarkRequest]
     specs: list[SyntheticTurnSpec]
+    assistant_messages: list[dict] = field(default_factory=list)
+    """Live assistant dicts shared with later turns' message lists. Empty content;
+    the runner writes the engine reply in before the next turn is sent."""
 
 
 class DistributionalSampler:
@@ -236,6 +239,7 @@ class DistributionalSampler:
 
         turns: list[BenchmarkRequest] = []
         specs: list[SyntheticTurnSpec] = []
+        assistant_messages: list[dict] = []
         previous_prompt_context = sum(self._tokenize(str(m.get("content", ""))) for m in messages)
         previous_output_tokens = 0
 
@@ -282,11 +286,10 @@ class DistributionalSampler:
                 request, spec, messages, prompt_text_so_far = turn
                 turns.append(request)
                 specs.append(spec)
-                assistant_text = self._synthetic_text(
-                    f"s{session_id}_t{synthetic_turn_index}_assistant", output_tokens
-                )
-                messages.append({"role": "assistant", "content": assistant_text})
-                prompt_text_so_far = prompt_text_so_far + "\n" + assistant_text
+                assistant_message = {"role": "assistant", "content": ""}
+                messages.append(assistant_message)
+                assistant_messages.append(assistant_message)
+                prompt_text_so_far = prompt_text_so_far + "\n"
                 previous_prompt_context = spec.total_context_tokens
                 previous_output_tokens = output_tokens
                 continue
@@ -370,11 +373,9 @@ class DistributionalSampler:
                 )
             )
 
-            assistant_text = self._synthetic_text(
-                f"s{session_id}_t{synthetic_turn_index}_assistant",
-                output_tokens,
-            )
-            messages.append({"role": "assistant", "content": assistant_text})
+            assistant_message = {"role": "assistant", "content": ""}
+            messages.append(assistant_message)
+            assistant_messages.append(assistant_message)
             prompt_text_so_far = "\n".join(str(m.get("content", "")) for m in messages)
             previous_prompt_context = actual_total_context
             previous_output_tokens = output_tokens
@@ -382,7 +383,8 @@ class DistributionalSampler:
             if truncated:
                 break
 
-        return SyntheticSession(session_id=session_id, turns=turns, specs=specs)
+        return SyntheticSession(session_id=session_id, turns=turns, specs=specs,
+                                assistant_messages=assistant_messages)
 
     def _build_evicted_turn(
         self,

@@ -1,16 +1,9 @@
 """
 Multi-turn mode — growing conversation history with prefix caching.
 
-Uses ShareGPT pre-recorded replies to build deterministic growing-history
-request sequences (Option B design — see .claude/docs/multi_turn_design.md).
-
-Design:
-  - ShareGPTMultiTurnDataset: extracts full conversations, builds per-session
-    request sequences with growing message history
-  - Interleaved round-robin scheduling: [A1,B1,C1,A2,B2,C2,...] forces KV
-    cache eviction between turns, testing prefix cache reuse under memory pressure
-  - Per-turn metrics: TTFT by turn number shows prefix cache effectiveness
-    (turn 2+ should have lower TTFT due to shared prefix)
+Later turns send the engine's own reply back (shared assistant dicts). Trace
+replay keeps recorded assistant text. Default scheduling is interleaved
+(barrier per turn); --turn-pacing per-session runs a session's turns back to back.
 
 Server requirements (same as single-turn):
   - vLLM: --enable-prefix-caching

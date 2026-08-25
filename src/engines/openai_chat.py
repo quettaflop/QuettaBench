@@ -28,6 +28,7 @@ async def send_request(
     request_id: Optional[str] = None,
     seed: Optional[int] = None,
     min_tokens: int = 0,
+    capture_text: bool = False,
 ) -> RequestResult:
     """
     Send a single streaming chat completion request and record metrics.
@@ -77,6 +78,7 @@ async def send_request(
     input_tokens = 0
     output_tokens = 0
     usage_reported = False
+    text_parts: list[str] = []
 
     try:
         async with session.post(url, headers=headers, json=payload) as resp:
@@ -136,6 +138,12 @@ async def send_request(
                 if not has_payload:
                     continue
 
+                if capture_text:
+                    # Transcript is content only; reasoning/tool_calls are not sent back.
+                    piece = delta.get("content")
+                    if piece:
+                        text_parts.append(piece)
+
                 # Real token received
                 if ttft is None:
                     ttft = now - start_time
@@ -153,6 +161,7 @@ async def send_request(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             usage_reported=usage_reported,
+            generated_text="".join(text_parts) if capture_text else None,
         )
 
     except asyncio.CancelledError:

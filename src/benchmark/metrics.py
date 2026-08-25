@@ -35,6 +35,10 @@ class RequestResult:
     # per_request for inspection; they just do not feed the percentiles.
     excluded_from_summary: bool = False
 
+    # Captured only when asked; used to splice the engine reply into later turns.
+    # Not written to the result JSON.
+    generated_text: Optional[str] = None
+
     # Client-side request shape/timing. These do not replace TTFT/TPOT/E2EL;
     # they explain scheduler pressure and workload shape for later predictors.
     request_index: Optional[int] = None
@@ -145,13 +149,15 @@ def annotate_multi_turn_cache_estimate(
     turn_index: int,
     previous_context_tokens: int,
     cache_block_size: Optional[int] = None,
+    previous_output_tokens: int = 0,
+    reply_in_cache: bool = False,
 ) -> RequestResult:
     """Attach per-session cache-estimate metadata to a multi-turn result.
 
-    The serving API does not expose actual prefix-cache hit/miss telemetry.
-    Instead, record the exact prompt-token delta observed for each session:
-    previous prompt tokens are the reusable prefix estimate, and the current
-    prompt-token delta is the newly-prefilled estimate.
+    Client-side estimate from observed prompt-token deltas, not engine telemetry.
+    If ``reply_in_cache``, the previous turn's output is treated as reusable
+    prefix (engine-generated reply spliced into later prompts); otherwise the
+    reusable prefix stops at the previous prompt.
     """
     result.session_id = session_id
     result.turn_index = turn_index
@@ -162,14 +168,18 @@ def annotate_multi_turn_cache_estimate(
         return result
 
     total_context = int(result.input_tokens)
-    cached_context = min(result.previous_context_tokens, total_context)
+    reusable = result.previous_context_tokens
+    if reply_in_cache:
+        reusable += max(0, int(previous_output_tokens or 0))
+    cached_context = min(reusable, total_context)
     new_prefill = max(0, total_context - cached_context)
 
     result.total_context_tokens = total_context
     result.cached_context_tokens = cached_context
     result.new_prefill_tokens = new_prefill
     result.cache_hit_rate = cached_context / total_context if total_context > 0 else 0.0
-    result.cache_estimate_source = "previous_prompt_tokens"
+    result.cache_estimate_source = ("previous_prompt_and_reply_tokens"
+                                   if reply_in_cache else "previous_prompt_tokens")
 
     if cache_block_size is not None and cache_block_size > 0:
         block_size = int(cache_block_size)
