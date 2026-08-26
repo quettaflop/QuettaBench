@@ -70,7 +70,7 @@ Canonical data lives on the `agent-bench` R2 bucket:
 | `data/` | raw trajectory datasets (fetched by `scripts/fetch_data.sh`) |
 | `results/` | benchmark ground truth (synthetic_distributional, trace_replay, archived) |
 | `json/current/` | dashboard runtime JSONs |
-| `archive/` | pre-2026-05 result snapshots |
+| `archive/` | pre-2026-05 result snapshots; `2026-08-26-realized-session-distributions/` holds the old per-GPU sim replay pools |
 
 Results sync up with `aws s3 sync` against the same bucket (see
 `agentic-serve` for the orchestrator this was trimmed from).

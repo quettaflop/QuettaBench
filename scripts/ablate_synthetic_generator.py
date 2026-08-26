@@ -32,6 +32,11 @@ each quantity. Positive = synthetic overstates.
 Usage:
     python scripts/ablate_synthetic_generator.py
     python scripts/ablate_synthetic_generator.py --hw h100 --benchmark swebench
+
+The per-GPU `*_realized_*.json` pools were untracked on 2026-08-26. Restore
+from `s3://agent-bench/archive/2026-08-26-realized-session-distributions/`
+(complete tarball: `realized-session-distributions.tar.gz`) into
+`data/distributions/` before running this script.
 """
 
 from __future__ import annotations
