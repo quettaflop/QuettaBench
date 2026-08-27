@@ -1,16 +1,8 @@
 #!/usr/bin/env python3
 """Build predictor-coverage.json from kernels_labeled.csv + per_op_labeled.csv.
 
-Walks the two predictor training CSVs and emits per-(gpu, model) row counts
-for the dashboard's Coverage page. Mirrors the publish_sweep_state.py +
-publish_profiling_state.py contract: write to dashboard/public/, optionally
-upload to R2.
-
-Run (no upload):
-    python scripts/publish_predictor_coverage.py --no-upload
-
-Run (upload to R2):
-    python scripts/publish_predictor_coverage.py
+Writes BENCH_ARTIFACT_DIR/predictor-coverage.json. CSV roots default to a sibling
+llm_predict_legacy tree (override KERNEL_CSV / PEROP_CSV).
 """
 from __future__ import annotations
 
@@ -25,9 +17,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-REPO_ROOT = HERE.parent.parent
-KERNEL_CSV = REPO_ROOT / "llm_predict_legacy" / "training" / "per_kernel" / "data" / "kernels_labeled.csv"
-PEROP_CSV = REPO_ROOT / "llm_predict_legacy" / "training" / "per_op" / "data" / "per_op_labeled.csv"
+REPO_ROOT = HERE.parent
+LEGACY_ROOT = REPO_ROOT.parent / "llm_predict_legacy"
+KERNEL_CSV = LEGACY_ROOT / "training" / "per_kernel" / "data" / "kernels_labeled.csv"
+PEROP_CSV = LEGACY_ROOT / "training" / "per_op" / "data" / "per_op_labeled.csv"
 # Dashboard-JSON artifact output lands in the neutral artifact dir (env-overridable);
 # the dashboard tree now lives in the separate QuettaBoard repo.
 OUTPUT_FILE = Path(os.environ.get("BENCH_ARTIFACT_DIR", "/mnt/100g/agent-bench/artifacts")) / "predictor-coverage.json"

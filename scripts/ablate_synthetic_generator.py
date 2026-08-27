@@ -1,42 +1,12 @@
 #!/usr/bin/env python3
-"""Tier-1 ablation: does the synthetic generator match REALIZED workload shape
-at each concurrency?
+"""Compare DistributionalSampler shape vs realized per-concurrency pools.
 
-Motivation
-----------
-The 44-cell LSS validation (docs/lss-validation-results.md) certifies the
-SIMULATOR, and it does so via trace replay -- the synthetic generator is not in
-that loop at all. Meanwhile `DistributionalSampler` takes no concurrency
-argument, so it is concurrency-invariant by construction, and the "short"
-distributions were fit from a single concurrency (conc5) capture. Whether a
-conc5-fit, concurrency-invariant generator reproduces realized workload shape at
-conc 1..320 has never been measured.
+Restore the pools from
+s3://agent-bench/archive/2026-08-26-realized-session-distributions/
+into data/distributions/ first.
 
-This script measures exactly that, with no simulator in the loop, so it is cheap
-and can run before committing to any GPU/sim time.
-
-Method
-------
-For each (benchmark, hardware, concurrency):
-  realized  = by_concurrency[c].trajectory_pool, a list of sessions, each a list
-              of [cached, new, output] per turn. So
-                  total_context = cached + new
-                  new_prefill   = new
-                  cache_hit     = cached / (cached + new)
-  synthetic = DistributionalSampler over the matching *synthetic* distribution,
-              sampling the same number of sessions with the same seed.
-
-Reports the signed relative error of synthetic vs realized on the p50 and p90 of
-each quantity. Positive = synthetic overstates.
-
-Usage:
     python scripts/ablate_synthetic_generator.py
     python scripts/ablate_synthetic_generator.py --hw h100 --benchmark swebench
-
-The per-GPU `*_realized_*.json` pools were untracked on 2026-08-26. Restore
-from `s3://agent-bench/archive/2026-08-26-realized-session-distributions/`
-(complete tarball: `realized-session-distributions.tar.gz`) into
-`data/distributions/` before running this script.
 """
 
 from __future__ import annotations

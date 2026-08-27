@@ -1,27 +1,8 @@
 #!/usr/bin/env python3
-"""Held-out test of the synthetic generator using Claw-Eval sessions.
+"""Held-out test of DistributionalSampler on Claw-Eval sessions.
 
-Why this is worth doing
------------------------
-The Tier-1 ablation (ablate_synthetic_generator.py) is limited two ways:
+Fit on train sessions, score on held-out test sessions.
 
-1. Statistical power. Realized pools have `n_sessions == concurrency`, so the
-   low-concurrency cells compare against 1-20 sessions. Nothing conclusive can
-   be said there.
-2. Train-on-test. `swebench_..._filtered-mse` was FIT on the conc5 capture it is
-   then compared against, so a good conc5 score is partly circular.
-
-The Claw-Eval capture fixes both: 300 real sessions at one concurrency
-(--parallel 16), which is ~15x the sessions in the conc-20 pool, and enough to
-split. We fit the distribution on TRAIN sessions only and score the generator
-against held-out TEST sessions it has never seen.
-
-This measures generator fidelity in the *unsaturated* regime specifically. The
-claw-eval run had 8 idle H100s at parallel=16 and was not queue-bound, so there
-is little load-induced truncation -- which is exactly the regime the existing GT
-cannot speak to.
-
-Usage:
     python scripts/holdout_claweval_generator.py
     python scripts/holdout_claweval_generator.py --splits 5 --seed 7
 """

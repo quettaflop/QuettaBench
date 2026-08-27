@@ -40,7 +40,8 @@ from pathlib import Path
 
 import torch
 import torch.distributed as dist
-
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _paths import kernel_data_root
 
 _DTYPE = torch.bfloat16

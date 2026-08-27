@@ -40,14 +40,7 @@ from ..workloads.arrival import make_arrival_times
 
 
 SUPPORTED_BACKENDS = ["openai", "vllm", "sglang"]
-# v4 (2026-07-22): streaming client counts reasoning_content/reasoning/tool_calls
-# deltas as token events, and tpot falls back to wall-clock when ITL chunk
-# coverage is incomplete. v3 and earlier vllm gpt-oss results carry inter-chunk
-# tpot (see QuettaSim tools/GT_QUALITY_FLAGS.md Finding 1).
-# v5 (2026-07-30): sampling is pinned (greedy by default + forwarded seed) so
-# output lengths are reproducible; failed requests keep their partial timings
-# and carry an error_kind; runs can reset the server prefix cache first. v4 and
-# earlier used temperature=1.0 with no seed, so their OSL varies run to run.
+# v5: greedy-by-default + seed; failed requests keep partial timings and error_kind.
 BENCHMARK_SCHEMA_VERSION = 5
 WORKLOAD_SCHEMA_VERSION = "distributional-synthetic-v1"
 TRACE_REQUEST_ID_PREFIX = "agenticbench"

@@ -1,15 +1,9 @@
 # profiling/README.md
 
 Measurement code for QuettaBench: GPU kernel probes, live-server probes, and the
-emitters that turn raw probe output into curated tables. This was proposed as a
-separate QuettaProbe repo; it lives here instead, as a peer of the runner
-(`src/`), so QuettaBench holds both the benchmark client and the measurement
-tools.
-
-The runner (`src/`) stays light and GPU-free. Everything under `profiling/probes/`
-needs a GPU, torch, and vLLM. Those deps are opt-in (see "Install" below), so a
-plain `pip install -r requirements.txt` still runs the benchmark client on a box
-with no GPU.
+emitters that turn raw probe output into curated tables. Peer of the runner
+(`src/`). The runner stays GPU-free; `profiling/probes/` needs torch and vLLM
+(opt-in via requirements-probe.txt).
 
 ## Layout
 

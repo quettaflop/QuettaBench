@@ -7,9 +7,8 @@ record by reading /mnt/100g/agent-bench/state/<scope>/<job_id>.status. Legacy
 BENCH_STATE_LEGACY_FALLBACK=0. Cells without a state file get status "pending".
 known_oom entries override runtime status.
 
-Output is written to dashboard/public/sweep-state.json and optionally uploaded
-to R2 at s3://agent-bench/json/current/sweep-state.json so the live dashboard
-can fetch it from the generated JSON prefix.
+Output lands in BENCH_ARTIFACT_DIR/sweep-state.json and optionally uploads
+to R2 at s3://agent-bench/json/current/sweep-state.json.
 
 Run locally (no upload):
     python scripts/publish_sweep_state.py --no-upload

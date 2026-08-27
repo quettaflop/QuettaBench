@@ -23,6 +23,8 @@ import triton
 from vllm.model_executor.layers.fla.ops import (
     chunk_gated_delta_rule, fused_recurrent_gated_delta_rule,
 )
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _ncu import ncu_op_us
 
 # chunk_gated_delta_rule's solve_tril merge kernel autotunes on a fresh host (no

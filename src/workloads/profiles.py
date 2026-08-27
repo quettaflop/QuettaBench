@@ -4,7 +4,7 @@ Workload profile definitions.
 Profiles are organized into groups:
   Group 1: Real agent data (SWEBench PLLM, SWEBench trajectories, TerminalBench trajectories)
   Group 2: Chat — single-turn and multi-turn (ShareGPT)
-  Group 3: Synthetic stress tests (random tokens, file-based)
+  Group 3: Synthetic stress tests (random tokens)
 
 Each profile defines the data source, ISL/OSL bounds, and metadata tags.
 """
@@ -23,7 +23,6 @@ DATA_SOURCES = [
     "terminalbench",
     "osworld",
     "distributional",
-    "file",
     "random",
     "test",
 ]
@@ -36,8 +35,8 @@ class WorkloadProfile:
     osl_tokens: int   # for random: exact target OSL; for sharegpt: max OSL filter bound (also max_tokens)
     isl_stddev: float        # stddev as fraction of isl (for Gaussian sampling)
     description: str
-    dataset: str             # "sharegpt", "file", "test", "random", "jsonl", "sharegpt-multi-turn", "swebench-multi-turn", "terminalbench-multi-turn"
-    file_path: str = ""      # used when dataset="file" or "jsonl"
+    dataset: str             # "sharegpt", "test", "random", "jsonl", "sharegpt-multi-turn", "swebench-multi-turn", "terminalbench-multi-turn"
+    file_path: str = ""      # used when dataset="jsonl" or "distributional-multi-turn"
     system_prompt: str = "You are a helpful assistant."
     tokenizer_name: str = "" # used when dataset="random"
     mode: str = "single-turn"           # "stress-test" | "single-turn" | "multi-turn"
@@ -48,7 +47,7 @@ class WorkloadProfile:
     agent_type: str = ""           # "chat" | "coding" | "terminal"
     turn_style: str = "single-turn"  # "single-turn" | "multi-turn"
     serving_style: str = "not-disaggregated"  # "disaggregated" | "not-disaggregated"
-    data_source: str = ""          # "sharegpt" | "swebench" | "terminalbench" | "file" | "random" | "test"
+    data_source: str = ""          # "sharegpt" | "swebench" | "terminalbench" | "random" | "test"
     active: bool = True            # False = legacy/runnable, hidden from default sweeps/profile lists
 
 
@@ -185,15 +184,8 @@ PROFILES: dict[str, WorkloadProfile] = {
         data_source="distributional",
     ),
 
-    # Claw-Eval general-agent sessions. Distinct from the three above in two
-    # ways worth knowing before comparing against them:
-    #   1. Context sizes are MEASURED (server-reported usage per turn), not
-    #      word-ratio estimated -- diagnostics report estimated_context_turns=0.
-    #   2. Captured under DeepSeek-V4-Flash "Think Max", so output_tokens include
-    #      reasoning tokens. Output is correspondingly heavy-tailed: p50 279 but
-    #      max 17,258, against swebench-synth's flat osl_tokens=2000.
-    # Bounds below are the measured extremes of the 300-session capture, not
-    # round numbers: turns 1..39, context max 323,695, output max 17,258.
+    # Claw-Eval: measured server usage (not word-ratio estimates). Output includes
+    # DeepSeek-V4 reasoning tokens; bounds are capture extremes, not round numbers.
     "claweval-multiturn-synth": WorkloadProfile(
         name="claweval-multiturn-synth",
         isl_tokens=323695,
@@ -211,9 +203,6 @@ PROFILES: dict[str, WorkloadProfile] = {
         min_turns=1,
         max_turns=39,
         num_sessions=1,
-        # Tool mix is productivity/assistant rather than pure coding or CLI:
-        # Bash 1113, web_fetch 678, web_search 400, plus mock gmail/contacts/
-        # crm/helpdesk services. "computer-use" is the closest existing bucket.
         agent_type="computer-use",
         turn_style="multi-turn",
         serving_style="not-disaggregated",
@@ -731,11 +720,7 @@ PROFILES: dict[str, WorkloadProfile] = {
         active=False,
     ),
 
-    # === MSE-validation profiles — bucketed by turn-count range (2026-05-05) ===
-    # These match the REAL trace_replay profiles' turn-count ranges:
-    #   -short: 13-30 turns (swebench), 2-30 (terminalbench)
-    #   -medium: 50-125 turns
-    # Use for head-to-head per-turn validation against archived trace_replay runs.
+    # Inactive MSE profiles: turn-count buckets matching legacy trace_replay -short/-medium.
     "swebench-multiturn-mse-short": WorkloadProfile(
         name="swebench-multiturn-mse-short",
         isl_tokens=32768, osl_tokens=2000, isl_stddev=0.0,

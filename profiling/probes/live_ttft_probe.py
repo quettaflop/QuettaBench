@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
 # profiling/probes/live_ttft_probe.py
-"""Live vLLM OpenAI-server c1 TTFT probe — does the HTTP/chat path reproduce the serving cached rate 6.1 ms/1k?
+"""c1 live-server TTFT vs (new, cached) over the OpenAI chat path.
 
-Mirrors prefill_stage_split.py but over the FULL serving path (aiohttp streaming chat/completions, same as the
-benchmark client). For each (new, cached): prime the cached prefix (a HIT), then measure TTFT of `prefix + a
-FRESH new tail` (new = real miss) at concurrency 1, fresh tail per trial. Regress ttft on (new, cached).
-Compare the cached slope to offline 2.4 ms/1k (prefill_stage_split) and the fitted serving 6.1 ms/1k.
+Prime a cached prefix, then measure TTFT of prefix + a fresh miss tail.
 """
 import asyncio, json, time, random, csv, argparse, statistics as st
 import aiohttp

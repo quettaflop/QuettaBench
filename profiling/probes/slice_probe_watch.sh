@@ -8,7 +8,7 @@ DIR=$(cd "$(dirname "$0")" && pwd)
 OUT=/data48/kevinlau/herd_probe
 mkdir -p "$OUT"
 
-# root fs is 100% full (2026-07-04) — keep every write off it
+# Keep probe scratch off the root filesystem.
 export TMPDIR=/data48/kevinlau/tmp
 export XDG_CACHE_HOME=/data48/kevinlau/tmp/cache
 export PYTHONDONTWRITEBYTECODE=1

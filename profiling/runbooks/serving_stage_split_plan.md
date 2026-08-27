@@ -10,8 +10,8 @@ model-forward (DEVICE) | framework-dispatch | sample | detokenize | response-str
 ```
 
 Artifacts:
-- `profiling/gpu_profiling/vllm/serving_stage_split.py` — the instrumented live bench.
-- `profiling/gpu_profiling/vllm/analyze_serving_stage_split.py` — regress each stage on `(new,cached)`.
+- `profiling/probes/serving_stage_split.py` — the instrumented live bench.
+- `profiling/probes/serving_stage_split.py` — regress each stage on `(new,cached)`.
 - this doc — rationale, device-timing method, exact H100 recipe, VERIFY-ON-H100 checklist, feed-back.
 
 ---
@@ -119,7 +119,7 @@ gpu-mem 0.9, stats ON), health-polls `/health`, then sweeps `(new × cached)` at
 fresh tail per trial and a `/metrics` scrape around each request.
 
 ```bash
-$PYTHON profiling/gpu_profiling/vllm/serving_stage_split.py \
+$PYTHON profiling/probes/serving_stage_split.py \
   --model "$MODEL" --port 8771 \
   --news 8,128,512,1024,2048 --cacheds 0,2000,8000,16000 --trials 5 \
   --out profile_data/results/serving_stage_split_H100.csv
@@ -139,7 +139,7 @@ Print the exact command + the worker hook, then run it by hand (kept separate so
 does not contaminate the Lane-0/A walls):
 
 ```bash
-$PYTHON profiling/gpu_profiling/vllm/serving_stage_split.py --emit-nsys-cmd --port 8771
+$PYTHON profiling/probes/serving_stage_split.py --emit-nsys-cmd --port 8771
 ```
 
 That prints (paths are **VERIFY-ON-H100**):
@@ -174,7 +174,7 @@ Emit a small `serving_stage_device_H100.csv` (`new,cached,device_kernel_ms`) for
 ### 4c. Analyze
 
 ```bash
-$PYTHON profiling/gpu_profiling/vllm/analyze_serving_stage_split.py \
+$PYTHON profiling/probes/serving_stage_split.py \
   --csv profile_data/results/serving_stage_split_H100.csv \
   --device-csv profile_data/results/serving_stage_device_H100.csv   # optional (LANE B)
 ```

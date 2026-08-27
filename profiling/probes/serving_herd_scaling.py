@@ -1,33 +1,15 @@
 #!/usr/bin/env python3
 # profiling/probes/serving_herd_scaling.py
-"""Herd-scaling probe: how c1 prefill TTFT and its per-stage spans grow when N
-identical requests arrive as a SYNCHRONIZED barrier (asyncio.gather).
+"""How prefill TTFT grows when N identical requests arrive as one barrier.
 
-Companion to serving_stage_split.py (c1-only). Every request in a burst shares the SAME
-primed cached prefix (APC hit -> GPU only prefills each request's small fresh `new` tail),
-so GPU prefill work stays ~flat across the burst and the TTFT growth with concurrency
-isolates FRONTEND + scheduler SERIALIZATION -- the mechanism the v2 queue sim under-
-predicts in the sub-saturation band.
+Companion to serving_stage_split.py. Shared cached prefix, fresh `new` tail per
+request, so GPU work stays ~flat and TTFT vs concurrency isolates frontend +
+scheduler. Also scrapes vLLM's time_to_first_token histogram so client-loop
+serialization is not mistaken for server-side delay.
 
-TWO JOBS:
-  1. VERIFY server-side. The client wall TTFT can be inflated by THIS single-process asyncio
-     client serializing N concurrent SSE reads. So we ALSO scrape vLLM's own
-     `time_to_first_token_seconds` histogram (delta/conc = mean SERVER TTFT, immune to the
-     client event loop). server_frontend = server_ttft - queue - prefill. If THAT grows with
-     conc, the serialization is genuinely in the server frontend, not the client.
-  2. CHARACTERIZE. Sweep (new, cached) x conc so the per-request frontend service F and its
-     token-dependence + sub-linear GPU-overlap can be fit for a serving-frontend term.
-
-Per (new, cached, conc): prime the prefix, fire `conc` requests concurrently (each a fresh
-`new` tail), scrape /metrics _sum before/after the burst -> mean per-request spans
-(delta/conc), record client wall TTFT median/max.
-
-Run (GPU 7, self-launches the server):
-  CUDA_VISIBLE_DEVICES=7 TMPDIR=/data48/kevinlau/tmp XDG_CACHE_HOME=/data48/kevinlau/tmp/.cache \
-    ~/miniconda3/envs/vllm/bin/python \
-    profiling/gpu_profiling/vllm/serving_herd_scaling.py \
-    --news 128,2048 --cacheds 0,8000 --concs 1,5,10,20 \
-    --out profile_data/results/serving_herd_scaling_H100.csv
+    python3 profiling/probes/serving_herd_scaling.py \
+      --news 128,2048 --cacheds 0,8000 --concs 1,5,10,20 \
+      --out profile_data/results/serving_herd_scaling_H100.csv
 """
 from __future__ import annotations
 

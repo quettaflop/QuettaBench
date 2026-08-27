@@ -1,22 +1,10 @@
 #!/usr/bin/env python3
 # profiling/emit/build_saturated_ceiling.py
-"""Derive the measured saturated-ITL ceiling anchors for the kernel TPOT amplifier.
+"""Measured saturated-ITL ceiling anchors (median tpot_ms at KV pressure >= 2.5).
 
-Replaces the retired least-squares ceiling ``118.7 + 3263/output`` (a 2-coefficient
-regression to measured plateau ITL) with a small set of **measured anchors**: the
-median measured ``tpot_ms`` over turns in the saturated regime (KV pressure >= 2.5,
-i.e. the "C=300+" asymptote), grouped by output-length cluster. ``saturated_ceiling_ms``
-then linearly interpolates between these measured points (the same fit-free
-measured-anchor + interpolation pattern as the decode kernel grid).
+Needs QuettaSim/agentic-serve on PYTHONPATH (`configs.loader` and
+`profiling.process.build_simulator_rows`).
 
-Pressure is the same workload quantity the predictor uses:
-``pressure = scheduled_requests * per_session_blocks / available_kv_blocks``.
-
-Saturated turns fall into disjoint output clusters (short-output agentic coding vs
-long-output osworld); the cluster split sits in the empty output gap, so the anchors
-are invariant to its exact value. One anchor per populated cluster.
-
-Usage:
     python3 -m profiling.emit.build_saturated_ceiling
 """
 from __future__ import annotations
@@ -32,17 +20,15 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-# NOTE: consumer-coupled emitter. build_simulator_rows (skipped v1 module), configs,
-# and simulator live in the CONSUMER repo (agentic-serve / QuettaSim), not QuettaBench.
-# Run from a checkout where those are importable (see profiling/README.md).
-from profiling.process.build_simulator_rows import (  # noqa: E402
-    BENCH_BASE, CONCURRENCIES, PROFILES, build_turns,
-)
-from configs.loader import all_deployments  # noqa: E402
-
-PRESSURE_THRESHOLD = 2.5      # saturated regime (the C=300+ asymptote the ceiling models)
-CLUSTER_SPLIT_OUTPUT = 50.0   # sits in the empty output gap [35,75]; anchors invariant to it
+PRESSURE_THRESHOLD = 2.5
+CLUSTER_SPLIT_OUTPUT = 50.0
 CACHE_BLOCK_SIZE = 16
+
+# Filled in main() after consumer imports succeed.
+BENCH_BASE = None
+CONCURRENCIES = None
+PROFILES = None
+build_turns = None
 
 
 @dataclass(frozen=True)
@@ -55,18 +41,21 @@ class CeilingConfig:
     out_json: Path
 
 
-# Generate a ceiling for every deployment that OWNS one (manifest data.saturated_ceiling status
-# measured/derived, with a path). Configs that INHERIT the H100 ceiling (e.g. H100x2) are skipped.
-# Driven by configs/deployments/*.json — to add one, set that deployment's saturated_ceiling status.
-# Model-general: the ceiling is the measured plateau for THIS (gpu, model), so Llama, MoE (gpt-oss /
-# Mixtral), etc. all flow through the same builder — the model label comes from the deployment.
-CONFIGS = [
-    CeilingConfig(d.gpu_key, d.model, d.tp, d.bench_dir, d.available_kv_blocks,
-                  Path((d.data.get("saturated_ceiling") or {})["path"]))
-    for d in all_deployments()
-    if (d.data.get("saturated_ceiling") or {}).get("status") in ("measured", "derived")
-    and (d.data.get("saturated_ceiling") or {}).get("path")
-]
+def _load_consumer():
+    try:
+        from profiling.process.build_simulator_rows import (  # noqa: E402
+            BENCH_BASE as bench_base,
+            CONCURRENCIES as concs,
+            PROFILES as profiles,
+            build_turns as turns_fn,
+        )
+        from configs.loader import all_deployments  # noqa: E402
+    except ImportError as e:
+        raise SystemExit(
+            "build_saturated_ceiling needs QuettaSim/agentic-serve on PYTHONPATH "
+            f"(could not import {e.name!r}). See profiling/README.md."
+        ) from e
+    return bench_base, concs, profiles, turns_fn, all_deployments
 
 
 def _turns_with_pressure(cfg: CeilingConfig) -> list[tuple[float, float, float]]:
@@ -184,14 +173,22 @@ def build(cfg: CeilingConfig) -> dict | None:
         "_notes": ("Measured-anchor replacement for the retired least-squares ceiling "
                    "118.7 + 3263/output (no fit; measured plateau medians + interpolation, "
                    "same pattern as the decode kernel grid). Regenerate: "
-                   "python3 -m profiling.emit.build_saturated_ceiling. "
-                   "See profiling/docs/fitted_constants_audit.md."
+                   "python3 -m profiling.emit.build_saturated_ceiling."
                    + _sensitivity_note(turns, anchors)),
     }
 
 
 def main() -> None:
-    for cfg in CONFIGS:
+    global BENCH_BASE, CONCURRENCIES, PROFILES, build_turns
+    BENCH_BASE, CONCURRENCIES, PROFILES, build_turns, all_deployments = _load_consumer()
+    configs = [
+        CeilingConfig(d.gpu_key, d.model, d.tp, d.bench_dir, d.available_kv_blocks,
+                      Path((d.data.get("saturated_ceiling") or {})["path"]))
+        for d in all_deployments()
+        if (d.data.get("saturated_ceiling") or {}).get("status") in ("measured", "derived")
+        and (d.data.get("saturated_ceiling") or {}).get("path")
+    ]
+    for cfg in configs:
         if not (BENCH_BASE / cfg.bench_dir).exists():
             print(f"SKIP {cfg.gpu}: bench root missing ({BENCH_BASE / cfg.bench_dir})")
             continue

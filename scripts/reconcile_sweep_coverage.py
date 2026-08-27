@@ -37,7 +37,7 @@ DEFAULT_DATA = f"{DEFAULT_PUBLIC_BASE}/data.json"
 DEFAULT_SWEEP_YAML = HERE / "sweep.yaml"
 DEFAULT_BENCH_JOBS = HERE / "bench_jobs.txt"
 DEFAULT_STATE_DIR = Path("/tmp/bench_jobs/state")
-DEFAULT_SWEEP_STATE = BENCH_ROOT / "dashboard" / "public" / "sweep-state.json"
+DEFAULT_SWEEP_STATE = Path("/mnt/100g/agent-bench/artifacts") / "sweep-state.json"
 DEFAULT_REPORT = Path("/tmp/sweep-coverage-reconcile.md")
 DEFAULT_MISSING_JOBS = Path("/tmp/bench_jobs/missing_synthetic_distributional_bench_jobs.txt")
 
