@@ -42,7 +42,6 @@ src/engines/      vLLM/SGLang OpenAI-compatible endpoints
 src/modes/        stress_test / single_turn / multi_turn
 src/workloads/    profiles, datasets, arrival patterns, distributional replay
 data/distributions/  measured per-profile workload distributions (fetched from R2)
-configs/          server launch baselines
 tests/            runner/workload unit tests
 profiling/        GPU kernel + live-server probes and their emitters (opt-in, needs a GPU)
 ```
