@@ -5,6 +5,7 @@ results/
 
 # Large datasets live on R2 (see scripts/fetch_data.sh), not in git.
 data/*.jsonl
+data/distributions/*.json
 
 # Scratch output from distribution rebuilds / re-baselines.
 data/_rebuilt*/

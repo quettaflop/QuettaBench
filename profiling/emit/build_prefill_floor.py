@@ -1,26 +1,15 @@
 # profiling/emit/build_prefill_floor.py
-"""Measured per-config prefill FLOOR (ms): the fixed per-request first-token overhead
-(kernel launch + first-token emit + detok + return) that the queue sim charges ONCE per
-request on prefill completion (``ttft_queue_sim._on_first_token``).
+"""Measured conc=1 prefill floor (ms) per deployment.
 
-The floor is the y-intercept of TTFT vs newly-(re)prefilled tokens in the **conc=1, immediately
-admitted** regime — i.e. TTFT with the prefill COMPUTE extrapolated to zero. At conc=1 there is
-no server-side prefill batching/contention (one request in flight), so TTFT = floor + compute.
-This is the same measured-anchor method that set the retired single H100-tp1 constant
-``PREFILL_FLOOR_MS = 26.0`` (c1 turn-0, cached~=0); here it is computed PER deployment so tp2/tp4
-configs stop inheriting the tp1 floor (the H100x2 floor is ~14 ms, not 26 — the dominant source of
-the tp2 low-concurrency TTFT/TPOT over-prediction). No fit to any validation target: a measured
-intercept per config, regenerable like the decode grid.
+y-intercept of TTFT vs new-prefill tokens when a request is admitted immediately.
+Needs QuettaSim/agentic-serve on PYTHONPATH (`configs.loader`, `simulator.ramp_tpot`).
 
-Run:  python3 -m profiling.emit.build_prefill_floor   (writes profile_data/results/prefill_floor_llama31_8b.json)
+    python3 -m profiling.emit.build_prefill_floor
 """
 from __future__ import annotations
 
 import json
 from pathlib import Path
-
-from configs.loader import all_deployments
-from simulator.ramp_tpot import _gpu_slug
 
 BENCH_BASE = Path("/mnt/100g/agent-bench/results/synthetic_distributional")
 OUT = Path("profile_data/kernels/prefill_floor_llama31_8b.json")  # committed (curated), like the saturated ceiling
@@ -58,15 +47,7 @@ def _clean_points(bench_root: Path) -> list[tuple[float, float]]:
 
 
 def _floor_from_points(pts: list[tuple[float, float]]) -> dict | None:
-    """Floor = the minimum TTFT over all immediately-admitted conc=1 requests — the
-    compute-and-cache minimum, ≈ the pure per-request first-token overhead (the turn with
-    near-zero effective prefill). This is the EXACT measured-anchor definition of the retired
-    tp1 constant 26.0 ("min pure-prefill TTFT, c1"), and reproduces it (H100-tp1 = 25.9 ≈ 26)
-    while exposing the true lower tp2/tp4 floors (H100x2 = 14.0) that the single tp1 constant
-    wrongly imposed. NOT restricted by ``new_prefill_tokens``: that field undercounts an
-    evicted-prefix re-prefill, so small-``new`` turns are not reliably floor-dominated — the
-    global min is. Stable here: the floor is a hardware/launch constant, and n=63 across four
-    profiles makes the min a true cohort minimum, not a single-request glitch (validated vs 26.0)."""
+    """Min TTFT over immediately-admitted conc=1 requests (hardware/launch floor)."""
     if len(pts) < 5:
         return None
     ttfts = [t for _, t in pts]
@@ -78,6 +59,14 @@ def _floor_from_points(pts: list[tuple[float, float]]) -> dict | None:
 
 
 def main() -> None:
+    try:
+        from configs.loader import all_deployments
+        from simulator.ramp_tpot import _gpu_slug
+    except ImportError as e:
+        raise SystemExit(
+            "build_prefill_floor needs QuettaSim/agentic-serve on PYTHONPATH "
+            f"(could not import {e.name!r}). See profiling/README.md."
+        ) from e
     out: dict[str, dict] = {}
     for dep in all_deployments():
         if getattr(dep, "model", None) != "Llama-3.1-8B":

@@ -1,12 +1,4 @@
-"""
-Dataset classes for benchmark workloads.
-
-Ported from llm-bench/src/benchmark_dataset.py with improvements:
-- Thread-safe with asyncio lock support
-- Profile-aware (returns messages list, not just prompt string)
-- ShareGPT loads full conversations, not just first message
-- ShareGPT returns per-request max_tokens from the actual assistant reply length
-"""
+"""Dataset classes for benchmark workloads."""
 
 import asyncio
 import threading
@@ -49,37 +41,6 @@ class TestDataset(BaseDataset):
             messages=[{"role": "user", "content": self.prompt}],
             max_tokens=20,
         )
-
-
-class FileDataset(BaseDataset):
-    """Loads a single static prompt from a text file."""
-
-    def __init__(
-        self,
-        filepath: str,
-        system_prompt: str = "You are a helpful assistant.",
-        max_tokens: int = 1024,
-    ):
-        self.filepath = filepath
-        self.system_prompt = system_prompt
-        self.max_tokens = max_tokens
-        self._prompt: Optional[str] = None
-        self._lock = threading.Lock()
-
-    def _load(self):
-        if self._prompt is None:
-            with self._lock:
-                if self._prompt is None:
-                    with open(self.filepath, "r") as f:
-                        self._prompt = f.read().strip()
-
-    def get_next_request(self) -> BenchmarkRequest:
-        self._load()
-        messages = []
-        if self.system_prompt:
-            messages.append({"role": "system", "content": self.system_prompt})
-        messages.append({"role": "user", "content": self._prompt})
-        return BenchmarkRequest(messages=messages, max_tokens=self.max_tokens)
 
 
 class JsonlDataset(BaseDataset):
@@ -897,12 +858,6 @@ def make_dataset(
 
     if profile.dataset == "test":
         return TestDataset()
-    elif profile.dataset == "file":
-        return FileDataset(
-            filepath=profile.file_path,
-            system_prompt=profile.system_prompt,
-            max_tokens=profile.osl_tokens,
-        )
     elif profile.dataset == "sharegpt":
         return ShareGPTDataset(
             num_prompts=1000,

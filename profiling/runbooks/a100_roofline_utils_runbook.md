@@ -4,7 +4,7 @@ Goal: replace the H100 PLACEHOLDERS in `configs/gpus/A100.json`
 (`util_flops=0.65 / util_bw=0.93 / scheduler_overhead_ms_per_step=5.7`) with values
 measured ON the A100, using the SAME pre-registered recipe that re-derived the H100
 values (`profiling/docs/defit_log_entries/L6-utils.md`,
-`profiling/process/build_roofline_utils.py`). The recipe is pinned — do NOT tune it on
+`profiling/emit/build_roofline_utils.py`). The recipe is pinned — do NOT tune it on
 the A100 numbers; if the A100 data violates a recipe assumption, record the deviation in
 the de-fit log and stop.
 
@@ -53,7 +53,7 @@ engine step, not a replay).
 
 ## Procedure
 
-1. `bash profiling/process/preflight_a100_roofline_utils.sh` (from this repo, local —
+1. `bash profiling/runbooks/preflight_a100_roofline_utils.sh` (from this repo, local —
    it ssh-es to `a100`). All checks must pass; the GPU-quiet check has no override flag
    on purpose.
 2. Launch the instrumented vLLM OpenAI server on the ONE free GPU
@@ -68,7 +68,7 @@ engine step, not a replay).
    `util_flops`; plan a separate prefill-util sweep (R1-style,
    `build_prefill_gemm_util.py` pattern) for the A100 prefill side.
 4. `scp` traces back (sequential, Rule #1 etiquette), drop them in a local dir, then:
-   `python3 -m profiling.process.build_roofline_utils --gpu A100 --archive <dir>`
+   `python3 -m profiling.emit.build_roofline_utils --gpu A100 --archive <dir>`
    → `profile_data/kernels/roofline_utils_A100.json`.
 5. Wire `configs/gpus/A100.json` (+ `roofline_params_A100_llama31_8b.json`) from the
    artifact, drop the PLACEHOLDER label, and gate: A100 rows are BINDING

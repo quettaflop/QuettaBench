@@ -1,31 +1,7 @@
 #!/usr/bin/env python3
 # profiling/emit/build_roofline_utils.py
-"""Build the roofline-utils artifact from the pinned serving-wall step traces (gitignored working-set on this host — see the de-fit entry).
+"""Build the roofline-utils artifact from pinned serving-wall step traces.
 
-Audit-v2 G4: ``util_bw = 0.93`` reproduces from a real trace byte-wise but matches NO
-documented computation (the documented recipe gives 0.945; real step walls give
-0.90-0.92; the cited step 17 is a 290 ms outlier). This builder replaces the hand-read
-anchor with a DETERMINISTIC, PRE-REGISTERED recipe — the recipe text was committed to
-``profiling/docs/defit_log_entries/L6-utils.md`` BEFORE any number was computed, and this
-script implements exactly that text. No RNG, no fitting; medians over rule-selected steps.
-
-Inputs (pinned, audit-verified; gitignored working-set artifacts, see L6-utils.md):
-    profile_data/_archive/vllm_engine_step_trace_{swe_c40_t12,swe_c80_t12,swe_c320_t2,
-    terminal_c80_t16}_benchmark_serving_wall.jsonl
-
-Outputs:
-    profile_data/kernels/roofline_utils_<GPU>.json
-
-Conventions re-derived (each follows the constant's OWN pinned documentation):
-  - util_bw:    median of bw_roofline_ms / engine_step_wall_ms over steady-state,
-                bandwidth-dominated, outlier-trimmed decode-only steps
-                (closed_form_tpot prices tpot = bw/util_bw with NO separate sched term).
-  - util_flops: median of compute_roofline_ms / model_submit_wall_ms over pure-prefill
-                steps >= 1024 scheduled tokens (the pinned anchor's own wall convention).
-  - sched:      median of engine_step_wall_ms - model_submit_wall_ms over decode_batch==1
-                steps (the pinned comment's lowest-work-decode population).
-
-Usage:
     python3 -m profiling.emit.build_roofline_utils [--gpu H100] [--archive DIR]
 """
 from __future__ import annotations

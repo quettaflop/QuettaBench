@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # profiling/runbooks/preflight_a100_roofline_utils.sh
 # Preflight for the A100 roofline-utils measurement (L6, audit-v2 G7).
-# See profiling/docs/a100_roofline_utils_runbook.md. Run LOCALLY; it ssh-es to 'a100'.
+# See profiling/runbooks/a100_roofline_utils_runbook.md. Run LOCALLY; it ssh-es to 'a100'.
 #
 # Hard gates (no override flags — the measurement is latency-sensitive and was
 # explicitly deferred because of GPU contention):

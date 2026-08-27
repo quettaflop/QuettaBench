@@ -1,15 +1,9 @@
 # profiling/README.md
 
 Measurement code for QuettaBench: GPU kernel probes, live-server probes, and the
-emitters that turn raw probe output into curated tables. This was proposed as a
-separate QuettaProbe repo; it lives here instead, as a peer of the runner
-(`src/`), so QuettaBench holds both the benchmark client and the measurement
-tools.
-
-The runner (`src/`) stays light and GPU-free. Everything under `profiling/probes/`
-needs a GPU, torch, and vLLM. Those deps are opt-in (see "Install" below), so a
-plain `pip install -r requirements.txt` still runs the benchmark client on a box
-with no GPU.
+emitters that turn raw probe output into curated tables. Peer of the runner
+(`src/`). The runner stays GPU-free; `profiling/probes/` needs torch and vLLM
+(opt-in via requirements-probe.txt).
 
 ## Layout
 
@@ -17,7 +11,6 @@ with no GPU.
 profiling/probes/              live-server + serving-wall probes (need a GPU)
 profiling/kernel_composed/     QuettaSim kernel tables (ncu/ vs cuda_event/ schema)
 profiling/emit/                emitters: raw CSV/JSONL.gz -> curated tables (no GPU)
-profiling/watch/               schedulers that wait for free GPUs, then fire probes
 profiling/runbooks/            how-to-measure docs and preflight scripts
 profiling/tests/               emitter tests (run against fixtures, no GPU)
 ```
@@ -128,7 +121,7 @@ Live-server probe: launch a vLLM OpenAI server first, then point the probe at it
 Scheduler that waits for free GPUs before firing:
 
 ```bash
-nohup bash profiling/watch/slice_probe_watch.sh > slice_watch.log 2>&1 &
+nohup bash profiling/probes/slice_probe_watch.sh > slice_watch.log 2>&1 &
 ```
 
 ## Emit a curated table

@@ -1,45 +1,12 @@
 #!/usr/bin/env python3
-"""Capture a real chat trajectory source from ShareGPT into data/chat_trajectories.jsonl.
+"""Write data/chat_trajectories.jsonl from ShareGPT so chat matches the other traces.
 
-WHY THIS EXISTS
----------------
-swebench / terminalbench / osworld each have a captured trajectory JSONL on R2, and
-their synthetic distributions declare honest provenance back to it:
+One session per line: session_id, source, num_turns, turns[{turn_idx, messages,
+input_tokens, output_tokens}]. `messages` is only the new turn, not cumulative
+history.
 
-    source: {"kind": "trajectory_jsonl", "path": "data/terminalbench_trajectories.jsonl",
-             "sessions": 267, "turns": 20042}
-
-chat did not. `data/distributions/chat_multiturn.json` was instead derived from our own
-prior benchmark output (`source.kind == "dashboard_per_turn_summary"`), because -- per
-that file's own note -- "ShareGPT raw multi-turn source is not stored locally". That
-makes the chat workload circular: it reproduces the token-length shape of runs we
-already did, so a chat MAPE cannot validate anything about real chat traffic.
-
-This script closes that gap by materialising the source the code already knows how to
-read (`src/workloads/dataset.py::ShareGPTMultiTurnDataset` loads the same HF dataset),
-so `build_trace_distributions.py` can treat chat exactly like the other three.
-
-SCHEMA (matches the existing trajectory JSONLs, one session per line)
---------------------------------------------------------------------
-    {"session_id": str, "source": "sharegpt", "num_turns": int,
-     "turns": [{"turn_idx": int,
-                "messages": [{"role": ..., "content": ...}],   # NEW messages this turn
-                "input_tokens": int,      # FULL growing context at this turn
-                "output_tokens": int}]}
-
-`messages` holds only the messages *added* at that turn, not the replayed history:
-the full context is already captured numerically in `input_tokens`, and storing the
-cumulative history per turn would blow the file up quadratically (that is why the
-agentic captures are GB-scale). The history is still reconstructable by concatenating
-earlier turns. `build_trajectory_distribution()` prefers explicit `input_tokens` and
-only falls back to a coarse word-ratio estimate over `messages`, so supplying real
-tokenizer counts here is strictly more accurate than letting it guess.
-
-Token counts use a real tokenizer with the model's chat template when available, which
-is what the serving stack actually sees.
-
-  python3 scripts/build_chat_trajectories.py \
-      --tokenizer /home/kevinlau/models/Llama-3.1-8B-Instruct \
+    python3 scripts/build_chat_trajectories.py \
+      --tokenizer /path/to/Llama-3.1-8B-Instruct \
       --max-sessions 4000 --out data/chat_trajectories.jsonl
 """
 

@@ -1,4 +1,4 @@
-# profiling/watch/slice_probe_watch.sh
+# profiling/probes/slice_probe_watch.sh
 # Waits for 2 truly free GPUs (mem<1GiB, util<5%, 3 consecutive 2-min samples),
 # then runs gemm_slice_probe (1 GPU) + custom_allreduce_probe (2 GPUs) and exits.
 # Run on the h100 box:  nohup bash slice_probe_watch.sh > /data48/kevinlau/herd_probe/slice_watch.log 2>&1 &
@@ -8,7 +8,7 @@ DIR=$(cd "$(dirname "$0")" && pwd)
 OUT=/data48/kevinlau/herd_probe
 mkdir -p "$OUT"
 
-# root fs is 100% full (2026-07-04) — keep every write off it
+# Keep probe scratch off the root filesystem.
 export TMPDIR=/data48/kevinlau/tmp
 export XDG_CACHE_HOME=/data48/kevinlau/tmp/cache
 export PYTHONDONTWRITEBYTECODE=1

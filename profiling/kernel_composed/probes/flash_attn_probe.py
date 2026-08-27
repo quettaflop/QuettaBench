@@ -14,10 +14,12 @@ import argparse
 import csv
 import os
 import statistics as st
+import sys
 from pathlib import Path
 
 import torch
 from vllm.vllm_flash_attn.flash_attn_interface import flash_attn_varlen_func
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _ncu import ncu_op_us
 
 KV_AXIS = [128, 256, 512, 1024, 2048, 4096, 8192, 16384]

@@ -1,69 +1,18 @@
 #!/usr/bin/env python3
 # profiling/probes/serving_stage_split.py
-"""Serving-level per-stage cost breakdown of c1 prefill TTFT vs (new, cached) tokens.
+"""c1 live-server prefill TTFT split vs (new, cached) tokens.
 
-This is the LIVE-SERVER successor to ``prefill_stage_split.py`` (offline, host/device split
-UNRELIABLE) and an extension of ``live_ttft_probe.py`` (full client wall TTFT, trustworthy).
+Lanes: client SSE wall (0), Prometheus queue/prefill/frontend (A), nsys device
+split (B, printed via --emit-nsys-cmd). Run from a clean cwd so a stray
+flash_attn.py cannot shadow the pip package. Leave server stats ON (no
+--disable-log-stats). Randomize the `new` tail per trial so warmup cannot
+turn every miss into a hit. c1 only: /metrics _sum deltas isolate one request.
 
-GOAL
-----
-Partition the wall TTFT of a c1 ``/v1/chat/completions`` request into per-stage spans as a
-function of (new, cached) prompt tokens:
-
-    HTTP-recv/parse | chat-template | tokenize | enqueue/ZMQ-IPC | scheduler-admit |
-    model-forward (DEVICE) | framework-dispatch | sample | detokenize | response-stream
-
-and resolve the two open residuals from prefill_law_defit_trace.md:
-  * the NEW above-roofline dispatch residual (~6 ms/1k)  -> framework-dispatch stage
-  * the CACHED host residual (~3.7 ms/1k)                 -> HTTP-recv/parse + chat-template + IPC
-
-It does this with THREE measurement lanes, layered so the un-patched lanes already give a
-reliable 3-way split and the patched lanes (run only if the verified hooks land) refine it:
-
-  LANE 0 (always, no patch)  : client perf_counter around aiohttp SSE  -> wall TTFT  (== live_ttft_probe)
-  LANE A (no patch)          : Prometheus /metrics _sum delta-scrape per c1 request
-                               -> queue_span + prefill_span + frontend_residual (3-way partition)
-  LANE B (run command emitted): nsys --cuda-graph-trace=node wrapping the live server, with
-                               NVTX request-window markers from a worker monkeypatch
-                               -> DEVICE kernel time vs framework-dispatch (the offline split could not do)
-
-The offline torch.profiler self-time split failed three ways (see prefill_stage_split_results.md):
-  (1) eager: Sigma(self_time) over-counts wall -> host = wall - device goes negative.
-  (2) CUDA graphs: per-kernel CUPTI activities collapse into one graph-exec row -> device ~ 0.
-  (3) v1 multiprocessing: forward runs in the EngineCore SUBPROCESS -> main-proc profiler sees 0 kernels.
-Lane A sidesteps device timing entirely (uses the engine's own SCHEDULED->first_token wall via
-Prometheus). Lane B fixes the device split by attaching nsys to the CUDA-owning subprocess and
-re-expanding graph nodes (--cuda-graph-trace=node), bracketed by in-engine NVTX ranges.
-
-------------------------------------------------------------------------------------------------
-RUN NOTES (learned the hard way -- carried over from prefill_stage_split.py / live_ttft_probe.py)
-------------------------------------------------------------------------------------------------
-  * Run from a CLEAN cwd. A stray ``flash_attn.py`` in the cwd shadows the flash_attn pip package
-    that vLLM needs ('flash_attn' is not a package'). This script also strips its own dir from
-    sys.path defensively (the cuda_events scripts do the same).
-  * Server stats MUST be ON (default) for Lane A. Do NOT pass --disable-log-stats. The /metrics
-    endpoint only populates the histograms when stats are enabled.   [VERIFY ON H100]
-  * The ``new`` tail is freshly random PER TRIAL so it is a REAL cache miss (else the warmup primes
-    it and every measured trial is a hit -- the original prefill_stage_split bug).
-  * c1 only: concurrency 1 is what makes the Prometheus _sum delta-scrape isolate one request --
-    between two scrapes exactly one request's worth of time is added to each cumulative _sum.
-  * env (per profiling/docs/h100_setup.md, but GPU 7 per the task, NOT 6):
-        CUDA_VISIBLE_DEVICES=7
-        TMPDIR=/data48/kevinlau/tmp
-        XDG_CACHE_HOME=/data48/kevinlau/tmp/.cache
-        PYTHON=~/miniconda3/envs/vllm/bin/python
-        MODEL=/data48/kevinlau/models/Llama-3.1-8B-Instruct
-
-Example (Lane 0 + Lane A, no patch, self-launching the server on GPU 7):
-    CUDA_VISIBLE_DEVICES=7 TMPDIR=/data48/kevinlau/tmp XDG_CACHE_HOME=/data48/kevinlau/tmp/.cache \
-      ~/miniconda3/envs/vllm/bin/python \
-      profiling/gpu_profiling/vllm/serving_stage_split.py \
-      --model /data48/kevinlau/models/Llama-3.1-8B-Instruct --port 8771 \
+    python3 profiling/probes/serving_stage_split.py \
+      --model /path/to/Llama-3.1-8B-Instruct --port 8771 \
       --out profile_data/results/serving_stage_split_H100.csv
 
-Lane B (device split) is a SEPARATE nsys-wrapped run; this script PRINTS the exact command
-(see ``--emit-nsys-cmd``) rather than launching nsys itself, so the profiled and un-profiled
-walls stay comparable. See profiling/docs/serving_stage_split_plan.md for the full recipe.
+See profiling/runbooks/serving_stage_split_plan.md.
 """
 from __future__ import annotations
 
@@ -299,10 +248,7 @@ async def measure(session, base_url, model, cached, new, trials):
 
 
 # ------------------------------------------------------------------------------------------------
-# Server lifecycle -- reuse the cached_prefill_batch_ttft.py launch + health-poll verbatim.
-# Same bench config the live probes already validated against the fitted serving law:
-#   prefix-cache + chunked-prefill, gpu-mem 0.9 (per results doc; arg-overridable), GPU 7.
-# CRITICAL: stats ON (no --disable-log-stats) so /metrics populates for LANE A.   [VERIFY ON H100]
+# Server lifecycle. Stats stay ON so /metrics populates for Lane A.
 # ------------------------------------------------------------------------------------------------
 def wait_health(port, timeout=420):
     t0 = time.time()
@@ -388,8 +334,7 @@ def emit_nsys_cmd(model, port, gpu_mem, max_model_len, api_key, out_sqlite):
     )
     print("\n" + "=" * 96)
     print("LANE B (DEVICE split) -- run this SEPARATELY (nsys-wrapped server), then drive it with")
-    print("this same script (--no-launch, pointing at the nsys server). Parse the .sqlite with the")
-    print("existing extractor pattern (profiling/process/_legacy/extract_nsys_prefill_breakdown.py),")
+    print("this same script (--no-launch, pointing at the nsys server).")
     print("restricting Sigma(end-start) to the per-step prefill NVTX range:")
     print("=" * 96)
     print(nsys_cmd)
@@ -507,7 +452,7 @@ def main():
         # Always remind the operator how to get the DEVICE split (LANE B is a separate run).
         emit_nsys_cmd(a.model, a.port, a.gpu_mem, a.max_model_len, a.api_key,
                       out_sqlite="serving_stage_split_nsys")
-        print("Next: analyze with profiling/gpu_profiling/vllm/analyze_serving_stage_split.py", flush=True)
+        print("Next: parse the nsys sqlite (CUPTI kernels inside the vllm_prefill_step NVTX range).", flush=True)
     finally:
         if proc is not None:
             proc.terminate()

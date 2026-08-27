@@ -1,18 +1,10 @@
 #!/usr/bin/env python3
-"""Build profiling-state.json from profiling_manifest.yaml and write to dashboard/public/.
+"""Build profiling-state.json from profiling_manifest.yaml into BENCH_ARTIFACT_DIR.
 
-Reads llm_predict_legacy/training/per_kernel/profiling_manifest.yaml (produced by Phase 1).
-If the manifest does not exist, prints a warning and leaves the existing stub JSON in place.
+Reads an externally produced profiling_manifest.yaml (PROFILING_MANIFEST, or a
+sibling llm_predict_legacy tree). Writes BENCH_ARTIFACT_DIR/profiling-state.json.
 
-The manifest is nested (gpus -> model -> per_kernel|per_op -> status_entry); the dashboard
-consumes a flat cells list, so build_state() walks the nested dict and emits one cell per
-(gpu, model) pair with four status columns.
-
-Run (no upload):
     python scripts/publish_profiling_state.py --no-upload
-
-Run (upload to R2):
-    python scripts/publish_profiling_state.py
 """
 from __future__ import annotations
 
@@ -26,14 +18,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-# TODO(phase-1): the per-kernel profiling manifest producer (llm_predict_legacy) is
-# not yet ported into QuettaBench. Until it is, point PROFILING_MANIFEST at an
-# externally-produced profiling_manifest.yaml; the legacy path below is only a
-# best-effort fallback and will typically not exist in this repo layout.
+REPO_ROOT = HERE.parent
+# External Phase-1 producer; override with PROFILING_MANIFEST.
 MANIFEST = Path(
     os.environ.get(
         "PROFILING_MANIFEST",
-        str(HERE.parent.parent / "llm_predict_legacy" / "training" / "per_kernel" / "profiling_manifest.yaml"),
+        str(REPO_ROOT.parent / "llm_predict_legacy" / "training" / "per_kernel" / "profiling_manifest.yaml"),
     )
 )
 # Dashboard-JSON artifact output lands in the neutral artifact dir (env-overridable).
@@ -393,7 +383,7 @@ def main() -> int:
 
     manifest = yaml.safe_load(args.manifest.read_text())
     global _RESULTS
-    repo_root = HERE.parent.parent  # inference-benchmark/scripts -> inference-benchmark -> repo
+    repo_root = REPO_ROOT
     _RESULTS = _load_results(repo_root)
     state = build_state(manifest)
 

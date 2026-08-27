@@ -1,55 +1,17 @@
 #!/usr/bin/env python3
 # profiling/probes/serving_decode_grid.py
-"""SERVING-context decode grid: live-server (B, T) sweep of steady-state mid-stream ITL.
+"""Live-server (batch, context) grid of steady-state mid-stream ITL.
 
-WHY (the L8 tp4 paradox, see profiling/docs/defit_log_entries/L8-h100x4.md and L11-h100multi.md):
-the ISOLATED kernel lattice (cuda_events/decode_steps.py) measures the per-step wall of a bare
-engine stepping a synthetic batch — at tp4 that wall sits ABOVE what real serving achieves at
-the same (B, ctx) (chat c320: 6.56 ms served vs 11.5 ms isolated B=320 step), because the
-isolated per-step fixed costs (4-way NCCL launch + host walls; S12 walls-vs-trace +12–35%)
-overlap/pipeline under continuous serving. The simulator prices ``decode_step_ms(b_eff, ctx)``
-as the per-step SERVING cost (kernel_tpot's TPOT floor AND ttft_queue_sim's ``_price_step``
-drain rate), so the right measurement is the live per-request MID-STREAM ITL at steady decode.
+Isolated kernel stepping overstates per-step cost vs continuous serving (NCCL
+launch overlaps). This probe self-launches vLLM, fires B concurrent completion
+streams per cell, and records SSE timestamps. The authoritative CSV is built by
+``python3 -m profiling.emit.build_serving_decode_grid`` (imports summarize_cell
+from this module).
 
-METHOD (pre-registered in L11-h100multi.md):
-  * self-launch a vLLM OpenAI api_server (``launch_server``/``wait_health`` reused from
-    serving_stage_split.py; ``-m vllm.entrypoints.openai.api_server`` -> the L8 flash_attn.py
-    sys.path-shadowing failure mode does not apply, but still run from a clean scripts copy);
-    engine flags = the L8 lattice / GT-bench class config:
-        --no-enable-prefix-caching --max-num-seqs 320 --max-num-batched-tokens 8192
-        --max-model-len 25600 --gpu-memory-utilization 0.90 --dtype bfloat16 --tp N
-  * per cell (B, T): fire B concurrent ``/v1/completions`` SSE streams. Each request sends a
-    UNIQUE seeded random token-ID prompt (exact prompt_tokens, no tokenizer variance) with
-    ``max_tokens=osl, temperature=0, stream=true, ignore_eos=true`` (verified at warmup by
-    counting streamed events; fallback ``min_tokens=osl``). ``prompt = T - osl//2`` and
-    ``osl = 384 + ceil(B*prompt/8192)`` (integer fixed point) so that (a) the steady window
-    survives the chunked admission ramp (~B*prompt/8192 steps) and (b) the median in-window
-    context sits at the nominal T.
-  * a perf_counter timestamp is recorded per SSE content delta; for B >= --shard-threshold the
-    client shards across --n-shards OS processes (per-shard wall-clock anchor for cross-shard
-    alignment) and each shard samples its asyncio loop-lag (50 ms sleeper overshoot) — p99
-    lag > 2 ms flags the cell ``check`` (an overloaded client loop fakes ITL).
-  * steady window = [max_i(first_token_ts), min_i(last_token_ts)] (every request decoding, no
-    prefill left); per-request p50 ITL over deltas inside the window (>= 64 in-window deltas
-    per request required, else ``check``); cell decode_step_ms = median over the B per-request
-    p50s; effective context_len = prompt + median in-window progress.
-
-OUTPUT: an APPEND-ONLY raw per-request JSONL.gz (one line per request: wall-anchored event
-timestamps) + an operator summary CSV. The AUTHORITATIVE grid CSV is produced by the
-deterministic builder ``profiling/process/build_serving_decode_grid.py`` from the raw JSONL
-(same ``summarize_cell`` below — the builder imports this module by path), with columns
-    batch_size, context_len, decode_step_ms, validation_status,
-    nominal_T, prompt_tokens, osl, n_samples, steady_window_s, ...diagnostics
-of which ``simulator.kernel_step_cost.load_grid`` reads only the first four (the grid consumer
-is agnostic to how cells were measured).
-
-Example (tp4, h100 GPUs 4-7, per profiling/docs/h100_setup.md):
-    CUDA_VISIBLE_DEVICES=4,5,6,7 TMPDIR=/data48/kevinlau/tmp \
-      XDG_CACHE_HOME=/data48/kevinlau/tmp/.cache \
-      ~/miniconda3/envs/vllm/bin/python serving_decode_grid.py \
-      --model /data48/kevinlau/models/Llama-3.1-8B-Instruct --tensor-parallel-size 4 \
-      --port 8791 --out-raw serving_decode_grid_H100x4_<date>.jsonl.gz \
-      --out-summary serving_decode_grid_H100x4_<date>_summary.csv
+    python3 profiling/probes/serving_decode_grid.py \
+      --model /path/to/Llama-3.1-8B-Instruct --tensor-parallel-size 4 \
+      --port 8791 --out-raw serving_decode_grid.jsonl.gz \
+      --out-summary serving_decode_grid_summary.csv
 """
 from __future__ import annotations
 
@@ -547,7 +509,7 @@ def main() -> None:
             for row in rows:
                 w.writerow({k: row.get(k, "") for k in SUMMARY_FIELDS})
         print(f"\nwrote {out_raw} + {out_sum}", flush=True)
-        print("authoritative grid CSV: python3 -m profiling.process.build_serving_decode_grid "
+        print("authoritative grid CSV: python3 -m profiling.emit.build_serving_decode_grid "
               f"--inputs {out_raw.name} ...", flush=True)
     finally:
         if proc is not None:

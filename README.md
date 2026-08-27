@@ -21,7 +21,7 @@ as JSON under `results/`.
 
 ```bash
 pip install -r requirements.txt
-bash scripts/fetch_data.sh        # large trajectory datasets from R2 (gitignored)
+bash scripts/fetch_data.sh        # trajectories + distributions from R2 (gitignored)
 
 # server (on the GPU box)
 CUDA_VISIBLE_DEVICES=0 ./scripts/launch_server.sh single-turn
@@ -41,8 +41,7 @@ src/benchmark/    async runner, metrics (p50/p90/p99 TTFT/TPOT/E2EL), SSE client
 src/engines/      vLLM/SGLang OpenAI-compatible endpoints
 src/modes/        stress_test / single_turn / multi_turn
 src/workloads/    profiles, datasets, arrival patterns, distributional replay
-data/distributions/  measured per-profile workload distributions (committed)
-configs/          server launch baselines
+data/distributions/  measured per-profile workload distributions (fetched from R2)
 tests/            runner/workload unit tests
 profiling/        GPU kernel + live-server probes and their emitters (opt-in, needs a GPU)
 ```
@@ -67,10 +66,10 @@ Canonical data lives on the `agent-bench` R2 bucket:
 
 | prefix | contents |
 |---|---|
-| `data/` | raw trajectory datasets (fetched by `scripts/fetch_data.sh`) |
+| `data/` | raw trajectory datasets and `data/distributions/` histograms (fetched by `scripts/fetch_data.sh`) |
 | `results/` | benchmark ground truth (synthetic_distributional, trace_replay, archived) |
 | `json/current/` | dashboard runtime JSONs |
-| `archive/` | pre-2026-05 result snapshots |
+| `archive/` | pre-2026-05 result snapshots; `2026-08-26-realized-session-distributions/` holds the old per-GPU sim replay pools |
 
 Results sync up with `aws s3 sync` against the same bucket (see
 `agentic-serve` for the orchestrator this was trimmed from).
