@@ -1,6 +1,7 @@
 # scripts/fetch_data.sh
-# Pull the large trajectory datasets from R2 (they are gitignored).
-# Needs an aws profile with R2 credentials (default profile name: r2).
+# Pull the large trajectory datasets and workload distributions from R2
+# (they are gitignored). Needs an aws profile with R2 credentials
+# (default profile name: r2).
 
 set -euo pipefail
 
@@ -14,4 +15,9 @@ for f in coding_agent_prompts.jsonl osworld_trajectories.jsonl \
     aws --profile "$PROFILE" --endpoint-url "$ENDPOINT" \
         s3 cp "s3://$BUCKET/data/$f" "$DEST/$f"
 done
+
+mkdir -p "$DEST/distributions"
+aws --profile "$PROFILE" --endpoint-url "$ENDPOINT" \
+    s3 sync "s3://$BUCKET/data/distributions/" "$DEST/distributions/"
+
 echo "datasets in $DEST"
