@@ -1,4 +1,4 @@
-# profiling/watch/slice_probe_watch.sh
+# profiling/probes/slice_probe_watch.sh
 # Waits for 2 truly free GPUs (mem<1GiB, util<5%, 3 consecutive 2-min samples),
 # then runs gemm_slice_probe (1 GPU) + custom_allreduce_probe (2 GPUs) and exits.
 # Run on the h100 box:  nohup bash slice_probe_watch.sh > /data48/kevinlau/herd_probe/slice_watch.log 2>&1 &

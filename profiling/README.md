@@ -17,7 +17,6 @@ with no GPU.
 profiling/probes/              live-server + serving-wall probes (need a GPU)
 profiling/kernel_composed/     QuettaSim kernel tables (ncu/ vs cuda_event/ schema)
 profiling/emit/                emitters: raw CSV/JSONL.gz -> curated tables (no GPU)
-profiling/watch/               schedulers that wait for free GPUs, then fire probes
 profiling/runbooks/            how-to-measure docs and preflight scripts
 profiling/tests/               emitter tests (run against fixtures, no GPU)
 ```
@@ -128,7 +127,7 @@ Live-server probe: launch a vLLM OpenAI server first, then point the probe at it
 Scheduler that waits for free GPUs before firing:
 
 ```bash
-nohup bash profiling/watch/slice_probe_watch.sh > slice_watch.log 2>&1 &
+nohup bash profiling/probes/slice_probe_watch.sh > slice_watch.log 2>&1 &
 ```
 
 ## Emit a curated table
