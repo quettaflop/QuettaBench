@@ -27,6 +27,7 @@ from urllib.parse import urlsplit, urlunsplit
 # so the server must be launched with VLLM_SERVER_DEV_MODE=1 or this 404s.
 _RESET_ENDPOINTS = {
     "vllm": "/reset_prefix_cache",
+    "vllm-completions": "/reset_prefix_cache",
     "openai": "/reset_prefix_cache",
 }
 

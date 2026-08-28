@@ -12,3 +12,5 @@ data/_rebuilt*/
 data/_pre_rebaseline_*/
 data/_holdout_*.jsonl
 .omc/
+data/mooncake/*.jsonl
+data/mooncake/*.fit.json

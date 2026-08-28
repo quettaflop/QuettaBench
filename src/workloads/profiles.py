@@ -18,6 +18,7 @@ AGENT_TYPES = ["chat", "coding", "terminal", "computer-use", "stress"]
 TURN_STYLES = ["single-turn", "multi-turn"]
 SERVING_STYLES = ["disaggregated", "not-disaggregated"]
 DATA_SOURCES = [
+    "mooncake",
     "sharegpt",
     "swebench",
     "terminalbench",
@@ -78,6 +79,27 @@ PROFILES: dict[str, WorkloadProfile] = {
         turn_style="single-turn",
         serving_style="not-disaggregated",
         data_source="swebench",
+    ),
+
+    # Open-loop replay of the public Mooncake production trace. Tokens
+    # are synthesized deterministically from hash_ids so cross-request
+    # prefix sharing survives replay. Requires backend vllm-completions
+    # and arrival_pattern "trace".
+    "mooncake-trace": WorkloadProfile(
+        name="mooncake-trace",
+        isl_tokens=131072,
+        osl_tokens=4096,
+        isl_stddev=0.0,
+        description="Mooncake production trace replay with exact prefix sharing from hash_ids",
+        dataset="mooncake-trace",
+        file_path="data/mooncake/conversation_trace.jsonl",
+        system_prompt="",
+        mode="single-turn",
+        prefix_caching_required=True,
+        agent_type="chat",
+        turn_style="single-turn",
+        serving_style="not-disaggregated",
+        data_source="mooncake",
     ),
 
     # Canonical distributional multi-turn profiles.

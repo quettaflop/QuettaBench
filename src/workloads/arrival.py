@@ -11,6 +11,9 @@ to dispatch each request.
 
 import random
 import math
+
+# Single source of truth for CLI choices.
+ARRIVAL_PATTERNS = ["steady", "poisson", "ramp"]
 from typing import Iterator
 
 

@@ -858,6 +858,12 @@ def make_dataset(
 
     if profile.dataset == "test":
         return TestDataset()
+    elif profile.dataset == "mooncake-trace":
+        from .mooncake import MooncakeTraceDataset
+        return MooncakeTraceDataset(
+            filepath=profile.file_path,
+            seed=random_seed,
+        )
     elif profile.dataset == "sharegpt":
         return ShareGPTDataset(
             num_prompts=1000,
