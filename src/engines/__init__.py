@@ -8,11 +8,13 @@ Supported backends:
 """
 
 from . import openai_chat
+from . import openai_completions
 
 _BACKENDS = {
     "openai": openai_chat,
     "vllm": openai_chat,
     "sglang": openai_chat,
+    "vllm-completions": openai_completions,
 }
 
 SUPPORTED_BACKENDS = list(_BACKENDS.keys())
