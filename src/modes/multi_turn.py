@@ -2,8 +2,9 @@
 Multi-turn mode — growing conversation history with prefix caching.
 
 Later turns send the engine's own reply back (shared assistant dicts). Trace
-replay keeps recorded assistant text. Default scheduling is interleaved
-(barrier per turn); --turn-pacing per-session runs a session's turns back to back.
+replay keeps recorded assistant text. Default scheduling is per-session (turns
+back to back, no cross-session barrier). --turn-pacing interleaved barriers
+each turn across sessions (turn-aligned herd; not production traffic).
 
 Server requirements (same as single-turn):
   - vLLM: --enable-prefix-caching

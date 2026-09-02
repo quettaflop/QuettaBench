@@ -15,7 +15,10 @@ multi-turn KV cache reuse measurement — ported from `agentic-serve`'s
 
 Multi-turn profiles replay measured agent-workload distributions (chat, osworld,
 swebench, terminalbench) at fixed concurrency; per-turn TTFT/TPOT/E2EL come out
-as JSON under `results/`.
+as JSON under `results/`. Closed-loop default is `--turn-pacing per-session`
+(no cross-session turn barrier). `--turn-pacing interleaved` is a turn-aligned
+herd for prefix-by-turn plots — not production traffic. Inter-turn
+`--tool-wait-ms` / `--human-wait-ms` default to 0 (auto-mode).
 
 ## Quickstart
 

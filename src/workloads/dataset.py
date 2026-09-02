@@ -437,6 +437,41 @@ class RandomTokenDatasetDoubleWrap(RandomTokenDataset):
         )
 
 
+def turn_wait_metadata(turn: dict) -> dict:
+    """Copy optional inter-turn wait fields from a trajectory turn.
+
+    Accepts the names used by claw-eval conversion (`tool_ms`) and the
+    TraceLab-style aliases (`tool_wait_after_ms`, `human_wait_after_ms`).
+    Missing fields are 0.
+    """
+    def _ms(*keys: str) -> float:
+        for key in keys:
+            if key in turn and turn[key] is not None:
+                try:
+                    return max(0.0, float(turn[key]))
+                except (TypeError, ValueError):
+                    pass
+        return 0.0
+
+    return {
+        "tool_wait_after_ms": _ms("tool_wait_after_ms", "tool_ms", "tool_wait_ms"),
+        "human_wait_after_ms": _ms(
+            "human_wait_after_ms", "human_ms", "human_wait_ms"
+        ),
+    }
+
+
+def session_arrival_ms(entry: dict) -> float:
+    """Session start offset in milliseconds. Missing / invalid → 0."""
+    for key in ("arrival_time_ms", "arrival_time"):
+        if key in entry and entry[key] is not None:
+            try:
+                return max(0.0, float(entry[key]))
+            except (TypeError, ValueError):
+                pass
+    return 0.0
+
+
 @dataclass
 class MultiTurnSession:
     """A single multi-turn conversation: list of requests with growing history."""
@@ -445,6 +480,9 @@ class MultiTurnSession:
     assistant_messages: list[dict] = field(default_factory=list)
     """Live assistant dicts later turns hold. Empty for trace replay, which must
     keep recorded assistant text rather than substituting the engine's output."""
+    arrival_time_ms: float = 0.0
+    """Optional recorded session start offset (ms). Unused unless the runner
+    is passed --use-recorded-arrivals."""
 
 
 class ShareGPTMultiTurnDataset(BaseDataset):
@@ -690,6 +728,7 @@ class TrajectoryMultiTurnDataset(BaseDataset):
                                 ),
                                 "prompt_token_budget": prompt_budget,
                                 "truncated_by_context_limit": False,
+                                **turn_wait_metadata(t),
                             },
                         ))
 
@@ -699,6 +738,7 @@ class TrajectoryMultiTurnDataset(BaseDataset):
                     sessions.append(MultiTurnSession(
                         session_id=len(sessions),
                         turns=turns,
+                        arrival_time_ms=session_arrival_ms(entry),
                     ))
 
             rng = random.Random(self.random_seed)
