@@ -1167,12 +1167,19 @@ if __name__ == "__main__":
     # is scheduled at t=0 and the semaphore paces them, which is the definition
     # of closed loop; a rate process only means anything with the cap removed.
     if args.load_mode == "open-loop":
-        if args.arrival not in OPEN_LOOP_ARRIVALS:
+        if args.use_recorded_arrivals:
+            # Recorded arrival_time_ms replaces the generated pattern, so the
+            # poisson|ramp requirement (and --target-rate) does not apply.
+            if args.arrival in OPEN_LOOP_ARRIVALS:
+                print("WARNING: --use-recorded-arrivals replays recorded "
+                      "arrival_time_ms; --arrival and --target-rate are ignored.")
+        elif args.arrival not in OPEN_LOOP_ARRIVALS:
             print(f"Error: --open-loop requires --arrival {'|'.join(OPEN_LOOP_ARRIVALS)}, "
                   f"got '{args.arrival}'. 'steady' schedules everything at t=0, which is "
-                  f"closed-loop by construction.")
+                  f"closed-loop by construction. Multi-turn trajectory replays can "
+                  f"exempt this with --use-recorded-arrivals.")
             sys.exit(1)
-        if args.target_rate <= 0:
+        elif args.target_rate <= 0:
             print(f"Error: --open-loop requires a positive --target-rate, got {args.target_rate}.")
             sys.exit(1)
     elif args.arrival in OPEN_LOOP_ARRIVALS:
@@ -1403,6 +1410,11 @@ if __name__ == "__main__":
         print(f"Per-turn results saved to: {turn_output}")
 
     else:
+        if (args.use_recorded_arrivals or args.use_recorded_waits
+                or args.tool_wait_ms or args.human_wait_ms):
+            print("WARNING: --use-recorded-arrivals / --use-recorded-waits / "
+                  "--tool-wait-ms / --human-wait-ms apply to multi-turn "
+                  "profiles only; ignoring them.")
         results, duration = _run(run_benchmark(
             url=args.url,
             model=args.model,
