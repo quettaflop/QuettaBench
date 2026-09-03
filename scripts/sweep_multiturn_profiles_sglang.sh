@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # SGLang multi-turn variant of sweep_multiturn_profiles.sh.
+# Closed-loop uses --turn-pacing per-session (no cross-session turn barrier).
 #
 # Same positional-arg shape as the vLLM launcher so bench_orchestrator.sh can
 # dispatch backend=sglang multi-turn cells once sweep.yaml enables them.

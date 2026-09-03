@@ -53,6 +53,36 @@ TRACE_REQUEST_ID_PREFIX = "agenticbench"
 # exposes saturation.
 LOAD_MODES = ("closed-loop", "open-loop")
 OPEN_LOOP_ARRIVALS = ("poisson", "ramp")
+TURN_PACINGS = ("per-session", "interleaved")
+
+
+def inter_turn_wait_s(
+    request,
+    *,
+    tool_wait_ms: float = 0.0,
+    human_wait_ms: float = 0.0,
+    use_recorded_waits: bool = False,
+) -> float:
+    """Seconds to sleep after a turn before the next turn in the same session.
+
+    Defaults are zero (auto-mode: no human approval pause, ignore recorded
+    tool gaps). ``--use-recorded-waits`` adds ``tool_wait_after_ms`` and
+    ``human_wait_after_ms`` from the turn metadata when present.
+    """
+    recorded_tool = 0.0
+    recorded_human = 0.0
+    if use_recorded_waits and request is not None:
+        metadata = getattr(request, "metadata", None) or {}
+        recorded_tool = float(metadata.get("tool_wait_after_ms") or 0.0)
+        recorded_human = float(metadata.get("human_wait_after_ms") or 0.0)
+    total_ms = tool_wait_ms + human_wait_ms + recorded_tool + recorded_human
+    return max(0.0, total_ms / 1000.0)
+
+
+async def _sleep_until_elapsed(benchmark_start: float, target_s: float) -> None:
+    delay = target_s - (time.perf_counter() - benchmark_start)
+    if delay > 0:
+        await asyncio.sleep(delay)
 
 
 @asynccontextmanager
@@ -341,7 +371,7 @@ async def run_multi_turn_benchmark(
     source_session_ids: list[str] | None = None,
     max_turn_index: int | None = None,
     trace_request_ids: bool = False,
-    turn_pacing: str = "interleaved",
+    turn_pacing: str = "per-session",
     temperature: float = 0.0,
     sampling_seed: int | None = None,
     exact_output_length: bool = False,
@@ -350,24 +380,34 @@ async def run_multi_turn_benchmark(
     load_mode: str = "closed-loop",
     arrival_pattern: str = "steady",
     target_rate: float = 1.0,
+    tool_wait_ms: float = 0.0,
+    human_wait_ms: float = 0.0,
+    use_recorded_waits: bool = False,
+    use_recorded_arrivals: bool = False,
 ):
     """Run a multi-turn benchmark.
 
-    CLOSED LOOP (default): ``turn_pacing="interleaved"`` barriers every turn
-    across sessions. ``turn_pacing="per-session"`` runs a session's turns back
-    to back, sessions concurrent against the semaphore.
+    CLOSED LOOP (default): ``turn_pacing="per-session"`` runs a session's turns
+    back to back; sessions share the in-flight semaphore. ``interleaved``
+    barriers every turn across sessions (turn-aligned herd; not production
+    traffic — TTFT/TPOT spikes at turn boundaries are schedule artifacts).
 
-    OPEN LOOP: sessions arrive at ``target_rate`` sess/s; turns are sequential
-    within a session, with no barrier and no concurrency cap.
+    OPEN LOOP: sessions arrive at ``target_rate`` sess/s (or recorded
+    ``arrival_time_ms``); turns are sequential within a session, with no
+    barrier and no concurrency cap.
+
+    Inter-turn sleeps (``tool_wait_ms`` + ``human_wait_ms``, plus recorded
+    waits if requested) apply to per-session and open-loop only. They default
+    to zero. Interleaved ignores them.
 
     Later prompts contain the engine's own reply. Trace replay keeps recorded
     assistant text. ``exact_output_length`` pins min_tokens=max_tokens.
 
     Returns (all_results, results_by_turn, duration).
     """
-    if turn_pacing not in ("interleaved", "per-session"):
+    if turn_pacing not in TURN_PACINGS:
         raise ValueError(
-            f"turn_pacing must be 'interleaved' or 'per-session', got {turn_pacing!r}"
+            f"turn_pacing must be one of {TURN_PACINGS}, got {turn_pacing!r}"
         )
     import aiohttp
     from ..engines import get_backend
@@ -400,6 +440,16 @@ async def run_multi_turn_benchmark(
 
     max_turns = max(len(s.turns) for s in sessions)
     print(f"Loaded {len(sessions)} sessions, max {max_turns} turns per session")
+    if not open_loop and turn_pacing == "interleaved":
+        print("WARNING: --turn-pacing interleaved is a turn-aligned herd "
+              "(global barrier per turn).")
+        print("         TTFT/TPOT spikes at turn boundaries are schedule "
+              "artifacts, not production traffic.")
+        print("         Default is per-session. Inter-turn waits are ignored "
+              "under interleaved.")
+        if use_recorded_arrivals:
+            print("WARNING: --use-recorded-arrivals is ignored under "
+                  "--turn-pacing interleaved (everyone starts turn 0 together).")
 
     connector = aiohttp.TCPConnector(limit=concurrency + 10)
     client_timeout = aiohttp.ClientTimeout(total=timeout)
@@ -511,6 +561,16 @@ async def run_multi_turn_benchmark(
             last = n_turns - 1
             return last if max_turn_index is None else min(last, max_turn_index)
 
+        def _wait_s(request) -> float:
+            return inter_turn_wait_s(
+                request,
+                tool_wait_ms=tool_wait_ms,
+                human_wait_ms=human_wait_ms,
+                use_recorded_waits=use_recorded_waits,
+            )
+
+        apply_inter_turn_waits = open_loop or turn_pacing == "per-session"
+
         dead_sessions: set[int] = set()
 
         def _record(sid: int, t_idx: int, result) -> None:
@@ -542,21 +602,35 @@ async def run_multi_turn_benchmark(
                 session.assistant_messages[t_idx]["content"] = text
 
         if open_loop:
-            arrivals = make_arrival_times(
-                pattern=arrival_pattern,
-                num_requests=len(sessions),
-                concurrency=concurrency,
-                target_rate=target_rate,
-                seed=seed,
-            )
+            if use_recorded_arrivals:
+                arrivals = [s.arrival_time_ms / 1000.0 for s in sessions]
+                print(f"  Open loop: {len(sessions)} sessions at recorded "
+                      f"arrival_time_ms; turns sequential within a session, "
+                      f"no barrier")
+            else:
+                arrivals = make_arrival_times(
+                    pattern=arrival_pattern,
+                    num_requests=len(sessions),
+                    concurrency=concurrency,
+                    target_rate=target_rate,
+                    seed=seed,
+                )
+                print(f"  Open loop: {len(sessions)} sessions arriving at "
+                      f"{target_rate} sess/s ({arrival_pattern}); "
+                      f"turns sequential within a session, no barrier")
+            if apply_inter_turn_waits and (
+                tool_wait_ms or human_wait_ms or use_recorded_waits
+            ):
+                print(f"  Inter-turn waits: tool_wait_ms={tool_wait_ms:g} "
+                      f"human_wait_ms={human_wait_ms:g} "
+                      f"recorded={'on' if use_recorded_waits else 'off'}")
             counter = itertools.count()
 
             async def run_open_session(conv_session, arrive_at_s: float):
-                delay = arrive_at_s - (time.perf_counter() - benchmark_start)
-                if delay > 0:
-                    await asyncio.sleep(delay)
+                await _sleep_until_elapsed(benchmark_start, arrive_at_s)
+                last = _last_turn(len(conv_session.turns))
                 for t_idx, request in enumerate(conv_session.turns):
-                    if max_turn_index is not None and t_idx > max_turn_index:
+                    if t_idx > last:
                         break
                     _sid, _t, result = await dispatch(
                         conv_session.session_id,
@@ -569,10 +643,10 @@ async def run_multi_turn_benchmark(
                     _record(_sid, _t, result)
                     if result is None or not result.success:
                         break
+                    wait_s = _wait_s(request)
+                    if wait_s > 0 and t_idx < last:
+                        await asyncio.sleep(wait_s)
 
-            print(f"  Open loop: {len(sessions)} sessions arriving at "
-                  f"{target_rate} sess/s ({arrival_pattern}); "
-                  f"turns sequential within a session, no barrier")
             await asyncio.gather(*[
                 run_open_session(cs, t) for cs, t in zip(sessions, arrivals)
             ])
@@ -589,14 +663,30 @@ async def run_multi_turn_benchmark(
                     index_of[(conv_session.session_id, t_idx)] = nxt
                     nxt += 1
             print(f"  Per-session pacing: {len(sessions)} sessions, "
-                  f"{nxt} requests, up to {concurrency} in flight")
+                  f"{nxt} requests, up to {concurrency} in flight "
+                  f"(no cross-session turn barrier)")
+            if apply_inter_turn_waits and (
+                tool_wait_ms or human_wait_ms or use_recorded_waits
+            ):
+                print(f"  Inter-turn waits: tool_wait_ms={tool_wait_ms:g} "
+                      f"human_wait_ms={human_wait_ms:g} "
+                      f"recorded={'on' if use_recorded_waits else 'off'}")
+            if use_recorded_arrivals:
+                print("  Session starts: recorded arrival_time_ms "
+                      "(wait is outside the concurrency slot)")
 
             async def run_session(conv_session) -> None:
                 sid = conv_session.session_id
-                for t_idx in range(_last_turn(len(conv_session.turns)) + 1):
+                if use_recorded_arrivals:
+                    await _sleep_until_elapsed(
+                        benchmark_start, conv_session.arrival_time_ms / 1000.0
+                    )
+                last = _last_turn(len(conv_session.turns))
+                for t_idx in range(last + 1):
+                    request = conv_session.turns[t_idx]
                     _sid, _t, result = await dispatch(
                         sid,
-                        conv_session.turns[t_idx],
+                        request,
                         t_idx,
                         previous_context_by_session.get(sid, 0),
                         request_index=index_of[(sid, t_idx)],
@@ -604,6 +694,9 @@ async def run_multi_turn_benchmark(
                     _record(_sid, _t, result)
                     if result is None or not result.success:
                         break
+                    wait_s = _wait_s(request)
+                    if wait_s > 0 and t_idx < last:
+                        await asyncio.sleep(wait_s)
 
             await asyncio.gather(*[run_session(s) for s in sessions])
             done = sum(len(v) for v in results_by_turn.values())
@@ -888,23 +981,45 @@ def get_args():
     parser.add_argument("--num-requests", type=int, default=100)
     parser.add_argument("--api-key", default="test")
     parser.add_argument("--arrival", default="steady", choices=["steady", "poisson", "ramp"])
-    parser.add_argument("--turn-pacing", default="interleaved",
-                        choices=["interleaved", "per-session"],
-                        help="closed-loop multi-turn scheduling: 'interleaved' (default) "
-                             "barriers each turn across sessions; 'per-session' runs a "
-                             "session's turns back to back. Ignored under --open-loop.")
+    parser.add_argument("--turn-pacing", default="per-session",
+                        choices=list(TURN_PACINGS),
+                        help="closed-loop multi-turn scheduling: 'per-session' (default) "
+                             "runs a session's turns back to back with no cross-session "
+                             "barrier; 'interleaved' is a turn-aligned herd (global "
+                             "barrier per turn — schedule artifacts in TTFT/TPOT, not "
+                             "production traffic). Ignored under --open-loop.")
+    parser.add_argument("--tool-wait-ms", type=float, default=0.0,
+                        help="Fixed sleep after each turn before the next turn in the "
+                             "same session (ms). Default 0 (auto-mode / no tool gap). "
+                             "Ignored under --turn-pacing interleaved.")
+    parser.add_argument("--human-wait-ms", type=float, default=0.0,
+                        help="Extra sleep after each turn for a human-approval gap (ms). "
+                             "Default 0. Added to --tool-wait-ms. Ignored under "
+                             "--turn-pacing interleaved.")
+    parser.add_argument("--use-recorded-waits", action="store_true",
+                        help="Add per-turn tool_wait_after_ms / human_wait_after_ms from "
+                             "the trajectory (tool_ms / human_ms aliases accepted). "
+                             "Default off. Still adds the CLI --tool-wait-ms / "
+                             "--human-wait-ms values.")
+    parser.add_argument("--use-recorded-arrivals", action="store_true",
+                        help="Start each session at its recorded arrival_time_ms instead "
+                             "of t=0 (closed-loop) or a generated Poisson/ramp "
+                             "(open-loop). Default off. Ignored under interleaved.")
     parser.add_argument("--target-rate", type=float, default=10.0, help="req/s for poisson/ramp")
     load_group = parser.add_mutually_exclusive_group()
     load_group.add_argument(
         "--closed-loop", dest="load_mode", action="store_const", const="closed-loop",
         help="Closed loop (default): hold --concurrency requests in flight, each replaced "
              "only when the previous finishes. Offered load is capped by server speed, so "
-             "the server can never fall behind. Implies --arrival steady.")
+             "the server can never fall behind. Implies --arrival steady. Multi-turn "
+             "defaults to --turn-pacing per-session.")
     load_group.add_argument(
         "--open-loop", dest="load_mode", action="store_const", const="open-loop",
         help="Open loop: fire arrivals on a clock at --target-rate with NO client-side "
              "concurrency cap, so an overloaded server queues instead of back-pressuring "
-             "the client. Requires --arrival poisson|ramp. Single-turn profiles only.")
+             "the client. Requires --arrival poisson|ramp. Single-turn: independent "
+             "requests. Multi-turn: session starts are open-loop; turns stay sequential "
+             "inside each session.")
     parser.set_defaults(load_mode="closed-loop")
     parser.add_argument("--temperature", type=float, default=0.0,
                         help="Sampling temperature. Default 0.0 (greedy) so output lengths "
@@ -1052,18 +1167,29 @@ if __name__ == "__main__":
     # is scheduled at t=0 and the semaphore paces them, which is the definition
     # of closed loop; a rate process only means anything with the cap removed.
     if args.load_mode == "open-loop":
-        if args.arrival not in OPEN_LOOP_ARRIVALS:
+        if args.use_recorded_arrivals:
+            # Recorded arrival_time_ms replaces the generated pattern, so the
+            # poisson|ramp requirement (and --target-rate) does not apply.
+            if args.arrival in OPEN_LOOP_ARRIVALS:
+                print("WARNING: --use-recorded-arrivals replays recorded "
+                      "arrival_time_ms; --arrival and --target-rate are ignored.")
+        elif args.arrival not in OPEN_LOOP_ARRIVALS:
             print(f"Error: --open-loop requires --arrival {'|'.join(OPEN_LOOP_ARRIVALS)}, "
                   f"got '{args.arrival}'. 'steady' schedules everything at t=0, which is "
-                  f"closed-loop by construction.")
+                  f"closed-loop by construction. Multi-turn trajectory replays can "
+                  f"exempt this with --use-recorded-arrivals.")
             sys.exit(1)
-        if args.target_rate <= 0:
+        elif args.target_rate <= 0:
             print(f"Error: --open-loop requires a positive --target-rate, got {args.target_rate}.")
             sys.exit(1)
     elif args.arrival in OPEN_LOOP_ARRIVALS:
         print(f"Error: --arrival {args.arrival} describes open-loop offered load, but the run "
               f"is closed-loop, so --concurrency would still cap it. Pass --open-loop to "
               f"remove the cap, or use --arrival steady.")
+        sys.exit(1)
+
+    if args.tool_wait_ms < 0 or args.human_wait_ms < 0:
+        print("Error: --tool-wait-ms and --human-wait-ms must be >= 0.")
         sys.exit(1)
 
     # Warmup width. Under closed loop --concurrency is the real in-flight cap, so
@@ -1160,6 +1286,10 @@ if __name__ == "__main__":
         "ep_size": ep_size,
         "parallelism": parallelism,
         "turn_pacing": args.turn_pacing,
+        "tool_wait_ms": args.tool_wait_ms,
+        "human_wait_ms": args.human_wait_ms,
+        "use_recorded_waits": args.use_recorded_waits,
+        "use_recorded_arrivals": args.use_recorded_arrivals,
         "reply_feedback": True,
         "load_mode": args.load_mode,
         "sampling": {
@@ -1239,6 +1369,10 @@ if __name__ == "__main__":
             load_mode=args.load_mode,
             arrival_pattern=args.arrival,
             target_rate=args.target_rate,
+            tool_wait_ms=args.tool_wait_ms,
+            human_wait_ms=args.human_wait_ms,
+            use_recorded_waits=args.use_recorded_waits,
+            use_recorded_arrivals=args.use_recorded_arrivals,
             temperature=args.temperature,
             sampling_seed=args.sampling_seed,
             exact_output_length=args.exact_output_length,
@@ -1276,6 +1410,11 @@ if __name__ == "__main__":
         print(f"Per-turn results saved to: {turn_output}")
 
     else:
+        if (args.use_recorded_arrivals or args.use_recorded_waits
+                or args.tool_wait_ms or args.human_wait_ms):
+            print("WARNING: --use-recorded-arrivals / --use-recorded-waits / "
+                  "--tool-wait-ms / --human-wait-ms apply to multi-turn "
+                  "profiles only; ignoring them.")
         results, duration = _run(run_benchmark(
             url=args.url,
             model=args.model,

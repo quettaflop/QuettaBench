@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Multi-turn sweep variant of sweep_all_profiles.sh — adds --mode multi-turn.
 # Profiles default to the canonical distributional multi-turn paper suite.
+# Closed-loop uses --turn-pacing per-session (no cross-session turn barrier).
+# Pass --turn-pacing interleaved only for turn-aligned herd / prefix-by-turn plots.
 #
 # Usage:
 #   bash sweep_multiturn_profiles.sh \
