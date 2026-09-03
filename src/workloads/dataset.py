@@ -228,6 +228,11 @@ class ShareGPTDataset(BaseDataset):
         return BenchmarkRequest(messages=messages, max_tokens=osl)
 
 
+def _uniform_len_bounds(input_len: int, range_ratio: float) -> tuple[int, int]:
+    """InferenceX sample_uniform bounds."""
+    return max(1, int(input_len * range_ratio)), input_len
+
+
 class RandomTokenDataset(BaseDataset):
     """
     Replicates InferenceX's random token workload for cross-validation.
@@ -270,8 +275,7 @@ class RandomTokenDataset(BaseDataset):
             tokenizer = AutoTokenizer.from_pretrained(self._tokenizer_name)
             rng = np.random.default_rng(self._seed)
 
-            lo = max(1, int(self._input_len * (1 - self._range_ratio / 2)))
-            hi = int(self._input_len * (1 + self._range_ratio / 2))
+            lo, hi = _uniform_len_bounds(self._input_len, self._range_ratio)
             input_lens = rng.integers(lo, hi + 1, size=self._num_prompts)
             offsets = rng.integers(0, tokenizer.vocab_size, size=self._num_prompts)
 
@@ -352,8 +356,7 @@ class RandomTokenDatasetLegacy(BaseDataset):
             np.random.seed(self._seed)
             prefix_token_ids = np.random.randint(0, vocab_size, size=self._prefix_len).tolist()
 
-            lo = int(self._input_len * self._range_ratio)
-            hi = self._input_len
+            lo, hi = _uniform_len_bounds(self._input_len, self._range_ratio)
             input_lens = np.random.randint(lo, hi + 1, size=self._num_prompts).tolist()
             _output_lens = np.random.randint(
                 int(self.output_len * self._range_ratio),
