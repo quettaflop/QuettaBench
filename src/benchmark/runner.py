@@ -85,6 +85,13 @@ async def _sleep_until_elapsed(benchmark_start: float, target_s: float) -> None:
         await asyncio.sleep(delay)
 
 
+def per_turn_output_path(output: str) -> str:
+    """Per-turn breakdown path for a results file; always differs from ``output``."""
+    p = Path(output)
+    stem = p.stem if p.suffix else p.name
+    return str(p.with_name(stem + "_per_turn.json"))
+
+
 @asynccontextmanager
 async def _no_limit():
     """Stand-in for the concurrency semaphore when running open loop."""
@@ -451,7 +458,7 @@ async def run_multi_turn_benchmark(
             print("WARNING: --use-recorded-arrivals is ignored under "
                   "--turn-pacing interleaved (everyone starts turn 0 together).")
 
-    connector = aiohttp.TCPConnector(limit=concurrency + 10)
+    connector = aiohttp.TCPConnector(limit=0 if open_loop else concurrency + 10)
     client_timeout = aiohttp.ClientTimeout(total=timeout)
 
     async with aiohttp.ClientSession(connector=connector, timeout=client_timeout) as session_http:
@@ -1192,6 +1199,22 @@ if __name__ == "__main__":
         print("Error: --tool-wait-ms and --human-wait-ms must be >= 0.")
         sys.exit(1)
 
+    if args.concurrency < 1:
+        print(f"Error: --concurrency must be >= 1, got {args.concurrency}.")
+        sys.exit(1)
+    if args.num_requests < 1:
+        print(f"Error: --num-requests must be >= 1, got {args.num_requests}.")
+        sys.exit(1)
+    if args.warmup < 0:
+        print(f"Error: --warmup must be >= 0, got {args.warmup}.")
+        sys.exit(1)
+    if args.max_turn_index is not None and args.max_turn_index < 0:
+        print(f"Error: --max-turn-index must be >= 0, got {args.max_turn_index}.")
+        sys.exit(1)
+    if not 0.0 <= args.min_success_rate <= 1.0:
+        print(f"Error: --min-success-rate must be in [0, 1], got {args.min_success_rate}.")
+        sys.exit(1)
+
     # Warmup width. Under closed loop --concurrency is the real in-flight cap, so
     # it is the right width. Under open loop it caps nothing, so sizing warmup
     # from it can miss the batch shapes the run reaches -- default to the upper
@@ -1398,12 +1421,10 @@ if __name__ == "__main__":
         save_results(summary, all_results, args.output, config)
 
         # Also save per-turn breakdown
-        turn_output = args.output.replace(".json", "_per_turn.json")
-        import json as json_mod
-        from pathlib import Path as PathMod
-        PathMod(turn_output).parent.mkdir(parents=True, exist_ok=True)
+        turn_output = per_turn_output_path(args.output)
+        Path(turn_output).parent.mkdir(parents=True, exist_ok=True)
         with open(turn_output, "w") as f:
-            json_mod.dump({
+            json.dump({
                 "config": config,
                 "per_turn": [ts.to_dict() for ts in turn_summaries],
             }, f, indent=2)
