@@ -1,22 +1,15 @@
 #!/usr/bin/env python3
-"""Score two replay result files under one metric definition.
+"""Compare two replay results and gate on the differences.
 
-Reads per request records from QuettaBench result JSON (schema with a
-per_request list) and compares TTFT, TPOT and E2EL between the two
-sides: mean, median, p90, p99, and the relative difference of each.
-Applies the acceptance gates: TPOT and E2EL means within 5 percent.
-TTFT is reported but not gated, it is queueing sensitive. If traces
-are supplied, also compares the ISL and OSL distributions with a
-Kolmogorov Smirnov statistic (KS below).
-
-Exit code 0 when every gate passes, 1 otherwise.
-
-Usage:
-    python scripts/score_replay_records.py --a results/qb.json --b results/ref.json \
-        [--trace-a real.jsonl --trace-b synth.jsonl] [--gate-pct 5.0]
+For TTFT, TPOT and E2EL, print mean, p50, p90 and p99 from each result
+file and the relative difference. Gates: TPOT and E2EL means within
+--gate-pct. TTFT is printed but not gated, it is queueing sensitive.
+With --trace-a and --trace-b, also compare ISL and OSL distributions
+with a Kolmogorov-Smirnov statistic. Exit 0 when every gate passes.
 """
 
 import argparse
+import bisect
 import json
 import sys
 
@@ -36,13 +29,17 @@ def load_records(path):
     )
 
 
-def stat(values, q):
+def summary_stat(values, which):
+    """Return one statistic of values: "mean", "p50", "p90" or "p99".
+
+    Empty input returns nan, which fails any gate it feeds.
+    """
     s = sorted(values)
     if not s:
         return float("nan")
-    if q == "mean":
+    if which == "mean":
         return sum(s) / len(s)
-    idx = min(len(s) - 1, int(len(s) * {"p50": 0.5, "p90": 0.9, "p99": 0.99}[q]))
+    idx = min(len(s) - 1, int(len(s) * {"p50": 0.5, "p90": 0.9, "p99": 0.99}[which]))
     return s[idx]
 
 
@@ -53,7 +50,6 @@ def ks_statistic(a, b):
         return 1.0
     xs = sorted(set(a) | set(b))
     sa, sb = sorted(a), sorted(b)
-    import bisect
     d = 0.0
     for x in xs:
         fa = bisect.bisect_right(sa, x) / len(sa)
@@ -90,7 +86,7 @@ def main() -> int:
     print(f"{'metric':8} {'stat':5} {'A':>10} {'B':>10} {'diff%':>8}")
     for metric in ("ttft", "tpot", "e2el"):
         for q in ("mean", "p50", "p90", "p99"):
-            va, vb = stat(a[metric], q), stat(b[metric], q)
+            va, vb = summary_stat(a[metric], q), summary_stat(b[metric], q)
             diff = (vb - va) / va * 100 if va else float("nan")
             print(f"{metric:8} {q:5} {va:10.2f} {vb:10.2f} {diff:+8.2f}")
             gated = metric in ("tpot", "e2el") and q == "mean"

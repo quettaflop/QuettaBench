@@ -28,24 +28,22 @@ def main() -> int:
     ok = fail = usage_missing = 0
     mismatches = []
     for r in rows:
-        if not r.get("success"):
-            fail += 1
-            continue
         idx = r.get("request_index")
         rec = records[idx] if idx is not None and idx < len(records) else None
-        if rec is None:
+        if not r.get("success"):
+            fail += 1
+        elif rec is None:
             mismatches.append(f"row without matching trace record: {idx}")
-            continue
-        if not r.get("usage_reported"):
+        elif not r.get("usage_reported"):
             usage_missing += 1
-            continue
-        if r["input_tokens"] != rec.input_length:
-            mismatches.append(
-                f"req {idx}: input {r['input_tokens']} != trace {rec.input_length}")
-        if r["output_tokens"] != rec.output_length:
-            mismatches.append(
-                f"req {idx}: output {r['output_tokens']} != trace {rec.output_length}")
-        ok += 1
+        else:
+            if r["input_tokens"] != rec.input_length:
+                mismatches.append(
+                    f"req {idx}: input {r['input_tokens']} != trace {rec.input_length}")
+            if r["output_tokens"] != rec.output_length:
+                mismatches.append(
+                    f"req {idx}: output {r['output_tokens']} != trace {rec.output_length}")
+            ok += 1
 
     print(f"requests: {len(rows)}  audited: {ok}  failed: {fail}  "
           f"usage_missing: {usage_missing}")

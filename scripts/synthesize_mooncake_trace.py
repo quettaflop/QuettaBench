@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.workloads.mooncake import parse_mooncake_trace
 
 
-def fit(records):
+def build_record_pools(records):
     """Extract the per record distributions and sharing structure.
 
     Sharing is modeled as leading prefix reuse only. Interior or suffix
@@ -64,7 +64,7 @@ def fit(records):
     }
 
 
-def synthesize(stats, num_requests, seed):
+def sample_rotated_trace(stats, num_requests, seed):
     """Sample a synthetic trace with the fitted structure.
 
     Circular block bootstrap: rotate the fitted sequence at a seed
@@ -85,7 +85,7 @@ def synthesize(stats, num_requests, seed):
 
     relabel: dict[int, int] = {}
 
-    def new_id(h):
+    def fresh_block_id(h):
         if h not in relabel:
             relabel[h] = 1_000_000 + len(relabel)
         return relabel[h]
@@ -96,7 +96,7 @@ def synthesize(stats, num_requests, seed):
         rows.append({
             "input_length": isl,
             "output_length": osl,
-            "hash_ids": [new_id(h) for h in hash_pool[i]],
+            "hash_ids": [fresh_block_id(h) for h in hash_pool[i]],
         })
     return rows
 
@@ -115,9 +115,9 @@ def main() -> int:
     args = ap.parse_args()
 
     records = parse_mooncake_trace(args.trace, args.fit_limit)
-    stats = fit(records)
+    stats = build_record_pools(records)
     n = args.num_requests or stats["num_requests"]
-    rows = synthesize(stats, n, args.seed)
+    rows = sample_rotated_trace(stats, n, args.seed)
 
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     with open(args.out, "w") as f:

@@ -1144,7 +1144,11 @@ def get_args():
     parser.add_argument("--turn-style", type=str, default=None, help="Filter profiles by turn style")
     parser.add_argument("--serving-style", type=str, default=None, help="Filter profiles by serving style")
     parser.add_argument("--data-source", type=str, default=None, help="Filter profiles by data source")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.profile == "mooncake-trace" and args.backend != "vllm-completions":
+        parser.error("--profile mooncake-trace sends token id prompts; "
+                     "use --backend vllm-completions")
+    return args
 
 
 if __name__ == "__main__":

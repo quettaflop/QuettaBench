@@ -57,13 +57,13 @@ def parse_mooncake_trace(filepath: str, limit: int = 0) -> list[MooncakeRecord]:
     return records
 
 
-def synthesize_block(hash_id: int, seed: int) -> list[int]:
+def expand_block(hash_id: int, seed: int) -> list[int]:
     """One hash id always yields the same BLOCK_SIZE token ids."""
     rng = random.Random(f"{seed}:{hash_id}")
     return [rng.randrange(TOKEN_ID_LOW, TOKEN_ID_HIGH) for _ in range(BLOCK_SIZE)]
 
 
-def synthesize_tail(record_index: int, length: int, seed: int) -> list[int]:
+def fill_tail(record_index: int, length: int, seed: int) -> list[int]:
     """Request-unique filler for input tokens not covered by hash blocks."""
     rng = random.Random(f"{seed}:tail:{record_index}")
     return [rng.randrange(TOKEN_ID_LOW, TOKEN_ID_HIGH) for _ in range(length)]
@@ -83,13 +83,13 @@ def build_prompt_token_ids(record: MooncakeRecord, seed: int = 42,
         if block_cache is not None:
             block = block_cache.get(hash_id)
             if block is None:
-                block = synthesize_block(hash_id, seed)
+                block = expand_block(hash_id, seed)
                 block_cache[hash_id] = block
         else:
-            block = synthesize_block(hash_id, seed)
+            block = expand_block(hash_id, seed)
         tokens.extend(block)
     if len(tokens) < record.input_length:
-        tokens.extend(synthesize_tail(record.index,
+        tokens.extend(fill_tail(record.index,
                                       record.input_length - len(tokens), seed))
     return tokens[: record.input_length]
 

@@ -12,9 +12,9 @@ to dispatch each request.
 import random
 import math
 
-# Single source of truth for CLI choices.
-ARRIVAL_PATTERNS = ["steady", "poisson", "ramp"]
 from typing import Iterator
+
+ARRIVAL_PATTERNS = ["steady", "poisson", "ramp"]
 
 
 def steady_arrivals(num_requests: int, concurrency: int) -> list[float]:
