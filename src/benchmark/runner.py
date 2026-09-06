@@ -995,7 +995,8 @@ def get_args():
     parser.add_argument("--url", required=False, help="Server endpoint URL")
     parser.add_argument("--model", required=False)
     parser.add_argument("--backend", default="vllm", choices=SUPPORTED_BACKENDS,
-                        help="Backend type (vllm/sglang/openai → /v1/chat/completions)")
+                        help="Backend type (vllm/sglang/openai → /v1/chat/completions, "
+                             "vllm-completions → /v1/completions)")
     parser.add_argument("--profile", default="chat-singleturn", help="Workload profile name")
     parser.add_argument("--workload-file", default="",
                         help="Override the profile file_path, for trace variants")

@@ -5,6 +5,7 @@ Supported backends:
   openai       — any OpenAI-compatible /v1/chat/completions (vLLM, SGLang, lmdeploy)
   vllm         — alias for openai
   sglang       — alias for openai
+  vllm-completions — /v1/completions, takes token id or raw text prompts
 """
 
 from . import openai_chat

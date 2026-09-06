@@ -1,15 +1,10 @@
 #!/usr/bin/env python3
-"""Fit a Mooncake style trace and sample a synthetic one like it.
+"""Sample a synthetic Mooncake style trace from a real one.
 
-Fits input and output length pools and cross request prefix sharing
-structure (how often requests reuse earlier blocks and how deep the
-reuse goes). Samples a synthetic trace in the same JSONL
-schema, so the same dataset class replays real and synthetic traces
-identically. Writes the fitted stats next to the output for auditing.
-
-Usage:
-    python scripts/synthesize_mooncake_trace.py --trace real.jsonl \
-        --out synthetic.jsonl --num-requests 5000 --seed 7
+Pools per record lengths and prefix sharing from the source trace,
+then samples a rotated, relabeled copy in the same JSONL schema, so
+the same dataset class replays real and synthetic traces identically.
+Writes the pooled stats next to the output for auditing.
 """
 
 import argparse
@@ -65,11 +60,10 @@ def build_record_pools(records):
 
 
 def sample_rotated_trace(stats, num_requests, seed):
-    """Sample a synthetic trace with the fitted structure.
+    """Circular block bootstrap over the pooled records.
 
-    Circular block bootstrap: rotate the fitted sequence at a seed
-    chosen cut and assign fresh block ids. Sizes and sharing keep their
-    real per record coupling.
+    Rotate the source order at a seeded cut and assign fresh block
+    ids. Sizes and sharing keep their real per record coupling.
     """
     rng = random.Random(seed)
     record_pool = stats["record_pool"]
@@ -108,9 +102,7 @@ def main() -> int:
     ap.add_argument("--num-requests", type=int, default=0,
                     help="0 means match the source trace size")
     ap.add_argument("--fit-limit", type=int, default=0,
-                    help="fit on the first N records only, so a replay of "
-                         "that slice compares against a generator fitted to "
-                         "the same population; 0 fits the whole trace")
+                    help="pool only the first N records; 0 uses the whole trace")
     ap.add_argument("--seed", type=int, default=7)
     args = ap.parse_args()
 

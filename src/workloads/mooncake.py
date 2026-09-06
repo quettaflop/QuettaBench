@@ -1,12 +1,10 @@
 """Mooncake production trace support.
 
 Each trace line is one request: input and output token counts, and
-hash_ids naming 512-token prefix blocks (equal ids mean
-equal blocks, which encodes prefix sharing). The trace has no token
-content, so blocks expand to deterministic token ids and shared
-prefixes stay shared byte for byte in the replay. Note 512 is the hash
-granularity, not the cache hit granularity: records usually truncate
-mid block, so sharing is effectively token for token up to input_length.
+hash_ids naming 512-token prefix blocks (equal ids mean equal blocks,
+which encodes prefix sharing). The trace has no token content, so
+blocks expand to deterministic token ids and shared prefixes stay
+shared byte for byte in the replay.
 
 Trace format reference: https://github.com/kvcache-ai/Mooncake
 """
@@ -21,8 +19,7 @@ from .dataset import BaseDataset, BenchmarkRequest
 
 BLOCK_SIZE = 512
 
-# Token ids are sampled from this range. It avoids the low ids where
-# most tokenizers keep special tokens, and stays under small vocabs.
+# Range avoids low special token ids and stays under small vocabs.
 TOKEN_ID_LOW = 1000
 TOKEN_ID_HIGH = 20000
 
@@ -95,11 +92,10 @@ def build_prompt_token_ids(record: MooncakeRecord, seed: int = 42,
 
 
 class MooncakeTraceDataset(BaseDataset):
-    """Serves the Mooncake trace in original order with synthesized tokens.
+    """Serves the Mooncake trace in original order with expanded token ids.
 
-    Requests carry prompt_token_ids in metadata. The token ids are meant
-    for a completions style backend that submits them directly, so no
-    chat template can disturb block boundaries.
+    Requests carry prompt_token_ids in metadata for a completions style
+    backend, so no chat template can disturb block boundaries.
     """
 
     def __init__(self, filepath: str, seed: int = 42, limit: int = 0):

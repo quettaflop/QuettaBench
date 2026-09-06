@@ -123,9 +123,7 @@ async def send_request(
                 if not choices:
                     continue
 
-                # Completions chunks carry generated text directly on the
-                # choice. A chunk with empty text carries no generated
-                # payload and is not a token event.
+                # A chunk with empty text is not a token event.
                 if choices[0].get("text"):
                     if ttft is None:
                         ttft = now - start_time

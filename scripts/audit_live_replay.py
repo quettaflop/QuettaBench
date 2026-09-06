@@ -29,7 +29,7 @@ def main() -> int:
     mismatches = []
     for r in rows:
         idx = r.get("request_index")
-        rec = records[idx] if idx is not None and idx < len(records) else None
+        rec = records[idx] if isinstance(idx, int) and 0 <= idx < len(records) else None
         if not r.get("success"):
             fail += 1
         elif rec is None:

@@ -3,8 +3,7 @@
 
 For TTFT, TPOT and E2EL, print mean, p50, p90 and p99 from each result
 file and the relative difference. Gates: TPOT and E2EL means within
---gate-pct. TTFT is printed but not gated, it is queueing sensitive.
-With --trace-a and --trace-b, also compare ISL and OSL distributions
+--gate-pct. With --trace-a and --trace-b, also compare ISL and OSL distributions
 with a Kolmogorov-Smirnov statistic. Exit 0 when every gate passes.
 """
 
@@ -15,6 +14,7 @@ import sys
 
 
 def load_records(path):
+    """Metric series (ttft, tpot, e2el) from a result file's successful rows."""
     with open(path) as f:
         data = json.load(f)
     if isinstance(data, dict) and "per_request" in data:
@@ -58,7 +58,7 @@ def ks_statistic(a, b):
     return d
 
 
-def lengths(path):
+def trace_lengths(path):
     isl, osl = [], []
     with open(path) as f:
         for line in f:
@@ -96,8 +96,8 @@ def main() -> int:
                               f"{args.gate_pct}% or is undefined")
 
     if args.trace_a and args.trace_b:
-        isl_a, osl_a = lengths(args.trace_a)
-        isl_b, osl_b = lengths(args.trace_b)
+        isl_a, osl_a = trace_lengths(args.trace_a)
+        isl_b, osl_b = trace_lengths(args.trace_b)
         for name, xa, xb in (("ISL", isl_a, isl_b), ("OSL", osl_a, osl_b)):
             ks = ks_statistic(xa, xb)
             print(f"{name} KS statistic: {ks:.4f}")

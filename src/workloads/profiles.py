@@ -81,10 +81,9 @@ PROFILES: dict[str, WorkloadProfile] = {
         data_source="swebench",
     ),
 
-    # Open-loop replay of the public Mooncake production trace. Tokens
-    # are synthesized deterministically from hash_ids so cross-request
-    # prefix sharing survives replay. Requires backend vllm-completions
-    # and arrival_pattern "trace".
+    # Replay of the public Mooncake production trace. Tokens expand
+    # deterministically from hash_ids so prefix sharing survives
+    # replay. Requires backend vllm-completions.
     "mooncake-trace": WorkloadProfile(
         name="mooncake-trace",
         isl_tokens=131072,
