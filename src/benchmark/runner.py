@@ -16,6 +16,7 @@ Usage:
 
 import asyncio
 import argparse
+import dataclasses
 import itertools
 import json
 import sys
@@ -36,10 +37,10 @@ from .metrics import (
 from .server_control import PrefixCacheResetError, reset_prefix_cache
 from ..workloads.profiles import get_profile
 from ..workloads.dataset import make_dataset
-from ..workloads.arrival import make_arrival_times
+from ..workloads.arrival import make_arrival_times, ARRIVAL_PATTERNS
 
 
-SUPPORTED_BACKENDS = ["openai", "vllm", "sglang"]
+from ..engines import SUPPORTED_BACKENDS
 # v5: greedy-by-default + seed; failed requests keep partial timings and error_kind.
 BENCHMARK_SCHEMA_VERSION = 5
 WORKLOAD_SCHEMA_VERSION = "distributional-synthetic-v1"
@@ -130,6 +131,7 @@ async def _warmup_with_profile(
 
     Requests are drawn from the live dataset, so for single-turn profiles the
     warmup prompts are consumed and the measured run sees different ones.
+    Trace datasets are rewound by the caller afterwards.
     Results are discarded, but failures are counted: a warmup where nothing
     succeeds means the server is not usable and the run should not proceed.
 
@@ -139,6 +141,9 @@ async def _warmup_with_profile(
 
     async def one():
         request = dataset.get_next_request()
+        token_id_kwargs = {}
+        if request.metadata.get("prompt_token_ids"):
+            token_id_kwargs["prompt_token_ids"] = request.metadata["prompt_token_ids"]
         async with semaphore:
             return await backend.send_request(
                 session=session,
@@ -151,6 +156,7 @@ async def _warmup_with_profile(
                 temperature=temperature,
                 seed=sampling_seed,
                 min_tokens=request.max_tokens if exact_output_length else 0,
+                **token_id_kwargs,
             )
 
     results = await asyncio.gather(*[one() for _ in range(count)], return_exceptions=True)
@@ -224,6 +230,7 @@ async def run_benchmark(
     exact_output_length: bool = False,
     reset_prefix_cache_first: bool = False,
     warmup_concurrency: int | None = None,
+    workload_file: str = "",
 ):
     """
     Run a benchmark and return (results, duration).
@@ -239,6 +246,8 @@ async def run_benchmark(
     backend = get_backend(backend_name)
     open_loop = load_mode == "open-loop"
     profile = get_profile(profile_name)
+    if workload_file:
+        profile = dataclasses.replace(profile, file_path=workload_file)
     dataset = make_dataset(
         profile,
         max_context_tokens=max_context_tokens,
@@ -278,6 +287,10 @@ async def run_benchmark(
                 print("ABORT: every warmup request failed. The server is not serving "
                       "this profile; check the server log before benchmarking.")
                 sys.exit(1)
+            # Rewind trace datasets so request i still maps to record i.
+            reset = getattr(dataset, "reset", None)
+            if callable(reset):
+                reset()
 
         # Reset AFTER warmup so the run starts from a genuinely cold cache
         # regardless of what warmup left behind.
@@ -291,12 +304,17 @@ async def run_benchmark(
         benchmark_start = time.perf_counter()
 
         async def dispatch(i: int, dispatch_time: float):
+            # Fetch before sleeping: pre-await code runs in creation order,
+            # so request i gets record i, which trace replay relies on.
+            request = dataset.get_next_request()
             now = time.perf_counter() - benchmark_start
             delay = dispatch_time - now
             if delay > 0:
                 await asyncio.sleep(delay)
 
-            request = dataset.get_next_request()
+            token_id_kwargs = {}
+            if request.metadata.get("prompt_token_ids"):
+                token_id_kwargs["prompt_token_ids"] = request.metadata["prompt_token_ids"]
             dispatch_started_at_s = time.perf_counter() - benchmark_start
             async with (_no_limit() if open_loop else semaphore):
                 semaphore_acquired_at_s = time.perf_counter() - benchmark_start
@@ -322,6 +340,7 @@ async def run_benchmark(
                         if trace_request_ids
                         else None
                     ),
+                    **token_id_kwargs,
                 )
             completed_at_s = time.perf_counter() - benchmark_start
             annotate_request_observability(
@@ -976,8 +995,11 @@ def get_args():
     parser.add_argument("--url", required=False, help="Server endpoint URL")
     parser.add_argument("--model", required=False)
     parser.add_argument("--backend", default="vllm", choices=SUPPORTED_BACKENDS,
-                        help="Backend type (vllm/sglang/openai → /v1/chat/completions)")
+                        help="Backend type (vllm/sglang/openai → /v1/chat/completions, "
+                             "vllm-completions → /v1/completions)")
     parser.add_argument("--profile", default="chat-singleturn", help="Workload profile name")
+    parser.add_argument("--workload-file", default="",
+                        help="Override the profile file_path, for trace variants")
     parser.add_argument("--concurrency", type=int, default=10)
     parser.add_argument("--multi-turn-sessions", type=int, default=None,
                         help="Override number of multi-turn sessions to load/sample. Floored at --concurrency.")
@@ -987,7 +1009,7 @@ def get_args():
                         help="Validation mode: source-lock distributional multi-turn sampling to these source_session_id values.")
     parser.add_argument("--num-requests", type=int, default=100)
     parser.add_argument("--api-key", default="test")
-    parser.add_argument("--arrival", default="steady", choices=["steady", "poisson", "ramp"])
+    parser.add_argument("--arrival", default="steady", choices=ARRIVAL_PATTERNS)
     parser.add_argument("--turn-pacing", default="per-session",
                         choices=list(TURN_PACINGS),
                         help="closed-loop multi-turn scheduling: 'per-session' (default) "
@@ -1123,7 +1145,11 @@ def get_args():
     parser.add_argument("--turn-style", type=str, default=None, help="Filter profiles by turn style")
     parser.add_argument("--serving-style", type=str, default=None, help="Filter profiles by serving style")
     parser.add_argument("--data-source", type=str, default=None, help="Filter profiles by data source")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.profile == "mooncake-trace" and args.backend != "vllm-completions":
+        parser.error("--profile mooncake-trace sends token id prompts; "
+                     "use --backend vllm-completions")
+    return args
 
 
 if __name__ == "__main__":
@@ -1459,6 +1485,7 @@ if __name__ == "__main__":
             exact_output_length=args.exact_output_length,
             reset_prefix_cache_first=args.reset_prefix_cache,
             warmup_concurrency=args.warmup_concurrency,
+            workload_file=args.workload_file,
         ))
 
         # Hold out the startup wave by dispatch order. Requests keep their data

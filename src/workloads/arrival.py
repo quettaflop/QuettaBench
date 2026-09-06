@@ -11,7 +11,10 @@ to dispatch each request.
 
 import random
 import math
+
 from typing import Iterator
+
+ARRIVAL_PATTERNS = ["steady", "poisson", "ramp"]
 
 
 def steady_arrivals(num_requests: int, concurrency: int) -> list[float]:
