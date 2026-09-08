@@ -37,6 +37,19 @@ CUDA_VISIBLE_DEVICES=0 ./scripts/launch_server.sh single-turn
 per server). `scripts/build_trace_distributions.py` rebuilds the profile
 distribution JSONs in `data/distributions/` from the raw trajectory datasets.
 
+## Documentation
+
+Guides and API reference: https://lynae-1219.github.io/quettabench-docs-preview/
+
+The site is rebuilt from source docstrings on every push to main. Keep
+docstrings in Google style and new modules appear automatically. Build locally:
+
+```bash
+pip install -r docs/requirements.txt
+sphinx-apidoc -f --separate --module-first -o docs/api src
+sphinx-build -b html docs docs/_build/html    # then open docs/_build/html/index.html
+```
+
 ## Layout
 
 ```
