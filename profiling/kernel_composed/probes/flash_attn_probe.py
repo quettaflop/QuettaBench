@@ -14,13 +14,10 @@ import argparse
 import csv
 import os
 import statistics as st
-import sys
 from pathlib import Path
 
 import torch
 from vllm.vllm_flash_attn.flash_attn_interface import flash_attn_varlen_func
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _ncu import ncu_op_us
 
 KV_AXIS = [128, 256, 512, 1024, 2048, 4096, 8192, 16384]
 BATCH_AXIS = [1, 2, 4, 8, 16, 32, 40, 64, 80, 120, 160, 200, 256, 320]
@@ -33,7 +30,13 @@ NCU_REPS = 5   # op invocations profiled per point; min = warm steady state
 
 
 def _ncu_us(inner: str, ncu_bin: str) -> float | None:
-    """Per-call pure-kernel us via NCU (sums the flash sub-kernels, drops torch setup)."""
+    """Per-call pure-kernel us via NCU (sums the flash sub-kernels, drops torch setup).
+
+    ``_ncu`` is imported lazily: it is needed only on the --ncu path, and importing it
+    at module scope made the whole probe unrunnable (including the default cuda_event
+    and --graph paths) once the helper stopped shipping alongside this file.
+    """
+    from _ncu import ncu_op_us  # noqa: PLC0415
     return ncu_op_us(inner, ncu_bin, NCU_REPS)
 
 
@@ -66,6 +69,23 @@ def time_call(fn) -> float:
     return st.median(times)
 
 
+def _default_out_dir() -> str:
+    """Where measured grids are written: the NFS data root, else the in-repo tree.
+
+    Read straight from the environment rather than importing ``engine.paths`` so the
+    probe stays standalone -- it runs under the vLLM interpreter, invoked by path,
+    where the repo is not necessarily importable. Mirrors engine/paths.py: generated
+    data belongs on the shared disk, not in the git working tree.
+    """
+    for env in ("KERNEL_DATA", "QUETTASIM_DATA"):
+        raw = (os.environ.get(env) or "").strip()
+        if raw:
+            p = Path(raw).expanduser()
+            # QUETTASIM_DATA is the data ROOT; the probes write under kernel_data/.
+            return str(p if env == "KERNEL_DATA" else p / "kernel_data")
+    return str(Path(__file__).resolve().parents[2] / "data" / "kernel_data")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--n-heads", type=int, required=True)
@@ -75,10 +95,20 @@ def main():
     ap.add_argument("--fa-version", type=int, default=0, help="0=auto (FA3 on Hopper sm90+, else FA2)")
     ap.add_argument("--gpu-label", required=True, help="device label matching device_spec YAML name, e.g. A100/H100/RTX3090")
     ap.add_argument("--tag", required=True, help="grid tag, e.g. tp1/tp2/tp4 (head config)")
-    ap.add_argument("--out-dir", default=".")
+    ap.add_argument("--out-dir", default=_default_out_dir(),
+                    help="kernel_data root to write into; defaults to $KERNEL_DATA / "
+                         "$QUETTASIM_DATA/kernel_data (the NFS disk), else the in-repo data/")
     ap.add_argument("--max-mem-gb", type=float, default=40.0)
+    ap.add_argument("--kv-axis", default=None,
+                    help="comma-separated decode kv_len axis override (default tops out "
+                         "at 16384; a 64k-context workload needs 32768,65536 measured "
+                         "rather than linearly extrapolated)")
+    ap.add_argument("--batch-axis", default=None, help="comma-separated decode batch axis override")
     ap.add_argument("--ncu", action="store_true", help="NCU per-kernel timing (the standard); curated grid")
     ap.add_argument("--ncu-bin", default=os.environ.get("NCU_BIN", "ncu"))
+    ap.add_argument("--graph", action="store_true",
+                    help="CUDA-graph-replay DECODE timing (graphed-decode-faithful, "
+                         "no NCU needed) -> ncu/flash_attn/; prefill stays cuda_event")
     a = ap.parse_args()
     if a.fa_version == 0:   # auto: FA3 is Hopper-only (sm90+); Ampere/older need FA2
         a.fa_version = 3 if torch.cuda.get_device_capability()[0] >= 9 else 2
@@ -89,9 +119,13 @@ def main():
     out = Path(a.out_dir)
     out.mkdir(parents=True, exist_ok=True)
 
+    kv_axis = ([int(x) for x in a.kv_axis.split(",")] if a.kv_axis
+               else (KV_NCU if a.ncu else KV_AXIS))
+    batch_axis = ([int(x) for x in a.batch_axis.split(",")] if a.batch_axis
+                  else (BATCH_NCU if a.ncu else BATCH_AXIS))
     dec_rows = []
-    for kv in (KV_NCU if a.ncu else KV_AXIS):
-        for b in (BATCH_NCU if a.ncu else BATCH_AXIS):
+    for kv in kv_axis:
+        for b in batch_axis:
             if 2 * b * kv * a.n_kv_heads * a.head_dim * 2 / 1e9 > a.max_mem_gb:
                 continue
             if a.ncu:
@@ -105,14 +139,20 @@ def main():
                 v = torch.randn_like(k)
                 cu_q = torch.arange(0, b + 1, dtype=torch.int32, device=dev)
                 cu_k = torch.arange(0, (b + 1) * kv, kv, dtype=torch.int32, device=dev)
-                us = time_call(lambda: flash_attn_varlen_func(
+                fn = lambda: flash_attn_varlen_func(  # noqa: E731
                     q, k, v, 1, cu_q, kv, cu_seqlens_k=cu_k, causal=True,
-                    fa_version=a.fa_version))
+                    fa_version=a.fa_version)
+                if a.graph:
+                    from _graph import graph_median_us  # noqa: PLC0415
+                    us = graph_median_us(fn)
+                else:
+                    us = time_call(fn)
                 del q, k, v
                 torch.cuda.empty_cache()
             dec_rows.append({"q_len": 1, "kv_len": kv, "n_heads": a.n_heads,
                              "n_kv_heads": a.n_kv_heads, "head_dim": a.head_dim,
                              "batch": b, "causal": False, "phase": "decode",
+                             "layers": a.layers,
                              "latency_us": round(us * a.layers, 3)})
             print(f"{'ncu ' if a.ncu else ''}decode kv={kv} b={b}: {us:.1f}us/call", flush=True)
 
@@ -167,7 +207,7 @@ def main():
             w.writerows(kept + rows)
         return len(kept)
 
-    dec_method = "ncu" if a.ncu else "cuda_event"
+    dec_method = "ncu" if (a.ncu or a.graph) else "cuda_event"
     (out / dec_method / "flash_attn").mkdir(parents=True, exist_ok=True)
     dec_path = out / dec_method / "flash_attn" / f"{a.gpu_label}.csv"
     dec_kept = _upsert(dec_path, dec_rows)
