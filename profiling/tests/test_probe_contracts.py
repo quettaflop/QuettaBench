@@ -101,6 +101,13 @@ def test_recipe_probes_exist_and_accept_their_flags():
             )
 
 
+def test_every_probe_labels_its_gpu():
+    """Tables are keyed by GPU name, so every probe must take --gpu-label,
+    recipe-invoked or not."""
+    for probe in sorted(PROBES_DIR.glob("[!_]*.py")):
+        assert "--gpu-label" in argparse_flags(probe), f"{probe.name} has no --gpu-label"
+
+
 def test_sibling_helper_imports_resolve():
     for probe in sorted(PROBES_DIR.glob("[!_]*.py")):
         for node in ast.walk(ast.parse(probe.read_text())):
