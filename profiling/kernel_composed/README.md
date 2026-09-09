@@ -111,7 +111,9 @@ when done.
 `serving_frontend_probe.py` is the live-server exception in this folder: it fits
 the device-YAML `frontend:` + `serving:` blocks against a running `vllm serve`
 (recipe: `serving-profile`), for GPUs with no GT yet. With GT, prefer the cheaper
-`just -f $QUETTASIM/justfile serving-fit`.
+`just -f $QUETTASIM/justfile serving-fit`. It and `pd_host_probe.py` are
+consumer-coupled like the two emitters: they import the sim's `engine` package,
+so run them from a QuettaSim checkout (or with QuettaSim on `PYTHONPATH`).
 
 ### Why `moe_probe.py` exists
 Every other kernel family here has a measured table; the grouped MoE FFN did not.
