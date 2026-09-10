@@ -18,7 +18,17 @@ jobs:
       - run: pip install -r requirements.txt -r docs/requirements.txt
       - run: sphinx-apidoc -f --separate --module-first -o docs/api src
       - run: sphinx-build -b html docs docs/_build/html
+      - id: deploy_token
+        env:
+          DOCS_DEPLOY_TOKEN: ${{ secrets.DOCS_DEPLOY_TOKEN }}
+        run: |
+          if [ -n "$DOCS_DEPLOY_TOKEN" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
       - uses: peaceiris/actions-gh-pages@v4
+        if: steps.deploy_token.outputs.present == 'true'
         with:
           personal_token: ${{ secrets.DOCS_DEPLOY_TOKEN }}
           external_repository: lynae-1219/quettabench-docs-preview
