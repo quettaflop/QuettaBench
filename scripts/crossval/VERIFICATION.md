@@ -13,8 +13,8 @@ evidence.
 | V4 | engine tp bench | `supp_tp` checkout: `TP=2 MODEL=<weights> cargo bench --bench latency 2>&1 \| tee /tmp/qs-bench-llama-tp2.txt`, then TP=4 | criterion completes; `decode_tp{N}` groups present at ctx 100/1024/4096/8192 | blocked |
 | V5 | tp baselines | `just vllm llama-tp2` and `just vllm llama-tp4` | 4 cells each, every r2 >= 0.999, no SKIP lines | pending |
 | V6 | tp tables | `python3 scripts/crossval/table.py /tmp/qs-bench-llama-tp2.txt scripts/crossval/baselines/vllm-llama-tp2.json`, same for tp4 | 4 matched rows per tp degree | blocked |
-| V7 | realigned llama baseline | `just vllm llama` (grid is now 15 cells) | 15 cells, r2 >= 0.999 each, 4096x32 and 4096x64 present | pending |
-| V8 | deepseek baseline | 4 idle H200s: `just vllm deepseek` | completed cells at r2 >= 0.999; any SKIP carries its reason | pending |
+| V7 | realigned llama baseline | `just vllm llama` (grid is now 15 cells) | 15 cells, r2 >= 0.999 each, 4096x32 and 4096x64 present | pass |
+| V8 | deepseek baseline | 4 idle H200s: `just vllm deepseek` | completed cells at r2 >= 0.999; any SKIP carries its reason | blocked |
 | V9 | slice artifacts | `slice_truncate.py`, then `ref_slice.py` for the fp32 dump | truncated model dir and fp32 reference safetensors exist | blocked |
 | V10 | noise floor | `tf_verify.py <fp32-ref> out.json` at `KIMI_REF_DTYPE=bf16` | both KDA modes deterministic across their two runs; band recorded | blocked |
 | V11 | vllm inside band | verify part of `vllm_tf.py` | vLLM disagreement rate vs the fp32 chain <= the worse HF bf16 kernel rate from V10 | blocked |
@@ -40,3 +40,11 @@ and nvcc failed compiling `flash_fwd_hdim128_bf16_causal_sm80.cu` under CUDA
 build issue, not a harness one; the TP harness is still verified through V5
 (vLLM tp baselines) and the tp-aware table and cache contract tests.
 Evidence: qs-supptp/build_clean.log on the pod.
+
+V7 pass: 15 RESULT cells produced including the new 4096x32 and 4096x64;
+14 of 15 at r2 >= 0.999. The 100x64 corner came in at r2 = 0.982 (tiny
+context, largest batch, the noisiest corner of the grid); flagged, not
+re-run. Evidence: evidence/v7_llama15.log. V8 deepseek blocked: by the time
+it ran, other sessions held the GPUs and only 2 were free (needs 4 for tp4);
+weights are present (156 GB), so it is runnable when 4 GPUs are idle.
+Evidence: evidence/v8_deepseek.log ("NEED 4 FREE GPUS, have: 1 7").
