@@ -20,6 +20,7 @@ other than llama until each one is validated.
 | `cache.py` | parse a raw bench log into the cached point set |
 | `with_gpu.sh` | run a command on an idle GPU, which `free_gpu.sh` picks |
 | `workloads.json` | per-crate model, dtype, and the (context, batch) grid |
+| `greedy_agreement.py` | same prompts through the engine binary and vLLM, prints both continuations and the leading-token agreement (needs vllm) |
 
 ## Run
 
