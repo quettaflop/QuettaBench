@@ -12,7 +12,7 @@ def main():
         d = dict(re.findall(r"(\w+)=([-\d.A-Za-z_]+)", line.split("raw=")[0]))
         ctx, bs, ms = int(d["ctx"]), int(d["bs"]), float(d["ms_per_step"])
         points.append({
-            "ctx": ctx, "bs": bs, "ms_per_step": ms,
+            "ctx": ctx, "bs": bs, "tp": int(d.get("tp", "1")), "ms_per_step": ms,
             "tok_s": bs * 1000.0 / ms, "r2": float(d["r2"]),
         })
     if not points:

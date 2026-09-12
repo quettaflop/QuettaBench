@@ -12,14 +12,22 @@ otherwise only fails once someone has booked GPU time:
   3. A shell helper loses its executable bit or gains a syntax error --
      with_gpu.sh and vllm.sh are exec'd directly, so either one silently
      breaks the baseline refresh.
+  4. A grid cell that cannot run at its workload's maxlen -- vmin_fit prints
+     a SKIP line and moves on, so the config looks covered while the cell is
+     never measured.
+  5. A tensor-parallel workload whose name and tp field disagree -- the
+     baseline would be captured at the wrong degree and paired with the
+     wrong bench rows.
 
 The scripts are parsed, never imported: vmin_fit.py imports vllm, a GPU-only
-dependency absent from CI.
+dependency absent from CI. The glob is recursive so the ported slice_tf
+harness is parse-covered too.
 """
 
 import ast
 import json
 import os
+import re
 import subprocess
 import unittest
 from pathlib import Path
@@ -29,7 +37,7 @@ VERIFIED_CRATE = "llama"
 
 
 def _scripts(suffix):
-    return sorted(CROSSVAL.glob(f"*{suffix}"))
+    return sorted(p for p in CROSSVAL.rglob(f"*{suffix}") if "__pycache__" not in p.parts)
 
 
 def _load_workloads():
@@ -83,6 +91,45 @@ class WorkloadsConfig(unittest.TestCase):
         for cell in grid:
             self.assertEqual(len(cell), 2, f"grid cell {cell} is not (context, batch)")
             self.assertTrue(all(isinstance(x, int) for x in cell))
+
+    def test_tp_suffixed_workloads_declare_matching_tp(self):
+        cfg = _load_workloads()
+        for name, workload in cfg["workloads"].items():
+            m = re.search(r"-tp(\d+)$", name)
+            if m:
+                self.assertEqual(
+                    workload.get("tp"), int(m.group(1)),
+                    f"workload {name} must declare tp={m.group(1)}",
+                )
+
+    def test_grid_cells_fit_workload_maxlen(self):
+        cfg = _load_workloads()
+        top = max(cfg["step_points"])
+        for name, workload in cfg["workloads"].items():
+            for ctx, bs in cfg["grids"][workload["grid"]]:
+                self.assertLessEqual(
+                    ctx + top + 2, workload["maxlen"],
+                    f"workload {name} cell ({ctx}, {bs}) exceeds maxlen "
+                    f"{workload['maxlen']}; vmin_fit would SKIP it",
+                )
+
+
+class EngineBenchContract(unittest.TestCase):
+    """Cells frozen from QuettaServe llama/benches/latency.rs, identical on
+    the sm80, kev/xval and supp_tp branches: the batch groups sweep ctx
+    {100, 1024, 4096} x bs {1, 8, 16, 32, 64}; the tensor-parallel groups
+    sweep ctx {100, 1024, 4096, 8192} at bs 1. Every cell the engine bench
+    times needs a vLLM cell, or the comparison table silently drops the row."""
+
+    def test_llama_grid_covers_the_batch_bench_cells(self):
+        grid = {tuple(c) for c in _load_workloads()["grids"]["llama"]}
+        expected = {(ctx, bs) for ctx in (100, 1024, 4096) for bs in (1, 8, 16, 32, 64)}
+        self.assertTrue(expected <= grid, f"missing cells: {sorted(expected - grid)}")
+
+    def test_llama_single_grid_covers_the_tp_bench_cells(self):
+        grid = {tuple(c) for c in _load_workloads()["grids"]["llama_single"]}
+        expected = {(ctx, 1) for ctx in (100, 1024, 4096, 8192)}
+        self.assertTrue(expected <= grid, f"missing cells: {sorted(expected - grid)}")
 
 
 if __name__ == "__main__":

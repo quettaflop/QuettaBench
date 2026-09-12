@@ -2,9 +2,12 @@
   "step_points": [60, 230, 400],
   "grids": {
     "llama": [
-      [4096, 1], [4096, 8], [4096, 16],
+      [4096, 1], [4096, 8], [4096, 16], [4096, 32], [4096, 64],
       [1024, 1], [1024, 8], [1024, 16], [1024, 32], [1024, 64],
       [100, 1], [100, 8], [100, 16], [100, 32], [100, 64]
+    ],
+    "llama_single": [
+      [100, 1], [1024, 1], [4096, 1], [8192, 1]
     ],
     "qwen": [
       [100, 1], [1024, 1], [4096, 1], [8192, 1], [32768, 1],
@@ -24,6 +27,22 @@
       "weights_gib": 15,
       "maxlen": 8192,
       "grid": "llama"
+    },
+    "llama-tp2": {
+      "name": "Llama-3.1-8B-Instruct",
+      "dtype": "float16",
+      "weights_gib": 15,
+      "maxlen": 9216,
+      "tp": 2,
+      "grid": "llama_single"
+    },
+    "llama-tp4": {
+      "name": "Llama-3.1-8B-Instruct",
+      "dtype": "float16",
+      "weights_gib": 15,
+      "maxlen": 9216,
+      "tp": 4,
+      "grid": "llama_single"
     },
     "qwen": {
       "name": "Qwen3.5-9B",

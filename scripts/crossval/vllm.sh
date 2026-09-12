@@ -38,7 +38,7 @@ trap cleanup EXIT
   echo "META dtype=$DTYPE"
   echo "META grid=$GRID"
   echo "META mode=FULL"
-  export MODELPATH="$MDIR" WEIGHTS_GIB="$GIB" MAXLEN="$ML" GPU_UTIL=0.90 DTYPE="$DTYPE"
+  export MODELPATH="$MDIR" WEIGHTS_GIB="$GIB" MAXLEN="$ML" GPU_UTIL="${GPU_UTIL:-0.90}" DTYPE="$DTYPE"
   KV_DTYPE="$(wl kv_dtype)"; [ -n "$KV_DTYPE" ] && export KV_DTYPE
   KV_BYTES="$(wl kv_bytes)"; [ -n "$KV_BYTES" ] && export KV_BYTES
   CUDA_VISIBLE_DEVICES="$G" "$PY" "$REPO/scripts/crossval/vmin_fit.py" FULL "$CRATE" "$GRID" \
