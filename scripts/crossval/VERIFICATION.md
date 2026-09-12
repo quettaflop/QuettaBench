@@ -11,7 +11,7 @@ evidence.
 | V2 | static contracts | `python -m pytest tests/test_crossval_contracts.py -q` | all tests pass | pass |
 | V3 | engine tp equivalence | QuettaServe `supp_tp` checkout, 8 idle GPUs: `cargo test -p llama --test tp_equivalence -- --nocapture` | passes: tp 2/4/8 tokens equal tp1, logits within f16 tolerance | blocked |
 | V4 | engine tp bench | `supp_tp` checkout: `TP=2 MODEL=<weights> cargo bench --bench latency 2>&1 \| tee /tmp/qs-bench-llama-tp2.txt`, then TP=4 | criterion completes; `decode_tp{N}` groups present at ctx 100/1024/4096/8192 | blocked |
-| V5 | tp baselines | `just vllm llama-tp2` and `just vllm llama-tp4` | 4 cells each, every r2 >= 0.999, no SKIP lines | pending |
+| V5 | tp baselines | `just vllm llama-tp2` and `just vllm llama-tp4` | 4 cells each, every r2 >= 0.999, no SKIP lines | blocked |
 | V6 | tp tables | `python3 scripts/crossval/table.py /tmp/qs-bench-llama-tp2.txt scripts/crossval/baselines/vllm-llama-tp2.json`, same for tp4 | 4 matched rows per tp degree | blocked |
 | V7 | realigned llama baseline | `just vllm llama` (grid is now 15 cells) | 15 cells, r2 >= 0.999 each, 4096x32 and 4096x64 present | pass |
 | V8 | deepseek baseline | 4 idle H200s: `just vllm deepseek` | completed cells at r2 >= 0.999; any SKIP carries its reason | blocked |
@@ -48,3 +48,14 @@ re-run. Evidence: evidence/v7_llama15.log. V8 deepseek blocked: by the time
 it ran, other sessions held the GPUs and only 2 were free (needs 4 for tp4);
 weights are present (156 GB), so it is runnable when 4 GPUs are idle.
 Evidence: evidence/v8_deepseek.log ("NEED 4 FREE GPUS, have: 1 7").
+
+V5 blocked on vLLM tensor-parallel init, two attempts. First (default
+multiproc): "Engine core initialization failed" with an NCCL
+ProcessGroup/leaked-shared-memory warning. Second
+(VLLM_WORKER_MULTIPROC_METHOD=spawn, GPUs 1,7): the run stops right after the
+META header with no RESULT, error, or exit line, i.e. the TP workers hang or
+die silently during init. This is a vLLM-0.26 tensor-parallel startup issue
+in the detached environment on this pod, not a harness defect: the tp
+workloads, tp-aware table/cache, and single-GPU baseline path are all
+verified (V2, V7). Unblock needs an interactive vLLM tp debug or a different
+vLLM build. Evidence: evidence/v5_tp2.log, evidence/v5_tp2_retry.log.
