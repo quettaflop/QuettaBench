@@ -1,6 +1,6 @@
 """vLLM decode profile on the 13-layer real slice, windowed for nsys.
 
-Companion to `kimi_vllm_tf.py`'s bench: that one fits a slope through *host*
+Companion to `vllm_tf.py`'s bench: that one fits a slope through *host*
 latencies, this one hands nsys a pair of NVTX-delimited windows from which the
 marginal per-step **device** work can be recovered by subtraction:
 
@@ -21,7 +21,7 @@ against the range boundaries, which is process-independent.
 
     KIMI_MODEL=/data35/kevinlau/kimi-slice/truncated CUDA_VISIBLE_DEVICES=0,1,2,3 \
     nsys profile -t cuda,nvtx --cuda-graph-trace=node -o vllm_tp4 \
-      /data48/kevinlau/envs/vllm-k3/bin/python kimi_vllm_nsys.py --tp 4 --steps 200
+      /data48/kevinlau/envs/vllm-k3/bin/python vllm_nsys.py --tp 4 --steps 200
 """
 
 import argparse

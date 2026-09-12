@@ -8,9 +8,9 @@ independently: routing, dispatch, combine.
     KIMI_SLICE_MODEL=/data35/kevinlau/kimi-slice/truncated \
     KIMI_REF_DTYPE=f32 KIMI_REF_KDA_MODE=fused_recurrent \
     PYTHONPATH=/data35/kevinlau/pylibs/fla CUDA_VISIBLE_DEVICES=0,1,2,3 \
-    python kimi_moe_probe.py <out.safetensors>
+    python moe_routing_probe.py <out.safetensors>
 
-Model construction, weight loading and pipeline hooks are kimi_ref_slice.py's
+Model construction, weight loading and pipeline hooks are ref_slice.py's
 own (imported, not copied), so the probe cannot drift from the dump harness.
 """
 
@@ -20,8 +20,8 @@ import sys
 import torch
 from safetensors.torch import save_file
 
-import kimi_ref
-import kimi_ref_slice as krs
+import ref_full
+import ref_slice as krs
 
 
 def main() -> None:
@@ -78,7 +78,7 @@ def main() -> None:
         moe.shared_experts.register_forward_hook(keep_out("moe1_shared")),
     ]
 
-    ids = torch.tensor([kimi_ref.PROMPT_IDS], dtype=torch.long, device="cuda:0")
+    ids = torch.tensor([ref_full.PROMPT_IDS], dtype=torch.long, device="cuda:0")
     cache = mdl_mod.KimiDynamicCache(config=config)
     with torch.no_grad():
         model(input_ids=ids, past_key_values=cache, use_cache=True)

@@ -7,7 +7,7 @@ refuses to time anything until vLLM's greedy continuation matches the HF referen
 token for token.
 
     KIMI_MODEL=/data35/kevinlau/models/Kimi-K3-0.40B \
-    python kimi_vllm_baseline.py --ref <hf-dump>.safetensors [--dtype bfloat16]
+    python vllm_baseline.py --ref <hf-dump>.safetensors [--dtype bfloat16]
 
 The reference dump supplies both the prompt and the expected continuation:
 `decode{s}_token` is the input to step s, i.e. the greedy token the previous step
@@ -20,7 +20,7 @@ keys, so no other changes are needed:
 
     KIMI_MODEL=/data35/kevinlau/kimi-slice/truncated \
     CUDA_VISIBLE_DEVICES=4,5,6,7 \
-    python kimi_vllm_baseline.py --ref /data35/kevinlau/kimi-ref-slice-long.safetensors \
+    python vllm_baseline.py --ref /data35/kevinlau/kimi-ref-slice-long.safetensors \
         --tp 4 --verify-tokens 40
 
 Known env quirk (h100, vllm-k3 venv): flashinfer 0.6.16.post3 fd_exchange.py
@@ -62,7 +62,7 @@ import json
 import os
 import time
 
-# 16 fixed ids, identical to docs/scripts/kimi_ref.py.
+# 16 fixed ids, identical to docs/scripts/ref_full.py.
 PROMPT_IDS = [1, 4321, 100, 65535, 2048, 777, 31415, 9,
               128000, 42, 5, 99991, 1234, 60000, 8, 163839]
 
@@ -93,7 +93,7 @@ def slope_fit(xs, ys):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--ref", required=True, help="HF reference dump from kimi_ref.py")
+    ap.add_argument("--ref", required=True, help="HF reference dump from ref_full.py")
     ap.add_argument("--dtype", default="bfloat16")
     ap.add_argument("--verify-tokens", type=int, default=32)
     ap.add_argument("--max-model-len", type=int, default=512)

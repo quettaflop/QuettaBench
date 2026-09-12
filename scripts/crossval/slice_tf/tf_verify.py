@@ -19,7 +19,7 @@ fp32 chain <= the worse HF-bf16 kernel's rate).
     KIMI_REF_DTYPE=bf16 \
     PYTHONPATH=/data35/kevinlau/pylibs/fla \
     CUDA_VISIBLE_DEVICES=0,1,2,3 \
-    python kimi_tf_verify.py /data35/kevinlau/kimi-ref-slice-f32-long.safetensors out.json
+    python tf_verify.py /data35/kevinlau/kimi-ref-slice-f32-long.safetensors out.json
 
 One model load, both KDA modes, each mode run twice (in-process determinism
 check). Output JSON carries, for each mode, the per-position argmax and the
@@ -35,8 +35,8 @@ import sys
 import torch
 from safetensors import safe_open
 
-import kimi_ref  # PROMPT_IDS — shared with every other harness
-import kimi_ref_slice
+import ref_full  # PROMPT_IDS — shared with every other harness
+import ref_slice
 
 N_FORCED = 40
 MODES = ("fused_recurrent", "chunk")
@@ -104,17 +104,17 @@ def main() -> None:
 
     forced = chain_from_dump(ref_path, N_FORCED)
     gaps32 = fp32_gaps(ref_path, N_FORCED)
-    ids_list = list(kimi_ref.PROMPT_IDS) + forced
+    ids_list = list(ref_full.PROMPT_IDS) + forced
     print(f"concatenated prompt: {len(ids_list)} tokens "
-          f"({len(kimi_ref.PROMPT_IDS)} prompt + {N_FORCED} forced)", flush=True)
+          f"({len(ref_full.PROMPT_IDS)} prompt + {N_FORCED} forced)", flush=True)
 
-    model, config, mdl_mod = kimi_ref_slice.build_model(
+    model, config, mdl_mod = ref_slice.build_model(
         os.environ["KIMI_SLICE_MODEL"], os.environ.get("TMPDIR", "/tmp")
     )
 
     result = {
         "dtype": dtype,
-        "prompt_ids": list(kimi_ref.PROMPT_IDS),
+        "prompt_ids": list(ref_full.PROMPT_IDS),
         "forced_tokens": forced,
         "fp32_top2_gap": gaps32,
         "modes": {},

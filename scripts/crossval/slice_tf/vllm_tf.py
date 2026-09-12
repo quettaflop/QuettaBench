@@ -9,16 +9,16 @@ per-position rank/logprob information for prompt tokens, so the rank-1 token
 at position 16+s is vLLM's argmax prediction of forced token t_s given the
 identical prefix the fp32 reference saw. The acceptance criterion (computed
 outside, against the HF bf16 chunk-vs-recurrent envelope from
-kimi_tf_verify.py) is that vLLM's disagreement rate with the fp32 chain is
+tf_verify.py) is that vLLM's disagreement rate with the fp32 chain is
 <= the worse HF-bf16 kernel's rate: vLLM is bf16 and cannot beat the bf16
 noise floor, but a faithful implementation must sit inside it.
 
 PART 2 (bench, only with --bench and only if --max-disagree holds): same
-slope-fit protocol as kimi_vllm_baseline.py, but on a ~100-token prompt.
+slope-fit protocol as vllm_baseline.py, but on a ~100-token prompt.
 
     KIMI_MODEL=/data35/kevinlau/kimi-slice/truncated \
     CUDA_VISIBLE_DEVICES=0,1,2,3 \
-    python kimi_vllm_tf.py --ref /data35/kevinlau/kimi-ref-slice-f32-long.safetensors \
+    python vllm_tf.py --ref /data35/kevinlau/kimi-ref-slice-f32-long.safetensors \
         --tp 4 --out vllm_tf.json [--bench --max-disagree N]
 """
 
@@ -27,7 +27,7 @@ import json
 import os
 import time
 
-from kimi_vllm_baseline import PROMPT_IDS, slope_fit
+from vllm_baseline import PROMPT_IDS, slope_fit
 
 N_FORCED = 40
 

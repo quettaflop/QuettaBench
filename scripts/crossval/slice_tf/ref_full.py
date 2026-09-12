@@ -9,9 +9,9 @@ after prefill, and prefill + per-step decode logits.
 
     KIMI_MODEL=/data35/kevinlau/models/Kimi-K3-0.40B \
     PYTHONPATH=/data35/kevinlau/pylibs/fla \
-    python kimi_ref.py <out.safetensors> [decode_steps]
+    python ref_full.py <out.safetensors> [decode_steps]
 
-    python kimi_ref.py --compare <a.safetensors> <b.safetensors> <out.json>
+    python ref_full.py --compare <a.safetensors> <b.safetensors> <out.json>
 
 By default everything is fp32 end to end, TF32 explicitly off, so the candle port can
 be gated tightly. `KIMI_REF_DTYPE=bf16` runs the same code in bf16 — the dtype the

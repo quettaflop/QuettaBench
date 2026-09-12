@@ -1,18 +1,18 @@
 """Dump the HF reference on the REAL 13-layer Kimi-K3 slice, for the kimi crate's gates.
 
 Runs Moonshot's own modeling code (`modeling_kimi_linear.py`, shipped inside the
-checkpoint) on the truncated real checkpoint built by `kimi_slice_truncate.py`
+checkpoint) on the truncated real checkpoint built by `slice_truncate.py`
 (13 layers: KDA layers 0,1,2,4,5,6,8,9,10,12 zero-indexed, MLA layers 3,7,11,
 dense FFN layer 0, LatentMoE layers 1..12, attn_res anchors at layers 0 and 12).
 
     KIMI_SLICE_MODEL=/data35/kevinlau/kimi-slice/truncated \
     PYTHONPATH=/data35/kevinlau/pylibs/fla \
     CUDA_VISIBLE_DEVICES=0,1,2,3 \
-    python kimi_ref_slice.py <out.safetensors> [decode_steps]
+    python ref_slice.py <out.safetensors> [decode_steps]
 
-    python kimi_ref_slice.py --compare <a.safetensors> <b.safetensors> <out.json>
+    python ref_slice.py --compare <a.safetensors> <b.safetensors> <out.json>
 
-Tap names, prompt ids and the dump layout are shared with `kimi_ref.py` (the
+Tap names, prompt ids and the dump layout are shared with `ref_full.py` (the
 0.40B harness) so the crate's gate code reads both dumps identically.
 
 Why this shape (the option analysis, 2026-09-01):
@@ -54,12 +54,12 @@ Checkpoint quirks handled here (the Rust loader must mirror them):
     construction; the modeling code reads the config at forward time, so the
     eager mask + eager attention path is taken with zero code modification.
 
-Dtype policy matches `kimi_ref.py` KIMI_REF_DTYPE=bf16 (the dtype this
+Dtype policy matches `ref_full.py` KIMI_REF_DTYPE=bf16 (the dtype this
 checkpoint ships in, and the default here): every non-uint8 tensor is cast to
 bf16 at load, norms/A_log/dt_bias included; widenings happen where the modeling
 code takes `.float()`. fp32 accumulation is wherever Moonshot's code does it.
 
-Shims (same rules as kimi_ref.py — no monkeypatching of the modeling code):
+Shims (same rules as ref_full.py — no monkeypatching of the modeling code):
   1. fla-core via PYTHONPATH=/data35/kevinlau/pylibs/fla.
   2. modeling files materialized as byte-identical copies in an importable
      package (the checkpoint dir name is not a Python identifier).
@@ -83,7 +83,7 @@ from safetensors import safe_open
 from safetensors.torch import save_file
 from torch import nn
 
-import kimi_ref  # PROMPT_IDS, install_taps, compare — shared with the 0.40B harness
+import ref_full  # PROMPT_IDS, install_taps, compare — shared with the 0.40B harness
 
 PKG = "kimi_k3_slice_mod"
 PKG_FILES = ("configuration_kimi_k3.py", "modeling_kimi_linear.py")
@@ -250,7 +250,7 @@ def _shim_transformers_compat() -> None:
 
 def build_meta_model(model_dir: str, tmp_root: str):
     """Build the 13-layer text model on the meta device with MXFP4 expert
-    linears, ready for streamed loading (also used by kimi_slice_truncate.py
+    linears, ready for streamed loading (also used by slice_truncate.py
     as the expected-tensor-name oracle)."""
     _shim_transformers_compat()
     print("materializing modeling package from checkpoint (verbatim copies):")
@@ -390,7 +390,7 @@ def build_model(model_dir: str, tmp_root: str):
 
 
 # ---------------------------------------------------------------------------
-# Dump (mirrors kimi_ref.dump: same tap names, same tensor layout)
+# Dump (mirrors ref_full.dump: same tap names, same tensor layout)
 # ---------------------------------------------------------------------------
 
 def dump(model_dir: str, out_path: str, decode_steps: int, tmp_root: str) -> None:
@@ -407,11 +407,11 @@ def dump(model_dir: str, out_path: str, decode_steps: int, tmp_root: str) -> Non
                 layer.self_attn.mode = kda_mode
         print(f"KDA prefill mode forced to {kda_mode!r}")
     captured = {}
-    handles = kimi_ref.install_taps(model, config, captured)
+    handles = ref_full.install_taps(model, config, captured)
 
     tensors = {}
     embed_dev = f"cuda:{EMBED_DEV}"
-    ids = torch.tensor([kimi_ref.PROMPT_IDS], dtype=torch.long, device=embed_dev)
+    ids = torch.tensor([ref_full.PROMPT_IDS], dtype=torch.long, device=embed_dev)
     cache = mdl_mod.KimiDynamicCache(config=config)
     with torch.no_grad():
         out = model(input_ids=ids, past_key_values=cache, use_cache=True)
@@ -419,7 +419,7 @@ def dump(model_dir: str, out_path: str, decode_steps: int, tmp_root: str) -> Non
     for k, v in captured.items():
         tensors[k] = v[0] if v.dim() == 3 else v
     tensors["prefill_logits"] = logits.detach().float().cpu()[0]
-    print(f"prefill: {len(kimi_ref.PROMPT_IDS)} tokens, logits {tuple(logits.shape)}, "
+    print(f"prefill: {len(ref_full.PROMPT_IDS)} tokens, logits {tuple(logits.shape)}, "
           f"argmax(last) {int(logits[0, -1].argmax())}", flush=True)
 
     for i in range(config.num_hidden_layers):
@@ -450,7 +450,7 @@ def dump(model_dir: str, out_path: str, decode_steps: int, tmp_root: str) -> Non
 
     for h in handles:
         h.remove()
-    tensors["input_ids"] = torch.tensor(kimi_ref.PROMPT_IDS, dtype=torch.int64)
+    tensors["input_ids"] = torch.tensor(ref_full.PROMPT_IDS, dtype=torch.int64)
     tensors = {k: v.contiguous() for k, v in tensors.items()}
     save_file(tensors, out_path)
     print(f"wrote {out_path}: {len(tensors)} tensors, {decode_steps} decode steps")
@@ -458,10 +458,10 @@ def dump(model_dir: str, out_path: str, decode_steps: int, tmp_root: str) -> Non
 
 def main() -> None:
     if sys.argv[1] == "--compare":
-        kimi_ref.compare(sys.argv[2], sys.argv[3], sys.argv[4])
+        ref_full.compare(sys.argv[2], sys.argv[3], sys.argv[4])
         return
     out_path = sys.argv[1]
-    steps = int(sys.argv[2]) if len(sys.argv) > 2 else kimi_ref.DECODE_STEPS
+    steps = int(sys.argv[2]) if len(sys.argv) > 2 else ref_full.DECODE_STEPS
     dump(
         os.environ["KIMI_SLICE_MODEL"],
         out_path,

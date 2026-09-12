@@ -21,15 +21,15 @@ Sanity gates (all hard failures):
      parses, and the truncated fields read back exactly;
   B. every weight_map entry's shard file exists in <dst> (symlinks resolve);
   C. name-level diff against the actual 13-layer text model: the meta-built
-     KimiLinearForCausalLM (experts as MXFP4Linear, via kimi_ref_slice) must
+     KimiLinearForCausalLM (experts as MXFP4Linear, via ref_slice) must
      find every one of its state-dict tensors in the subset weight_map and
      vice versa (language_model.* namespace) — zero missing, zero extra —
      with shapes checked against the shard headers. Known exception: A_log is
      stored zero-padded to head_dim (128) while the model has 96 heads; shape
-     is allowed to differ there (the loader slices, see kimi_ref_slice.py).
+     is allowed to differ there (the loader slices, see ref_slice.py).
 
     PYTHONPATH=/data35/kevinlau/pylibs/fla \
-    python kimi_slice_truncate.py /data35/kevinlau/kimi-slice/model \
+    python slice_truncate.py /data35/kevinlau/kimi-slice/model \
                                   /data35/kevinlau/kimi-slice/truncated
 """
 
@@ -159,9 +159,9 @@ def gate_b_shards_exist(dst: str) -> dict:
 
 
 def gate_c_name_diff(dst: str, wm: dict) -> None:
-    import kimi_ref_slice
+    import ref_slice
 
-    model, config, _ = kimi_ref_slice.build_meta_model(
+    model, config, _ = ref_slice.build_meta_model(
         dst, os.environ.get("TMPDIR", "/tmp"))
     expected = {"language_model." + k: tuple(v.shape)
                 for k, v in model.state_dict().items()}
