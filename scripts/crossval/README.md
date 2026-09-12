@@ -21,6 +21,7 @@ other than llama until each one is validated.
 | `with_gpu.sh` | run a command on an idle GPU, which `free_gpu.sh` picks |
 | `workloads.json` | per-crate model, dtype, and the (context, batch) grid |
 | `greedy_agreement.py` | same prompts through the engine binary and vLLM, prints both continuations and the leading-token agreement (needs vllm) |
+| `slice_tf/` | teacher-forced slice verification harness ported from the deepseek branch; see `slice_tf/README.md` |
 
 ## Run
 
@@ -39,5 +40,8 @@ and stay untracked.
 ## Tests
 
 `tests/test_crossval_contracts.py` runs without a GPU: the scripts parse, the
-shell helpers keep their executable bit, and every workload names a grid that
-exists.
+shell helpers keep their executable bit, every workload names a grid that
+exists and fits its maxlen, and tensor-parallel workload names match their tp
+field. Tensor-parallel baselines use the `llama-tp2` / `llama-tp4` workloads
+(grid `llama_single`, the engine bench's tp cells); the table pairs tp rows
+only with tp baselines. Run stages and pass criteria: `VERIFICATION.md`.
