@@ -52,11 +52,18 @@ SKIPs on fp16 capacity) plus `llama-h200-fp8kv` (bf16 model + fp8 KV, the
 one cell that only fits quantized -- vLLM requires bf16 activations with
 fp8 KV).
 
+`PROF=1 xval.sh ...` nsys-captures the `prof` grid cell (8192x64, where the
+decode gap is widest) for the vLLM baseline, and for the engine bench when
+`QS_BENCH_BIN` points at the latency binary. Reports land in `profiles/`
+with a plain-text kernel summary beside each. Kernel time tells you engine
+math; the idle share of the trace tells you launch and plan overhead.
+
 ## Files
 
 | file | role |
 |---|---|
-| `xval.sh` | the orchestrator: baseline if missing, logit check, greedy check, table |
+| `xval.sh` | the orchestrator: baseline if missing, logit check, greedy check, table, PROF=1 profiles |
+| `prof.sh` | nsys capture of one command into profiles/, with the kernel summary dumped as text |
 | `vllm.sh` | baseline capture: picks gpus, runs vmin_fit, caches the json |
 | `vmin_fit.py` | vLLM decode slope fit, ms per step and r2 per cell (needs vllm) |
 | `cache.py` | packs a raw run into the cached baseline json |

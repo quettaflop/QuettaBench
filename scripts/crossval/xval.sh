@@ -4,6 +4,8 @@
 # against the transformers reference (LOGIT=0 skips), runs the greedy
 # check when QS_BIN points at an engine binary, and prints the comparison
 # table when a criterion bench log is given. PY selects the python with vllm.
+# PROF=1 nsys-captures the profiling cell on both sides afterwards: the vLLM
+# baseline, and the engine decode_loop when QS_BENCH_BIN names the bench.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CRATE="${1:?crate}"
@@ -26,4 +28,11 @@ if [ -n "$BENCH_LOG" ]; then
     "$PY" "$HERE/table.py" "$BENCH_LOG" "$BASELINE"
 else
     echo "no bench log given; baseline and checks only (table: xval.sh $CRATE <weights> <bench-log>)"
+fi
+
+if [ "${PROF:-0}" = 1 ]; then
+    MODELPATH="$MDIR" "$HERE/prof.sh" "vllm-$CRATE" "$PY" "$HERE/vmin_fit.py" FULL "$CRATE" prof
+    if [ -n "${QS_BENCH_BIN:-}" ]; then
+        MODEL="$MDIR" "$HERE/prof.sh" "qserve-$CRATE" "$QS_BENCH_BIN" decode_loop --bench
+    fi
 fi
