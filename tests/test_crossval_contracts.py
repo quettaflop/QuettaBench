@@ -1,10 +1,8 @@
-"""Wiring contracts for scripts/crossval, run in CI without a GPU.
+"""Offline checks for scripts/crossval.
 
-The scripts themselves only run on a GPU box, so CI pins what it can: every
-script parses (parsed, never imported: vmin_fit.py needs vllm), the shell
-helpers keep their exec bit, workloads.json stays consistent (grids exist,
-every cell fits its workload maxlen, tp-suffixed names match their tp
-field), and the grids cover every cell the engine bench times.
+CI has no GPU, so this pins the wiring: scripts parse, shell helpers keep
+their exec bit, workloads.json stays consistent, the grids cover the cells
+the engine bench times, and table.py only compares like with like.
 """
 
 import ast
@@ -29,6 +27,7 @@ def _load_workloads():
 
 class CrossvalScripts(unittest.TestCase):
     def test_python_scripts_parse(self):
+        # Parse only: importing would pull in vllm, which CI does not have.
         scripts = _scripts(".py")
         self.assertTrue(scripts, "no python scripts under scripts/crossval")
         for script in scripts:
@@ -46,6 +45,11 @@ class CrossvalScripts(unittest.TestCase):
                 os.access(script, os.X_OK),
                 f"{script.name} is exec'd directly and must keep its +x bit",
             )
+
+    def test_agreement_inputs_present(self):
+        for name in ("prompts.txt", "texts.txt"):
+            lines = [l for l in (CROSSVAL / name).read_text().splitlines() if l.strip()]
+            self.assertTrue(lines, f"{name} is empty")
 
 
 class WorkloadsConfig(unittest.TestCase):
@@ -98,11 +102,10 @@ class WorkloadsConfig(unittest.TestCase):
 
 
 class EngineBenchContract(unittest.TestCase):
-    """Cells frozen from QuettaServe llama/benches/latency.rs, identical on
-    the sm80, kev/xval and supp_tp branches: the batch groups sweep ctx
-    {100, 1024, 4096} x bs {1, 8, 16, 32, 64}; the tensor-parallel groups
-    sweep ctx {100, 1024, 4096, 8192} at bs 1. Every cell the engine bench
-    times needs a vLLM cell, or the comparison table silently drops the row."""
+    """Cells frozen from QuettaServe llama/benches/latency.rs: the batch
+    groups sweep ctx {100, 1024, 4096} x bs {1, 8, 16, 32, 64}; the
+    tensor-parallel groups sweep ctx {100, 1024, 4096, 8192} at bs 1. Every
+    cell the bench times needs a vLLM cell, or the table drops the row."""
 
     def test_llama_grid_covers_the_batch_bench_cells(self):
         grid = {tuple(c) for c in _load_workloads()["grids"]["llama"]}

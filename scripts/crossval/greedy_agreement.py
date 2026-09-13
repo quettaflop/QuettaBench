@@ -3,7 +3,8 @@
 Prints both continuations and the leading-token agreement per prompt. The
 engine side runs at temperature 0.01 (its temperature 0 path divides by
 zero) and its hardcoded Llama 2 start token skews exact token divergence on
-Llama 3, so content-level agreement is the meaningful signal.
+Llama 3, so content-level agreement is the meaningful signal. Prompts live
+in prompts.txt, one per line.
 
     python3 greedy_agreement.py --qs-bin /path/to/llama --model /path/to/weights
 """
@@ -12,23 +13,15 @@ import argparse
 import os
 import statistics
 import subprocess
+from pathlib import Path
 
 from transformers import AutoTokenizer
 from vllm import LLM, SamplingParams
 
 PROMPTS = [
-    "The capital of France is",
-    "The first three prime numbers are",
-    "The chemical symbol for gold is",
-    "The opposite of hot is",
-    "The largest planet in the solar system is",
-    "Two plus two equals",
-    "The author of Romeo and Juliet is",
-    "The square root of 64 is",
-    "The currency of Japan is the",
-    "The freezing point of water in Celsius is",
-    "The past tense of run is",
-    "The number of days in a week is",
+    line.strip()
+    for line in Path(__file__).with_name("prompts.txt").read_text().splitlines()
+    if line.strip()
 ]
 
 

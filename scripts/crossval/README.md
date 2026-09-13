@@ -1,10 +1,9 @@
 # crossval -- QuettaServe vs vLLM
 
 Cross-validates a QuettaServe engine against vLLM at matched context, batch
-and tensor-parallel degree. Ported from QuettaServe `kev/xval`; QuettaServe
-drives it through this repo as a submodule. Only llama is wired: the
-workloads file keeps the qwen and deepseek entries it arrived with, and the
-recipes refuse them until validated.
+and tensor-parallel degree. QuettaServe drives it through this repo as a
+submodule. Only llama is wired: qwen and deepseek entries exist in the
+workloads file, and the recipes refuse them until validated.
 
 ## Run
 

@@ -1,5 +1,7 @@
 import json, os, re, sys, time
 
+# Age past which the baseline draws a warning: drivers and kernels move, and
+# ratios against a stale vLLM capture mislead.
 STALE_DAYS = 14
 GROUP_PREF = ("decode_batch_paged", "decode_batch", "decode_graph", "decode")
 POINT_RE = re.compile(

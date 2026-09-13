@@ -4,77 +4,24 @@ Both score the same fixed token sequences in bfloat16, so every position is
 an independent trial: argmax match per position plus the log probability
 each assigns the true next token, with the reference top-2 gap printed on
 any disagreement so near-ties separate from real defects. Validates the
-baseline; the engine binary emits text only.
+baseline; the engine binary emits text only. Texts live in texts.txt, one
+per line.
 
     python3 logit_agreement.py --model /path/to/Llama-3.1-8B-Instruct
 """
 
 import argparse
 import gc
+from pathlib import Path
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from vllm import LLM, SamplingParams
 
 TEXTS = [
-    "The industrial revolution began in Britain in the late eighteenth "
-    "century and transformed manufacturing from hand production to machines. "
-    "New chemical and iron production processes appeared, water power gave "
-    "way to steam, and the factory system concentrated labour in cities. "
-    "Textiles were the dominant industry in terms of employment, value of "
-    "output and capital invested.",
-    "Photosynthesis is the process by which green plants convert sunlight "
-    "into chemical energy. Light is absorbed by chlorophyll in the "
-    "chloroplasts, water is split to release oxygen, and carbon dioxide is "
-    "reduced to sugars in the Calvin cycle. The overall reaction consumes "
-    "six molecules of carbon dioxide and six of water to produce one glucose "
-    "molecule and six of oxygen.",
-    "A binary search algorithm finds a target value in a sorted array by "
-    "repeatedly halving the search interval. It compares the target with "
-    "the middle element: if they are unequal, the half in which the target "
-    "cannot lie is eliminated and the search continues on the remaining "
-    "half until the target is found or the interval is empty. Its running "
-    "time is logarithmic in the length of the array.",
-    "The transmission control protocol provides reliable, ordered delivery "
-    "of a byte stream between applications. A connection is established "
-    "with a three way handshake, data segments carry sequence numbers so "
-    "the receiver can reassemble them in order, and acknowledgements with "
-    "retransmission timers recover anything the network drops. Congestion "
-    "control adjusts the sending rate to what the path can carry.",
-    "To make a simple bread dough, combine flour, water, salt and yeast, "
-    "then knead until the surface turns smooth and elastic. Let it rise "
-    "until doubled, fold it once to redistribute the gas, shape the loaf "
-    "and let it rise again. Bake in a hot oven until the crust browns and "
-    "the inside reaches temperature, then cool it on a rack before "
-    "slicing.",
-    "The planets of the solar system divide into two groups. The inner "
-    "four are small rocky bodies with thin atmospheres or none at all, "
-    "while the outer four are giants composed mostly of hydrogen, helium "
-    "and ices. Between the two groups lies the asteroid belt, and beyond "
-    "the giants a scattered disc of icy objects marks the boundary of the "
-    "planetary region.",
-    "Inflation measures how fast the general level of prices rises over "
-    "time. Central banks respond by adjusting interest rates: higher rates "
-    "make borrowing dearer, which cools spending and investment, while "
-    "lower rates do the opposite. The lag between a rate change and its "
-    "effect on prices is long and variable, which is what makes the job "
-    "difficult.",
-    "The referee blew the whistle and the match restarted with a short "
-    "corner. The defender cleared the first ball, but the winger returned "
-    "it low across the face of goal and the striker arrived a step ahead "
-    "of his marker to turn it in at the near post. The stadium erupted; "
-    "the away end went silent.",
-    "A hash table stores key value pairs in an array indexed by a hash "
-    "function applied to the key. Collisions, where two keys map to the "
-    "same slot, are handled either by chaining entries in a list or by "
-    "probing for the next open slot. With a good hash function and a load "
-    "factor kept below one, insertion and lookup take constant time on "
-    "average.",
-    "Cells store their genetic instructions in DNA, which is transcribed "
-    "into messenger RNA in the nucleus. The message travels to a ribosome, "
-    "where transfer RNA molecules deliver amino acids matching each three "
-    "letter codon, and the growing chain folds into a working protein. "
-    "Errors in copying are rare because polymerases proofread as they go.",
+    line.strip()
+    for line in Path(__file__).with_name("texts.txt").read_text().splitlines()
+    if line.strip()
 ]
 
 
