@@ -14,6 +14,7 @@ def main():
         points.append({
             "ctx": ctx, "bs": bs, "tp": int(d.get("tp", "1")), "ms_per_step": ms,
             "tok_s": bs * 1000.0 / ms, "r2": float(d["r2"]),
+            "kv": d.get("kv", meta.get("dtype", "?")),
         })
     if not points:
         sys.exit(f"no RESULT lines in {raw}")
@@ -29,6 +30,8 @@ def main():
         "model": meta.get("model", "?"),
         "dtype": meta.get("dtype", "?"),
         "grid": meta.get("grid", "?"),
+        "method": "slope",
+        "kv_dtype": points[0]["kv"],
         "llmsrv_sha_at_capture": sha,
         "points": points,
     }, open(out, "w"), indent=2)

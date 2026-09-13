@@ -36,6 +36,22 @@ Correctness runs alongside the latency: `greedy_agreement.py` (engine vs
 vLLM text) and `logit_agreement.py` (vLLM vs the transformers reference,
 teacher forced).
 
+## Measurement contract
+
+Both columns time the same quantity: steady-state decode ms per token at a
+resident batch, pipelined, synchronized only at the ends, at matched
+(context, batch, tp). The vLLM side is the slope of generate time over the
+step points; the engine side is the `decode_loop` bench (K pipelined steps,
+one sync). Criterion's decode groups synchronize inside every iteration --
+a different quantity -- so `table.py` prints those cells with ratios
+withheld (`XVAL_ALLOW_METHOD_MISMATCH=1` forces them). Baselines record the
+KV cache dtype per point; rows with mismatched KV formats are flagged `KV`.
+
+The H200 table is workload `llama-h200` (fp16, the 12-cell grid; 64x16384
+SKIPs on fp16 capacity) plus `llama-h200-fp8kv` (bf16 model + fp8 KV, the
+one cell that only fits quantized -- vLLM requires bf16 activations with
+fp8 KV).
+
 ## Files
 
 | file | role |

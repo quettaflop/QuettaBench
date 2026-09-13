@@ -115,5 +115,58 @@ class EngineBenchContract(unittest.TestCase):
         self.assertTrue(expected <= grid, f"missing cells: {sorted(expected - grid)}")
 
 
+class TableParity(unittest.TestCase):
+    """table.py prints ratios only when both sides timed the same quantity:
+    the engine's pipelined decode_loop against the baseline's slope. A
+    criterion per-step log gets its cells printed with ratios withheld, and
+    rows whose KV formats differ carry a KV flag."""
+
+    def _table(self, bench_text, kv="float16"):
+        import sys
+        import tempfile
+        import time
+
+        base = {
+            "recorded_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "gpu": "test", "vllm": "0", "mode": "FULL", "model": "m",
+            "dtype": "float16", "grid": "g", "method": "slope", "kv_dtype": kv,
+            "points": [{"ctx": 1024, "bs": 1, "tp": 1, "ms_per_step": 5.0,
+                        "tok_s": 200.0, "r2": 1.0, "kv": kv}],
+        }
+        with tempfile.TemporaryDirectory() as td:
+            bench = Path(td) / "bench.log"
+            cache = Path(td) / "base.json"
+            bench.write_text(bench_text)
+            cache.write_text(json.dumps(base))
+            out = subprocess.run(
+                [sys.executable, str(CROSSVAL / "table.py"), str(bench), str(cache)],
+                capture_output=True, text=True,
+            )
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return out.stdout
+
+    def test_loop_bench_gets_a_ratio(self):
+        out = self._table("LOOP ctx=1024 bs=1 kv=fp16 ms_per_step=10.000 k=100\n")
+        self.assertIn("0.50x", out)
+        self.assertNotIn("withheld", out)
+
+    def test_per_step_bench_gets_no_ratio(self):
+        out = self._table(
+            "decode_batch_paged/1024x1\n"
+            "                        time:   [9.9 ms 10.0 ms 10.1 ms]\n"
+        )
+        self.assertIn("withheld", out)
+        self.assertNotIn("0.50x", out)
+
+    def test_kv_mismatch_is_flagged(self):
+        out = self._table("LOOP ctx=1024 bs=1 kv=nvfp4 ms_per_step=10.000 k=100\n")
+        self.assertIn("KV nvfp4/fp16", out)
+
+    def test_h200_grid_is_the_table(self):
+        grid = {tuple(c) for c in _load_workloads()["grids"]["table_h200"]}
+        expected = {(c, b) for c in (1024, 8192, 16384) for b in (1, 4, 16, 64)}
+        self.assertEqual(grid, expected)
+
+
 if __name__ == "__main__":
     unittest.main()

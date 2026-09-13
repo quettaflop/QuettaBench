@@ -105,7 +105,7 @@ def main():
         slope, inter, r2 = fit(steps, ys)
         kv_gib = ctx * bs * kv_b / (1 << 30)
         print(
-            f"RESULT mode={mode} tp={tp} ep={ep} ctx={ctx} bs={bs} "
+            f"RESULT mode={mode} tp={tp} ep={ep} kv={kv_dtype or dtype} ctx={ctx} bs={bs} "
             f"ms_per_step={slope * 1e3:.3f} r2={r2:.5f} prefill_s={inter:.2f} "
             f"kv_gib={kv_gib:.1f} attn_share={kv_gib / (kv_gib + weights_gib):.3f} "
             f"raw={[round(y, 2) for y in ys]}",
