@@ -14,4 +14,10 @@ Environment=DASHBOARD_DIR=/root/QuettaBoard
 Environment=MIRROR_R2=1
 Environment=GPU_STATE_REPORT=/tmp/quetta-gpu-state-latest.md
 Environment=DASHBOARD_LOCK_FILE=/tmp/quetta-dashboard-artifacts.lock
+Environment=BENCH_SKIP_RESULT_DIRS=archived
+MemoryAccounting=yes
+MemoryHigh=8G
+MemoryMax=12G
+OOMPolicy=stop
+TimeoutStartSec=10min
 ExecStart=/usr/bin/env bash /root/QuettaBench/scripts/rebuild-local-dashboard.sh
