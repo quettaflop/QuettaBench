@@ -11,7 +11,7 @@ evidence.
 | V2 | static contracts | `python -m pytest tests/test_crossval_contracts.py -q` | all tests pass | pass |
 | V3 | engine tp equivalence | QuettaServe `supp_tp` checkout, 8 idle GPUs: `cargo test -p llama --test tp_equivalence -- --nocapture` | passes: tp 2/4/8 tokens equal tp1, logits within f16 tolerance | blocked |
 | V4 | engine tp bench | `supp_tp` checkout: `TP=2 MODEL=<weights> cargo bench --bench latency 2>&1 \| tee /tmp/qs-bench-llama-tp2.txt`, then TP=4 | criterion completes; `decode_tp{N}` groups present at ctx 100/1024/4096/8192 | blocked |
-| V5 | tp baselines | `just vllm llama-tp2` and `just vllm llama-tp4` | 4 cells each, every r2 >= 0.999, no SKIP lines | blocked |
+| V5 | tp baselines | `just vllm llama-tp2` and `just vllm llama-tp4` | 4 cells each, every r2 >= 0.999, no SKIP lines | pass (blackwell) |
 | V6 | tp tables | `python3 scripts/crossval/table.py /tmp/qs-bench-llama-tp2.txt scripts/crossval/baselines/vllm-llama-tp2.json`, same for tp4 | 4 matched rows per tp degree | blocked |
 | V7 | realigned llama baseline | `just vllm llama` (grid is now 15 cells) | 15 cells, r2 >= 0.999 each, 4096x32 and 4096x64 present | pass |
 | V8 | deepseek baseline | 4 idle H200s: `just vllm deepseek` | completed cells at r2 >= 0.999; any SKIP carries its reason | blocked |
@@ -59,3 +59,20 @@ in the detached environment on this pod, not a harness defect: the tp
 workloads, tp-aware table/cache, and single-GPU baseline path are all
 verified (V2, V7). Unblock needs an interactive vLLM tp debug or a different
 vLLM build. Evidence: evidence/v5_tp2.log, evidence/v5_tp2_retry.log.
+
+Run 2026-09-13 (GCP hwn-z1-gpu11, 8x RTX PRO 6000 Blackwell sm_120, all idle;
+evidence rsynced to /home/kw/crossval-evidence/blackwell/). Bare node: stood up
+a userspace stack (uv + vLLM 0.29.0 / torch cu130, micromamba cuda-toolkit
+13.4, rustup). Key fix: vLLM's wheel ships no prebuilt sm_120 kernels so it
+JIT-compiles at runtime and needs nvcc; installing the CUDA toolkit is what
+unblocked TP init. V5 PASS on Blackwell: llama-tp2 4 cells r2=1.0 ms 6.98-7.28,
+llama-tp4 4 cells r2=1.0 ms 5.74-5.85 (tp4 faster than tp2, correct decode TP
+scaling); single-GPU warmup also valid (100x1, 11.35 ms/step, r2=1.0). V3/V4/V6
+still blocked: the engine build fails on Blackwell at `cudarc v0.19.8` custom
+build (that pinned crate version predates CUDA 13.x), before flash-attn; V3 also
+needs the built engine. V8 deepseek blocked: DeepseekV4ForCausalLM resolves and
+fp8_ds_mla KV is set, but TP=4 worker init dies with NCCL "unhandled system
+error" three times (standalone and with NCCL_P2P_DISABLE=1) -- the MoE
+all-to-all over PCIe (these cards have no NVLink) where llama's all-reduce
+succeeded; needs dedicated NCCL debug (NCCL_DEBUG=INFO) or NVLink hardware.
+Evidence: evidence/deepseek*.raw.
