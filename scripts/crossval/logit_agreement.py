@@ -1,6 +1,7 @@
 """Teacher-forced logit agreement between vLLM and the transformers reference.
 
-Both score the same fixed token sequences in bfloat16, so every position is
+Both score the same fixed token sequences in the workload's dtype from
+workloads.json, the numeric path the baseline measures, so every position is
 an independent trial: argmax match per position plus the log probability
 each assigns the true next token, with the reference top-2 gap printed on
 any disagreement so near-ties separate from real defects. Validates the
@@ -12,11 +13,14 @@ per line.
 
 import argparse
 import gc
+import json
 from pathlib import Path
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from vllm import LLM, SamplingParams
+
+CFG = json.load(open(Path(__file__).with_name("workloads.json")))
 
 TEXTS = [
     line.strip()
@@ -25,11 +29,11 @@ TEXTS = [
 ]
 
 
-def transformers_reference(model_dir, token_ids_per_text):
+def transformers_reference(model_dir, token_ids_per_text, dtype):
     """Per text: argmax prediction, top-2 gap and true-token logprob at each
     position, from a single teacher-forced forward pass."""
     model = AutoModelForCausalLM.from_pretrained(
-        model_dir, torch_dtype=torch.bfloat16
+        model_dir, torch_dtype=getattr(torch, dtype)
     ).to("cuda:0")
     model.eval()
     out = []
@@ -49,9 +53,9 @@ def transformers_reference(model_dir, token_ids_per_text):
     return out
 
 
-def vllm_scores(model_dir, token_ids_per_text, gpu_util):
+def vllm_scores(model_dir, token_ids_per_text, gpu_util, dtype):
     """Per text: vLLM's argmax and true-token logprob at each prompt position."""
-    llm = LLM(model=model_dir, dtype="bfloat16", gpu_memory_utilization=gpu_util,
+    llm = LLM(model=model_dir, dtype=dtype, gpu_memory_utilization=gpu_util,
               max_model_len=4096, enforce_eager=True, enable_prefix_caching=False)
     params = SamplingParams(temperature=0, max_tokens=1, prompt_logprobs=2)
     outputs = llm.generate(
@@ -75,14 +79,16 @@ def vllm_scores(model_dir, token_ids_per_text, gpu_util):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True, help="model weights dir")
+    ap.add_argument("--crate", default="llama", help="workload whose dtype to validate")
     ap.add_argument("--gpu-util", type=float, default=0.5)
     args = ap.parse_args()
+    dtype = CFG["workloads"][args.crate]["dtype"]
 
     tokenizer = AutoTokenizer.from_pretrained(args.model)
     ids_per_text = [tokenizer(t)["input_ids"] for t in TEXTS]
 
-    reference = transformers_reference(args.model, ids_per_text)
-    vllm_result = vllm_scores(args.model, ids_per_text, args.gpu_util)
+    reference = transformers_reference(args.model, ids_per_text, dtype)
+    vllm_result = vllm_scores(args.model, ids_per_text, args.gpu_util, dtype)
 
     total = agree = 0
     near_tie = far = 0

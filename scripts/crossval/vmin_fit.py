@@ -1,9 +1,21 @@
-# vmin_fit.py MODE CRATE [GRID] — decode ms/step = slope of time vs generated tokens
-import json, os, sys, time
+# vmin_fit.py <crate> [grid] --model <dir> [--nograph]
+# decode ms/step = slope of total generate time vs generated tokens
+import argparse
+import json
+import os
+import sys
+import time
 from pathlib import Path
+
+import torch
+import vllm
 from vllm import LLM, SamplingParams
 
 CFG = json.load(open(Path(__file__).with_name("workloads.json")))
+
+# Fraction of the KV budget a cell may claim before it is skipped; the rest
+# covers fragmentation and scheduler headroom.
+CAP_FRAC = 0.80
 
 
 def toks(n, seed=10):
@@ -24,37 +36,51 @@ def fit(xs, ys):
 
 
 def main():
-    mode, crate = sys.argv[1], sys.argv[2].lower()
-    wl = CFG["workloads"][crate]
+    ap = argparse.ArgumentParser()
+    ap.add_argument("crate", help="workload name from workloads.json")
+    ap.add_argument("grid", nargs="?", default="", help="grid override")
+    ap.add_argument("--model", required=True, help="model weights dir")
+    ap.add_argument("--nograph", action="store_true", help="disable CUDA graphs")
+    args = ap.parse_args()
+
+    wl = CFG["workloads"].get(args.crate)
+    if wl is None:
+        sys.exit(f"unknown crate {args.crate!r}; workloads: {', '.join(CFG['workloads'])}")
+    if not wl.get("verified"):
+        sys.exit(f"{args.crate} is not validated for cross-validation yet")
     grids = {k.lower(): v for k, v in CFG["grids"].items()}
-    gridname = (sys.argv[3] if len(sys.argv) > 3 and sys.argv[3] else wl["grid"]).lower()
+    gridname = (args.grid or wl["grid"]).lower()
+    if gridname not in grids:
+        sys.exit(f"unknown grid {gridname!r}; grids: {', '.join(grids)}")
     points = grids[gridname]
     steps = CFG["step_points"]
 
-    model = os.environ["MODELPATH"]
-    weights_gib = float(os.environ.get("WEIGHTS_GIB", wl["weights_gib"]))
-    maxlen = int(os.environ.get("MAXLEN", wl["maxlen"]))
-    dtype = os.environ.get("DTYPE", wl["dtype"])
-    gpu_gib = float(os.environ.get("GPU_GIB", "80"))
-    tp = int(os.environ.get("TP", wl.get("tp", 1)))
+    mode = "NOGRAPH" if args.nograph else "FULL"
+    tp = int(wl.get("tp", 1))
+    dtype = wl["dtype"]
+    kv_dtype = wl.get("kv_dtype")
+    weights_gib = float(wl["weights_gib"])
+    maxlen = int(wl["maxlen"])
+    util = float(os.environ.get("GPU_UTIL", wl.get("gpu_util", 0.90)))
 
-    cc = {}
-    if mode == "NOGRAPH":
-        cc["cudagraph_mode"] = "NONE"
-    if os.environ.get("COMPILE_MODE"):
-        cc["mode"] = int(os.environ["COMPILE_MODE"])
-    kw = {"compilation_config": cc} if cc else {}
-    kv_dtype = os.environ.get("KV_DTYPE", wl.get("kv_dtype"))
+    print(f"META gpu={torch.cuda.get_device_name(0)}", flush=True)
+    print(f"META vllm={vllm.__version__}", flush=True)
+    print(f"META model={wl['name']}", flush=True)
+    print(f"META dtype={dtype}", flush=True)
+    print(f"META grid={gridname}", flush=True)
+    print(f"META mode={mode}", flush=True)
+
+    kw = {}
+    if args.nograph:
+        kw["compilation_config"] = {"cudagraph_mode": "NONE"}
     if kv_dtype:
         kw["kv_cache_dtype"] = kv_dtype
-    if os.environ.get("EXPERT_PARALLEL") or wl.get("expert_parallel"):
-        kw["enable_expert_parallel"] = True
 
     llm = LLM(
-        model=model,
+        model=args.model,
         dtype=dtype,
         tensor_parallel_size=tp,
-        gpu_memory_utilization=float(os.environ.get("GPU_UTIL", wl.get("gpu_util", 0.90))),
+        gpu_memory_utilization=util,
         max_model_len=maxlen,
         enable_prefix_caching=False,
         disable_log_stats=True,
@@ -62,21 +88,20 @@ def main():
         **kw,
     )
 
-    cfg = json.load(open(os.path.join(model, "config.json")))
+    cfg = json.load(open(os.path.join(args.model, "config.json")))
     cfg = cfg.get("text_config", cfg)
-    kv_bytes = os.environ.get("KV_BYTES", wl.get("kv_bytes"))
+    kv_bytes = wl.get("kv_bytes")
     if kv_bytes:
         kv_b = int(kv_bytes)
     else:
         hd = cfg.get("head_dim") or cfg["hidden_size"] // cfg["num_attention_heads"]
         hd += cfg.get("qk_rope_head_dim") or 0
         kv_b = 2 * cfg["num_hidden_layers"] * cfg["num_key_value_heads"] * hd * 2
-    util = float(os.environ.get("GPU_UTIL", wl.get("gpu_util", 0.90)))
+    gpu_gib = torch.cuda.get_device_properties(0).total_memory / (1 << 30)
     free_gib = tp * (gpu_gib * util) - weights_gib - tp * 5.0
     cap = int(free_gib * (1 << 30) / kv_b) if free_gib > 0 else 0
-    ep = 1 if (os.environ.get("EXPERT_PARALLEL") or wl.get("expert_parallel")) else 0
     print(
-        f"CAPACITY mode={mode} tp={tp} ep={ep} dtype={dtype} kv_bytes_per_token={kv_b} "
+        f"CAPACITY mode={mode} tp={tp} dtype={dtype} kv_bytes_per_token={kv_b} "
         f"free_gib={free_gib:.0f} kv_tokens={cap}",
         flush=True,
     )
@@ -96,7 +121,7 @@ def main():
             print(f"SKIP ctx={ctx} bs={bs} reason=maxlen", flush=True)
             continue
         need = (ctx + top) * bs
-        if cap and need > float(os.environ.get("CAP_FRAC", "0.80")) * cap:
+        if cap and need > CAP_FRAC * cap:
             print(f"SKIP ctx={ctx} bs={bs} need_kv={need} cap={cap}", flush=True)
             continue
         prompts = [toks(ctx, seed=10 + j) for j in range(bs)]
@@ -105,7 +130,7 @@ def main():
         slope, inter, r2 = fit(steps, ys)
         kv_gib = ctx * bs * kv_b / (1 << 30)
         print(
-            f"RESULT mode={mode} tp={tp} ep={ep} kv={kv_dtype or dtype} ctx={ctx} bs={bs} "
+            f"RESULT mode={mode} tp={tp} kv={kv_dtype or dtype} ctx={ctx} bs={bs} "
             f"ms_per_step={slope * 1e3:.3f} r2={r2:.5f} prefill_s={inter:.2f} "
             f"kv_gib={kv_gib:.1f} attn_share={kv_gib / (kv_gib + weights_gib):.3f} "
             f"raw={[round(y, 2) for y in ys]}",

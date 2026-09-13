@@ -36,7 +36,7 @@ class CrossvalBaselineSmoke(unittest.TestCase):
             ],
             check=True, timeout=1200, env=env,
         )
-        baseline = CROSSVAL / "baselines" / "vllm-llama.json"
+        baseline = CROSSVAL / "baselines" / "vllm-llama-smoke.json"
         self.assertTrue(baseline.is_file(), "vllm.sh wrote no baseline")
         data = json.loads(baseline.read_text())
         self.assertIn("gpu", data, "baseline missing gpu metadata")

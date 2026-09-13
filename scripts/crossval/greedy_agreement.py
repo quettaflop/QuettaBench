@@ -10,6 +10,7 @@ in prompts.txt, one per line.
 """
 
 import argparse
+import gc
 import os
 import statistics
 import subprocess
@@ -36,6 +37,10 @@ def engine_continuation(bin_path, model, prompt, n, temperature, gpu):
          "--model", model, "--prompt", prompt],
         capture_output=True, text=True, timeout=420, env=env,
     )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"engine exited {result.returncode} on {prompt!r}: {result.stderr[-400:]}"
+        )
     out = result.stdout.strip()
     at = out.find(prompt)
     return out[at + len(prompt):] if at >= 0 else out
@@ -69,6 +74,10 @@ def main():
     greedy = SamplingParams(temperature=0, max_tokens=args.n)
     vllm_texts = [o.outputs[0].text
                   for o in llm.generate(PROMPTS, greedy, use_tqdm=False)]
+
+    # Free vLLM before the engine loop; the binary needs the memory.
+    del llm
+    gc.collect()
 
     prefixes = []
     for prompt, vllm_text in zip(PROMPTS, vllm_texts):

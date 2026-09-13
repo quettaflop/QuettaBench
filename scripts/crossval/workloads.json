@@ -22,9 +22,6 @@
       [1024, 8], [1024, 16], [1024, 32], [1024, 64],
       [4096, 8], [4096, 16], [4096, 32], [4096, 64]
     ],
-    "cmp": [
-      [100, 1], [100, 8], [100, 16], [100, 32], [100, 64]
-    ],
     "smoke": [[100, 1]]
   },
   "workloads": {
@@ -32,8 +29,9 @@
       "name": "Llama-3.1-8B-Instruct",
       "dtype": "float16",
       "weights_gib": 15,
-      "maxlen": 8192,
-      "grid": "llama"
+      "maxlen": 9216,
+      "grid": "llama",
+      "verified": true
     },
     "llama-tp1": {
       "name": "Llama-3.1-8B-Instruct",
@@ -41,7 +39,8 @@
       "weights_gib": 15,
       "maxlen": 9216,
       "tp": 1,
-      "grid": "llama_single"
+      "grid": "llama_single",
+      "verified": true
     },
     "llama-tp2": {
       "name": "Llama-3.1-8B-Instruct",
@@ -49,7 +48,8 @@
       "weights_gib": 15,
       "maxlen": 9216,
       "tp": 2,
-      "grid": "llama_single"
+      "grid": "llama_single",
+      "verified": true
     },
     "llama-tp4": {
       "name": "Llama-3.1-8B-Instruct",
@@ -57,7 +57,8 @@
       "weights_gib": 15,
       "maxlen": 9216,
       "tp": 4,
-      "grid": "llama_single"
+      "grid": "llama_single",
+      "verified": true
     },
     "llama-h200": {
       "name": "Llama-3.1-8B-Instruct",
@@ -65,7 +66,8 @@
       "weights_gib": 15,
       "maxlen": 17408,
       "tp": 1,
-      "grid": "table_h200"
+      "grid": "table_h200",
+      "verified": true
     },
     "llama-h200-fp8kv": {
       "name": "Llama-3.1-8B-Instruct",
@@ -75,14 +77,16 @@
       "tp": 1,
       "grid": "table_h200_big",
       "kv_dtype": "fp8",
-      "kv_bytes": 65536
+      "kv_bytes": 65536,
+      "verified": true
     },
     "qwen": {
       "name": "Qwen3.5-9B",
       "dtype": "bfloat16",
       "weights_gib": 19,
       "maxlen": 33280,
-      "grid": "qwen"
+      "grid": "qwen",
+      "verified": false
     },
     "deepseek": {
       "name": "DeepSeek-V4-Flash-0731",
@@ -92,7 +96,8 @@
       "tp": 4,
       "grid": "qwen",
       "kv_dtype": "fp8_ds_mla",
-      "kv_bytes": 1024
+      "kv_bytes": 1024,
+      "verified": false
     }
   }
 }

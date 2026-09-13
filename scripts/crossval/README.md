@@ -14,18 +14,21 @@ PY=<python-with-vllm> QS_BIN=<engine-binary> \
   ./xval.sh llama <weights-dir> [bench-log]
 ```
 
-It captures the vLLM baseline if not cached, logit-checks the baseline
-against the Hugging Face transformers reference (`LOGIT=0` skips), runs the
-greedy engine-vs-vLLM check when `QS_BIN` is set, and prints the comparison
-table when a criterion bench log is given. From a QuettaServe checkout the same pipeline is
-`just crossval llama`.
+It picks idle GPUs once and runs every stage on them, captures the vLLM
+baseline if not cached, logit-checks the baseline against the Hugging Face
+transformers reference (result cached beside the baseline; `LOGIT=1` reruns,
+`LOGIT=0` skips), runs the greedy engine-vs-vLLM check when `QS_BIN` is set,
+and prints the comparison table when a criterion bench log is given. From a
+QuettaServe checkout the same pipeline is `just crossval llama`.
 
 ## Pipeline stages
 
 1. `vllm.sh <crate> [grid] <weights-dir> [python]` captures the vLLM
    baseline: `vmin_fit.py` slope-fits ms per decode step for every
    (ctx, batch) cell with r2 recorded, `cache.py` writes
-   `baselines/vllm-<crate>.json`.
+   `baselines/vllm-<crate>.json`. A named grid writes
+   `vllm-<crate>-<grid>.json`, so scratch grids never clobber the real
+   baseline.
 2. The engine side produces a criterion log (`just bench llama` in
    QuettaServe).
 3. `table.py <bench-log> <baseline.json>` is the cross-validation: it pairs
@@ -64,12 +67,12 @@ math; the idle share of the trace tells you launch and plan overhead.
 | `xval.sh` | the orchestrator: baseline if missing, logit check, greedy check, table, PROF=1 profiles |
 | `prof.sh` | nsys capture of one command into profiles/, with the kernel summary dumped as text |
 | `vllm.sh` | baseline capture: picks gpus, runs vmin_fit, caches the json |
-| `vmin_fit.py` | vLLM decode slope fit, ms per step and r2 per cell (needs vllm) |
+| `vmin_fit.py` | vLLM decode slope fit, ms per step and r2 per cell; standalone as `vmin_fit.py <crate> [grid] --model <dir>` (needs vllm) |
 | `cache.py` | packs a raw run into the cached baseline json |
 | `table.py` | the comparison: engine criterion log vs baseline at matched (ctx, bs, tp) |
 | `greedy_agreement.py` | engine binary vs vLLM on shared prompts, leading-token agreement (needs vllm) |
 | `logit_agreement.py` | vLLM vs the transformers reference, per-position argmax and true-token logprob (needs vllm, transformers) |
-| `with_gpu.sh` | run a command on an idle gpu, which `free_gpu.sh` picks |
+| `with_gpu.sh` | run a command on an idle gpu, which `free_gpu.sh` picks; the engine bench recipes call it |
 | `workloads.json` | per-crate model, dtype, maxlen, tp and the (ctx, batch) grids |
 
 ## Tests

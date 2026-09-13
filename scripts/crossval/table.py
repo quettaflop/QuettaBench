@@ -1,4 +1,4 @@
-import json, os, re, sys, time
+import calendar, json, os, re, sys, time
 
 # Age past which the baseline draws a warning: drivers and kernels move, and
 # ratios against a stale vLLM capture mislead.
@@ -46,7 +46,8 @@ def ours_points(path):
         tp = int(tp_suffix) if tp_suffix else 1
         ms = float(m.group("mid")) * MS[m.group("unit")]
         prev = by_key.get((ctx, bs, tp))
-        if prev is None or pref[base] < pref.get(prev[1].partition("_tp")[0], 99):
+        # Ties go to the later entry so an appended log supersedes stale runs.
+        if prev is None or pref[base] <= pref.get(prev[1].partition("_tp")[0], 99):
             by_key[(ctx, bs, tp)] = (ms, group, None)
     return by_key, "step"
 
@@ -61,7 +62,7 @@ def main():
     ours, method = ours_points(bench_path)
     cache = json.load(open(cache_path))
     theirs = {(p["ctx"], p["bs"], p.get("tp", 1)): p for p in cache["points"]}
-    age_d = (time.time() - time.mktime(time.strptime(cache["recorded_utc"], "%Y-%m-%dT%H:%M:%SZ"))) / 86400
+    age_d = (time.time() - calendar.timegm(time.strptime(cache["recorded_utc"], "%Y-%m-%dT%H:%M:%SZ"))) / 86400
     print(
         f"vLLM {cache['recorded_utc']} ({age_d:.1f}d)  "
         f"vllm {cache['vllm']}  {cache['gpu']}  {cache.get('model', '?')}  "
@@ -80,6 +81,11 @@ def main():
     print()
 
     shared = sorted(set(ours) & set(theirs))
+    ours_tps = {t for _, _, t in ours}
+    base_tps = {t for _, _, t in theirs}
+    if ours_tps - base_tps:
+        print(f"tp mismatch: engine rows at tp {sorted(ours_tps - base_tps)} have no "
+              f"baseline (baseline holds tp {sorted(base_tps)}); capture one per tp")
     if not shared:
         sys.exit("no overlapping (ctx, bs, tp) points")
 
