@@ -19,6 +19,7 @@ evidence.
 | V10 | noise floor | `tf_verify.py <fp32-ref> out.json` at `KIMI_REF_DTYPE=bf16` | both KDA modes deterministic across their two runs; band recorded | blocked |
 | V11 | vllm inside band | verify part of `vllm_tf.py` | vLLM disagreement rate vs the fp32 chain <= the worse HF bf16 kernel rate from V10 | blocked |
 | V12 | routing dump | `moe_routing_probe.py <out.safetensors>` | dump holds topk_idx, topk_weight and the stage tensors | blocked |
+| V13 | llama logit agreement | `python3 scripts/crossval/logit_agreement.py --model <weights>` | argmax agreement >= 99 percent with disagreements only at near-ties; mean true-token logprob delta <= 0.05 | pass |
 
 Notes. V3 and V4 run from a QuettaServe checkout of `supp_tp` next to this
 repo; the table consumes their criterion logs unchanged. V9 to V12 need the
@@ -76,3 +77,13 @@ error" three times (standalone and with NCCL_P2P_DISABLE=1) -- the MoE
 all-to-all over PCIe (these cards have no NVLink) where llama's all-reduce
 succeeded; needs dedicated NCCL debug (NCCL_DEBUG=INFO) or NVLink hardware.
 Evidence: evidence/deepseek*.raw.
+
+Logit validation 2026-09-13 (same Blackwell node, one GPU, bfloat16 on both
+sides): teacher-forced vLLM 0.29 against the HF transformers reference on 209
+positions across three fixed texts. Argmax agreement 207 of 209 (99.04
+percent); the two disagreements sit at an HF top-2 gap of exactly 0.125,
+which is one bf16 quantization step at that logit magnitude, so they are
+numerical ties, not defects. True-token logprob delta: mean 0.0256, p95
+0.110, max 0.223. This logit-validates the baseline lane; the engine lane
+stays token-level until QuettaServe adds a logit dump. Evidence:
+evidence/logit_agreement.log.

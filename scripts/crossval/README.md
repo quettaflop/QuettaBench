@@ -21,6 +21,7 @@ other than llama until each one is validated.
 | `with_gpu.sh` | run a command on an idle GPU, which `free_gpu.sh` picks |
 | `workloads.json` | per-crate model, dtype, and the (context, batch) grid |
 | `greedy_agreement.py` | same prompts through the engine binary and vLLM, prints both continuations and the leading-token agreement (needs vllm) |
+| `logit_agreement.py` | teacher-forced logit comparison of vLLM against the HF reference: per-position argmax agreement and true-token logprob deltas (needs vllm, transformers) |
 | `slice_tf/` | teacher-forced slice verification harness ported from the deepseek branch; see `slice_tf/README.md` |
 
 ## Run
