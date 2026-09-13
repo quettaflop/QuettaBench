@@ -18,7 +18,8 @@ The median inter-token gap across the steady middle of the generation is the rea
 step time at batch B. Sweep B and compare to KernelComposed.fused_step_ms(0, B, ctx).
 
   vllm serve <model> --tensor-parallel-size 4 --port 8000 --enable-prefix-caching ...
-  python profiling/probes/decode_batch_probe.py --base-url http://127.0.0.1:8000/v1 \
+  python profiling/kernel_composed/probes/decode_batch_probe.py \
+      --base-url http://127.0.0.1:8000/v1 \
       --model qwen3-235b --model-yaml qwen3-235b-a22b-fp8 --tp 4 \
       --ctx 20000 --batches 1 2 4 8 11 16 24 --gen 64
 
@@ -32,6 +33,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import statistics as st
 import sys
 import threading
@@ -39,8 +41,27 @@ import time
 import urllib.request
 from pathlib import Path
 
+_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE / ".." / ".."))
+
+
+def _quettasim_root() -> Path:
+    """The QuettaSim checkout this probe prices against (it imports engine.factory).
+
+    Since the probes moved under QuettaBench, the repo root is no longer two
+    levels up: walk out to whatever holds engine/factory.py, or take $QUETTASIM.
+    """
+    env = os.environ.get("QUETTASIM")
+    if env:
+        return Path(env)
+    for parent in HERE.parents:
+        if (parent / "engine" / "factory.py").is_file():
+            return parent
+    raise SystemExit("set QUETTASIM to the QuettaSim checkout (engine/factory.py not found)")
+
+
+sys.path.insert(0, str(_quettasim_root()))
 
 
 def _one(base_url: str, model: str, prompt: str, gen: int, itl_out: list) -> None:
@@ -51,7 +72,8 @@ def _one(base_url: str, model: str, prompt: str, gen: int, itl_out: list) -> Non
                                  headers={"Content-Type": "application/json"})
     prev = None
     gaps = []
-    with urllib.request.urlopen(req, timeout=600) as r:
+    # direct connection: an http_proxy in the environment 403s the cluster's private IPs
+    with _OPENER.open(req, timeout=600) as r:
         for line in r:
             if line.startswith(b"data:") and b'"text"' in line:
                 now = time.perf_counter()
