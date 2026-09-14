@@ -9,16 +9,21 @@
 #
 # The full cargo output is kept in the log as evidence; one cell per
 # invocation, so a failed cell costs only that cell.
+#
+# Hosts without a toolchain (the air-gapped GPU nodes) set DS_BENCH_BIN to a
+# cross-built copy of the test binary instead: `cargo test -p deepseek --test
+# batch_bench --release --no-run` emits target/release/deps/batch_bench-<hash>;
+# ship that and pass its absolute path.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${DS_CKPT:?set DS_CKPT (the mp<world> checkpoint)}"
 : "${DS_CFG:?set DS_CFG (the original inference config.json)}"
 QS="${QS_DIR:-.}"
-[ -f "$QS/deepseek/Cargo.toml" ] || {
-  echo "no deepseek crate under '$QS'; run from the QuettaServe root or set QS_DIR" >&2
+if [ -z "${DS_BENCH_BIN:-}" ] && [ ! -f "$QS/deepseek/Cargo.toml" ]; then
+  echo "no deepseek crate under '$QS'; run from the QuettaServe root, set QS_DIR, or set DS_BENCH_BIN" >&2
   exit 1
-}
+fi
 STEPS="${DS_TIMING_STEPS:-100}"
 OUT="${1:-deepseek-bench.log}"
 
@@ -44,10 +49,13 @@ while read -r ctx bs; do
   echo ">>> ctx=$ctx bs=$bs world=$WORLD max_seq=$max_seq" | tee -a "$OUT" >&2
   before=$(wc -l < "$OUT")
   (
-    cd "$QS" && DS_CKPT="$DS_CKPT" DS_CFG="$DS_CFG" DS_WORLD="$WORLD" \
-      DS_BATCH="$bs" DS_BENCH_PROMPT="$ctx" DS_MAX_SEQ="$max_seq" \
-      DS_TIMING_STEPS="$STEPS" \
-      cargo test -p deepseek --test batch_bench --release -- --nocapture
+    cd "$QS" || exit 1
+    export DS_CKPT DS_CFG DS_WORLD="$WORLD" DS_BATCH="$bs" \
+      DS_BENCH_PROMPT="$ctx" DS_MAX_SEQ="$max_seq" DS_TIMING_STEPS="$STEPS"
+    if [ -n "${DS_BENCH_BIN:-}" ]; then
+      exec "$DS_BENCH_BIN" --nocapture
+    fi
+    exec cargo test -p deepseek --test batch_bench --release -- --nocapture
   ) 2>&1 | tee -a "$OUT" || true
   if ! tail -n +"$((before + 1))" "$OUT" | grep -q "^\[batch_bench\] "; then
     echo "FAIL ctx=$ctx bs=$bs (no batch_bench line; see $OUT)" | tee -a "$OUT" >&2

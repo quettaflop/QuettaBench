@@ -81,7 +81,9 @@ steady-state marginal decode ms per step at matched (ctx, bs, tp).
   directly. The bench reports the median of the graph-replay decode steps,
   the steady-state marginal step -- the same quantity as the baseline slope,
   so the rows pair. DS_WORLD defaults to the workload's tp so the cells match
-  the baseline's.
+  the baseline's. A host without cargo (the air-gapped GPU nodes) sets
+  DS_BENCH_BIN to a cross-built copy of the test binary
+  (`cargo test -p deepseek --test batch_bench --release --no-run` emits it).
 - table: `table.py deepseek-bench.log baselines/vllm-deepseek.json`.
 
 KV format differs by design: the engine caches the MLA latent in bf16, the

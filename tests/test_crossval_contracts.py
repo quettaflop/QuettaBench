@@ -58,6 +58,11 @@ class CrossvalScripts(unittest.TestCase):
         self.assertIn("enable_expert_parallel", src)
         self.assertIn("allow-unverified", src)
 
+    def test_ds_bench_supports_a_prebuilt_binary(self):
+        # The air-gapped GPU nodes have no cargo; the deepseek sweep must
+        # accept a cross-built test binary.
+        self.assertIn("DS_BENCH_BIN", (CROSSVAL / "ds_bench.sh").read_text())
+
 
 class WorkloadsConfig(unittest.TestCase):
     def test_top_level_shape(self):
