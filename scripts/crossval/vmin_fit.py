@@ -82,8 +82,7 @@ def main():
         kw["compilation_config"] = {"cudagraph_mode": "NONE"}
     if kv_dtype:
         kw["kv_cache_dtype"] = kv_dtype
-    # A mixture-of-experts model (deepseek) shards its experts across the tp
-    # ranks; a dense model leaves this off.
+    # MoE workloads shard their experts across the tp ranks.
     if wl.get("expert_parallel"):
         kw["enable_expert_parallel"] = True
         print("META expert_parallel=1", flush=True)
@@ -137,8 +136,12 @@ def main():
             print(f"SKIP ctx={ctx} bs={bs} need_kv={need} cap={cap}", flush=True)
             continue
         prompts = [toks(ctx, seed=10 + j) for j in range(bs)]
-        gen(prompts, 20)
-        ys = [gen(prompts, n) for n in steps]
+        # Full-length warm: every decode graph for this batch size must be
+        # captured before timing, or the capture cost lands in the first point.
+        gen(prompts, max(steps))
+        # Min over repeats: jitter only ever inflates a step.
+        reps = int(os.environ.get("VMIN_REPEATS", "3"))
+        ys = [min(gen(prompts, n) for _ in range(reps)) for n in steps]
         slope, inter, r2 = fit(steps, ys)
         kv_gib = ctx * bs * kv_b / (1 << 30)
         print(

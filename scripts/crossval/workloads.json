@@ -101,7 +101,7 @@
       "tp": 8,
       "grid": "deepseek",
       "expert_parallel": true,
-      "kv_dtype": "fp8",
+      "kv_dtype": "fp8_ds_mla",
       "kv_bytes": 24768,
       "verified": false
     }

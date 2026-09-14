@@ -32,6 +32,7 @@ def main():
         "grid": meta.get("grid", "?"),
         "method": "slope",
         "kv_dtype": points[0]["kv"],
+        "expert_parallel": meta.get("expert_parallel") == "1",
         "llmsrv_sha_at_capture": sha,
         "points": points,
     }, open(out, "w"), indent=2)

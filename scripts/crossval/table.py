@@ -28,27 +28,27 @@ def _loop_points(text):
 
 def _batch_bench_points(text):
     """(ctx, bs, tp) -> (ms, "batch_bench", kv) from the deepseek engine's
-    stock bench summary. The median of the graph-replay decode steps is the
-    steady-state marginal step, the same quantity as the baseline slope.
-    Truncated-model runs (layers != all) time a different model and are
-    ignored. The line does not state its KV format, so kv is "?" and the
-    table flags it against the baseline's."""
+    stock bench summary: the median of the graph-replay decode steps, the
+    same marginal quantity as the baseline slope. kv is "?" (unstated)."""
     pts = {}
-    truncated = 0
+    truncated = unparsed = 0
     for line in text.splitlines():
         if not line.startswith("[batch_bench] "):
             continue
         d = dict(re.findall(r"(\w+)=([\w.]+)", line))
         ms = re.search(r"median ([\d.]+) ms/step", line)
-        if not ms:
+        if not ms or "layers" not in d:
+            unparsed += 1
             continue
-        if d.get("layers") != "all":
+        if d["layers"] != "all":
             truncated += 1
             continue
         key = (int(d["prompt"]), int(d["bs"]), int(d.get("world", "1")))
         pts[key] = (float(ms.group(1)), "batch_bench", d.get("kv", "?"))
     if truncated:
         print(f"ignored {truncated} truncated-model batch_bench line(s) (layers != all)")
+    if unparsed:
+        print(f"ignored {unparsed} unparsed batch_bench line(s)")
     return pts
 
 
@@ -89,6 +89,8 @@ def main():
         sys.exit(f"no vLLM baseline at {cache_path} — run `just vllm llama`")
 
     ours, method = ours_points(bench_path)
+    if not ours:
+        sys.exit(f"no engine rows parsed from {bench_path}")
     cache = json.load(open(cache_path))
     theirs = {(p["ctx"], p["bs"], p.get("tp", 1)): p for p in cache["points"]}
     age_d = (time.time() - calendar.timegm(time.strptime(cache["recorded_utc"], "%Y-%m-%dT%H:%M:%SZ"))) / 86400

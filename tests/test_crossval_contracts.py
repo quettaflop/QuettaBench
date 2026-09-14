@@ -58,10 +58,46 @@ class CrossvalScripts(unittest.TestCase):
         self.assertIn("enable_expert_parallel", src)
         self.assertIn("allow-unverified", src)
 
-    def test_ds_bench_supports_a_prebuilt_binary(self):
-        # The air-gapped GPU nodes have no cargo; the deepseek sweep must
-        # accept a cross-built test binary.
-        self.assertIn("DS_BENCH_BIN", (CROSSVAL / "ds_bench.sh").read_text())
+    def _ds_bench(self, stub_body, env=None):
+        import subprocess as sp
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            stub = Path(td) / "stub"
+            stub.write_text("#!/usr/bin/env bash\n" + stub_body + "\n")
+            stub.chmod(0o755)
+            log = Path(td) / "sweep.log"
+            out = sp.run(
+                ["bash", str(CROSSVAL / "ds_bench.sh"), str(log)],
+                capture_output=True, text=True, cwd=td,
+                env={**os.environ, "DS_CKPT": "/dev/null", "DS_CFG": "/dev/null",
+                     "DS_BENCH_BIN": str(stub), "QS_DIR": td, **(env or {})},
+            )
+            return out, log.read_text() if log.exists() else ""
+
+    BENCH_LINE = (
+        'echo "[batch_bench] world=${DS_WORLD} bs=${DS_BATCH}'
+        ' max_seq=${DS_MAX_SEQ} layers=${DS_LAYERS:-all}'
+        ' prompt=${DS_BENCH_PROMPT} steps=92: median 1.000 ms/step,'
+        ' mean 1.0, best 1.0 -> 1.0 tok/s (median)"'
+    )
+
+    def test_ds_bench_runs_the_grid_at_the_workload_tp(self):
+        # DS_BENCH_BIN stands in for the prebuilt binary: world must come from
+        # the workload tp, every cell must run, and a leaked DS_LAYERS must
+        # not reach the bench.
+        out, log = self._ds_bench(self.BENCH_LINE, env={"DS_LAYERS": "6"})
+        self.assertEqual(out.returncode, 0, out.stderr)
+        cfg = _load_workloads()
+        tp = cfg["workloads"]["deepseek"]["tp"]
+        cells = re.findall(r"^\[batch_bench\] world=(\d+) .*layers=(\w+)", log, re.M)
+        self.assertEqual(len(cells), len(cfg["grids"]["deepseek"]))
+        self.assertEqual(set(cells), {(str(tp), "all")})
+
+    def test_ds_bench_fails_when_a_cell_produces_no_line(self):
+        out, _ = self._ds_bench("exit 0")
+        self.assertEqual(out.returncode, 1)
+        self.assertIn("FAIL", out.stderr)
 
 
 class WorkloadsConfig(unittest.TestCase):
@@ -106,13 +142,14 @@ class WorkloadsConfig(unittest.TestCase):
             self.assertIn("verified", workload, f"{name} missing the verified flag")
 
     def test_deepseek_is_moe_expert_parallel_at_tp8(self):
-        # The MoE workload must enable expert parallel (vmin_fit passes it to
-        # vLLM) and set tp so it pairs with the engine's DS_WORLD. Its
-        # kv_cache_dtype must be a value vLLM accepts, not an engine-side label.
+        # kv_dtype is the model's shipped MLA cache layout (vLLM's CacheDType
+        # includes fp8_ds_mla); kv_bytes is that layout's per-token size,
+        # (512 latent + 64 rope) x 43 layers at one byte.
         ds = _load_workloads()["workloads"]["deepseek"]
         self.assertIs(ds.get("expert_parallel"), True)
         self.assertEqual(ds.get("tp"), 8)
-        self.assertIn(ds.get("kv_dtype"), {"fp8", "fp8_e4m3", "fp8_e5m2", "auto", None})
+        self.assertEqual(ds.get("kv_dtype"), "fp8_ds_mla")
+        self.assertEqual(ds.get("kv_bytes"), (512 + 64) * 43)
 
     def test_grid_cells_fit_workload_maxlen(self):
         cfg = _load_workloads()
@@ -232,12 +269,13 @@ class TableParity(unittest.TestCase):
         self.assertNotIn("20.000", out)
 
     def test_truncated_model_bench_lines_are_ignored(self):
-        # A DS_LAYERS run times a different model; comparing it against the
-        # full-model baseline would be nonsense, so it never becomes a row.
+        # A DS_LAYERS run times a different model, so it never becomes a row,
+        # and the empty log is reported as such, not as a method mismatch.
         line = self.BB.format(ms="10.000").replace("layers=all", "layers=6")
         out = self._table(line, expect_rc=1)
         self.assertIn("truncated", out)
         self.assertNotIn("10.000", out)
+        self.assertNotIn("synchronized step", out)
 
     def test_h200_grid_is_the_table(self):
         grid = {tuple(c) for c in _load_workloads()["grids"]["table_h200"]}

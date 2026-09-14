@@ -1,19 +1,13 @@
 #!/usr/bin/env bash
 # Sweep the deepseek cross-validation grid through the engine's stock
-# batch_bench test and collect its output. table.py reads the [batch_bench]
-# summary lines directly, so the engine needs no patch. Run from the
-# QuettaServe checkout root (QS_DIR overrides):
+# batch_bench test; table.py reads the [batch_bench] summary lines directly.
+# Run from the QuettaServe checkout root (QS_DIR overrides):
 #
 #   DS_CKPT=/data/ds-0731-mp8 DS_CFG=<orig>/inference/config.json \
 #     quettabench/scripts/crossval/ds_bench.sh [out.log]
 #
-# The full cargo output is kept in the log as evidence; one cell per
-# invocation, so a failed cell costs only that cell.
-#
-# Hosts without a toolchain (the air-gapped GPU nodes) set DS_BENCH_BIN to a
-# cross-built copy of the test binary instead: `cargo test -p deepseek --test
-# batch_bench --release --no-run` emits target/release/deps/batch_bench-<hash>;
-# ship that and pass its absolute path.
+# Hosts without cargo set DS_BENCH_BIN to a prebuilt copy of the test binary
+# (cargo test -p deepseek --test batch_bench --release --no-run emits it).
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,9 +20,12 @@ if [ -z "${DS_BENCH_BIN:-}" ] && [ ! -f "$QS/deepseek/Cargo.toml" ]; then
 fi
 STEPS="${DS_TIMING_STEPS:-100}"
 OUT="${1:-deepseek-bench.log}"
+# A leaked DS_LAYERS would time a truncated model on every cell, which
+# table.py then drops.
+unset DS_LAYERS
 
-# The cells and the tensor-parallel degree come from workloads.json so the
-# sweep cannot drift from the baseline's grid.
+# Cells and tp come from workloads.json so the sweep cannot drift from the
+# baseline grid.
 CELLS="$(python3 -c '
 import json, sys
 cfg = json.load(open(sys.argv[1]))
@@ -42,9 +39,9 @@ print(json.load(open(sys.argv[1]))["workloads"]["deepseek"]["tp"])
 ' "$HERE/workloads.json")}"
 
 : > "$OUT"
+FAILED=0
 while read -r ctx bs; do
-  # prompt + timed steps + headroom for the eager warm-up; the bench asserts
-  # prompt + steps + 8 <= max_seq.
+  # The bench asserts prompt + steps + 8 <= max_seq.
   max_seq=$((ctx + STEPS + 512))
   echo ">>> ctx=$ctx bs=$bs world=$WORLD max_seq=$max_seq" | tee -a "$OUT" >&2
   before=$(wc -l < "$OUT")
@@ -57,8 +54,10 @@ while read -r ctx bs; do
     fi
     exec cargo test -p deepseek --test batch_bench --release -- --nocapture
   ) 2>&1 | tee -a "$OUT" || true
-  if ! tail -n +"$((before + 1))" "$OUT" | grep -q "^\[batch_bench\] "; then
-    echo "FAIL ctx=$ctx bs=$bs (no batch_bench line; see $OUT)" | tee -a "$OUT" >&2
+  if ! tail -n +"$((before + 1))" "$OUT" | grep -q "^\[batch_bench\] .*layers=all"; then
+    echo "FAIL ctx=$ctx bs=$bs (no full-model batch_bench line; see $OUT)" | tee -a "$OUT" >&2
+    FAILED=$((FAILED + 1))
   fi
 done <<< "$CELLS"
 echo "wrote $OUT" >&2
+[ "$FAILED" -eq 0 ] || { echo "$FAILED cell(s) failed" >&2; exit 1; }
