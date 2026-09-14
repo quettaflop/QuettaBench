@@ -17,4 +17,4 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt pytest
-      - run: python -m pytest profiling/tests -q
+      - run: python -m pytest profiling/tests tests/test_crossval_contracts.py -q

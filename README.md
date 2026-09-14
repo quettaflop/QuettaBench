@@ -60,6 +60,7 @@ src/workloads/    profiles, datasets, arrival patterns, distributional replay
 data/distributions/  measured per-profile workload distributions (fetched from R2)
 tests/            runner/workload unit tests
 profiling/        GPU kernel + live-server probes and their emitters (opt-in, needs a GPU)
+scripts/crossval/ QuettaServe-vs-vLLM cross-validation, driven from QuettaServe via submodule
 ```
 
 ## Profiling
@@ -75,6 +76,16 @@ pip install -r requirements.txt -r requirements-probe.txt   # on a GPU host
 
 See `profiling/README.md` for the probe list, the raw-to-curated data flow, and
 how to run a probe. The emitter tests run without a GPU: `pytest profiling/tests/`.
+
+## Cross-validation
+
+`scripts/crossval/` compares a QuettaServe engine's decode latency against a
+cached vLLM baseline, at matched context and batch. It is the portable half of
+the comparison; QuettaServe holds the engine bench and drives these scripts as a
+submodule. Only llama is verified so far. Contract tests run without a GPU
+(`pytest tests/test_crossval_contracts.py`); the vLLM-baseline smoke needs a GPU
+and `MODEL` (`tests/test_crossval_smoke_gpu.py`, run by the gpu-smoke workflow).
+See `scripts/crossval/README.md`.
 
 ## Data
 

@@ -10,8 +10,9 @@ jobs:
   probe-smoke:
     # Needs a self-hosted runner registered on a GPU host whose default
     # python has torch, vllm and pytest (the serving env). Hosted runners
-    # have no GPU; there the same file skips inside the regular tests job.
+    # have no GPU; there the same files skip inside the regular tests job.
+    # The crossval smoke also needs MODEL set to a Llama weights dir.
     runs-on: [self-hosted, gpu]
     steps:
       - uses: actions/checkout@v4
-      - run: python -m pytest profiling/tests/test_probe_smoke_gpu.py -v
+      - run: python -m pytest profiling/tests/test_probe_smoke_gpu.py tests/test_crossval_smoke_gpu.py -v
