@@ -41,13 +41,20 @@ def main():
     ap.add_argument("grid", nargs="?", default="", help="grid override")
     ap.add_argument("--model", required=True, help="model weights dir")
     ap.add_argument("--nograph", action="store_true", help="disable CUDA graphs")
+    ap.add_argument(
+        "--allow-unverified",
+        action="store_true",
+        help="run a workload whose verified flag is false (bring-up only)",
+    )
     args = ap.parse_args()
 
     wl = CFG["workloads"].get(args.crate)
     if wl is None:
         sys.exit(f"unknown crate {args.crate!r}; workloads: {', '.join(CFG['workloads'])}")
-    if not wl.get("verified"):
-        sys.exit(f"{args.crate} is not validated for cross-validation yet")
+    if not wl.get("verified") and not args.allow_unverified:
+        sys.exit(
+            f"{args.crate} is not validated yet; pass --allow-unverified to bring it up"
+        )
     grids = {k.lower(): v for k, v in CFG["grids"].items()}
     gridname = (args.grid or wl["grid"]).lower()
     if gridname not in grids:
@@ -75,6 +82,11 @@ def main():
         kw["compilation_config"] = {"cudagraph_mode": "NONE"}
     if kv_dtype:
         kw["kv_cache_dtype"] = kv_dtype
+    # A mixture-of-experts model (deepseek) shards its experts across the tp
+    # ranks; a dense model leaves this off.
+    if wl.get("expert_parallel"):
+        kw["enable_expert_parallel"] = True
+        print("META expert_parallel=1", flush=True)
 
     llm = LLM(
         model=args.model,

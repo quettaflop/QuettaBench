@@ -26,7 +26,13 @@ RAW="$(mktemp /tmp/vllm-raw-XXXXXX.txt)"
 cleanup() { rm -f "$RAW"; }
 trap cleanup EXIT
 
+# Bring-up only: ALLOW_UNVERIFIED=1 runs a workload whose verified flag is
+# false, so a new engine (deepseek) can be measured before it is certified.
+EXTRA=()
+[ "${ALLOW_UNVERIFIED:-0}" = "1" ] && EXTRA+=(--allow-unverified)
+
 CUDA_VISIBLE_DEVICES="$G" "$PY" "$HERE/vmin_fit.py" "$CRATE" "$GRID" --model "$MDIR" \
+  ${EXTRA[@]+"${EXTRA[@]}"} \
   | grep -E "^META|^RESULT|^SKIP|^CAPACITY" | tee "$RAW"
 
 python3 "$HERE/cache.py" "$RAW" "$OUT"

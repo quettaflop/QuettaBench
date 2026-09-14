@@ -26,16 +26,45 @@ def _loop_points(text):
     return pts
 
 
+def _batch_bench_points(text):
+    """(ctx, bs, tp) -> (ms, "batch_bench", kv) from the deepseek engine's
+    stock bench summary. The median of the graph-replay decode steps is the
+    steady-state marginal step, the same quantity as the baseline slope.
+    Truncated-model runs (layers != all) time a different model and are
+    ignored. The line does not state its KV format, so kv is "?" and the
+    table flags it against the baseline's."""
+    pts = {}
+    truncated = 0
+    for line in text.splitlines():
+        if not line.startswith("[batch_bench] "):
+            continue
+        d = dict(re.findall(r"(\w+)=([\w.]+)", line))
+        ms = re.search(r"median ([\d.]+) ms/step", line)
+        if not ms:
+            continue
+        if d.get("layers") != "all":
+            truncated += 1
+            continue
+        key = (int(d["prompt"]), int(d["bs"]), int(d.get("world", "1")))
+        pts[key] = (float(ms.group(1)), "batch_bench", d.get("kv", "?"))
+    if truncated:
+        print(f"ignored {truncated} truncated-model batch_bench line(s) (layers != all)")
+    return pts
+
+
 def ours_points(path):
     """(ctx, bs, tp) -> (ms, group, kv), plus "loop" or "step" for how the
-    engine timed them. LOOP lines win outright; the criterion decode groups
+    engine timed them. LOOP lines and batch_bench summaries both report
+    steady-state marginal decode, so either earns ratios, and a LOOP line
+    supersedes the summary on the same cell. The criterion decode groups
     synchronize inside every step, a different quantity from the slope, so
     the caller withholds ratios for those. Tensor-parallel criterion groups
     are named decode_tp{N} / decode_graph_tp{N}; bare names are tp 1."""
     text = open(path).read()
+    bench = _batch_bench_points(text)
     loop = _loop_points(text)
-    if loop:
-        return loop, "loop"
+    if loop or bench:
+        return {**bench, **loop}, "loop"
     pref = {name: i for i, name in enumerate(GROUP_PREF)}
     by_key = {}
     for m in POINT_RE.finditer(text):

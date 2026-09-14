@@ -2,8 +2,9 @@
 
 Cross-validates a QuettaServe engine against vLLM at matched context, batch
 and tensor-parallel degree. QuettaServe drives it through this repo as a
-submodule. Only llama is wired: qwen and deepseek entries exist in the
-workloads file, and the recipes refuse them until validated.
+submodule. llama is certified; deepseek is wired for bring-up (see the
+DeepSeek section); qwen exists in the workloads file but the recipes refuse it
+until validated.
 
 ## Run
 
@@ -60,6 +61,47 @@ decode gap is widest) for the vLLM baseline, and for the engine bench when
 with a plain-text kernel summary beside each. Kernel time tells you engine
 math; the idle share of the trace tells you launch and plan overhead.
 
+## DeepSeek (bring-up)
+
+DeepSeek-V4-Flash is a mixture-of-experts model with multi-head latent
+attention, served at tensor-parallel 8. It is wired but not yet certified
+(`verified: false`), so the recipes require an explicit opt-in until the
+numbers are validated. The measurement contract is unchanged: both sides time
+steady-state marginal decode ms per step at matched (ctx, bs, tp).
+
+- vLLM baseline:
+  `ALLOW_UNVERIFIED=1 vllm.sh deepseek deepseek <weights> <py>`. The workload
+  sets `expert_parallel` (vmin_fit passes `enable_expert_parallel` to vLLM) and
+  `tp: 8`. `<py>` must be the DeepSeek vLLM fork (ununnilium/vllm-ds4-sm120);
+  upstream vLLM does not serve this model on sm_120.
+- engine: `DS_CKPT=... DS_CFG=... ds_bench.sh` run from the QuettaServe
+  checkout root (QS_DIR overrides). It sweeps the grid through the engine's
+  stock batch_bench test and keeps the full cargo output as the log; the
+  engine needs no patch, table.py reads the `[batch_bench]` summary lines
+  directly. The bench reports the median of the graph-replay decode steps,
+  the steady-state marginal step -- the same quantity as the baseline slope,
+  so the rows pair. DS_WORLD defaults to the workload's tp so the cells match
+  the baseline's.
+- table: `table.py deepseek-bench.log baselines/vllm-deepseek.json`.
+
+KV format differs by design: the engine caches the MLA latent in bf16, the
+fork in fp8, and the comparison is each engine in its shipped configuration.
+The bench line does not state its KV format, so the table prints `KV ?/fp8`
+rather than hiding the difference -- read `?` as the engine's bf16. Lines
+from truncated-model runs (layers != all) are ignored, not compared. The
+grid is ctx {1024, 8192, 16384} x bs {1, 4, 16, 64}.
+
+Correctness for deepseek does not use logit_agreement (the transformers
+reference has no DeepSeek-V4 model). It comes from the engine's own gates:
+batch_gate / tp_batch_gate prove the lockstep batched decode is bit-exact
+against B independent single-sequence decodes (logits within 1e-5, argmax
+exact bar head-GEMM ties), and greedy_agreement compares engine vs fork text.
+
+Assumptions to confirm on the first run, each a one-field change if wrong: the
+fork accepts `kv_cache_dtype=fp8` and `enable_expert_parallel=True`; DS_WORLD
+equals the workload tp (8); all 12 cells produce a RESULT (no capacity SKIP).
+Flip `verified` to true only after the numbers are checked.
+
 ## Files
 
 | file | role |
@@ -67,9 +109,10 @@ math; the idle share of the trace tells you launch and plan overhead.
 | `xval.sh` | the orchestrator: baseline if missing, logit check, greedy check, table, PROF=1 profiles |
 | `prof.sh` | nsys capture of one command into profiles/, with the kernel summary dumped as text |
 | `vllm.sh` | baseline capture: picks gpus, runs vmin_fit, caches the json |
+| `ds_bench.sh` | deepseek engine sweep: runs the stock batch_bench per grid cell from a QuettaServe checkout; its log feeds table.py |
 | `vmin_fit.py` | vLLM decode slope fit, ms per step and r2 per cell; standalone as `vmin_fit.py <crate> [grid] --model <dir>` (needs vllm) |
 | `cache.py` | packs a raw run into the cached baseline json |
-| `table.py` | the comparison: engine criterion log vs baseline at matched (ctx, bs, tp) |
+| `table.py` | the comparison: engine bench log vs baseline at matched (ctx, bs, tp) |
 | `greedy_agreement.py` | engine binary vs vLLM on shared prompts, leading-token agreement (needs vllm) |
 | `logit_agreement.py` | vLLM vs the transformers reference, per-position argmax and true-token logprob (needs vllm, transformers) |
 | `with_gpu.sh` | run a command on an idle gpu, which `free_gpu.sh` picks; the engine bench recipes call it |

@@ -51,6 +51,13 @@ class CrossvalScripts(unittest.TestCase):
             lines = [l for l in (CROSSVAL / name).read_text().splitlines() if l.strip()]
             self.assertTrue(lines, f"{name} is empty")
 
+    def test_vmin_fit_supports_moe_bringup(self):
+        # deepseek needs expert parallel on the vLLM side, and an explicit
+        # opt-in to run a workload before it is certified.
+        src = (CROSSVAL / "vmin_fit.py").read_text()
+        self.assertIn("enable_expert_parallel", src)
+        self.assertIn("allow-unverified", src)
+
 
 class WorkloadsConfig(unittest.TestCase):
     def test_top_level_shape(self):
@@ -93,6 +100,15 @@ class WorkloadsConfig(unittest.TestCase):
         for name, workload in _load_workloads()["workloads"].items():
             self.assertIn("verified", workload, f"{name} missing the verified flag")
 
+    def test_deepseek_is_moe_expert_parallel_at_tp8(self):
+        # The MoE workload must enable expert parallel (vmin_fit passes it to
+        # vLLM) and set tp so it pairs with the engine's DS_WORLD. Its
+        # kv_cache_dtype must be a value vLLM accepts, not an engine-side label.
+        ds = _load_workloads()["workloads"]["deepseek"]
+        self.assertIs(ds.get("expert_parallel"), True)
+        self.assertEqual(ds.get("tp"), 8)
+        self.assertIn(ds.get("kv_dtype"), {"fp8", "fp8_e4m3", "fp8_e5m2", "auto", None})
+
     def test_grid_cells_fit_workload_maxlen(self):
         cfg = _load_workloads()
         top = max(cfg["step_points"])
@@ -120,6 +136,14 @@ class EngineBenchContract(unittest.TestCase):
         grid = {tuple(c) for c in _load_workloads()["grids"]["llama_single"]}
         expected = {(ctx, 1) for ctx in (100, 1024, 4096, 8192)}
         self.assertTrue(expected <= grid, f"missing cells: {sorted(expected - grid)}")
+
+    def test_deepseek_grid_covers_the_batch_bench_cells(self):
+        # deepseek/tests/batch_bench.rs times one (ctx, bs) per invocation;
+        # ds_bench.sh reads these cells from workloads.json and loops them, so
+        # this grid is the single source the sweep cannot drift from.
+        grid = {tuple(c) for c in _load_workloads()["grids"]["deepseek"]}
+        expected = {(ctx, bs) for ctx in (1024, 8192, 16384) for bs in (1, 4, 16, 64)}
+        self.assertEqual(grid, expected, f"grid drift: {sorted(grid ^ expected)}")
 
 
 class TableParity(unittest.TestCase):
@@ -168,6 +192,47 @@ class TableParity(unittest.TestCase):
     def test_kv_mismatch_is_flagged(self):
         out = self._table("LOOP ctx=1024 bs=1 kv=nvfp4 ms_per_step=10.000 k=100\n")
         self.assertIn("KV nvfp4/fp16", out)
+
+    def test_deepseek_kv_difference_is_flagged(self):
+        # The engine caches the MLA latent in bf16, the vLLM fork in fp8; the
+        # methods still match (both marginal decode), so the row prints a ratio
+        # and the KV difference is flagged rather than hidden.
+        out = self._table(
+            "LOOP ctx=1024 bs=1 kv=bf16 ms_per_step=10.000 k=100\n", kv="fp8"
+        )
+        self.assertIn("KV bf16/fp8", out)
+        self.assertIn("0.50x", out)
+
+    BB = (
+        "[batch_bench] world=1 bs=1 max_seq=1636 layers=all prompt=1024 "
+        "steps=92: median {ms} ms/step, mean 10.100, best 9.900 "
+        "-> 100.0 tok/s (median)\n"
+    )
+
+    def test_stock_deepseek_bench_line_gets_a_ratio_and_kv_flag(self):
+        # The stock engine bench line is parsed directly (no engine patch);
+        # its median is the marginal step, so the ratio prints, and the
+        # unstated KV format is flagged as ? against the baseline's.
+        out = self._table(self.BB.format(ms="10.000"), kv="fp8")
+        self.assertIn("0.50x", out)
+        self.assertIn("KV ?/fp8", out)
+        self.assertIn("batch_bench", out)
+
+    def test_loop_line_supersedes_the_bench_summary(self):
+        out = self._table(
+            self.BB.format(ms="20.000")
+            + "LOOP ctx=1024 bs=1 kv=fp16 ms_per_step=10.000 k=100\n"
+        )
+        self.assertIn("10.000", out)
+        self.assertNotIn("20.000", out)
+
+    def test_truncated_model_bench_lines_are_ignored(self):
+        # A DS_LAYERS run times a different model; comparing it against the
+        # full-model baseline would be nonsense, so it never becomes a row.
+        line = self.BB.format(ms="10.000").replace("layers=all", "layers=6")
+        out = self._table(line, expect_rc=1)
+        self.assertIn("truncated", out)
+        self.assertNotIn("10.000", out)
 
     def test_h200_grid_is_the_table(self):
         grid = {tuple(c) for c in _load_workloads()["grids"]["table_h200"]}
