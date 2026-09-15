@@ -1,4 +1,5 @@
 import calendar, json, os, re, sys, time
+from pathlib import Path
 
 # Age past which the baseline draws a warning: drivers and kernels move, and
 # ratios against a stale vLLM capture mislead.
@@ -26,16 +27,45 @@ def _loop_points(text):
     return pts
 
 
+def _batch_bench_points(text):
+    """(ctx, bs, tp) -> (ms, "batch_bench", kv) from the deepseek engine's
+    stock bench summary: the median of the graph-replay decode steps, the
+    same marginal quantity as the baseline slope. kv is "?" (unstated)."""
+    pts = {}
+    truncated = unparsed = 0
+    for line in text.splitlines():
+        if not line.startswith("[batch_bench] "):
+            continue
+        d = dict(re.findall(r"(\w+)=([\w.]+)", line))
+        ms = re.search(r"median ([\d.]+) ms/step", line)
+        if not ms or "layers" not in d:
+            unparsed += 1
+            continue
+        if d["layers"] != "all":
+            truncated += 1
+            continue
+        key = (int(d["prompt"]), int(d["bs"]), int(d.get("world", "1")))
+        pts[key] = (float(ms.group(1)), "batch_bench", d.get("kv", "?"))
+    if truncated:
+        print(f"ignored {truncated} truncated-model batch_bench line(s) (layers != all)")
+    if unparsed:
+        print(f"ignored {unparsed} unparsed batch_bench line(s)")
+    return pts
+
+
 def ours_points(path):
     """(ctx, bs, tp) -> (ms, group, kv), plus "loop" or "step" for how the
-    engine timed them. LOOP lines win outright; the criterion decode groups
+    engine timed them. LOOP lines and batch_bench summaries both report
+    steady-state marginal decode, so either earns ratios, and a LOOP line
+    supersedes the summary on the same cell. The criterion decode groups
     synchronize inside every step, a different quantity from the slope, so
     the caller withholds ratios for those. Tensor-parallel criterion groups
     are named decode_tp{N} / decode_graph_tp{N}; bare names are tp 1."""
     text = open(path).read()
+    bench = _batch_bench_points(text)
     loop = _loop_points(text)
-    if loop:
-        return loop, "loop"
+    if loop or bench:
+        return {**bench, **loop}, "loop"
     pref = {name: i for i, name in enumerate(GROUP_PREF)}
     by_key = {}
     for m in POINT_RE.finditer(text):
@@ -60,17 +90,39 @@ def main():
         sys.exit(f"no vLLM baseline at {cache_path} — run `just vllm llama`")
 
     ours, method = ours_points(bench_path)
+    if not ours:
+        sys.exit(f"no engine rows parsed from {bench_path}")
     cache = json.load(open(cache_path))
     theirs = {(p["ctx"], p["bs"], p.get("tp", 1)): p for p in cache["points"]}
     age_d = (time.time() - calendar.timegm(time.strptime(cache["recorded_utc"], "%Y-%m-%dT%H:%M:%SZ"))) / 86400
+    nccl_algo = cache.get("nccl_algo")
+    nccl_proto = cache.get("nccl_proto")
     print(
         f"vLLM {cache['recorded_utc']} ({age_d:.1f}d)  "
         f"vllm {cache['vllm']}  {cache['gpu']}  {cache.get('model', '?')}  "
         f"{cache.get('dtype', '?')}  grid {cache.get('grid', '?')}  {cache['mode']}"
         + (f"  HEAD {cache['llmsrv_sha_at_capture']}" if cache.get("llmsrv_sha_at_capture") else "")
+        + (f"  nccl={nccl_algo}/{nccl_proto}" if nccl_algo or nccl_proto else "")
     )
     if age_d > STALE_DAYS:
         print(f"WARNING: baseline older than {STALE_DAYS}d — re-run `just vllm`")
+    eng_nccl_algo = os.environ.get("NCCL_ALGO")
+    eng_nccl_proto = os.environ.get("NCCL_PROTO")
+    if nccl_algo and eng_nccl_algo and nccl_algo != eng_nccl_algo:
+        print(f"NCCL MISMATCH engine={eng_nccl_algo}/{eng_nccl_proto} vllm={nccl_algo}/{nccl_proto}")
+    elif nccl_proto and eng_nccl_proto and nccl_proto != eng_nccl_proto:
+        print(f"NCCL MISMATCH engine={eng_nccl_algo}/{eng_nccl_proto} vllm={nccl_algo}/{nccl_proto}")
+
+    wl_cfg = json.load(open(Path(__file__).with_name("workloads.json")))
+    crate = cache.get("model", "")
+    comm_bound_bs = None
+    for wl in wl_cfg["workloads"].values():
+        if wl.get("name") == crate and "comm_bound_bs" in wl:
+            comm_bound_bs = int(wl["comm_bound_bs"])
+            break
+    if comm_bound_bs is None:
+        comm_bound_bs = 64
+
     matched = method == "loop" and cache.get("method", "slope") == "slope"
     if not matched and os.environ.get("XVAL_ALLOW_METHOD_MISMATCH"):
         matched = True
@@ -92,6 +144,7 @@ def main():
     print(f"{'group':<20} {'ctx':>6} {'bs':>4} {'tp':>4} {'ours ms':>10} {'vllm ms':>9} "
           f"{'ours tok/s':>12} {'vllm tok/s':>11} {'ratio':>7} {'r2':>7}")
     kv_short = {"float16": "fp16", "bfloat16": "bf16", "half": "fp16"}
+    comm_footnote_printed = False
     for ctx, bs, tp in shared:
         ms_a, group, kv_a = ours[(ctx, bs, tp)]
         p = theirs[(ctx, bs, tp)]
@@ -101,12 +154,21 @@ def main():
         kv_b = p.get("kv", cache.get("dtype", "?"))
         if kv_a and kv_short.get(kv_a, kv_a) != kv_short.get(kv_b, kv_b):
             flag += f"  KV {kv_short.get(kv_a, kv_a)}/{kv_short.get(kv_b, kv_b)}"
+        if bs >= comm_bound_bs:
+            flag += "  COMM"
         ratio = f"{(bs * 1000.0 / ms_a) / p['tok_s']:>6.2f}x" if matched else f"{'--':>7}"
         print(
             f"{group:<20} {ctx:>6} {bs:>4} {tp:>4} {ms_a:>10.3f} {ms_b:>9.3f} "
             f"{bs * 1000.0 / ms_a:>12.0f} {p['tok_s']:>11.0f} "
             f"{ratio} {r2:>7.5f}{flag}"
         )
+        if bs >= comm_bound_bs and not comm_footnote_printed:
+            comm_footnote_printed = True
+
+    if comm_footnote_printed:
+        print(f"\nCOMM = collective-bound (bs>={comm_bound_bs}): absolute ms is dominated by "
+              f"the shared TP allreduce and is node/NCCL-specific; "
+              f"cross-node reference anchoring is not meaningful for these cells.")
 
     missing = sorted(set(ours) - set(theirs))
     unused = sorted(set(theirs) - set(ours))
