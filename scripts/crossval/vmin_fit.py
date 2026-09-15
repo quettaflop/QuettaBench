@@ -139,10 +139,19 @@ def main():
         # Full-length warm: every decode graph for this batch size must be
         # captured before timing, or the capture cost lands in the first point.
         gen(prompts, max(steps))
-        # Min over repeats: jitter only ever inflates a step.
-        reps = int(os.environ.get("VMIN_REPEATS", "3"))
-        ys = [min(gen(prompts, n) for _ in range(reps)) for n in steps]
-        slope, inter, r2 = fit(steps, ys)
+        # Keep the cleanest of a few full slopes, chosen by r2 (not the fastest
+        # sample): a lone noisy fit at low-work cells is not trusted, and
+        # selecting on r2 rather than min avoids biasing the step time down.
+        attempts = int(os.environ.get("VMIN_ATTEMPTS", "4"))
+        best = None  # (r2, slope, inter, ys)
+        for _ in range(attempts):
+            ys = [gen(prompts, n) for n in steps]
+            s, i, rr = fit(steps, ys)
+            if best is None or rr > best[0]:
+                best = (rr, s, i, ys)
+            if rr >= 0.999:
+                break
+        r2, slope, inter, ys = best
         kv_gib = ctx * bs * kv_b / (1 << 30)
         print(
             f"RESULT mode={mode} tp={tp} kv={kv_dtype or dtype} ctx={ctx} bs={bs} "
