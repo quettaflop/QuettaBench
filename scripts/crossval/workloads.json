@@ -103,6 +103,7 @@
       "expert_parallel": true,
       "kv_dtype": "fp8_ds_mla",
       "kv_bytes": 24768,
+      "comm_bound_bs": 64,
       "verified": false
     }
   }

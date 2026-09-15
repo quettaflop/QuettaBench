@@ -118,6 +118,22 @@ fall back to it and note that here if the MLA layout is rejected) and
 (8); all 12 cells produce a RESULT (no capacity SKIP). Flip `verified` to
 true only after the numbers are checked.
 
+## NCCL collective pinning
+
+`ds_bench.sh` and `vllm.sh` both export `NCCL_ALGO=Tree NCCL_PROTO=Simple`
+before running the engine or vLLM, so both sides use the same NCCL path and
+the comparison is impartial. Override via the caller's environment if needed.
+
+Cells with `bs >= comm_bound_bs` (default 64, set per-workload in
+`workloads.json`) are collective-bound: at that batch size the TP allreduce
+dominates decode latency and its cost is node- and NCCL-specific. `table.py`
+flags these rows `COMM` and prints a footnote; cross-node reference anchoring
+is not meaningful for them.
+
+Runtime note: on Blackwell (sm_120 / RTX PRO 6000) the engine requires NCCL >=
+2.28. The system-shipped 2.25.1 fails with "invalid argument" at enqueue. Point
+`LD_LIBRARY_PATH` at a newer `libnccl.so` before running `ds_bench.sh`.
+
 ## Files
 
 | file | role |

@@ -76,6 +76,8 @@ def main():
     print(f"META dtype={dtype}", flush=True)
     print(f"META grid={gridname}", flush=True)
     print(f"META mode={mode}", flush=True)
+    print(f"META nccl_algo={os.environ.get('NCCL_ALGO','auto')}", flush=True)
+    print(f"META nccl_proto={os.environ.get('NCCL_PROTO','auto')}", flush=True)
 
     kw = {}
     if args.nograph:
@@ -136,9 +138,7 @@ def main():
             print(f"SKIP ctx={ctx} bs={bs} need_kv={need} cap={cap}", flush=True)
             continue
         prompts = [toks(ctx, seed=10 + j) for j in range(bs)]
-        # Warm every decode graph before timing.
         gen(prompts, max(steps))
-        # Best-r2 slope over a few tries, not the fastest sample.
         attempts = int(os.environ.get("VMIN_ATTEMPTS", "4"))
         best = None  # (r2, slope, inter, ys)
         for _ in range(attempts):

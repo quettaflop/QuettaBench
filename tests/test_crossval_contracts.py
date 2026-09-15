@@ -196,6 +196,7 @@ class TableParity(unittest.TestCase):
             "recorded_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "gpu": "test", "vllm": "0", "mode": "FULL", "model": "m",
             "dtype": "float16", "grid": "g", "method": "slope", "kv_dtype": kv,
+            "nccl_algo": "Tree", "nccl_proto": "Simple",
             "points": [{"ctx": 1024, "bs": 1, "tp": 1, "ms_per_step": 5.0,
                         "tok_s": 200.0, "r2": 1.0, "kv": kv}],
         }
@@ -286,6 +287,33 @@ class TableParity(unittest.TestCase):
             expect_rc=1,
         )
         self.assertIn("tp mismatch", out)
+
+    def test_comm_bound_cell_is_flagged(self):
+        # bs=64 >= comm_bound_bs default (64): row must carry COMM marker.
+        import sys
+        import tempfile
+        import time
+
+        base = {
+            "recorded_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "gpu": "test", "vllm": "0", "mode": "FULL", "model": "m",
+            "dtype": "float16", "grid": "g", "method": "slope", "kv_dtype": "float16",
+            "nccl_algo": "Tree", "nccl_proto": "Simple",
+            "points": [{"ctx": 1024, "bs": 64, "tp": 1, "ms_per_step": 5.0,
+                        "tok_s": 12800.0, "r2": 1.0, "kv": "float16"}],
+        }
+        bench_text = "LOOP ctx=1024 bs=64 kv=fp16 ms_per_step=10.000 k=100\n"
+        with tempfile.TemporaryDirectory() as td:
+            bench = Path(td) / "bench.log"
+            cache = Path(td) / "base.json"
+            bench.write_text(bench_text)
+            cache.write_text(json.dumps(base))
+            out = subprocess.run(
+                [sys.executable, str(CROSSVAL / "table.py"), str(bench), str(cache)],
+                capture_output=True, text=True, env=os.environ,
+            )
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("COMM", out.stdout)
 
     def test_baseline_age_ignores_local_timezone(self):
         out = self._table(

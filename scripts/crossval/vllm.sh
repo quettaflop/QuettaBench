@@ -30,6 +30,9 @@ trap cleanup EXIT
 EXTRA=()
 [ "${ALLOW_UNVERIFIED:-0}" = "1" ] && EXTRA+=(--allow-unverified)
 
+# Engine and vLLM must pin the same collective; high-bs latency is allreduce-bound.
+export NCCL_ALGO="${NCCL_ALGO:-Tree}" NCCL_PROTO="${NCCL_PROTO:-Simple}"
+
 CUDA_VISIBLE_DEVICES="$G" "$PY" "$HERE/vmin_fit.py" "$CRATE" "$GRID" --model "$MDIR" \
   ${EXTRA[@]+"${EXTRA[@]}"} \
   | grep -E "^META|^RESULT|^SKIP|^CAPACITY" | tee "$RAW"

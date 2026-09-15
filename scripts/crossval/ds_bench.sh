@@ -35,12 +35,15 @@ FAILED=0
 while read -r ctx bs; do
   # The bench asserts prompt + steps + 8 <= max_seq.
   max_seq=$((ctx + STEPS + 512))
-  echo ">>> ctx=$ctx bs=$bs world=$WORLD max_seq=$max_seq" | tee -a "$OUT" >&2
+  echo ">>> ctx=$ctx bs=$bs world=$WORLD max_seq=$max_seq nccl=$NCCL_ALGO/$NCCL_PROTO" | tee -a "$OUT" >&2
   before=$(wc -l < "$OUT")
   (
     cd "$QS" || exit 1
+    # Engine and vLLM must pin the same collective; high-bs latency is allreduce-bound.
+    NCCL_ALGO="${NCCL_ALGO:-Tree}" NCCL_PROTO="${NCCL_PROTO:-Simple}"
     export DS_CKPT DS_CFG DS_WORLD="$WORLD" DS_BATCH="$bs" \
-      DS_BENCH_PROMPT="$ctx" DS_MAX_SEQ="$max_seq" DS_TIMING_STEPS="$STEPS"
+      DS_BENCH_PROMPT="$ctx" DS_MAX_SEQ="$max_seq" DS_TIMING_STEPS="$STEPS" \
+      NCCL_ALGO NCCL_PROTO
     if [ -n "${DS_BENCH_BIN:-}" ]; then
       exec "$DS_BENCH_BIN" --nocapture
     fi
