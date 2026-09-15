@@ -52,8 +52,7 @@ class CrossvalScripts(unittest.TestCase):
             self.assertTrue(lines, f"{name} is empty")
 
     def test_vmin_fit_supports_moe_bringup(self):
-        # deepseek needs expert parallel on the vLLM side, and an explicit
-        # opt-in to run a workload before it is certified.
+        # expert parallel on vLLM, plus an opt-in to run before certified.
         src = (CROSSVAL / "vmin_fit.py").read_text()
         self.assertIn("enable_expert_parallel", src)
         self.assertIn("allow-unverified", src)
@@ -83,9 +82,7 @@ class CrossvalScripts(unittest.TestCase):
     )
 
     def test_ds_bench_runs_the_grid_at_the_workload_tp(self):
-        # DS_BENCH_BIN stands in for the prebuilt binary: world must come from
-        # the workload tp, every cell must run, and a leaked DS_LAYERS must
-        # not reach the bench.
+        # world from the workload tp, every cell runs, DS_LAYERS blocked.
         out, log = self._ds_bench(self.BENCH_LINE, env={"DS_LAYERS": "6"})
         self.assertEqual(out.returncode, 0, out.stderr)
         cfg = _load_workloads()
@@ -142,9 +139,7 @@ class WorkloadsConfig(unittest.TestCase):
             self.assertIn("verified", workload, f"{name} missing the verified flag")
 
     def test_deepseek_is_moe_expert_parallel_at_tp8(self):
-        # kv_dtype is the model's shipped MLA cache layout (vLLM's CacheDType
-        # includes fp8_ds_mla); kv_bytes is that layout's per-token size,
-        # (512 latent + 64 rope) x 43 layers at one byte.
+        # kv_dtype is the shipped MLA layout; kv_bytes = (512+64) x 43 layers.
         ds = _load_workloads()["workloads"]["deepseek"]
         self.assertIs(ds.get("expert_parallel"), True)
         self.assertEqual(ds.get("tp"), 8)
@@ -180,9 +175,7 @@ class EngineBenchContract(unittest.TestCase):
         self.assertTrue(expected <= grid, f"missing cells: {sorted(expected - grid)}")
 
     def test_deepseek_grid_covers_the_batch_bench_cells(self):
-        # deepseek/tests/batch_bench.rs times one (ctx, bs) per invocation;
-        # ds_bench.sh reads these cells from workloads.json and loops them, so
-        # this grid is the single source the sweep cannot drift from.
+        # ds_bench.sh loops these cells from workloads.json.
         grid = {tuple(c) for c in _load_workloads()["grids"]["deepseek"]}
         expected = {(ctx, bs) for ctx in (1024, 8192, 16384) for bs in (1, 4, 16, 64)}
         self.assertEqual(grid, expected, f"grid drift: {sorted(grid ^ expected)}")
@@ -236,9 +229,7 @@ class TableParity(unittest.TestCase):
         self.assertIn("KV nvfp4/fp16", out)
 
     def test_deepseek_kv_difference_is_flagged(self):
-        # The engine caches the MLA latent in bf16, the vLLM fork in fp8; the
-        # methods still match (both marginal decode), so the row prints a ratio
-        # and the KV difference is flagged rather than hidden.
+        # bf16 engine vs fp8 fork: ratio still prints, KV flagged.
         out = self._table(
             "LOOP ctx=1024 bs=1 kv=bf16 ms_per_step=10.000 k=100\n", kv="fp8"
         )
@@ -252,9 +243,7 @@ class TableParity(unittest.TestCase):
     )
 
     def test_stock_deepseek_bench_line_gets_a_ratio_and_kv_flag(self):
-        # The stock engine bench line is parsed directly (no engine patch);
-        # its median is the marginal step, so the ratio prints, and the
-        # unstated KV format is flagged as ? against the baseline's.
+        # batch_bench line parsed directly: ratio prints, unstated KV is ?.
         out = self._table(self.BB.format(ms="10.000"), kv="fp8")
         self.assertIn("0.50x", out)
         self.assertIn("KV ?/fp8", out)
@@ -269,8 +258,7 @@ class TableParity(unittest.TestCase):
         self.assertNotIn("20.000", out)
 
     def test_truncated_model_bench_lines_are_ignored(self):
-        # A DS_LAYERS run times a different model, so it never becomes a row,
-        # and the empty log is reported as such, not as a method mismatch.
+        # truncated run is dropped and reported plainly, not as a mismatch.
         line = self.BB.format(ms="10.000").replace("layers=all", "layers=6")
         out = self._table(line, expect_rc=1)
         self.assertIn("truncated", out)

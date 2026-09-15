@@ -26,8 +26,7 @@ RAW="$(mktemp /tmp/vllm-raw-XXXXXX.txt)"
 cleanup() { rm -f "$RAW"; }
 trap cleanup EXIT
 
-# Bring-up only: ALLOW_UNVERIFIED=1 runs a workload whose verified flag is
-# false, so a new engine (deepseek) can be measured before it is certified.
+# ALLOW_UNVERIFIED=1 runs an uncertified workload (deepseek bring-up).
 EXTRA=()
 [ "${ALLOW_UNVERIFIED:-0}" = "1" ] && EXTRA+=(--allow-unverified)
 

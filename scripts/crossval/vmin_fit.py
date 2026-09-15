@@ -136,12 +136,9 @@ def main():
             print(f"SKIP ctx={ctx} bs={bs} need_kv={need} cap={cap}", flush=True)
             continue
         prompts = [toks(ctx, seed=10 + j) for j in range(bs)]
-        # Full-length warm: every decode graph for this batch size must be
-        # captured before timing, or the capture cost lands in the first point.
+        # Warm every decode graph before timing.
         gen(prompts, max(steps))
-        # Keep the cleanest of a few full slopes, chosen by r2 (not the fastest
-        # sample): a lone noisy fit at low-work cells is not trusted, and
-        # selecting on r2 rather than min avoids biasing the step time down.
+        # Best-r2 slope over a few tries, not the fastest sample.
         attempts = int(os.environ.get("VMIN_ATTEMPTS", "4"))
         best = None  # (r2, slope, inter, ys)
         for _ in range(attempts):

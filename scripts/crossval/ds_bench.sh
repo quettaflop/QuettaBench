@@ -1,13 +1,7 @@
 #!/usr/bin/env bash
-# Sweep the deepseek cross-validation grid through the engine's stock
-# batch_bench test; table.py reads the [batch_bench] summary lines directly.
-# Run from the QuettaServe checkout root (QS_DIR overrides):
-#
-#   DS_CKPT=/data/ds-0731-mp8 DS_CFG=<orig>/inference/config.json \
-#     quettabench/scripts/crossval/ds_bench.sh [out.log]
-#
-# Hosts without cargo set DS_BENCH_BIN to a prebuilt copy of the test binary
-# (cargo test -p deepseek --test batch_bench --release --no-run emits it).
+# Sweep the deepseek grid through the engine's batch_bench test into one log.
+# Run from a QuettaServe checkout (QS_DIR overrides); DS_BENCH_BIN points at a
+# prebuilt binary when cargo is absent.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -20,12 +14,10 @@ if [ -z "${DS_BENCH_BIN:-}" ] && [ ! -f "$QS/deepseek/Cargo.toml" ]; then
 fi
 STEPS="${DS_TIMING_STEPS:-100}"
 OUT="${1:-deepseek-bench.log}"
-# A leaked DS_LAYERS would time a truncated model on every cell, which
-# table.py then drops.
+# DS_LAYERS would truncate the model.
 unset DS_LAYERS
 
-# Cells and tp come from workloads.json so the sweep cannot drift from the
-# baseline grid.
+# Cells and tp come from workloads.json.
 CELLS="$(python3 -c '
 import json, sys
 cfg = json.load(open(sys.argv[1]))
