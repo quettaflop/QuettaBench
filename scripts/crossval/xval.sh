@@ -15,8 +15,11 @@ MDIR="${2:?weights dir}"
 BENCH_LOG="${3:-}"
 PY="${PY:-python3}"
 
-TP="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["workloads"][sys.argv[2]].get("tp", 1))' \
-  "$HERE/workloads.json" "$CRATE")"
+TP="$(python3 -c "
+import sys; sys.path.insert(0,'$HERE')
+from xval_config import workloads
+print(workloads()['$CRATE'].get('tp', 1))
+")"
 GPUS="${CUDA_VISIBLE_DEVICES:-$("$HERE/free_gpu.sh" "$TP")}"
 export CUDA_VISIBLE_DEVICES="$GPUS"
 ONE="${GPUS%%,*}"
@@ -25,17 +28,23 @@ echo "GPU=$GPUS"
 BASELINE="$HERE/baselines/vllm-$CRATE.json"
 [ -f "$BASELINE" ] || "$HERE/vllm.sh" "$CRATE" "" "$MDIR" "$PY"
 
+# logit_agreement uses transformers reference; skip for crates without one (deepseek).
+_HAS_REFERENCE=1
+[ "$CRATE" = "deepseek" ] && _HAS_REFERENCE=0
+
 LOGIT_LOG="$HERE/baselines/logit-$CRATE.log"
-if [ "${LOGIT:-}" != 0 ] && { [ "${LOGIT:-}" = 1 ] || [ ! -f "$LOGIT_LOG" ]; }; then
+if [ "$_HAS_REFERENCE" = 1 ] && [ "${LOGIT:-}" != 0 ] && \
+   { [ "${LOGIT:-}" = 1 ] || [ ! -f "$LOGIT_LOG" ]; }; then
     CUDA_VISIBLE_DEVICES="$ONE" "$PY" "$HERE/logit_agreement.py" \
         --model "$MDIR" --crate "$CRATE" > "$LOGIT_LOG.tmp"
     mv "$LOGIT_LOG.tmp" "$LOGIT_LOG"
 fi
-if [ -f "$LOGIT_LOG" ]; then
+if [ "$_HAS_REFERENCE" = 1 ] && [ -f "$LOGIT_LOG" ]; then
     grep -E "SUMMARY|DISAGREE|NEAR_TIE" "$LOGIT_LOG"
 fi
 
-if [ -n "${QS_BIN:-}" ]; then
+# greedy_agreement uses the llama/transformers reference binary; skip for deepseek.
+if [ "$_HAS_REFERENCE" = 1 ] && [ -n "${QS_BIN:-}" ]; then
     CUDA_VISIBLE_DEVICES="$ONE" "$PY" "$HERE/greedy_agreement.py" \
         --qs-bin "$QS_BIN" --model "$MDIR" | grep -E "^AGREE|^SUMMARY"
 fi
@@ -47,10 +56,11 @@ else
 fi
 
 if [ "${PROF:-0}" = 1 ]; then
-    CUDA_VISIBLE_DEVICES="$ONE" "$HERE/prof.sh" "vllm-$CRATE" \
+    # Use the workload's tp for device selection; prof grid comes from merged grids().
+    CUDA_VISIBLE_DEVICES="$GPUS" "$HERE/prof.sh" "vllm-$CRATE" \
         "$PY" "$HERE/vmin_fit.py" "$CRATE" prof --model "$MDIR"
     if [ -n "${QS_BENCH_BIN:-}" ]; then
-        MODEL="$MDIR" CUDA_VISIBLE_DEVICES="$ONE" "$HERE/prof.sh" "qserve-$CRATE" \
+        MODEL="$MDIR" CUDA_VISIBLE_DEVICES="$GPUS" "$HERE/prof.sh" "qserve-$CRATE" \
             "$QS_BENCH_BIN" decode_loop --bench
     fi
 fi
