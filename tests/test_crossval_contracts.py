@@ -148,6 +148,26 @@ class WorkloadsConfig(unittest.TestCase):
         self.assertEqual(ds.get("kv_dtype"), "fp8_ds_mla")
         self.assertEqual(ds.get("kv_bytes"), (512 + 64) * 43)
 
+    def test_qwen3_is_dense_no_expert_parallel(self):
+        # Dense model: no expert_parallel, tp 4, bfloat16.
+        qw = _load_workloads()["workloads"]["qwen3"]
+        self.assertNotIn("expert_parallel", qw)
+        self.assertEqual(qw.get("tp"), 4)
+        # Hybrid stack: KV lives only in the 16 full-attention layers:
+        # 16 layers x 2 (K+V) x 4 kv heads x 256 head_dim x 2 bytes (bf16).
+        self.assertEqual(qw.get("kv_bytes"), 16 * 2 * 4 * 256 * 2)
+        self.assertEqual(qw.get("dtype"), "bfloat16")
+        self.assertEqual(qw.get("weights_gib"), 54)
+        self.assertEqual(qw.get("maxlen"), 40960)
+        self.assertFalse(qw.get("verified"))
+
+    def test_qwen3_grid_is_16_cells(self):
+        # ctx {1024,4096,8192,16384} x bs {1,4,16,64} = 16 cells.
+        grid = _load_workloads()["grids"]["qwen3"]
+        self.assertEqual(len(grid), 16)
+        expected = {(c, b) for c in (1024, 4096, 8192, 16384) for b in (1, 4, 16, 64)}
+        self.assertEqual({tuple(c) for c in grid}, expected)
+
     def test_grid_cells_fit_workload_maxlen(self):
         cfg = _load_workloads()
         top = max(cfg["step_points"])
@@ -456,6 +476,26 @@ class XvalConfigWorkloads(unittest.TestCase):
         xc = self._load_xval_config()
         gs = xc.grids()
         self.assertEqual(len(gs["deepseek"]), 12)
+
+    def test_qwen3_workload_resolves_dense(self):
+        # qwen3 merges from workloads.json + xval.yaml; no expert_parallel.
+        xc = self._load_xval_config()
+        wls = xc.workloads()
+        self.assertIn("qwen3", wls)
+        qw = wls["qwen3"]
+        self.assertEqual(qw.get("tp"), 4)
+        # Hybrid stack: KV lives only in the 16 full-attention layers:
+        # 16 layers x 2 (K+V) x 4 kv heads x 256 head_dim x 2 bytes (bf16).
+        self.assertEqual(qw.get("kv_bytes"), 16 * 2 * 4 * 256 * 2)
+        self.assertEqual(qw.get("dtype"), "bfloat16")
+        self.assertNotIn("expert_parallel", qw)
+        self.assertFalse(qw.get("verified"))
+
+    def test_qwen3_grid_resolves_16_cells(self):
+        xc = self._load_xval_config()
+        gs = xc.grids()
+        self.assertIn("qwen3", gs)
+        self.assertEqual(len(gs["qwen3"]), 16)
 
     def test_vmin_fit_cfg_shape(self):
         # Assembled CFG must expose step_points, workloads, grids.

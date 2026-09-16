@@ -36,3 +36,7 @@ workloads:
     engine_commit: "8f99a55"
     checkpoint: ds-0731-tp8-fp4
     comm_bound_bs: 64
+  qwen3:
+    tp: 4
+    grid: qwen3
+    verified: false
