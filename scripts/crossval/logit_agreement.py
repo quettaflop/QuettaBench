@@ -13,14 +13,15 @@ per line.
 
 import argparse
 import gc
-import json
+import sys
 from pathlib import Path
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from vllm import LLM, SamplingParams
 
-CFG = json.load(open(Path(__file__).with_name("workloads.json")))
+sys.path.insert(0, str(Path(__file__).parent))
+import xval_config as _xval_config
 
 TEXTS = [
     line.strip()
@@ -82,7 +83,7 @@ def main():
     ap.add_argument("--crate", default="llama", help="workload whose dtype to validate")
     ap.add_argument("--gpu-util", type=float, default=0.5)
     args = ap.parse_args()
-    dtype = CFG["workloads"][args.crate]["dtype"]
+    dtype = _xval_config.workloads()[args.crate]["dtype"]
 
     tokenizer = AutoTokenizer.from_pretrained(args.model)
     ids_per_text = [tokenizer(t)["input_ids"] for t in TEXTS]
@@ -111,6 +112,10 @@ def main():
             if pos in v_true_lp:
                 deltas.append(abs(true_lp[i] - v_true_lp[pos]))
 
+    if not total or not deltas:
+        raise SystemExit(
+            "SUMMARY empty: vLLM returned no scored positions (no prompt logprobs)"
+        )
     deltas.sort()
     print(f"SUMMARY positions={total} argmax_agree={agree} "
           f"({100.0 * agree / total:.2f}%) near_tie_flips={near_tie} "
