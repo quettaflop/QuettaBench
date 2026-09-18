@@ -99,6 +99,13 @@ if [ "$WORLD" -ge 2 ]; then
   QS_CUSTOM_AR="${QS_CUSTOM_AR:-1}"
   export QS_CUSTOM_AR
 fi
+# The exact suite has no graph wiring (capture_batch_graph bails), so it must
+# run the bench's eager BatchStep driver; every other suite defaults to graph
+# replay. Caller QW_MODE overrides.
+if [ -z "${QW_MODE:-}" ]; then
+  if [ "$QS_KERNELS" = "exact" ]; then QW_MODE=eager; else QW_MODE=graph; fi
+fi
+export QW_MODE
 
 if [ -z "$CELLS" ]; then
   echo "no cells from workloads grid; check xval_config workloads['qwen3']['grid']" >&2
@@ -110,11 +117,11 @@ FAILED=0
 while read -r ctx bs; do
   # max_seq must satisfy: prompt + steps + 8 <= max_seq.
   max_seq=$((ctx + STEPS + _MAX_SEQ_HEADROOM))
-  echo ">>> ctx=$ctx bs=$bs world=$WORLD max_seq=$max_seq link=$XVAL_LINK_PROFILE nccl=${NCCL_ALGO:-auto}/${NCCL_PROTO:-auto} kern=$QS_KERNELS ar=${QS_CUSTOM_AR:-0} gdn_dir=${QS_VLLM_GDN_DIR:-none}" | tee -a "$OUT" >&2
+  echo ">>> ctx=$ctx bs=$bs world=$WORLD max_seq=$max_seq link=$XVAL_LINK_PROFILE nccl=${NCCL_ALGO:-auto}/${NCCL_PROTO:-auto} kern=$QS_KERNELS ar=${QS_CUSTOM_AR:-0} mode=$QW_MODE gdn_dir=${QS_VLLM_GDN_DIR:-none}" | tee -a "$OUT" >&2
   before=$(wc -l < "$OUT")
   (
     cd "$QS" || exit 1
-    export QW_CKPT QW_WORLD="$WORLD" QW_BATCH="$bs" \
+    export QW_CKPT QW_MODE QW_WORLD="$WORLD" QW_BATCH="$bs" \
       QW_BENCH_PROMPT="$ctx" QW_MAX_SEQ="$max_seq" QW_TIMING_STEPS="$STEPS"
     if [ -n "${QW_BENCH_BIN:-}" ]; then
       exec "$QW_BENCH_BIN" --nocapture

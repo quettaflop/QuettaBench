@@ -16,16 +16,24 @@ MS = {"ns": 1e-6, "us": 1e-3, "µs": 1e-3, "ms": 1.0, "s": 1e3}
 
 
 def _loop_points(text):
-    """(ctx, bs, tp) -> (ms, "decode_loop", kv) from the engine's LOOP lines:
-    K pipelined decode steps timed under one sync, the same quantity as the
-    baseline's slope."""
+    """(ctx, bs, tp) -> (ms, "decode_loop"|"decode_loop_eager", kv) from the
+    engine's LOOP lines: K pipelined decode steps timed under one sync, the
+    same quantity as the baseline's slope. mode=eager (kernels without graph
+    wiring, e.g. the exact vLLM GDN suite) keeps its own group name so graph
+    and eager rows can never silently mix in one column."""
     pts = {}
+    gdns = set()
     for line in text.splitlines():
         if not line.startswith("LOOP "):
             continue
         d = dict(re.findall(r"(\w+)=([\w.]+)", line))
         key = (int(d["ctx"]), int(d["bs"]), int(d.get("tp", "1")))
-        pts[key] = (float(d["ms_per_step"]), "decode_loop", d.get("kv"))
+        group = "decode_loop_eager" if d.get("mode") == "eager" else "decode_loop"
+        pts[key] = (float(d["ms_per_step"]), group, d.get("kv"))
+        if d.get("gdn"):
+            gdns.add(d["gdn"])
+    if gdns:
+        print(f"engine gdn kernel(s): {', '.join(sorted(gdns))}")
     return pts
 
 
@@ -164,6 +172,10 @@ def main():
         comm_flagged = comm_bound_bs is not None and bs >= comm_bound_bs
         if comm_flagged:
             flag += "  COMM"
+        # Eager rows time the same one-sync pipelined quantity but include
+        # per-step host enqueue; the flag keeps that visible next to the ratio.
+        if group == "decode_loop_eager":
+            flag += "  EAGER"
         if matched and not kv_flagged and not comm_flagged:
             ratio = f"{(bs * 1000.0 / ms_a) / p['tok_s']:>6.2f}x"
         else:

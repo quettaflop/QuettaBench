@@ -239,6 +239,34 @@ class TableParity(unittest.TestCase):
         self.assertIn("0.50x", out)
         self.assertNotIn("withheld", out)
 
+    def test_eager_loop_row_is_grouped_and_flagged(self):
+        # mode=eager rows keep the ratio (same one-sync pipelined quantity)
+        # but carry their own group name and an EAGER flag so graph and eager
+        # numbers can never silently mix in one column.
+        out = self._table(
+            "LOOP ctx=1024 bs=1 kv=fp16 ms_per_step=10.000 gdn=Vllm mode=eager\n"
+        )
+        self.assertIn("decode_loop_eager", out)
+        self.assertIn("EAGER", out)
+        self.assertIn("0.50x", out)
+        self.assertIn("engine gdn kernel(s): Vllm", out)
+
+    def test_graph_loop_row_has_no_eager_flag(self):
+        out = self._table(
+            "LOOP ctx=1024 bs=1 kv=fp16 ms_per_step=10.000 gdn=Tiled mode=graph\n"
+        )
+        self.assertNotIn("EAGER", out)
+        self.assertNotIn("decode_loop_eager", out)
+
+    def test_qwen_bench_defaults_exact_to_eager(self):
+        # The exact suite has no graph wiring (capture_batch_graph bails), so
+        # the driver must select the eager BatchStep mode for it by default
+        # and record the mode in every cell header.
+        text = (CROSSVAL / "qwen_bench.sh").read_text()
+        self.assertIn("QW_MODE=eager", text)
+        self.assertIn("export QW_MODE", text)
+        self.assertIn("mode=$QW_MODE", text)
+
     def test_per_step_bench_gets_no_ratio(self):
         out = self._table(
             "decode_batch_paged/1024x1\n"
