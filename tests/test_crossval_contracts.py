@@ -392,6 +392,40 @@ class TableParity(unittest.TestCase):
         self.assertTrue(corpus.exists(), "routing_corpus.txt missing")
         self.assertGreater(len(corpus.read_text().split()), 400)
 
+    def test_synth_bench_distinct_and_trace(self):
+        # The synthetic runner must produce DISTINCT per-request streams (so MoE
+        # routing spreads, unlike clone) and parse the three trace shapes.
+        sys.path.insert(0, str(CROSSVAL))
+        try:
+            import synth_bench
+            importlib.reload(synth_bench)
+            reqs = synth_bench.synth_requests(4, 32, seed=3)
+            ids = [tuple(r["prompt_token_ids"]) for r in reqs]
+            self.assertEqual(len(set(ids)), 4, "synth requests must be distinct")
+            self.assertTrue(all(r["prompt_len"] == 32 for r in reqs))
+            import json as _j, tempfile, os as _os
+            tf = tempfile.mktemp()
+            open(tf, "w").write(
+                _j.dumps({"prompt_token_ids": [1, 2, 3, 4, 5]}) + "\n"
+                + _j.dumps({"prompt_len": 40}) + "\n"
+                + _j.dumps({"input_length": 64, "output_length": 128}) + "\n"
+            )
+            tr = synth_bench.load_trace(tf)
+            self.assertEqual([r["prompt_len"] for r in tr], [5, 40, 64])
+            self.assertEqual(tr[2]["output_length"], 128)
+            prompts, cycled = synth_bench.take(tr, 6, 20)
+            self.assertTrue(all(len(p) == 20 for p in prompts))
+            self.assertTrue(cycled)
+            _os.remove(tf)
+        finally:
+            sys.path.pop(0)
+
+    def test_vmin_fit_knows_synth_and_trace_modes(self):
+        src = (CROSSVAL / "vmin_fit.py").read_text()
+        for m in ('"synth"', '"trace"'):
+            self.assertIn(m, src)
+        self.assertIn("XVAL_TRACE", src)
+
     def test_baseline_age_ignores_local_timezone(self):
         out = self._table(
             "LOOP ctx=1024 bs=1 kv=fp16 ms_per_step=10.000 k=100\n",

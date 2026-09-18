@@ -135,8 +135,16 @@ def main():
     # the engine-vs-vLLM ratio compares identical routing; corpus = frozen
     # real-text windows for a realistic-traffic column.
     prompt_mode = os.environ.get("PROMPT_MODE", wl.get("prompt_mode", "distinct"))
-    if prompt_mode not in ("distinct", "clone", "corpus"):
-        sys.exit(f"unknown prompt_mode {prompt_mode!r}; use distinct, clone or corpus")
+    if prompt_mode not in ("distinct", "clone", "corpus", "synth", "trace"):
+        sys.exit(f"unknown prompt_mode {prompt_mode!r}; use distinct, clone, corpus, synth or trace")
+    # synth = distinct routing-diverse streams (synth_bench); trace = replay a
+    # request trace from XVAL_TRACE (e.g. a Mooncake capture). Both spread MoE
+    # routing like real traffic, unlike clone.
+    trace_reqs = None
+    if prompt_mode == "trace":
+        import synth_bench
+        trace_reqs = synth_bench.load_trace(os.environ["XVAL_TRACE"])
+        print(f"META trace={os.environ['XVAL_TRACE']} reqs={len(trace_reqs)}", flush=True)
 
     print(f"META gpu={torch.cuda.get_device_name(0)}", flush=True)
     print(f"META vllm={vllm.__version__}", flush=True)
@@ -219,6 +227,16 @@ def main():
                 {"prompt_token_ids": corpus_prompt_ids(llm.get_tokenizer(), ctx, j)}
                 for j in range(bs)
             ]
+        elif prompt_mode == "synth":
+            import synth_bench
+            prompts = [{"prompt_token_ids": ids}
+                       for ids in synth_bench.take(
+                           synth_bench.synth_requests(bs, ctx, seed=ctx), bs, ctx)[0]]
+        elif prompt_mode == "trace":
+            ids_list, cycled = synth_bench.take(trace_reqs, bs, ctx)
+            if cycled:
+                print(f"NOTE ctx={ctx} bs={bs} trace cycled (fewer reqs than bs)", flush=True)
+            prompts = [{"prompt_token_ids": ids} for ids in ids_list]
         else:
             prompts = [toks(ctx, seed=10 + j) for j in range(bs)]
         if args.dump_tokens:
