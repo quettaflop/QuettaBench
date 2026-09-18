@@ -149,6 +149,17 @@ workloads:
     # Scripts require ALLOW_UNVERIFIED=1 while this is false.
     verified: false
 
+  qwen3:
+    # Qwen3.8-27B dense model. No MoE, no expert_parallel.
+    # tp: tensor-parallel degree; becomes QW_WORLD in qwen_bench.sh.
+    tp: 4
+
+    # grid: (ctx, bs) grid name; qwen3 uses ctx {1024,4096,8192,16384} x bs {1,4,16,64}.
+    grid: qwen3
+
+    # verified: false until a clean golden run completes.
+    verified: false
+
   llama:
     # Llama-3.1-8B-Instruct -- the certified reference workload.
     name: Llama-3.1-8B-Instruct
