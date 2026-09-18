@@ -371,6 +371,27 @@ class TableParity(unittest.TestCase):
         self.assertNotIn("COMM", out.stdout)
         self.assertIn("0.50x", out.stdout)
 
+    def test_vmin_fit_prompt_modes(self):
+        # clone mode must reproduce the engine benches' synthetic prompt
+        # (deepseek batch_bench / qwen decode_loop) so both sides make the
+        # same routing decisions; all three regimes must be selectable.
+        src = (CROSSVAL / "vmin_fit.py").read_text()
+        self.assertIn("(i * 137 + 11) % 100_000", src)
+        self.assertIn("prompt_mode", src)
+        for mode in ('"clone"', '"corpus"', '"distinct"'):
+            self.assertIn(mode, src)
+        self.assertIn("dump_tokens", src.replace("-", "_"))
+
+    def test_cache_records_prompt_mode(self):
+        # A baseline without its routing regime is not comparable later.
+        self.assertIn("prompt_mode", (CROSSVAL / "cache.py").read_text())
+        self.assertIn("prompt_mode", (CROSSVAL / "table.py").read_text())
+
+    def test_routing_corpus_is_frozen_and_nontrivial(self):
+        corpus = CROSSVAL / "routing_corpus.txt"
+        self.assertTrue(corpus.exists(), "routing_corpus.txt missing")
+        self.assertGreater(len(corpus.read_text().split()), 400)
+
     def test_baseline_age_ignores_local_timezone(self):
         out = self._table(
             "LOOP ctx=1024 bs=1 kv=fp16 ms_per_step=10.000 k=100\n",

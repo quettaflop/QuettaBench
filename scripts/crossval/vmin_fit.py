@@ -46,6 +46,37 @@ def toks(n, seed=10):
     return {"prompt_token_ids": [seed + (i % 1000) for i in range(n)]}
 
 
+def engine_prompt_ids(n):
+    """The engine benches' synthetic prompt: token i = (i * 137 + 11) % 100_000
+    (deepseek/tests/batch_bench.rs, qwen/tests/decode_loop.rs). clone mode
+    feeds these exact ids to every slot: same weights + same tokens + greedy
+    means both sides make the same expert-routing decisions step for step."""
+    return [(i * 137 + 11) % 100_000 for i in range(n)]
+
+
+_CORPUS_IDS = None
+
+
+def corpus_prompt_ids(tokenizer, n, slot):
+    """Sliding real-text windows over a frozen corpus: slot j starts at an odd
+    stride so slots are distinct but drawn from the same text. XVAL_CORPUS
+    points at a bigger corpus when less window overlap is wanted; the file
+    repeats cyclically when a window outruns it."""
+    global _CORPUS_IDS
+    if _CORPUS_IDS is None:
+        path = os.environ.get(
+            "XVAL_CORPUS", str(Path(__file__).with_name("routing_corpus.txt"))
+        )
+        _CORPUS_IDS = tokenizer(open(path).read())["input_ids"]
+    ids = _CORPUS_IDS
+    start = (slot * 997) % max(1, len(ids))
+    out = []
+    while len(out) < n:
+        out.extend(ids[start:start + (n - len(out))])
+        start = 0
+    return out
+
+
 def fit(xs, ys):
     n = len(xs)
     mx, my = sum(xs) / n, sum(ys) / n
@@ -70,6 +101,12 @@ def main():
         action="store_true",
         help="run a workload whose verified flag is false (bring-up only)",
     )
+    ap.add_argument(
+        "--dump-tokens",
+        metavar="FILE",
+        help="append per-cell greedy token ids (JSONL) for the routing-parity "
+        "audit against the engine's DS_TOKEN_TRACE stream",
+    )
     args = ap.parse_args()
 
     wl = CFG["workloads"].get(args.crate)
@@ -93,6 +130,13 @@ def main():
     weights_gib = float(wl["weights_gib"])
     maxlen = int(wl["maxlen"])
     util = float(os.environ.get("GPU_UTIL", wl.get("gpu_util", 0.90)))
+    # Routing regimes (matters for MoE, cosmetic for dense): distinct = current
+    # per-slot synthetic seeds; clone = engine-identical ids on every slot so
+    # the engine-vs-vLLM ratio compares identical routing; corpus = frozen
+    # real-text windows for a realistic-traffic column.
+    prompt_mode = os.environ.get("PROMPT_MODE", wl.get("prompt_mode", "distinct"))
+    if prompt_mode not in ("distinct", "clone", "corpus"):
+        sys.exit(f"unknown prompt_mode {prompt_mode!r}; use distinct, clone or corpus")
 
     print(f"META gpu={torch.cuda.get_device_name(0)}", flush=True)
     print(f"META vllm={vllm.__version__}", flush=True)
@@ -103,6 +147,7 @@ def main():
     print(f"META nccl_algo={os.environ.get('NCCL_ALGO','auto')}", flush=True)
     print(f"META nccl_proto={os.environ.get('NCCL_PROTO','auto')}", flush=True)
     print(f"META link_profile={os.environ['XVAL_LINK_PROFILE']}", flush=True)
+    print(f"META prompt_mode={prompt_mode}", flush=True)
 
     kw = {}
     if args.nograph:
@@ -147,11 +192,12 @@ def main():
         flush=True,
     )
 
-    def gen(prompts, n):
+    def gen(prompts, n, capture=False):
         sp = SamplingParams(temperature=0.0, max_tokens=n, ignore_eos=True)
         t0 = time.perf_counter()
-        llm.generate(prompts, sp, use_tqdm=False)
-        return time.perf_counter() - t0
+        outs = llm.generate(prompts, sp, use_tqdm=False)
+        dt = time.perf_counter() - t0
+        return (dt, outs) if capture else dt
 
     gen([toks(256)], 20)
     print("WARM_OK", flush=True)
@@ -165,7 +211,26 @@ def main():
         if cap and need > CAP_FRAC * cap:
             print(f"SKIP ctx={ctx} bs={bs} need_kv={need} cap={cap}", flush=True)
             continue
-        prompts = [toks(ctx, seed=10 + j) for j in range(bs)]
+        if prompt_mode == "clone":
+            base = engine_prompt_ids(ctx)
+            prompts = [{"prompt_token_ids": list(base)} for _ in range(bs)]
+        elif prompt_mode == "corpus":
+            prompts = [
+                {"prompt_token_ids": corpus_prompt_ids(llm.get_tokenizer(), ctx, j)}
+                for j in range(bs)
+            ]
+        else:
+            prompts = [toks(ctx, seed=10 + j) for j in range(bs)]
+        if args.dump_tokens:
+            # Routing-parity audit: greedy ids from the engine-identical prompt
+            # must match the engine's DS_TOKEN_TRACE stream if both sides
+            # routed alike; divergence rate quantifies the residual.
+            _, outs = gen(prompts, 64, capture=True)
+            with open(args.dump_tokens, "a") as fh:
+                fh.write(json.dumps({
+                    "ctx": ctx, "bs": bs, "prompt_mode": prompt_mode,
+                    "tokens": [list(o.outputs[0].token_ids)[:64] for o in outs],
+                }) + "\n")
         gen(prompts, max(steps))
         attempts = int(os.environ.get("VMIN_ATTEMPTS", "4"))
         best = None  # (r2, slope, inter, ys)

@@ -40,6 +40,7 @@ def main():
         "expert_parallel": meta.get("expert_parallel") == "1",
         "nccl_algo": meta.get("nccl_algo"),
         "nccl_proto": meta.get("nccl_proto"),
+        "prompt_mode": meta.get("prompt_mode", "distinct"),
         "bench_sha": bench_sha,
         "engine_sha": engine_sha,
         "points": points,

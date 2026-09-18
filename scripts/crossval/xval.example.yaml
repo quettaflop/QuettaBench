@@ -144,6 +144,17 @@ workloads:
     # not meaningful for them. At bs=64 the all-reduce cost exceeds compute.
     comm_bound_bs: 64
 
+    # prompt_mode: how vmin_fit builds prompt token ids (PROMPT_MODE env
+    # overrides). Matters for MoE, where routing depends on the tokens:
+    #   distinct (default) - per-slot synthetic seeds; spread routing.
+    #   clone - every slot gets the engine benches' exact synthetic pattern,
+    #           so the engine-vs-vLLM ratio compares identical routing.
+    #   corpus - sliding real-text windows over routing_corpus.txt
+    #            (XVAL_CORPUS points at a larger corpus); realistic traffic.
+    # Record which mode a baseline used: cache.py stores it and table.py
+    # prints it in the baseline header.
+    # prompt_mode: clone
+
     # verified: false until the numbers are validated end-to-end against the
     # reference anchors. Flip to true after the first clean golden run.
     # Scripts require ALLOW_UNVERIFIED=1 while this is false.

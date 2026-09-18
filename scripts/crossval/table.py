@@ -105,6 +105,7 @@ def main():
         f"{cache.get('dtype', '?')}  grid {cache.get('grid', '?')}  {cache['mode']}"
         + (f"  bench {cache['bench_sha'][:9]}" if cache.get("bench_sha") else "")
         + (f"  engine {cache['engine_sha'][:9]}" if cache.get("engine_sha") else "")
+        + (f"  prompts {cache['prompt_mode']}" if cache.get("prompt_mode") else "")
         + (f"  nccl={nccl_algo}/{nccl_proto}" if nccl_algo or nccl_proto else "")
     )
     if age_d > STALE_DAYS:
