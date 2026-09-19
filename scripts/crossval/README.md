@@ -204,6 +204,41 @@ duplicate the default values.
 | `with_gpu.sh` | run a command on an idle gpu, which `free_gpu.sh` picks; the engine bench recipes call it |
 | `workloads.json` | per-crate model, dtype, maxlen, tp and the (ctx, batch) grids |
 
+## Trace workloads (static grid vs serving replay)
+
+Two ways to feed request traces through the cross-validator; they answer
+different questions and their numbers never share a column:
+
+- Static grid: `PROMPT_MODE=trace XVAL_TRACE=t.jsonl ... vmin_fit.py` fills the
+  usual (ctx, bs) cells from trace prompts (arrivals ignored). Works for BOTH
+  engines: the vLLM side directly, the engine side by prefilling slots from the
+  same JSONL. This is the apples-to-apples decode cost.
+- Serving replay: `trace_serve.py t.jsonl --model <dir>` submits requests at
+  their arrival times, open loop, and reports per-request TTFT/TPOT plus a
+  SERVESUM aggregate. vLLM only today: QuettaServe has no continuous batching,
+  prefix caching, or query routing, so it cannot take an open-loop stream; its
+  comparable number stays the static grid until those land, at which point an
+  engine adapter emitting the same SERVE/SERVESUM lines drops in.
+
+Trace sources, one JSONL schema (`synth_bench.py` docstring has the fields):
+
+- `synth_bench.py gen --profile uniform --n 64 --ctx 8192` distinct
+  routing-diverse streams for a clean grid cell.
+- `synth_bench.py gen --profile swebench --n 200 --groups 8 --rate 2` a
+  SWE-bench-agent-shaped stream: long repo-context prompts (4k-24k), short
+  outputs (128-1024), sessions sharing a prompt prefix (what a prefix cache
+  would hit), bursty arrivals. Deterministic from the seed.
+- Mooncake captures: `input_length`/`output_length`/`timestamp` rows load
+  directly (timestamp ms becomes arrival_ts seconds).
+
+`--prefix-caching` is off by default in trace_serve so both engines pay full
+prefill; turn it on to measure the cache. That asymmetry is the point: the
+serving report shows what the missing features cost, the static grid shows
+what the kernels cost.
+
+| `synth_bench.py` | trace generator/loader: uniform + swebench profiles, Mooncake JSONL |
+| `trace_serve.py` | open-loop trace replay, TTFT/TPOT per request + SERVESUM (needs vllm) |
+
 ## Tests
 
 `tests/test_crossval_contracts.py` runs without a gpu: scripts parse, shell

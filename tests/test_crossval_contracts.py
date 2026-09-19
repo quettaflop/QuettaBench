@@ -789,5 +789,76 @@ class XvalConfig(unittest.TestCase):
         self.assertEqual(p["max_seq_headroom"], 28)
 
 
+class TraceWorkloads(unittest.TestCase):
+    """swebench profile + arrival/session passthrough + serving-summary math."""
+
+    def _sb(self):
+        sys.path.insert(0, str(CROSSVAL))
+        try:
+            import synth_bench
+            importlib.reload(synth_bench)
+            return synth_bench
+        finally:
+            sys.path.pop(0)
+
+    def test_swebench_profile_is_deterministic_and_grouped(self):
+        sb = self._sb()
+        a = sb.swebench_requests(24, seed=3, groups=4, prefix_frac=0.5)
+        b = sb.swebench_requests(24, seed=3, groups=4, prefix_frac=0.5)
+        self.assertEqual(a, b)
+        plen = int(4096 * 0.5)
+        # Same session shares the repo-context prefix; different sessions differ.
+        self.assertEqual(a[0]["prompt_token_ids"][:plen], a[4]["prompt_token_ids"][:plen])
+        self.assertNotEqual(a[0]["prompt_token_ids"][:plen], a[1]["prompt_token_ids"][:plen])
+        for r in a:
+            self.assertGreaterEqual(r["prompt_len"], 4096)
+            self.assertLessEqual(r["prompt_len"], 24576)
+            self.assertGreaterEqual(r["output_length"], 128)
+            self.assertLessEqual(r["output_length"], 1024)
+        arrivals = [r["arrival_ts"] for r in a]
+        self.assertEqual(arrivals, sorted(arrivals))
+        self.assertEqual({r["session_id"] for r in a}, {f"g{i}" for i in range(4)})
+
+    def test_load_trace_carries_arrivals_and_sessions(self):
+        import tempfile
+        sb = self._sb()
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "t.jsonl"
+            p.write_text(
+                json.dumps({"input_length": 8, "output_length": 4,
+                            "timestamp": 2000, "session_id": "s1"}) + "\n"
+                + json.dumps({"prompt_token_ids": [5, 6, 7], "output_length": 2,
+                              "arrival_ts": 3.5}) + "\n"
+            )
+            reqs = sb.load_trace(str(p))
+        self.assertEqual(reqs[0]["arrival_ts"], 2.0)  # Mooncake ms -> seconds
+        self.assertEqual(reqs[0]["session_id"], "s1")
+        self.assertEqual(reqs[0]["output_length"], 4)
+        self.assertEqual(reqs[1]["prompt_token_ids"], [5, 6, 7])
+        self.assertEqual(reqs[1]["arrival_ts"], 3.5)
+        self.assertEqual(reqs[1]["output_length"], 2)
+
+    def test_trace_serve_helpers_are_gpu_free(self):
+        # The serving replay must import without vLLM (CI has no GPU stack).
+        sys.path.insert(0, str(CROSSVAL))
+        try:
+            import trace_serve
+            importlib.reload(trace_serve)
+        finally:
+            sys.path.pop(0)
+        offs = trace_serve.plan_arrivals(
+            [{"arrival_ts": 10.0}, {"arrival_ts": 11.0}, {"arrival_ts": 14.0}], speed=2.0)
+        self.assertEqual(offs, [0.0, 0.5, 2.0])
+        self.assertEqual(trace_serve.plan_arrivals([{}, {}], speed=1.0), [0.0, 0.0])
+        s = trace_serve.summarize(
+            [{"ttft_ms": 10.0, "tpot_ms": 5.0, "out_tokens": 3},
+             {"ttft_ms": 30.0, "tpot_ms": None, "out_tokens": 1},
+             {"ttft_ms": 20.0, "tpot_ms": 7.0, "out_tokens": 3}], wall_s=2.0)
+        self.assertEqual(s["n"], 3)
+        self.assertEqual(s["ttft_ms"]["p50"], 20.0)
+        self.assertEqual(s["tpot_ms"]["p50"], 7.0)  # single-token req skipped
+        self.assertAlmostEqual(s["tok_s"], 3.5)
+
+
 if __name__ == "__main__":
     unittest.main()
