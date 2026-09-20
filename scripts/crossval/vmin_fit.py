@@ -130,16 +130,12 @@ def main():
     weights_gib = float(wl["weights_gib"])
     maxlen = int(wl["maxlen"])
     util = float(os.environ.get("GPU_UTIL", wl.get("gpu_util", 0.90)))
-    # Routing regimes (matters for MoE, cosmetic for dense): distinct = current
-    # per-slot synthetic seeds; clone = engine-identical ids on every slot so
-    # the engine-vs-vLLM ratio compares identical routing; corpus = frozen
-    # real-text windows for a realistic-traffic column.
+    # Routing regimes (matters for MoE): distinct = per-slot seeds; clone =
+    # engine-identical ids so ratios compare identical routing; corpus = real-text windows.
     prompt_mode = os.environ.get("PROMPT_MODE", wl.get("prompt_mode", "distinct"))
     if prompt_mode not in ("distinct", "clone", "corpus", "synth", "trace"):
         sys.exit(f"unknown prompt_mode {prompt_mode!r}; use distinct, clone, corpus, synth or trace")
-    # synth = distinct routing-diverse streams (synth_bench); trace = replay a
-    # request trace from XVAL_TRACE (e.g. a Mooncake capture). Both spread MoE
-    # routing like real traffic, unlike clone.
+    # synth = distinct streams (synth_bench); trace = replay XVAL_TRACE (e.g. Mooncake).
     trace_reqs = None
     if prompt_mode == "trace":
         import synth_bench
@@ -240,9 +236,8 @@ def main():
         else:
             prompts = [toks(ctx, seed=10 + j) for j in range(bs)]
         if args.dump_tokens:
-            # Routing-parity audit: greedy ids from the engine-identical prompt
-            # must match the engine's DS_TOKEN_TRACE stream if both sides
-            # routed alike; divergence rate quantifies the residual.
+            # Routing-parity audit: greedy ids must match the engine's DS_TOKEN_TRACE
+            # if both sides routed alike; divergence rate is the residual.
             _, outs = gen(prompts, 64, capture=True)
             with open(args.dump_tokens, "a") as fh:
                 fh.write(json.dumps({

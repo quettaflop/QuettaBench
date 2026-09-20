@@ -1,28 +1,14 @@
 #!/usr/bin/env python3
-"""Synthetic request-stream generator for the cross-validator.
+"""Synthetic and trace-driven request streams for the cross-validator.
 
-Why this exists: the engine batch benches CLONE one sequence into every slot,
-so all tokens route to the same experts. On an expert-parallel MoE that is the
-worst case (a few ranks do all the work, the rest idle) and it is not how real
-traffic behaves. This module builds DISTINCT, length-varied request streams so
-routing spreads like production, and it reads a request trace (JSONL) so a real
-capture -- e.g. a Mooncake trace -- can be replayed through the same path.
+Engine benches clone one sequence into every slot (worst-case MoE routing); this
+builds distinct, length-varied streams and loads a JSONL trace for replay.
+Transport only: token-id lists and lengths, no model or GPU.
 
-It is transport-only: it emits token-id lists (and lengths). vmin_fit.py turns
-them into vLLM prompts; an engine-side reader can consume the same JSONL. No
-model or GPU is touched here.
-
-Trace schema (JSONL, one request per line), any of:
-    {"prompt_token_ids": [int, ...]}          # exact tokens (replayed verbatim)
-    {"prompt_len": int}                        # length only (ids synthesized)
-    {"input_length": int, "output_length": int}  # Mooncake-style; output_length
-                                                   # advises decode steps
-Optional keys carried through when present:
-    "arrival_ts" (seconds, float; Mooncake "timestamp" in ms is converted)
-    "session_id" (prefix-sharing / routing group identity)
-trace_serve.py replays arrivals open-loop against a serving engine; the static
-grid path (vmin_fit PROMPT_MODE=trace) ignores them by design. Unknown keys
-are ignored, so richer captures pass through untouched.
+Trace JSONL per line: {"prompt_token_ids":[...]} or {"prompt_len":int} or
+Mooncake {"input_length","output_length","timestamp"}. Optional arrival_ts (s)
+and session_id; unknown keys pass through. trace_serve.py uses arrivals; the
+static grid (vmin_fit PROMPT_MODE=trace) ignores them.
 """
 
 import argparse
@@ -33,18 +19,14 @@ VOCAB = 100_000  # safe id ceiling for the checkpoints under test
 
 
 def synth_ids(n, seed):
-    """A distinct pseudo-random token stream. Different seed => different tokens
-    => different expert routing. Coprime stride keeps it non-repeating within a
-    prompt so the stream is not a single hot token."""
+    """Distinct pseudo-random token stream; different seed gives different routing."""
     a = 1103515245 * (seed + 1) + 12345
     return [((a + i * (2 * seed + 7)) % (VOCAB - 1)) + 1 for i in range(n)]
 
 
 def synth_requests(count, ctx, seed=0, length_jitter=0.0):
-    """`count` distinct requests of ~`ctx` tokens. length_jitter in [0,1) varies
-    each length by up to +/-jitter*ctx (deterministic from the seed) so the
-    batch mixes lengths like real traffic; 0.0 keeps them uniform for a clean
-    (ctx, bs) grid cell."""
+    """`count` requests of ~`ctx` tokens. length_jitter in [0,1) varies each length
+    deterministically; 0.0 keeps them uniform for a clean grid cell."""
     reqs = []
     for j in range(count):
         s = seed * 1_000_003 + j
@@ -58,20 +40,16 @@ def synth_requests(count, ctx, seed=0, length_jitter=0.0):
 
 
 def _lcg(state):
-    """Deterministic 31-bit LCG step; the module's only randomness source so a
-    seed always regenerates the identical trace."""
+    """Deterministic 31-bit LCG step, the module's only randomness source."""
     return (1103515245 * state + 12345) % (1 << 31)
 
 
 def swebench_requests(count, seed=0, groups=8, prefix_frac=0.5,
                       min_ctx=4096, max_ctx=24576,
                       min_out=128, max_out=1024, rate=1.0):
-    """SWE-bench-agent-profile stream: long repo-context prompts, short-medium
-    outputs, GROUPS sessions that share a common prefix (the repo/agent context
-    -- what a prefix cache would hit), and bursty arrivals at ~`rate` req/s.
-    Deterministic from the seed. Engines without prefix caching or continuous
-    batching simply pay full price for every request; the trace does not hide
-    that, the serving report shows it."""
+    """SWE-bench-shaped stream: long repo-context prompts, short-medium outputs,
+    `groups` sessions sharing a prefix (what a prefix cache would hit), bursty
+    arrivals at ~`rate` req/s. Deterministic from the seed."""
     group_prefix = {}
     prefix_len = int(min_ctx * prefix_frac)
     for g in range(groups):
@@ -83,8 +61,7 @@ def swebench_requests(count, seed=0, groups=8, prefix_frac=0.5,
         length = min_ctx + state % max(1, max_ctx - min_ctx + 1)
         state = _lcg(state)
         out = min_out + state % max(1, max_out - min_out + 1)
-        # Bursty arrivals: session turns cluster (1/8 of the mean gap), bursts
-        # separated by the full mean gap so the open-loop replay sees queueing.
+        # Bursty: turns within a session cluster, bursts a full mean gap apart.
         state = _lcg(state)
         gap = (state % 1000) / 1000.0 / max(rate, 1e-6)
         t += gap / 8.0 if j % groups else gap
@@ -100,8 +77,7 @@ def swebench_requests(count, seed=0, groups=8, prefix_frac=0.5,
 
 
 def _carry_meta(req, d):
-    """Copy scheduling metadata into the request: arrival_ts in seconds (Mooncake
-    writes "timestamp" in ms), session_id for prefix-sharing identity."""
+    """Carry arrival_ts (seconds; Mooncake writes timestamp in ms) and session_id."""
     if d.get("arrival_ts") is not None:
         req["arrival_ts"] = float(d["arrival_ts"])
     elif d.get("timestamp") is not None:
@@ -112,8 +88,7 @@ def _carry_meta(req, d):
 
 
 def load_trace(path):
-    """Read a JSONL request trace into the common request shape. Lengths without
-    ids are synthesized (routing-diverse); ids are replayed verbatim."""
+    """Read a JSONL trace into the common request shape; missing ids are synthesized."""
     reqs = []
     for i, line in enumerate(open(path)):
         line = line.strip()
@@ -140,9 +115,8 @@ def load_trace(path):
 
 
 def take(reqs, count, ctx):
-    """Pick `count` requests for a (ctx, bs) cell: prefer trace entries long
-    enough for the context, cycle if the trace is short, and trim/pad ids to
-    exactly ctx so the grid stays rectangular. Reports if it had to cycle."""
+    """Pick `count` requests for a (ctx, bs) cell, trimming/padding ids to ctx and
+    cycling the trace if short. Returns (ids, cycled)."""
     usable = [r for r in reqs if r["prompt_len"] >= ctx] or reqs
     out, cycled = [], False
     for j in range(count):

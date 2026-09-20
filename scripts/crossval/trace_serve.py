@@ -1,24 +1,15 @@
 #!/usr/bin/env python3
-"""Open-loop trace replay against a serving engine (TTFT / TPOT under arrivals).
+"""Open-loop trace replay against a serving engine (TTFT/TPOT under arrivals).
 
-This is the SERVING half of the trace story; the static half is the existing
-grid path (PROMPT_MODE=trace vmin_fit.py), which strips arrivals and measures
-lockstep marginal decode. The two answer different questions and their numbers
-must never share a column:
+The serving half of the trace story (static half: vmin_fit PROMPT_MODE=trace).
+Their numbers answer different questions and never share a column. vLLM only for
+now: QuettaServe lacks continuous batching, prefix caching, and routing, so its
+comparable number is the static grid; an adapter with the same SERVE/SERVESUM
+output drops in when those land.
 
-  static grid    what does one decode step cost at (ctx, bs)?   both engines
-  serving replay what latency does real traffic see?            vLLM only today
-
-QuettaServe has no continuous batching, prefix caching, or query routing, so it
-cannot take an open-loop stream; its comparable number is the static grid cell.
-When those features land, an engine adapter with the same SERVE/SERVESUM output
-drops in here and the reports become directly comparable.
-
-Replay: requests are submitted at arrival_ts/--speed (missing arrivals: back to
-back), greedy, max_tokens = the trace's output_length (or --max-tokens).
-Per request: SERVE id=<i> session=<g> in=<len> out=<n> ttft_ms=<a> tpot_ms=<b>
-Aggregate:   SERVESUM n=<n> ttft_ms p50/p95 tpot_ms p50/p95 req_s tok_s
-vLLM is imported lazily so this module stays importable in CI without a GPU.
+Submits at arrival_ts/--speed (missing: back-to-back), greedy, max_tokens from
+output_length. Emits per-request SERVE and aggregate SERVESUM. vLLM is imported
+lazily so the module stays importable in CI without a GPU.
 """
 
 import argparse
@@ -33,8 +24,8 @@ import synth_bench
 
 
 def plan_arrivals(reqs, speed):
-    """Submission offsets in seconds: arrival_ts scaled by --speed when present
-    (first arrival normalized to 0), else all 0 (back-to-back open loop)."""
+    """Submission offsets in seconds: arrival_ts scaled by --speed (first at 0),
+    else all 0 (back-to-back)."""
     if not any("arrival_ts" in r for r in reqs):
         return [0.0] * len(reqs)
     t0 = min(r.get("arrival_ts", 0.0) for r in reqs)
@@ -46,9 +37,8 @@ def _pct(sorted_vals, q):
 
 
 def summarize(records, wall_s):
-    """Aggregate per-request records: {ttft_ms, tpot_ms, out_tokens}. Records
-    with a single output token carry no decode interval and are skipped for
-    tpot but still count for ttft and throughput."""
+    """Aggregate per-request records; single-token records skip tpot but still
+    count for ttft and throughput."""
     if not records:
         raise ValueError("no completed requests")
     ttft = sorted(r["ttft_ms"] for r in records)

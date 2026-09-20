@@ -172,8 +172,7 @@ def main():
         comm_flagged = comm_bound_bs is not None and bs >= comm_bound_bs
         if comm_flagged:
             flag += "  COMM"
-        # Eager rows time the same one-sync pipelined quantity but include
-        # per-step host enqueue; the flag keeps that visible next to the ratio.
+        # Eager rows include per-step host enqueue; the flag keeps that visible.
         if group == "decode_loop_eager":
             flag += "  EAGER"
         if matched and not kv_flagged and not comm_flagged:
