@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """Synthetic and trace-driven request streams for the cross-validator.
 
-Engine benches clone one sequence into every slot (worst-case MoE routing); this
-builds distinct, length-varied streams and loads a JSONL trace for replay.
-Transport only: token-id lists and lengths, no model or GPU.
+Engine benches clone one sequence into every slot, the worst case for MoE
+routing; this builds distinct length-varied streams instead and loads JSONL
+traces for replay. Token ids and lengths only, no model or GPU.
 
-Trace JSONL per line: {"prompt_token_ids":[...]} or {"prompt_len":int} or
-Mooncake {"input_length","output_length","timestamp"}. Optional arrival_ts (s)
-and session_id; unknown keys pass through. trace_serve.py uses arrivals; the
-static grid (vmin_fit PROMPT_MODE=trace) ignores them.
+Trace lines hold prompt_token_ids, prompt_len, or Mooncake
+input_length/output_length/timestamp; arrival_ts and session_id carry
+through, unknown keys are ignored.
 """
 
 import argparse

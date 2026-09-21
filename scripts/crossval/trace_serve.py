@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
-"""Open-loop trace replay against a serving engine (TTFT/TPOT under arrivals).
+"""Replay a request trace open loop and report per-request serving latency.
 
-The serving half of the trace story (static half: vmin_fit PROMPT_MODE=trace).
-Their numbers answer different questions and never share a column. vLLM only for
-now: QuettaServe lacks continuous batching, prefix caching, and routing, so its
-comparable number is the static grid; an adapter with the same SERVE/SERVESUM
-output drops in when those land.
+vLLM only. QuettaServe has no continuous batching, prefix caching or query
+routing, so it cannot serve an open-loop stream; its comparable number stays
+the static grid (PROMPT_MODE=trace).
 
-Submits at arrival_ts/--speed (missing: back-to-back), greedy, max_tokens from
-output_length. Emits per-request SERVE and aggregate SERVESUM. vLLM is imported
-lazily so the module stays importable in CI without a GPU.
+Requests submit at arrival_ts / --speed, greedy, max_tokens from the trace's
+output_length. Prints SERVE per request, SERVESUM at the end. vllm imports
+lazily so importing this file needs no GPU.
 """
 
 import argparse
@@ -36,6 +34,10 @@ def _pct(sorted_vals, q):
     return sorted_vals[min(len(sorted_vals) - 1, int(q * len(sorted_vals)))]
 
 
+def _pcts(sorted_vals):
+    return {f"p{q}": _pct(sorted_vals, q / 100) for q in (50, 90, 95, 99)}
+
+
 def summarize(records, wall_s):
     """Aggregate per-request records; single-token records skip tpot but still
     count for ttft and throughput."""
@@ -46,9 +48,8 @@ def summarize(records, wall_s):
     toks = sum(r["out_tokens"] for r in records)
     return {
         "n": len(records),
-        "ttft_ms": {"p50": _pct(ttft, 0.50), "p95": _pct(ttft, 0.95)},
-        "tpot_ms": ({"p50": _pct(tpot, 0.50), "p95": _pct(tpot, 0.95)}
-                    if tpot else None),
+        "ttft_ms": _pcts(ttft),
+        "tpot_ms": _pcts(tpot) if tpot else None,
         "req_s": len(records) / wall_s if wall_s > 0 else 0.0,
         "tok_s": toks / wall_s if wall_s > 0 else 0.0,
     }
@@ -62,6 +63,8 @@ async def _replay_vllm(reqs, offsets, args):
     engine = AsyncLLMEngine.from_engine_args(AsyncEngineArgs(
         model=args.model,
         tensor_parallel_size=args.tp,
+        pipeline_parallel_size=args.pp,
+        enable_expert_parallel=args.ep,
         dtype=args.dtype,
         max_model_len=args.max_model_len,
         gpu_memory_utilization=args.gpu_util,
@@ -108,6 +111,8 @@ def main():
                     help="quettaserve adapter lands when it has continuous batching")
     ap.add_argument("--model", required=True)
     ap.add_argument("--tp", type=int, default=1)
+    ap.add_argument("--pp", type=int, default=1, help="pipeline parallel size")
+    ap.add_argument("--ep", action="store_true", help="enable expert parallel (MoE)")
     ap.add_argument("--dtype", default="bfloat16")
     ap.add_argument("--max-model-len", type=int, default=40960)
     ap.add_argument("--gpu-util", type=float, default=0.90)
@@ -124,13 +129,15 @@ def main():
         reqs = reqs[: args.limit]
     offsets = plan_arrivals(reqs, args.speed)
     print(f"META trace={args.trace} reqs={len(reqs)} engine={args.engine} "
+          f"tp={args.tp} pp={args.pp} ep={int(args.ep)} "
           f"speed={args.speed} prefix_caching={int(args.prefix_caching)}", flush=True)
     records, wall = asyncio.run(_replay_vllm(reqs, offsets, args))
     s = summarize(records, wall)
     tp = s["tpot_ms"]
-    print(f"SERVESUM n={s['n']} ttft_ms_p50={s['ttft_ms']['p50']:.1f} "
-          f"ttft_ms_p95={s['ttft_ms']['p95']:.1f} "
-          + (f"tpot_ms_p50={tp['p50']:.3f} tpot_ms_p95={tp['p95']:.3f} " if tp else "tpot_ms_p50=- ")
+    qs = (50, 90, 95, 99)
+    print(f"SERVESUM n={s['n']} "
+          + " ".join(f"ttft_ms_p{q}={s['ttft_ms'][f'p{q}']:.1f}" for q in qs) + " "
+          + (" ".join(f"tpot_ms_p{q}={tp[f'p{q}']:.3f}" for q in qs) + " " if tp else "tpot_ms_p50=- ")
           + f"req_s={s['req_s']:.3f} tok_s={s['tok_s']:.1f}", flush=True)
     if args.json:
         Path(args.json).write_text(json.dumps(s, indent=2, sort_keys=True))

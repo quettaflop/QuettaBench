@@ -16,11 +16,8 @@ MS = {"ns": 1e-6, "us": 1e-3, "µs": 1e-3, "ms": 1.0, "s": 1e3}
 
 
 def _loop_points(text):
-    """(ctx, bs, tp) -> (ms, "decode_loop"|"decode_loop_eager", kv) from the
-    engine's LOOP lines: K pipelined decode steps timed under one sync, the
-    same quantity as the baseline's slope. mode=eager (kernels without graph
-    wiring, e.g. the exact vLLM GDN suite) keeps its own group name so graph
-    and eager rows can never silently mix in one column."""
+    """(ctx, bs, tp) -> (ms, group, kv) from the engine's LOOP lines.
+    mode=eager rows get their own group so graph and eager never share a column."""
     pts = {}
     gdns = set()
     for line in text.splitlines():
@@ -125,10 +122,8 @@ def main():
     elif nccl_proto and eng_nccl_proto and nccl_proto != eng_nccl_proto:
         print(f"NCCL MISMATCH engine={eng_nccl_algo}/{eng_nccl_proto} vllm={nccl_algo}/{nccl_proto}")
 
-    # comm_bound_bs from the merged workloads (json base + yaml overlay).
-    # cache["model"] holds the display name, so match either the crate key or
-    # the record's name field. Absent means the workload is never comm-bound
-    # (tp1 has no TP allreduce); no invented default.
+    # comm_bound_bs from the merged workloads, matched on crate key or record
+    # name. Absent means never comm-bound (tp1 has no TP allreduce); no default.
     crate = cache.get("model", "")
     comm_bound_bs = None
     for _wname, _wl in _xval.workloads().items():

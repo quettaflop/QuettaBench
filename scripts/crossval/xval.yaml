@@ -4,17 +4,11 @@ run:
   max_seq_headroom: 28
   clone_slots: 1
 
-# collective: the PCIe profile pins. Exported only when XVAL_LINK_PROFILE=pcie
-# (the default on boxes without NVLink; ds_bench.sh and vmin_fit.py detect the
-# link via nvidia-smi topo). On NVLink boxes nothing here is exported; add a
-# collective_nvlink block to pin values there too (see xval.example.yaml).
 collective:
   nccl_algo: "allreduce:tree;allgather:ring"
   nccl_proto: Simple
   nccl_p2p_level: SYS
   nccl_ib_disable: 1
-  # nccl_socket_ifname: per-node fast NIC; unset by default (empty = not exported).
-  # Set to the node's NIC name, e.g. enp3s0f0np0. Do not hardcode here.
   nccl_socket_ifname: ""
   llmsrv_no_nvls: 1
   llmsrv_twoshot_min_bytes: 0
@@ -22,15 +16,8 @@ collective:
 runtime:
   nccl_min_version: "2.28"
 
-# step_points: generated-token counts used by vmin_fit.py for the linear fit.
-# Three points are the minimum for a well-conditioned slope; values must be
-# strictly increasing. Matches workloads.json so either file can serve as source.
 step_points: [60, 230, 400]
 
-# workloads: overrides applied on top of workloads.json per crate.
-# Only include keys that intentionally differ from workloads.json.
-# Fields not listed here (dtype, weights_gib, maxlen, kv_bytes, name) come
-# from workloads.json via the merge.
 workloads:
   deepseek:
     engine_commit: "8f99a55"

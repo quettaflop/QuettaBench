@@ -1,174 +1,39 @@
-# xval.example.yaml -- complete reference for every xval.yaml field.
-# Copy relevant sections to xval.yaml and edit; env vars still override.
-# Every field shown here is the current default (as of the DeepSeek bring-up).
-
-# run: sweep execution parameters
 run:
-  # world: number of GPU ranks (tensor-parallel degree) used when ds_bench.sh
-  # picks the world size instead of reading it from the workload entry.
-  # Overridden by DS_WORLD in the caller environment.
   world: 8
-
-  # timing_steps: number of decode steps timed per cell.
-  # max_seq = ctx + timing_steps + max_seq_headroom; raising this widens the
-  # engine's allocated sequence buffer and changes the engine number (KV
-  # capacity is scored every step for the graph-replay indexer). The vLLM
-  # baseline is unaffected by this field -- it uses max_model_len from the
-  # workload, not max_seq. Fix and state the basis for every run so the table
-  # is reproducible. Overridden by DS_TIMING_STEPS.
   timing_steps: 100
-
-  # max_seq_headroom: slack added on top of ctx + timing_steps.
-  # At timing_steps=100 this gives max_seq = ctx + 128.
-  # The bench asserts prompt + steps + 8 <= max_seq, so headroom >= 8 is
-  # required; 28 leaves room for the guard and one pipeline drain.
-  # Only the engine number changes when this is adjusted; vLLM is unaffected.
-  # Overridden by DS_MAX_SEQ_HEADROOM (if set; the formula stays the same).
   max_seq_headroom: 28
-
-  # clone_slots: number of parallel job slots when a future orchestrator
-  # launches concurrent sweep copies. Currently 1 (serial). Reserved for
-  # multi-node scheduling; leave at 1 unless you know what you are doing.
   clone_slots: 1
 
-# collective: NCCL / engine collective environment, applied identically to
-# both ds_bench.sh and vllm.sh. Both sides must match for the comparison to
-# be meaningful; impartiality requires the same NCCL path on both.
-#
-# These pins form the PCIe profile: they are exported only when
-# XVAL_LINK_PROFILE=pcie. The profile is auto-detected (nvidia-smi topo -m;
-# any NV* link selects nvlink) and can be forced via XVAL_LINK_PROFILE.
-# On the nvlink profile nothing below is exported: NCCL's own NVLS/LL128
-# selection and the engine's peer-allreduce are faster there, and vLLM's TP
-# path bypasses NCCL_ALGO, so exporting the pins would slow only the engine.
 collective:
-  # nccl_algo: per-collective algorithm selector.
-  # The per-collective syntax "allreduce:tree;allgather:ring" is required:
-  # plain "Tree" is rejected by NCCL for all-gather ("NCCL has no Tree
-  # all-gather"), so the two operations must be specified separately.
-  # allreduce uses Tree because the reduces stay symmetric on both engine and
-  # vLLM sides; allgather uses Ring because it is the only correct option.
-  # Overridden by NCCL_ALGO.
   nccl_algo: "allreduce:tree;allgather:ring"
-
-  # nccl_proto: NCCL protocol. Simple avoids the LL/LL128 buffering overhead
-  # that adds latency variability at decode batch sizes. Overridden by NCCL_PROTO.
   nccl_proto: Simple
-
-  # nccl_p2p_level: minimum topology level for NCCL P2P transfers.
-  # SYS is load-bearing: without it, cross-socket tree links fall back to TCP
-  # (~4x slower), which makes the allreduce latency unrepresentative and
-  # inflates engine ms/step. Must be SYS on multi-socket Blackwell nodes.
-  # Overridden by NCCL_P2P_LEVEL.
   nccl_p2p_level: SYS
-
-  # nccl_ib_disable: 1 forces NCCL to use the socket transport instead of
-  # InfiniBand. The H200 node uses Ethernet (enp3s0f0np0); IB is absent so
-  # disabling it avoids probe failures at startup. Overridden by NCCL_IB_DISABLE.
   nccl_ib_disable: 1
-
-  # nccl_socket_ifname: NIC NCCL binds for its socket transport.
-  # Per-node; unset by default (empty string). Set to the node's fast NIC,
-  # e.g. enp3s0f0np0. Wrong value causes NCCL to fall back to the management
-  # interface at much lower bandwidth. When empty, NCCL_SOCKET_IFNAME is not
-  # exported. Overridden by NCCL_SOCKET_IFNAME.
   nccl_socket_ifname: ""
-
-  # llmsrv_no_nvls: 1 disables NVLink SHARP (NVLS) in the QuettaServe engine.
-  # NVLS is not available on this node; enabling it causes a hang at init.
-  # Overridden by LLMSRV_NO_NVLS.
   llmsrv_no_nvls: 1
-
-  # llmsrv_twoshot_min_bytes: minimum payload size (bytes) for the engine's
-  # two-shot allreduce path. 0 forces single-shot always; the two-shot path
-  # adds a kernel launch that increases latency at these batch sizes.
-  # Overridden by LLMSRV_TWOSHOT_MIN_BYTES.
   llmsrv_twoshot_min_bytes: 0
 
-# collective_nvlink: optional per-value pins for the nvlink profile, applied
-# on top of the empty defaults. Keys are env-var names (case-insensitive).
-# Example: force the low-latency protocol on NVLink boxes:
-# collective_nvlink:
-#   nccl_proto: LL128
-
-# runtime: versioned environment requirements.
 runtime:
-  # nccl_min_version: minimum NCCL shared-library version required at run time.
-  # Blackwell (sm_120 / RTX PRO 6000) requires NCCL >= 2.28; the system-
-  # shipped 2.25.1 fails with "invalid argument" at enqueue. Point
-  # LD_LIBRARY_PATH at a newer libnccl.so before running ds_bench.sh.
-  # This field is informational (scripts print a warning if violated); it does
-  # not control the LD_LIBRARY_PATH itself.
   nccl_min_version: "2.28"
 
-# step_points: generated-token counts used by vmin_fit.py for the linear fit.
-# Three strictly-increasing integers are required; the slope is ms/step.
-# ctx + max(step_points) + 2 <= maxlen must hold for every grid cell or
-# vmin_fit skips that cell. Matches workloads.json so either file can serve.
 step_points: [60, 230, 400]
 
-# workloads: per-model knobs consumed by ds_bench.sh, vmin_fit.py, and table.py.
-# Fields here supplement (not replace) workloads.json; the json file holds the
-# canonical vmin_fit / vLLM fields (name, dtype, weights_gib, maxlen, etc.).
 workloads:
   deepseek:
-    # engine_commit: the QuettaServe git SHA used for this bring-up.
-    # Recorded for traceability; not consumed by any script.
     engine_commit: "8f99a55"
-
-    # checkpoint: the TP-sliced fp4 checkpoint name passed as DS_CKPT.
-    # Must be the TP-sliced fp4 layout (ds-0731-tp8-fp4), NOT the expert-
-    # parallel mp8 layout (ds-*-mp8): the mp8 layout has per-rank expert skew
-    # and does not match the reference numbers.
     checkpoint: ds-0731-tp8-fp4
-
-    # tp: tensor-parallel degree; becomes DS_WORLD in ds_bench.sh.
     tp: 8
-
-    # expert_parallel: true enables MoE expert sharding across tp ranks in
-    # vmin_fit.py (passes enable_expert_parallel=True to vLLM). Required for
-    # DeepSeek-V4 MoE; without it vLLM loads all experts on rank 0.
     expert_parallel: true
-
-    # kv_dtype: vLLM KV cache dtype. fp8_ds_mla is the DeepSeek MLA fp8
-    # layout in the DS4 fork. The engine uses bf16 MLA latent; this mismatch
-    # is by design and flagged as "KV ?/fp8_ds_mla" in the table.
     kv_dtype: fp8_ds_mla
-
-    # grid: name of the (ctx, bs) grid in the grids section below.
     grid: deepseek
-
-    # comm_bound_bs: batch size at or above which the TP allreduce dominates
-    # decode latency and makes the ratio node/NCCL-specific. table.py flags
-    # these rows COMM and prints a footnote; cross-node reference anchoring is
-    # not meaningful for them. At bs=64 the all-reduce cost exceeds compute.
     comm_bound_bs: 64
-
-    # prompt_mode: how vmin_fit builds prompt ids (PROMPT_MODE overrides). For MoE:
-    #   distinct (default): per-slot seeds, spread routing
-    #   clone: engine-identical ids so the ratio compares identical routing
-    #   corpus: real-text windows over routing_corpus.txt (XVAL_CORPUS overrides)
-    # cache.py records the mode; table.py prints it in the baseline header.
-    # prompt_mode: clone
-
-    # verified: false until the numbers are validated end-to-end against the
-    # reference anchors. Flip to true after the first clean golden run.
-    # Scripts require ALLOW_UNVERIFIED=1 while this is false.
+    prompt_mode: distinct
     verified: false
-
   qwen3:
-    # Qwen3.8-27B dense model. No MoE, no expert_parallel.
-    # tp: tensor-parallel degree; becomes QW_WORLD in qwen_bench.sh.
     tp: 4
-
-    # grid: (ctx, bs) grid name; qwen3 uses ctx {1024,4096,8192,16384} x bs {1,4,16,64}.
     grid: qwen3
-
-    # verified: false until a clean golden run completes.
     verified: false
-
   llama:
-    # Llama-3.1-8B-Instruct -- the certified reference workload.
     name: Llama-3.1-8B-Instruct
     dtype: float16
     weights_gib: 15
@@ -176,13 +41,8 @@ workloads:
     grid: llama
     verified: true
 
-# grids: (ctx, bs) cell lists for each named grid.
-# Each entry is [context_tokens, batch_size]. ds_bench.sh and vmin_fit.py
-# both iterate this list; every cell must satisfy ctx + max(step_points) + 2
-# <= maxlen or vmin_fit will SKIP it. Add cells here to extend a sweep.
 grids:
   deepseek:
-    # ctx {1024, 8192, 16384} x bs {1, 4, 16, 64} -- 12 cells total.
     - [1024,  1]
     - [1024,  4]
     - [1024, 16]
@@ -196,7 +56,6 @@ grids:
     - [16384, 16]
     - [16384, 64]
   llama:
-    # ctx {100, 1024, 4096} x bs {1, 8, 16, 32, 64} -- 15 cells total.
     - [4096,  1]
     - [4096,  8]
     - [4096, 16]

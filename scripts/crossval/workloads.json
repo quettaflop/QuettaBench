@@ -107,6 +107,13 @@
       "tp": 4,
       "grid": "qwen3",
       "kv_bytes": 65536,
+      "bench": {
+        "crate": "qwen",
+        "test": "decode_loop",
+        "env": "QW",
+        "family": "gdn",
+        "ok": "^LOOP "
+      },
       "verified": false
     },
     "deepseek": {
@@ -120,6 +127,13 @@
       "kv_dtype": "fp8_ds_mla",
       "kv_bytes": 24768,
       "comm_bound_bs": 64,
+      "bench": {
+        "crate": "deepseek",
+        "test": "batch_bench",
+        "env": "DS",
+        "family": "moe",
+        "ok": "^\\[batch_bench\\] .*layers=all"
+      },
       "verified": false
     }
   }

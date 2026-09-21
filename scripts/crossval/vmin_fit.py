@@ -13,8 +13,7 @@ import torch
 import vllm
 from vllm import LLM, SamplingParams
 
-# CFG assembled from xval_config: xval.yaml is authoritative when present,
-# workloads.json is the fallback. Shape is identical to the old json.load call.
+# CFG comes from xval_config: xval.yaml when present, workloads.json fallback.
 sys.path.insert(0, str(Path(__file__).parent))
 from xval_config import collective as _xval_collective, workloads as _xval_workloads
 from xval_config import grids as _xval_grids, step_points as _xval_step_points
@@ -23,7 +22,7 @@ CFG = {
     "grids": _xval_grids(),
     "step_points": _xval_step_points(),
 }
-# Same link-profile rule as ds_bench.sh: NVLink boxes take no pins (empty
+# Same link-profile rule as bench.sh: NVLink boxes take no pins (empty
 # values are skipped, not exported) so both sides run their native TP path.
 if "XVAL_LINK_PROFILE" not in os.environ:
     try:
@@ -47,10 +46,8 @@ def toks(n, seed=10):
 
 
 def engine_prompt_ids(n):
-    """The engine benches' synthetic prompt: token i = (i * 137 + 11) % 100_000
-    (deepseek/tests/batch_bench.rs, qwen/tests/decode_loop.rs). clone mode
-    feeds these exact ids to every slot: same weights + same tokens + greedy
-    means both sides make the same expert-routing decisions step for step."""
+    """Same synthetic prompt the engine benches feed. clone mode gives every
+    slot these ids so both sides route identically under greedy."""
     return [(i * 137 + 11) % 100_000 for i in range(n)]
 
 
@@ -58,15 +55,13 @@ _CORPUS_IDS = None
 
 
 def corpus_prompt_ids(tokenizer, n, slot):
-    """Sliding real-text windows over a frozen corpus: slot j starts at an odd
-    stride so slots are distinct but drawn from the same text. XVAL_CORPUS
-    points at a bigger corpus when less window overlap is wanted; the file
-    repeats cyclically when a window outruns it."""
+    """Sliding windows over the XVAL_CORPUS text; slots start at distinct
+    offsets and the text repeats when a window outruns it."""
     global _CORPUS_IDS
     if _CORPUS_IDS is None:
-        path = os.environ.get(
-            "XVAL_CORPUS", str(Path(__file__).with_name("routing_corpus.txt"))
-        )
+        path = os.environ.get("XVAL_CORPUS")
+        if not path:
+            sys.exit("prompt_mode=corpus needs XVAL_CORPUS pointing at a text file")
         _CORPUS_IDS = tokenizer(open(path).read())["input_ids"]
     ids = _CORPUS_IDS
     start = (slot * 997) % max(1, len(ids))
@@ -104,8 +99,7 @@ def main():
     ap.add_argument(
         "--dump-tokens",
         metavar="FILE",
-        help="append per-cell greedy token ids (JSONL) for the routing-parity "
-        "audit against the engine's DS_TOKEN_TRACE stream",
+        help="append per-cell greedy token ids (JSONL)",
     )
     args = ap.parse_args()
 
@@ -181,9 +175,8 @@ def main():
     if kv_bytes:
         kv_b = int(kv_bytes)
     else:
-        # Dense-model formula: counts every layer. Hybrid stacks (deltanet +
-        # attention) hold KV only in the attention layers, so those workloads
-        # must set kv_bytes explicitly or the capacity gate overestimates.
+        # Dense formula counts every layer; hybrid stacks hold KV only in the
+        # attention layers and must set kv_bytes or the capacity gate overestimates.
         hd = cfg.get("head_dim") or cfg["hidden_size"] // cfg["num_attention_heads"]
         hd += cfg.get("qk_rope_head_dim") or 0
         kv_b = 2 * cfg["num_hidden_layers"] * cfg["num_key_value_heads"] * hd * 2

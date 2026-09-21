@@ -33,12 +33,9 @@ trap cleanup EXIT
 EXTRA=()
 [ "${ALLOW_UNVERIFIED:-0}" = "1" ] && EXTRA+=(--allow-unverified)
 
-# Link profile picks the collective env, same rule as ds_bench.sh: PCIe boxes
-# get the tuned pins, NVLink boxes get none. Override with XVAL_LINK_PROFILE.
+# Link profile picks the collective env (same rule as bench.sh). Override with XVAL_LINK_PROFILE.
 if [ -z "${XVAL_LINK_PROFILE:-}" ]; then
-  # Capture then glob-match. Piping into `grep -q` makes grep close the pipe on
-  # first match; nvidia-smi then takes SIGPIPE (141) and pipefail reads that as
-  # a failure, so every box misdetects as pcie. No pipe, no SIGPIPE.
+  # Capture then match; piping to grep -q would SIGPIPE nvidia-smi and pipefail misreads it.
   _topo="$(nvidia-smi topo -m 2>/dev/null || true)"
   case "$_topo" in
     *NV[0-9]*) XVAL_LINK_PROFILE=nvlink ;;
@@ -47,11 +44,7 @@ if [ -z "${XVAL_LINK_PROFILE:-}" ]; then
 fi
 export XVAL_LINK_PROFILE
 
-# Engine and vLLM must resolve the same collective profile; high-bs latency is
-# allreduce-bound on PCIe. Read defaults from xval.yaml; caller env still
-# overrides via ${VAR:-yaml_value}. Empty means "leave unset": an exported
-# empty NCCL var is not the same as an absent one, so only non-empty values
-# are exported.
+# Same collective env as bench.sh; empty yaml values stay unset.
 while IFS='=' read -r _k _v; do
   case "$_k" in
     NCCL_ALGO)          _YAML_NCCL_ALGO="$_v" ;;

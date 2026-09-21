@@ -1,6 +1,6 @@
 # xval_config.py -- load xval.yaml merged over workloads.json; fall back to
 # hardcoded defaults when xval.yaml is absent.
-# Used by: ds_bench.sh (via python3 -c inline), vmin_fit.py, table.py.
+# Used by: bench.sh and vllm.sh (via python3 -c inline), vmin_fit.py, table.py.
 # PyYAML is available in the crossval environment (yaml 6.0.x).
 import json
 import os

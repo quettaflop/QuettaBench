@@ -59,7 +59,7 @@ class CrossvalScripts(unittest.TestCase):
         self.assertIn("enable_expert_parallel", src)
         self.assertIn("allow-unverified", src)
 
-    def _ds_bench(self, stub_body, env=None):
+    def _bench(self, workload, prefix, stub_body, env=None):
         import subprocess as sp
         import tempfile
 
@@ -68,11 +68,14 @@ class CrossvalScripts(unittest.TestCase):
             stub.write_text("#!/usr/bin/env bash\n" + stub_body + "\n")
             stub.chmod(0o755)
             log = Path(td) / "sweep.log"
+            run_env = {**os.environ, f"{prefix}_CKPT": "/dev/null",
+                       f"{prefix}_BENCH_BIN": str(stub), "QS_DIR": td}
+            run_env.pop("QS_KERNELS", None)
+            run_env.pop(f"{prefix}_MODE", None)
+            run_env.update(env or {})
             out = sp.run(
-                ["bash", str(CROSSVAL / "ds_bench.sh"), str(log)],
-                capture_output=True, text=True, cwd=td,
-                env={**os.environ, "DS_CKPT": "/dev/null", "DS_CFG": "/dev/null",
-                     "DS_BENCH_BIN": str(stub), "QS_DIR": td, **(env or {})},
+                ["bash", str(CROSSVAL / "bench.sh"), workload, str(log)],
+                capture_output=True, text=True, cwd=td, env=run_env,
             )
             return out, log.read_text() if log.exists() else ""
 
@@ -83,9 +86,10 @@ class CrossvalScripts(unittest.TestCase):
         ' mean 1.0, best 1.0 -> 1.0 tok/s (median)"'
     )
 
-    def test_ds_bench_runs_the_grid_at_the_workload_tp(self):
+    def test_bench_runs_the_deepseek_grid_at_the_workload_tp(self):
         # world from the workload tp, every cell runs, DS_LAYERS blocked.
-        out, log = self._ds_bench(self.BENCH_LINE, env={"DS_LAYERS": "6"})
+        out, log = self._bench("deepseek", "DS", self.BENCH_LINE,
+                               env={"DS_CFG": "/dev/null", "DS_LAYERS": "6"})
         self.assertEqual(out.returncode, 0, out.stderr)
         cfg = _load_workloads()
         tp = cfg["workloads"]["deepseek"]["tp"]
@@ -93,10 +97,32 @@ class CrossvalScripts(unittest.TestCase):
         self.assertEqual(len(cells), len(cfg["grids"]["deepseek"]))
         self.assertEqual(set(cells), {(str(tp), "all")})
 
-    def test_ds_bench_fails_when_a_cell_produces_no_line(self):
-        out, _ = self._ds_bench("exit 0")
+    def test_bench_fails_when_a_cell_produces_no_line(self):
+        out, _ = self._bench("deepseek", "DS", "exit 0", env={"DS_CFG": "/dev/null"})
         self.assertEqual(out.returncode, 1)
         self.assertIn("FAIL", out.stderr)
+
+    QWEN_LINE = (
+        'echo "LOOP ctx=${QW_BENCH_PROMPT} bs=${QW_BATCH} kv=bf16'
+        ' ms_per_step=1.000 gdn=${QS_KERNELS} mode=${QW_MODE} k=100"'
+    )
+
+    def test_bench_qwen_defaults_exact_to_eager(self):
+        # exact has no graph wiring, so with cubins present the driver must
+        # pick the eager step and stamp kern/mode into every cell.
+        out, log = self._bench("qwen3", "QW", self.QWEN_LINE,
+                               env={"QS_VLLM_GDN_DIR": "/dev/null"})
+        self.assertEqual(out.returncode, 0, out.stderr)
+        cfg = _load_workloads()
+        modes = re.findall(r"^LOOP .*mode=(\w+)", log, re.M)
+        self.assertEqual(len(modes), len(cfg["grids"]["qwen3"]))
+        self.assertEqual(set(modes), {"eager"})
+        self.assertIn("kern=exact", log)
+
+    def test_bench_requires_a_bench_section(self):
+        out, _ = self._bench("llama", "XX", "exit 0")
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn("bench", out.stderr + out.stdout)
 
 
 class WorkloadsConfig(unittest.TestCase):
@@ -197,7 +223,7 @@ class EngineBenchContract(unittest.TestCase):
         self.assertTrue(expected <= grid, f"missing cells: {sorted(expected - grid)}")
 
     def test_deepseek_grid_covers_the_batch_bench_cells(self):
-        # ds_bench.sh loops these cells from workloads.json.
+        # bench.sh loops these cells from workloads.json.
         grid = {tuple(c) for c in _load_workloads()["grids"]["deepseek"]}
         expected = {(ctx, bs) for ctx in (1024, 8192, 16384) for bs in (1, 4, 16, 64)}
         self.assertEqual(grid, expected, f"grid drift: {sorted(grid ^ expected)}")
@@ -240,9 +266,7 @@ class TableParity(unittest.TestCase):
         self.assertNotIn("withheld", out)
 
     def test_eager_loop_row_is_grouped_and_flagged(self):
-        # mode=eager rows keep the ratio (same one-sync pipelined quantity)
-        # but carry their own group name and an EAGER flag so graph and eager
-        # numbers can never silently mix in one column.
+        # eager rows keep the ratio but get their own group and an EAGER flag.
         out = self._table(
             "LOOP ctx=1024 bs=1 kv=fp16 ms_per_step=10.000 gdn=Vllm mode=eager\n"
         )
@@ -258,14 +282,12 @@ class TableParity(unittest.TestCase):
         self.assertNotIn("EAGER", out)
         self.assertNotIn("decode_loop_eager", out)
 
-    def test_qwen_bench_defaults_exact_to_eager(self):
-        # The exact suite has no graph wiring (capture_batch_graph bails), so
-        # the driver must select the eager BatchStep mode for it by default
-        # and record the mode in every cell header.
-        text = (CROSSVAL / "qwen_bench.sh").read_text()
-        self.assertIn("QW_MODE=eager", text)
-        self.assertIn("export QW_MODE", text)
-        self.assertIn("mode=$QW_MODE", text)
+    def test_bench_script_wires_the_gdn_family(self):
+        # The gdn family owns the kernel env and the eager default for exact.
+        text = (CROSSVAL / "bench.sh").read_text()
+        self.assertIn("QS_KERNELS=exact", text)
+        self.assertIn("MODE=eager", text)
+        self.assertIn("mode=$MODE", text)
 
     def test_per_step_bench_gets_no_ratio(self):
         out = self._table(
@@ -400,9 +422,8 @@ class TableParity(unittest.TestCase):
         self.assertIn("0.50x", out.stdout)
 
     def test_vmin_fit_prompt_modes(self):
-        # clone mode must reproduce the engine benches' synthetic prompt
-        # (deepseek batch_bench / qwen decode_loop) so both sides make the
-        # same routing decisions; all three regimes must be selectable.
+        # clone must reproduce the engine's synthetic prompt so both sides
+        # route alike; all three regimes must be selectable.
         src = (CROSSVAL / "vmin_fit.py").read_text()
         self.assertIn("(i * 137 + 11) % 100_000", src)
         self.assertIn("prompt_mode", src)
@@ -415,10 +436,10 @@ class TableParity(unittest.TestCase):
         self.assertIn("prompt_mode", (CROSSVAL / "cache.py").read_text())
         self.assertIn("prompt_mode", (CROSSVAL / "table.py").read_text())
 
-    def test_routing_corpus_is_frozen_and_nontrivial(self):
-        corpus = CROSSVAL / "routing_corpus.txt"
-        self.assertTrue(corpus.exists(), "routing_corpus.txt missing")
-        self.assertGreater(len(corpus.read_text().split()), 400)
+    def test_corpus_mode_requires_an_explicit_corpus(self):
+        # No experimental text ships in the repo; corpus mode takes XVAL_CORPUS.
+        self.assertFalse((CROSSVAL / "routing_corpus.txt").exists())
+        self.assertIn("XVAL_CORPUS", (CROSSVAL / "vmin_fit.py").read_text())
 
     def test_synth_bench_distinct_and_trace(self):
         # The synthetic runner must produce DISTINCT per-request streams (so MoE
@@ -735,10 +756,8 @@ class XvalConfig(unittest.TestCase):
             sys.path.pop(0)
 
     def test_link_detection_has_no_sigpipe_grep(self):
-        # `nvidia-smi topo | grep -q` makes grep close the pipe on its first
-        # match; nvidia-smi then takes SIGPIPE (141) and, under pipefail, the
-        # test reads as failure, so every box misdetects as pcie. Detection
-        # must capture the output first, then match without a pipe.
+        # Piping nvidia-smi into grep -q SIGPIPEs it under pipefail and every
+        # box misdetects as pcie; detection must capture first, then match.
         for sh in _scripts(".sh"):
             text = sh.read_text()
             if "nvidia-smi topo" not in text:
@@ -856,7 +875,9 @@ class TraceWorkloads(unittest.TestCase):
              {"ttft_ms": 20.0, "tpot_ms": 7.0, "out_tokens": 3}], wall_s=2.0)
         self.assertEqual(s["n"], 3)
         self.assertEqual(s["ttft_ms"]["p50"], 20.0)
+        self.assertEqual(s["ttft_ms"]["p99"], 30.0)
         self.assertEqual(s["tpot_ms"]["p50"], 7.0)  # single-token req skipped
+        self.assertEqual(s["tpot_ms"]["p90"], 7.0)
         self.assertAlmostEqual(s["tok_s"], 3.5)
 
 
