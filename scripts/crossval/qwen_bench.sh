@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 # Sweep the qwen3 grid through the engine decode_loop test into one log.
-# Run from a QuettaServe checkout (QS_DIR), or set QW_BENCH_BIN for a prebuilt binary.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -12,7 +11,6 @@ if [ -z "${QW_BENCH_BIN:-}" ] && [ ! -f "$QS/qwen/Cargo.toml" ]; then
 fi
 OUT="${1:-qwen3-bench.log}"
 
-# Link profile picks the collective env (same rule as ds_bench.sh). Override with XVAL_LINK_PROFILE.
 if [ -z "${XVAL_LINK_PROFILE:-}" ]; then
   # Capture then match; piping to grep -q would SIGPIPE nvidia-smi and pipefail misreads it.
   _topo="$(nvidia-smi topo -m 2>/dev/null || true)"
@@ -23,7 +21,6 @@ if [ -z "${XVAL_LINK_PROFILE:-}" ]; then
 fi
 export XVAL_LINK_PROFILE
 
-# Read run params from xval.yaml; falls back to hardcoded defaults when absent.
 read -r _STEPS _HEADROOM < <(python3 -c "
 import sys; sys.path.insert(0,'$HERE')
 from xval_config import run_params
@@ -33,7 +30,6 @@ print(p['timing_steps'], p['max_seq_headroom'])
 STEPS="${QW_TIMING_STEPS:-$_STEPS}"
 _MAX_SEQ_HEADROOM="${QW_MAX_SEQ_HEADROOM:-$_HEADROOM}"
 
-# Cells and tp come from the qwen3 workload in xval.yaml / workloads.json.
 CELLS="$(python3 -c "
 import sys; sys.path.insert(0,'$HERE')
 from xval_config import workloads, grids
@@ -47,7 +43,6 @@ from xval_config import workloads
 print(workloads()['qwen3'].get('tp', 1))
 ")}"
 
-# Collective env from xval.yaml; empty values stay unset (see ds_bench.sh).
 while IFS='=' read -r _k _v; do
   case "$_k" in
     NCCL_ALGO)             _YAML_NCCL_ALGO="$_v" ;;
@@ -76,10 +71,7 @@ for _var in NCCL_ALGO NCCL_PROTO NCCL_P2P_LEVEL NCCL_IB_DISABLE \
   if [ -n "${!_var}" ]; then export "$_var"; fi
 done
 
-# Kernel suite (QS_KERNELS): exact is the vLLM-parity suite but needs GDN cubins
-# exported to QS_VLLM_GDN_DIR (qwen/KERNELS.md) or its loader panics, so default
-# to exact only when that dir is set, else the tiled rust suite. QS_CUSTOM_AR=1
-# pairs the P2P all-reduce at tp>=2. Caller env overrides.
+# exact needs GDN cubins in QS_VLLM_GDN_DIR or the loader panics; default exact only when set.
 if [ -z "${QS_KERNELS:-}" ]; then
   if [ -n "${QS_VLLM_GDN_DIR:-}" ]; then QS_KERNELS=exact; else QS_KERNELS=rust; fi
 fi
@@ -89,7 +81,6 @@ if [ "$WORLD" -ge 2 ]; then
   QS_CUSTOM_AR="${QS_CUSTOM_AR:-1}"
   export QS_CUSTOM_AR
 fi
-# exact has no graph wiring so it runs the eager driver; others default to graph. QW_MODE overrides.
 if [ -z "${QW_MODE:-}" ]; then
   if [ "$QS_KERNELS" = "exact" ]; then QW_MODE=eager; else QW_MODE=graph; fi
 fi
@@ -103,7 +94,6 @@ fi
 : > "$OUT"
 FAILED=0
 while read -r ctx bs; do
-  # max_seq must satisfy: prompt + steps + 8 <= max_seq.
   max_seq=$((ctx + STEPS + _MAX_SEQ_HEADROOM))
   echo ">>> ctx=$ctx bs=$bs world=$WORLD max_seq=$max_seq link=$XVAL_LINK_PROFILE nccl=${NCCL_ALGO:-auto}/${NCCL_PROTO:-auto} kern=$QS_KERNELS ar=${QS_CUSTOM_AR:-0} mode=$QW_MODE gdn_dir=${QS_VLLM_GDN_DIR:-none}" | tee -a "$OUT" >&2
   before=$(wc -l < "$OUT")
