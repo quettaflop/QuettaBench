@@ -20,9 +20,16 @@ import argparse, csv, os, statistics as st, traceback
 from pathlib import Path
 import torch
 import triton
-from vllm.model_executor.layers.fla.ops import (
-    chunk_gated_delta_rule, fused_recurrent_gated_delta_rule,
-)
+try:
+    from vllm.model_executor.layers.fla.ops import (
+        chunk_gated_delta_rule, fused_recurrent_gated_delta_rule,
+    )
+    _FLA_OPS = "vllm.model_executor.layers.fla.ops"
+except ModuleNotFoundError:      # vLLM >= 0.28 vendors FLA under third_party
+    from vllm.third_party.flash_linear_attention.ops import (
+        chunk_gated_delta_rule, fused_recurrent_gated_delta_rule,
+    )
+    _FLA_OPS = "vllm.third_party.flash_linear_attention.ops"
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _ncu import ncu_op_us
@@ -52,7 +59,7 @@ NCU_REPS = 5
 def _ncu_decode_inner(B, H, K, V) -> str:
     return (
         "import torch;"
-        "from vllm.model_executor.layers.fla.ops import fused_recurrent_gated_delta_rule as R;"
+        f"from {_FLA_OPS} import fused_recurrent_gated_delta_rule as R;"
         "d=torch.device('cuda');t=torch.bfloat16;"
         f"B,H,K,V={B},{H},{K},{V};s=1.0/(K**0.5);"
         "q=torch.randn(B,1,H,K,device=d,dtype=t);k=torch.randn(B,1,H,K,device=d,dtype=t);"
