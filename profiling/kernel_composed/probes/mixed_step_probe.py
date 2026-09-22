@@ -64,7 +64,8 @@ sys.path.insert(0, str(_quettasim_root()))
 class Stream:
     """One decode stream; records the wall time of every token it receives."""
 
-    def __init__(self, base_url: str, model: str, prompt: str, gen: int, stop: threading.Event):
+    def __init__(self, base_url: str, model: str, prompt, gen: int, stop: threading.Event):
+        # prompt: text, or a list of token ids (distinct random contexts)
         self.times: list[float] = []
         self.err: str | None = None
         self._args = (base_url, model, prompt, gen, stop)
@@ -128,7 +129,24 @@ def measure_batch(a, B: int, chunks: list[int], rng: random.Random, cost) -> lis
         resident_ids = [rng.randrange(1000, 100000) for _ in range(a.resident)]
         t0w, t1w, _ = inject(a.base_url, a.model, resident_ids)
         print(f"    warmed a {a.resident}-token resident prefix in {(t1w - t0w)*1e3:.0f} ms", flush=True)
-    if B > 0:
+    if B > 0 and (a.distinct or a.ctx_list):
+        # --distinct: every stream decodes on its OWN ctx-token context (random ids, no
+        # shared prefix), so the batch holds B*ctx KV tokens like a real serving batch
+        # and the pool fills up. Started in small groups so the prefills do not queue
+        # behind each other for minutes. --ctx-list gives each stream its own length
+        # (heterogeneous batch: does the step follow the LONGEST context or the total?).
+        lens = ([int(x) for x in a.ctx_list.split(",")] if a.ctx_list else [a.ctx] * B)
+        B = len(lens)
+        streams = [Stream(a.base_url, a.model,
+                          [rng.randrange(1000, 100000) for _ in range(n)], a.gen, stop)
+                   for n in lens]
+        for i, s in enumerate(streams):
+            s.thread.start()
+            if i % 4 == 3:
+                time.sleep(max(0.5, a.ctx / 4000.0))
+        time.sleep(a.settle_s + a.ctx / 2000.0)
+        print(f"    {B} distinct {a.ctx}-token streams decoding", flush=True)
+    elif B > 0:
         prefix = "The quick brown fox. " * (a.ctx // 5)
         # warm the shared prefix so all B streams hit the cache and decode together
         w = Stream(a.base_url, a.model, prefix, 4, threading.Event()); w.thread.start(); w.thread.join()
@@ -141,16 +159,47 @@ def measure_batch(a, B: int, chunks: list[int], rng: random.Random, cost) -> lis
     windows: list[tuple[float, float]] = []
     try:
         for P in chunks:
-            if B + P > a.max_batched_tokens:
+            if a.burst <= 1 and B + P > a.max_batched_tokens:
                 print(f"    B={B} P={P}: skipped, {B}+{P} > max_num_batched_tokens", flush=True)
                 continue
             lat, wins, hits = [], [], []
-            for _ in range(a.injections):
-                ids = resident_ids + [rng.randrange(1000, 100000) for _ in range(P)]
-                t0, t1, ms = inject(a.base_url, a.model, ids)
+            t_first = time.perf_counter()
+            for k in range(a.injections):
+                if a.burst > 1:
+                    # a queue of whole prompts: K distinct P-token prompts sent together
+                    res: list = [None] * a.burst
+                    def _inj(i):
+                        ids = resident_ids + [rng.randrange(1000, 100000) for _ in range(P)]
+                        res[i] = inject(a.base_url, a.model, ids)
+                    th = [threading.Thread(target=_inj, args=(i,)) for i in range(a.burst)]
+                    for t in th: t.start()
+                    for t in th: t.join()
+                    t0 = min(r[0] for r in res); t1 = max(r[1] for r in res); ms = st.median(r[2] for r in res)
+                else:
+                    ids = resident_ids + [rng.randrange(1000, 100000) for _ in range(P)]
+                    t0, t1, ms = inject(a.base_url, a.model, ids)
                 lat.append(ms); wins.append((t0, t1)); windows.append((t0, t1))
                 hits.append(getattr(inject, "last_cached", 0))
+                if a.burst > 1 and B > 0:
+                    # per injection: how the chunk step evolves under SUSTAINED prefill load
+                    g = sorted(ms_ for s_ in streams for end, ms_ in s_.gaps()
+                               if t0 <= end <= t1 + 0.05 and ms_ > 300)
+                    if g:
+                        print(f"      inj {k:2d} +{t0 - t_first:5.0f}s: {len(g):4d} chunk steps "
+                              f"p10/p50/p90 = {g[len(g)//10]:.0f}/{g[len(g)//2]:.0f}/{g[9*len(g)//10]:.0f} ms"
+                              f"  (prompt {ms:.0f} ms)", flush=True)
                 time.sleep(a.gap_s)
+            if a.burst > 1 and B > 0:
+                # every long gap any stream saw inside the burst windows = the chunk steps
+                allg = []
+                for t0w, t1w in wins:
+                    for s_ in streams:
+                        allg += [ms_ for end, ms_ in s_.gaps() if t0w <= end <= t1w + 0.05 and ms_ > 100]
+                allg.sort()
+                if allg:
+                    print(f"    burst {a.burst}x{P}: {len(allg)} long gaps; p10/p50/p90 = "
+                          f"{allg[len(allg)//10]:.0f}/{allg[len(allg)//2]:.0f}/{allg[9*len(allg)//10]:.0f} ms; "
+                          f"prompt latency median {st.median(lat):.0f} ms", flush=True)
             if a.resident > 0 and hits and st.median(hits) < 0.9 * a.resident:
                 print(f"      warning: resident prefix hit only {st.median(hits):.0f} of {a.resident} tokens", flush=True)
             elif a.resident == 0 and hits and max(hits) > 0:
@@ -171,8 +220,10 @@ def measure_batch(a, B: int, chunks: list[int], rng: random.Random, cost) -> lis
             sim_mixed = cost.fused_step_ms(P, B, tuple([float(a.ctx)] * B)) if B else \
                 cost.fused_step_ms(P, 0, 0)
             sim_dec = cost.fused_step_ms(0, B, tuple([float(a.ctx)] * B)) if B else 0.0
-            rows.append({"tp": a.tp, "pp": a.pp, "ep": int(a.ep), "ctx": a.ctx, "batch": B,
-                         "resident": a.resident,
+            rows.append({"tp": a.tp, "pp": a.pp, "ep": int(a.ep),
+                         "ctx": (max(int(x) for x in a.ctx_list.split(",")) if a.ctx_list else a.ctx), "batch": B,
+                         "ctx_list": a.ctx_list,
+                         "resident": a.resident, "distinct": int(a.distinct),
                          "chunk": P, "real_mixed_ms": round(real_mixed, 2),
                          "real_prefill_lat_ms": round(st.median(lat), 2),
                          "sim_mixed_ms": round(sim_mixed, 2), "sim_decode_ms": round(sim_dec, 2),
@@ -223,6 +274,14 @@ def main() -> None:
     ap.add_argument("--max-batched-tokens", type=int, default=8192)
     ap.add_argument("--resident", type=int, default=0,
                     help="inject chunks as continuations of one cached R-token prefix (0 = fresh)")
+    ap.add_argument("--burst", type=int, default=1,
+                    help="inject this many prompts AT ONCE per injection (a queue of re-prefills, as in "
+                         "a prefix-cache collapse); each may exceed the step budget and chunk over "
+                         "several steps. Reports every stream gap > 100 ms inside the window.")
+    ap.add_argument("--distinct", action="store_true",
+                    help="streams decode on distinct random contexts (fills the pool) instead of one shared prefix")
+    ap.add_argument("--ctx-list", default="",
+                    help="comma-separated context length per stream (distinct contexts; overrides --ctx/--batches)")
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--out", required=True)
     a = ap.parse_args()

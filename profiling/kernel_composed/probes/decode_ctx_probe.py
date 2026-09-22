@@ -22,7 +22,9 @@ Compared with KernelComposed.fused_step_ms(0, B, ctx_list) on the SAME context l
                distinct:20000:24 distinct:12000:32 mixed:8000-32000:16 \\
       --out build/probes/decode_ctx_tp8.csv
 
-``mixed:LO-HI:B`` draws B lengths uniformly in [LO, HI]. Writes one CSV row per config.
+``mixed:LO-HI:B`` draws B lengths uniformly in [LO, HI]. ``churn:LEN:N`` prefills N throwaway
+LEN-token prompts to fragment the pool before the configs that follow (no row). Writes one
+CSV row per measured config.
 """
 from __future__ import annotations
 
@@ -132,6 +134,16 @@ def main() -> None:
     rows = []
     for cfg in a.configs:
         mode, spec, b = cfg.split(":"); B = int(b)
+        if mode == "churn":
+            # churn:LEN:N -- prefill N distinct random prompts of LEN tokens (max_tokens=1) and
+            # keep none of them: several pool-fulls of allocations and prefix-cache evictions,
+            # so the blocks the NEXT configs' streams get are scattered across the pool the way
+            # a long-running engine's are, instead of freshly carved. No row is written.
+            n, L = B, int(spec); t0 = time.perf_counter()
+            for _ in range(n):
+                warm(a.base_url, a.model, [rng.randrange(1000, 100000) for _ in range(L)])
+            print(f"  churn: {n} x {L} tokens ({n*L/1e6:.2f}M) in {time.perf_counter()-t0:.0f}s", flush=True)
+            continue
         prompts = prompts_for(mode, spec, B, rng)
         ctxs = [len(p) for p in prompts]
         t0 = time.perf_counter()
