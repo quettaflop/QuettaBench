@@ -13,11 +13,7 @@ MDIR="${3:?model dir}"
 PY="${4:-python3}"
 BASELINE_DIR="$HERE/baselines"
 
-TP="$(python3 -c "
-import sys; sys.path.insert(0,'$HERE')
-from xval_config import workloads
-print(workloads()['$CRATE'].get('tp', 1))
-")"
+TP="$(python3 "$HERE/xval_config.py" tp "$CRATE")"
 G="${CUDA_VISIBLE_DEVICES:-$("$HERE/free_gpu.sh" "$TP")}"
 echo "GPU=$G"
 
@@ -53,12 +49,7 @@ while IFS='=' read -r _k _v; do
     NCCL_IB_DISABLE)    _YAML_NCCL_IB_DISABLE="$_v" ;;
     NCCL_SOCKET_IFNAME) _YAML_NCCL_SOCKET_IFNAME="$_v" ;;
   esac
-done < <(python3 -c "
-import sys; sys.path.insert(0,'$HERE')
-from xval_config import collective
-for k, v in collective().items():
-    print(k + '=' + v)
-")
+done < <(python3 "$HERE/xval_config.py" collective)
 NCCL_ALGO="${NCCL_ALGO:-$_YAML_NCCL_ALGO}"
 NCCL_PROTO="${NCCL_PROTO:-$_YAML_NCCL_PROTO}"
 NCCL_P2P_LEVEL="${NCCL_P2P_LEVEL:-$_YAML_NCCL_P2P_LEVEL}"

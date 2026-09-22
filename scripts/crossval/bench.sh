@@ -8,14 +8,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WL="${1:?workload (a workloads.json entry with a bench section)}"
 OUT="${2:-$WL-bench.log}"
 
-mapfile -t _B < <(python3 -c "
-import sys; sys.path.insert(0,'$HERE')
-from xval_config import workloads
-wl = workloads().get('$WL') or sys.exit('unknown workload $WL')
-b = wl.get('bench') or sys.exit('workload $WL has no bench config')
-print(b['crate']); print(b['test']); print(b['env']); print(b['family']); print(b['ok'])
-print(wl.get('tp', 1))
-")
+mapfile -t _B < <(python3 "$HERE/xval_config.py" bench "$WL")
 [ "${#_B[@]}" -eq 6 ] || exit 1
 CRATE="${_B[0]}"; TEST="${_B[1]}"; P="${_B[2]}"; FAMILY="${_B[3]}"; OK="${_B[4]}"; TP="${_B[5]}"
 
@@ -45,22 +38,12 @@ if [ -z "${XVAL_LINK_PROFILE:-}" ]; then
 fi
 export XVAL_LINK_PROFILE
 
-read -r _STEPS _HEADROOM < <(python3 -c "
-import sys; sys.path.insert(0,'$HERE')
-from xval_config import run_params
-p = run_params()
-print(p['timing_steps'], p['max_seq_headroom'])
-")
+read -r _STEPS _HEADROOM < <(python3 "$HERE/xval_config.py" run-params)
 _V="${P}_TIMING_STEPS"; STEPS="${!_V:-$_STEPS}"
 _V="${P}_MAX_SEQ_HEADROOM"; HEADROOM="${!_V:-$_HEADROOM}"
 _V="${P}_WORLD"; WORLD="${!_V:-$TP}"
 
-CELLS="$(python3 -c "
-import sys; sys.path.insert(0,'$HERE')
-from xval_config import workloads, grids
-for ctx, bs in grids()[workloads()['$WL']['grid']]:
-    print(ctx, bs)
-")"
+CELLS="$(python3 "$HERE/xval_config.py" cells "$WL")"
 [ -n "$CELLS" ] || { echo "no cells for workload $WL" >&2; exit 1; }
 
 while IFS='=' read -r _k _v; do
@@ -73,12 +56,7 @@ while IFS='=' read -r _k _v; do
     LLMSRV_NO_NVLS)        _YAML_LLMSRV_NO_NVLS="$_v" ;;
     LLMSRV_TWOSHOT_MIN_BYTES) _YAML_LLMSRV_TWOSHOT_MIN_BYTES="$_v" ;;
   esac
-done < <(python3 -c "
-import sys; sys.path.insert(0,'$HERE')
-from xval_config import collective
-for k, v in collective().items():
-    print(k + '=' + v)
-")
+done < <(python3 "$HERE/xval_config.py" collective)
 NCCL_ALGO="${NCCL_ALGO:-$_YAML_NCCL_ALGO}"
 NCCL_PROTO="${NCCL_PROTO:-$_YAML_NCCL_PROTO}"
 NCCL_P2P_LEVEL="${NCCL_P2P_LEVEL:-$_YAML_NCCL_P2P_LEVEL}"

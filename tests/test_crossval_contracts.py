@@ -48,6 +48,10 @@ class CrossvalScripts(unittest.TestCase):
                 f"{script.name} is exec'd directly and must keep its +x bit",
             )
 
+    def test_shell_scripts_do_not_inline_python(self):
+        for sh in _scripts(".sh"):
+            self.assertNotIn("python3 -c", sh.read_text(), f"{sh.name} inlines python")
+
     def test_agreement_inputs_present(self):
         for name in ("prompts.txt", "texts.txt"):
             lines = [l for l in (CROSSVAL / name).read_text().splitlines() if l.strip()]

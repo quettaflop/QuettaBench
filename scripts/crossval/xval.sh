@@ -15,11 +15,7 @@ MDIR="${2:?weights dir}"
 BENCH_LOG="${3:-}"
 PY="${PY:-python3}"
 
-TP="$(python3 -c "
-import sys; sys.path.insert(0,'$HERE')
-from xval_config import workloads
-print(workloads()['$CRATE'].get('tp', 1))
-")"
+TP="$(python3 "$HERE/xval_config.py" tp "$CRATE")"
 GPUS="${CUDA_VISIBLE_DEVICES:-$("$HERE/free_gpu.sh" "$TP")}"
 export CUDA_VISIBLE_DEVICES="$GPUS"
 ONE="${GPUS%%,*}"
