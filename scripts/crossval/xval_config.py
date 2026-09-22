@@ -1,9 +1,10 @@
 # xval_config.py -- load xval.yaml merged over workloads.json; fall back to
 # hardcoded defaults when xval.yaml is absent.
-# Used by: ds_bench.sh (via python3 -c inline), vmin_fit.py, table.py.
+# Used by: the shell scripts (as a cli), vmin_fit.py, table.py.
 # PyYAML is available in the crossval environment (yaml 6.0.x).
 import json
 import os
+import sys
 from pathlib import Path
 
 _HERE = Path(__file__).parent
@@ -161,3 +162,37 @@ def step_points(cfg=None):
     if "step_points" in cfg:
         return list(cfg["step_points"])
     return _load_json()["step_points"]
+
+
+def _cli(args):
+    """Shell entry: collective | run-params | tp <wl> | cells <wl> | bench <wl>."""
+    cmd = args[0] if args else ""
+    if cmd == "collective":
+        for k, v in collective().items():
+            print(f"{k}={v}")
+        return
+    if cmd == "run-params":
+        p = run_params()
+        print(p["timing_steps"], p["max_seq_headroom"])
+        return
+    if cmd not in ("tp", "cells", "bench") or len(args) != 2:
+        sys.exit("usage: xval_config.py collective|run-params|tp|cells|bench [workload]")
+    wl = workloads().get(args[1])
+    if wl is None:
+        sys.exit(f"unknown workload {args[1]}")
+    if cmd == "tp":
+        print(wl.get("tp", 1))
+    elif cmd == "cells":
+        for ctx, bs in grids()[wl["grid"]]:
+            print(ctx, bs)
+    else:
+        b = wl.get("bench")
+        if not b:
+            sys.exit(f"workload {args[1]} has no bench config")
+        for key in ("crate", "test", "env", "family", "ok"):
+            print(b[key])
+        print(wl.get("tp", 1))
+
+
+if __name__ == "__main__":
+    _cli(sys.argv[1:])

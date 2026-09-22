@@ -48,6 +48,10 @@ class CrossvalScripts(unittest.TestCase):
                 f"{script.name} is exec'd directly and must keep its +x bit",
             )
 
+    def test_shell_scripts_do_not_inline_python(self):
+        for sh in _scripts(".sh"):
+            self.assertNotIn("python3 -c", sh.read_text(), f"{sh.name} inlines python")
+
     def test_agreement_inputs_present(self):
         for name in ("prompts.txt", "texts.txt"):
             lines = [l for l in (CROSSVAL / name).read_text().splitlines() if l.strip()]
@@ -59,7 +63,7 @@ class CrossvalScripts(unittest.TestCase):
         self.assertIn("enable_expert_parallel", src)
         self.assertIn("allow-unverified", src)
 
-    def _ds_bench(self, stub_body, env=None):
+    def _bench(self, workload, prefix, stub_body, env=None):
         import subprocess as sp
         import tempfile
 
@@ -68,11 +72,14 @@ class CrossvalScripts(unittest.TestCase):
             stub.write_text("#!/usr/bin/env bash\n" + stub_body + "\n")
             stub.chmod(0o755)
             log = Path(td) / "sweep.log"
+            run_env = {**os.environ, f"{prefix}_CKPT": "/dev/null",
+                       f"{prefix}_BENCH_BIN": str(stub), "QS_DIR": td}
+            run_env.pop("QS_KERNELS", None)
+            run_env.pop(f"{prefix}_MODE", None)
+            run_env.update(env or {})
             out = sp.run(
-                ["bash", str(CROSSVAL / "ds_bench.sh"), str(log)],
-                capture_output=True, text=True, cwd=td,
-                env={**os.environ, "DS_CKPT": "/dev/null", "DS_CFG": "/dev/null",
-                     "DS_BENCH_BIN": str(stub), "QS_DIR": td, **(env or {})},
+                ["bash", str(CROSSVAL / "bench.sh"), workload, str(log)],
+                capture_output=True, text=True, cwd=td, env=run_env,
             )
             return out, log.read_text() if log.exists() else ""
 
@@ -83,9 +90,10 @@ class CrossvalScripts(unittest.TestCase):
         ' mean 1.0, best 1.0 -> 1.0 tok/s (median)"'
     )
 
-    def test_ds_bench_runs_the_grid_at_the_workload_tp(self):
+    def test_bench_runs_the_deepseek_grid_at_the_workload_tp(self):
         # world from the workload tp, every cell runs, DS_LAYERS blocked.
-        out, log = self._ds_bench(self.BENCH_LINE, env={"DS_LAYERS": "6"})
+        out, log = self._bench("deepseek", "DS", self.BENCH_LINE,
+                               env={"DS_CFG": "/dev/null", "DS_LAYERS": "6"})
         self.assertEqual(out.returncode, 0, out.stderr)
         cfg = _load_workloads()
         tp = cfg["workloads"]["deepseek"]["tp"]
@@ -93,10 +101,32 @@ class CrossvalScripts(unittest.TestCase):
         self.assertEqual(len(cells), len(cfg["grids"]["deepseek"]))
         self.assertEqual(set(cells), {(str(tp), "all")})
 
-    def test_ds_bench_fails_when_a_cell_produces_no_line(self):
-        out, _ = self._ds_bench("exit 0")
+    def test_bench_fails_when_a_cell_produces_no_line(self):
+        out, _ = self._bench("deepseek", "DS", "exit 0", env={"DS_CFG": "/dev/null"})
         self.assertEqual(out.returncode, 1)
         self.assertIn("FAIL", out.stderr)
+
+    QWEN_LINE = (
+        'echo "LOOP ctx=${QW_BENCH_PROMPT} bs=${QW_BATCH} kv=bf16'
+        ' ms_per_step=1.000 gdn=${QS_KERNELS} mode=${QW_MODE} k=100"'
+    )
+
+    def test_bench_qwen_defaults_exact_to_eager(self):
+        # exact has no graph wiring, so with cubins present the driver must
+        # pick the eager step and stamp kern/mode into every cell.
+        out, log = self._bench("qwen3", "QW", self.QWEN_LINE,
+                               env={"QS_VLLM_GDN_DIR": "/dev/null"})
+        self.assertEqual(out.returncode, 0, out.stderr)
+        cfg = _load_workloads()
+        modes = re.findall(r"^LOOP .*mode=(\w+)", log, re.M)
+        self.assertEqual(len(modes), len(cfg["grids"]["qwen3"]))
+        self.assertEqual(set(modes), {"eager"})
+        self.assertIn("kern=exact", log)
+
+    def test_bench_requires_a_bench_section(self):
+        out, _ = self._bench("llama", "XX", "exit 0")
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn("bench", out.stderr + out.stdout)
 
 
 class WorkloadsConfig(unittest.TestCase):
@@ -148,6 +178,26 @@ class WorkloadsConfig(unittest.TestCase):
         self.assertEqual(ds.get("kv_dtype"), "fp8_ds_mla")
         self.assertEqual(ds.get("kv_bytes"), (512 + 64) * 43)
 
+    def test_qwen3_is_dense_no_expert_parallel(self):
+        # Dense model: no expert_parallel, tp 4, bfloat16.
+        qw = _load_workloads()["workloads"]["qwen3"]
+        self.assertNotIn("expert_parallel", qw)
+        self.assertEqual(qw.get("tp"), 4)
+        # Hybrid stack: KV lives only in the 16 full-attention layers:
+        # 16 layers x 2 (K+V) x 4 kv heads x 256 head_dim x 2 bytes (bf16).
+        self.assertEqual(qw.get("kv_bytes"), 16 * 2 * 4 * 256 * 2)
+        self.assertEqual(qw.get("dtype"), "bfloat16")
+        self.assertEqual(qw.get("weights_gib"), 54)
+        self.assertEqual(qw.get("maxlen"), 40960)
+        self.assertFalse(qw.get("verified"))
+
+    def test_qwen3_grid_is_16_cells(self):
+        # ctx {1024,4096,8192,16384} x bs {1,4,16,64} = 16 cells.
+        grid = _load_workloads()["grids"]["qwen3"]
+        self.assertEqual(len(grid), 16)
+        expected = {(c, b) for c in (1024, 4096, 8192, 16384) for b in (1, 4, 16, 64)}
+        self.assertEqual({tuple(c) for c in grid}, expected)
+
     def test_grid_cells_fit_workload_maxlen(self):
         cfg = _load_workloads()
         top = max(cfg["step_points"])
@@ -177,7 +227,7 @@ class EngineBenchContract(unittest.TestCase):
         self.assertTrue(expected <= grid, f"missing cells: {sorted(expected - grid)}")
 
     def test_deepseek_grid_covers_the_batch_bench_cells(self):
-        # ds_bench.sh loops these cells from workloads.json.
+        # bench.sh loops these cells from workloads.json.
         grid = {tuple(c) for c in _load_workloads()["grids"]["deepseek"]}
         expected = {(ctx, bs) for ctx in (1024, 8192, 16384) for bs in (1, 4, 16, 64)}
         self.assertEqual(grid, expected, f"grid drift: {sorted(grid ^ expected)}")
@@ -218,6 +268,30 @@ class TableParity(unittest.TestCase):
         out = self._table("LOOP ctx=1024 bs=1 kv=fp16 ms_per_step=10.000 k=100\n")
         self.assertIn("0.50x", out)
         self.assertNotIn("withheld", out)
+
+    def test_eager_loop_row_is_grouped_and_flagged(self):
+        # eager rows keep the ratio but get their own group and an EAGER flag.
+        out = self._table(
+            "LOOP ctx=1024 bs=1 kv=fp16 ms_per_step=10.000 gdn=Vllm mode=eager\n"
+        )
+        self.assertIn("decode_loop_eager", out)
+        self.assertIn("EAGER", out)
+        self.assertIn("0.50x", out)
+        self.assertIn("engine gdn kernel(s): Vllm", out)
+
+    def test_graph_loop_row_has_no_eager_flag(self):
+        out = self._table(
+            "LOOP ctx=1024 bs=1 kv=fp16 ms_per_step=10.000 gdn=Tiled mode=graph\n"
+        )
+        self.assertNotIn("EAGER", out)
+        self.assertNotIn("decode_loop_eager", out)
+
+    def test_bench_script_wires_the_gdn_family(self):
+        # The gdn family owns the kernel env and the eager default for exact.
+        text = (CROSSVAL / "bench.sh").read_text()
+        self.assertIn("QS_KERNELS=exact", text)
+        self.assertIn("MODE=eager", text)
+        self.assertIn("mode=$MODE", text)
 
     def test_per_step_bench_gets_no_ratio(self):
         out = self._table(
@@ -351,6 +425,60 @@ class TableParity(unittest.TestCase):
         self.assertNotIn("COMM", out.stdout)
         self.assertIn("0.50x", out.stdout)
 
+    def test_vmin_fit_prompt_modes(self):
+        # clone must reproduce the engine's synthetic prompt so both sides
+        # route alike; all three regimes must be selectable.
+        src = (CROSSVAL / "vmin_fit.py").read_text()
+        self.assertIn("(i * 137 + 11) % 100_000", src)
+        self.assertIn("prompt_mode", src)
+        for mode in ('"clone"', '"corpus"', '"distinct"'):
+            self.assertIn(mode, src)
+        self.assertIn("dump_tokens", src.replace("-", "_"))
+
+    def test_cache_records_prompt_mode(self):
+        # A baseline without its routing regime is not comparable later.
+        self.assertIn("prompt_mode", (CROSSVAL / "cache.py").read_text())
+        self.assertIn("prompt_mode", (CROSSVAL / "table.py").read_text())
+
+    def test_corpus_mode_requires_an_explicit_corpus(self):
+        # No experimental text ships in the repo; corpus mode takes XVAL_CORPUS.
+        self.assertFalse((CROSSVAL / "routing_corpus.txt").exists())
+        self.assertIn("XVAL_CORPUS", (CROSSVAL / "vmin_fit.py").read_text())
+
+    def test_synth_bench_distinct_and_trace(self):
+        # The synthetic runner must produce DISTINCT per-request streams (so MoE
+        # routing spreads, unlike clone) and parse the three trace shapes.
+        sys.path.insert(0, str(CROSSVAL))
+        try:
+            import synth_bench
+            importlib.reload(synth_bench)
+            reqs = synth_bench.synth_requests(4, 32, seed=3)
+            ids = [tuple(r["prompt_token_ids"]) for r in reqs]
+            self.assertEqual(len(set(ids)), 4, "synth requests must be distinct")
+            self.assertTrue(all(r["prompt_len"] == 32 for r in reqs))
+            import json as _j, tempfile, os as _os
+            tf = tempfile.mktemp()
+            open(tf, "w").write(
+                _j.dumps({"prompt_token_ids": [1, 2, 3, 4, 5]}) + "\n"
+                + _j.dumps({"prompt_len": 40}) + "\n"
+                + _j.dumps({"input_length": 64, "output_length": 128}) + "\n"
+            )
+            tr = synth_bench.load_trace(tf)
+            self.assertEqual([r["prompt_len"] for r in tr], [5, 40, 64])
+            self.assertEqual(tr[2]["output_length"], 128)
+            prompts, cycled = synth_bench.take(tr, 6, 20)
+            self.assertTrue(all(len(p) == 20 for p in prompts))
+            self.assertTrue(cycled)
+            _os.remove(tf)
+        finally:
+            sys.path.pop(0)
+
+    def test_vmin_fit_knows_synth_and_trace_modes(self):
+        src = (CROSSVAL / "vmin_fit.py").read_text()
+        for m in ('"synth"', '"trace"'):
+            self.assertIn(m, src)
+        self.assertIn("XVAL_TRACE", src)
+
     def test_baseline_age_ignores_local_timezone(self):
         out = self._table(
             "LOOP ctx=1024 bs=1 kv=fp16 ms_per_step=10.000 k=100\n",
@@ -456,6 +584,26 @@ class XvalConfigWorkloads(unittest.TestCase):
         xc = self._load_xval_config()
         gs = xc.grids()
         self.assertEqual(len(gs["deepseek"]), 12)
+
+    def test_qwen3_workload_resolves_dense(self):
+        # qwen3 merges from workloads.json + xval.yaml; no expert_parallel.
+        xc = self._load_xval_config()
+        wls = xc.workloads()
+        self.assertIn("qwen3", wls)
+        qw = wls["qwen3"]
+        self.assertEqual(qw.get("tp"), 4)
+        # Hybrid stack: KV lives only in the 16 full-attention layers:
+        # 16 layers x 2 (K+V) x 4 kv heads x 256 head_dim x 2 bytes (bf16).
+        self.assertEqual(qw.get("kv_bytes"), 16 * 2 * 4 * 256 * 2)
+        self.assertEqual(qw.get("dtype"), "bfloat16")
+        self.assertNotIn("expert_parallel", qw)
+        self.assertFalse(qw.get("verified"))
+
+    def test_qwen3_grid_resolves_16_cells(self):
+        xc = self._load_xval_config()
+        gs = xc.grids()
+        self.assertIn("qwen3", gs)
+        self.assertEqual(len(gs["qwen3"]), 16)
 
     def test_vmin_fit_cfg_shape(self):
         # Assembled CFG must expose step_points, workloads, grids.
@@ -612,10 +760,8 @@ class XvalConfig(unittest.TestCase):
             sys.path.pop(0)
 
     def test_link_detection_has_no_sigpipe_grep(self):
-        # `nvidia-smi topo | grep -q` makes grep close the pipe on its first
-        # match; nvidia-smi then takes SIGPIPE (141) and, under pipefail, the
-        # test reads as failure, so every box misdetects as pcie. Detection
-        # must capture the output first, then match without a pipe.
+        # Piping nvidia-smi into grep -q SIGPIPEs it under pipefail and every
+        # box misdetects as pcie; detection must capture first, then match.
         for sh in _scripts(".sh"):
             text = sh.read_text()
             if "nvidia-smi topo" not in text:
@@ -664,6 +810,79 @@ class XvalConfig(unittest.TestCase):
         self.assertEqual(coll["NCCL_ALGO"], "allreduce:tree;allgather:ring")
         self.assertEqual(p["timing_steps"], 100)
         self.assertEqual(p["max_seq_headroom"], 28)
+
+
+class TraceWorkloads(unittest.TestCase):
+    """swebench profile + arrival/session passthrough + serving-summary math."""
+
+    def _sb(self):
+        sys.path.insert(0, str(CROSSVAL))
+        try:
+            import synth_bench
+            importlib.reload(synth_bench)
+            return synth_bench
+        finally:
+            sys.path.pop(0)
+
+    def test_swebench_profile_is_deterministic_and_grouped(self):
+        sb = self._sb()
+        a = sb.swebench_requests(24, seed=3, groups=4, prefix_frac=0.5)
+        b = sb.swebench_requests(24, seed=3, groups=4, prefix_frac=0.5)
+        self.assertEqual(a, b)
+        plen = int(4096 * 0.5)
+        # Same session shares the repo-context prefix; different sessions differ.
+        self.assertEqual(a[0]["prompt_token_ids"][:plen], a[4]["prompt_token_ids"][:plen])
+        self.assertNotEqual(a[0]["prompt_token_ids"][:plen], a[1]["prompt_token_ids"][:plen])
+        for r in a:
+            self.assertGreaterEqual(r["prompt_len"], 4096)
+            self.assertLessEqual(r["prompt_len"], 24576)
+            self.assertGreaterEqual(r["output_length"], 128)
+            self.assertLessEqual(r["output_length"], 1024)
+        arrivals = [r["arrival_ts"] for r in a]
+        self.assertEqual(arrivals, sorted(arrivals))
+        self.assertEqual({r["session_id"] for r in a}, {f"g{i}" for i in range(4)})
+
+    def test_load_trace_carries_arrivals_and_sessions(self):
+        import tempfile
+        sb = self._sb()
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "t.jsonl"
+            p.write_text(
+                json.dumps({"input_length": 8, "output_length": 4,
+                            "timestamp": 2000, "session_id": "s1"}) + "\n"
+                + json.dumps({"prompt_token_ids": [5, 6, 7], "output_length": 2,
+                              "arrival_ts": 3.5}) + "\n"
+            )
+            reqs = sb.load_trace(str(p))
+        self.assertEqual(reqs[0]["arrival_ts"], 2.0)  # Mooncake ms -> seconds
+        self.assertEqual(reqs[0]["session_id"], "s1")
+        self.assertEqual(reqs[0]["output_length"], 4)
+        self.assertEqual(reqs[1]["prompt_token_ids"], [5, 6, 7])
+        self.assertEqual(reqs[1]["arrival_ts"], 3.5)
+        self.assertEqual(reqs[1]["output_length"], 2)
+
+    def test_trace_serve_helpers_are_gpu_free(self):
+        # The serving replay must import without vLLM (CI has no GPU stack).
+        sys.path.insert(0, str(CROSSVAL))
+        try:
+            import trace_serve
+            importlib.reload(trace_serve)
+        finally:
+            sys.path.pop(0)
+        offs = trace_serve.plan_arrivals(
+            [{"arrival_ts": 10.0}, {"arrival_ts": 11.0}, {"arrival_ts": 14.0}], speed=2.0)
+        self.assertEqual(offs, [0.0, 0.5, 2.0])
+        self.assertEqual(trace_serve.plan_arrivals([{}, {}], speed=1.0), [0.0, 0.0])
+        s = trace_serve.summarize(
+            [{"ttft_ms": 10.0, "tpot_ms": 5.0, "out_tokens": 3},
+             {"ttft_ms": 30.0, "tpot_ms": None, "out_tokens": 1},
+             {"ttft_ms": 20.0, "tpot_ms": 7.0, "out_tokens": 3}], wall_s=2.0)
+        self.assertEqual(s["n"], 3)
+        self.assertEqual(s["ttft_ms"]["p50"], 20.0)
+        self.assertEqual(s["ttft_ms"]["p99"], 30.0)
+        self.assertEqual(s["tpot_ms"]["p50"], 7.0)  # single-token req skipped
+        self.assertEqual(s["tpot_ms"]["p90"], 7.0)
+        self.assertAlmostEqual(s["tok_s"], 3.5)
 
 
 if __name__ == "__main__":

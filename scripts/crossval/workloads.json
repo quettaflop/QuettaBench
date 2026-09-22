@@ -27,6 +27,12 @@
       [1024, 8], [1024, 16], [1024, 32], [1024, 64],
       [4096, 8], [4096, 16], [4096, 32], [4096, 64]
     ],
+    "qwen3": [
+      [1024,   1], [1024,  4], [1024, 16], [1024, 64],
+      [4096,   1], [4096,  4], [4096, 16], [4096, 64],
+      [8192,   1], [8192,  4], [8192, 16], [8192, 64],
+      [16384,  1], [16384, 4], [16384, 16], [16384, 64]
+    ],
     "smoke": [[100, 1]]
   },
   "workloads": {
@@ -93,6 +99,23 @@
       "grid": "qwen",
       "verified": false
     },
+    "qwen3": {
+      "name": "Qwen3.8-27B",
+      "dtype": "bfloat16",
+      "weights_gib": 54,
+      "maxlen": 40960,
+      "tp": 4,
+      "grid": "qwen3",
+      "kv_bytes": 65536,
+      "bench": {
+        "crate": "qwen",
+        "test": "decode_loop",
+        "env": "QW",
+        "family": "gdn",
+        "ok": "^LOOP "
+      },
+      "verified": false
+    },
     "deepseek": {
       "name": "DeepSeek-V4-Flash-0731",
       "dtype": "bfloat16",
@@ -104,6 +127,13 @@
       "kv_dtype": "fp8_ds_mla",
       "kv_bytes": 24768,
       "comm_bound_bs": 64,
+      "bench": {
+        "crate": "deepseek",
+        "test": "batch_bench",
+        "env": "DS",
+        "family": "moe",
+        "ok": "^\\[batch_bench\\] .*layers=all"
+      },
       "verified": false
     }
   }

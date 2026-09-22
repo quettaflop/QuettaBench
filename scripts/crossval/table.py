@@ -16,16 +16,21 @@ MS = {"ns": 1e-6, "us": 1e-3, "µs": 1e-3, "ms": 1.0, "s": 1e3}
 
 
 def _loop_points(text):
-    """(ctx, bs, tp) -> (ms, "decode_loop", kv) from the engine's LOOP lines:
-    K pipelined decode steps timed under one sync, the same quantity as the
-    baseline's slope."""
+    """(ctx, bs, tp) -> (ms, group, kv) from the engine's LOOP lines.
+    mode=eager rows get their own group so graph and eager never share a column."""
     pts = {}
+    gdns = set()
     for line in text.splitlines():
         if not line.startswith("LOOP "):
             continue
         d = dict(re.findall(r"(\w+)=([\w.]+)", line))
         key = (int(d["ctx"]), int(d["bs"]), int(d.get("tp", "1")))
-        pts[key] = (float(d["ms_per_step"]), "decode_loop", d.get("kv"))
+        group = "decode_loop_eager" if d.get("mode") == "eager" else "decode_loop"
+        pts[key] = (float(d["ms_per_step"]), group, d.get("kv"))
+        if d.get("gdn"):
+            gdns.add(d["gdn"])
+    if gdns:
+        print(f"engine gdn kernel(s): {', '.join(sorted(gdns))}")
     return pts
 
 
@@ -105,6 +110,7 @@ def main():
         f"{cache.get('dtype', '?')}  grid {cache.get('grid', '?')}  {cache['mode']}"
         + (f"  bench {cache['bench_sha'][:9]}" if cache.get("bench_sha") else "")
         + (f"  engine {cache['engine_sha'][:9]}" if cache.get("engine_sha") else "")
+        + (f"  prompts {cache['prompt_mode']}" if cache.get("prompt_mode") else "")
         + (f"  nccl={nccl_algo}/{nccl_proto}" if nccl_algo or nccl_proto else "")
     )
     if age_d > STALE_DAYS:
@@ -116,10 +122,8 @@ def main():
     elif nccl_proto and eng_nccl_proto and nccl_proto != eng_nccl_proto:
         print(f"NCCL MISMATCH engine={eng_nccl_algo}/{eng_nccl_proto} vllm={nccl_algo}/{nccl_proto}")
 
-    # comm_bound_bs from the merged workloads (json base + yaml overlay).
-    # cache["model"] holds the display name, so match either the crate key or
-    # the record's name field. Absent means the workload is never comm-bound
-    # (tp1 has no TP allreduce); no invented default.
+    # comm_bound_bs from the merged workloads, matched on crate key or record
+    # name. Absent means never comm-bound (tp1 has no TP allreduce); no default.
     crate = cache.get("model", "")
     comm_bound_bs = None
     for _wname, _wl in _xval.workloads().items():
@@ -163,6 +167,9 @@ def main():
         comm_flagged = comm_bound_bs is not None and bs >= comm_bound_bs
         if comm_flagged:
             flag += "  COMM"
+        # Eager rows include per-step host enqueue; the flag keeps that visible.
+        if group == "decode_loop_eager":
+            flag += "  EAGER"
         if matched and not kv_flagged and not comm_flagged:
             ratio = f"{(bs * 1000.0 / ms_a) / p['tok_s']:>6.2f}x"
         else:
