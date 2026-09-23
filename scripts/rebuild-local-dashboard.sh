@@ -105,6 +105,32 @@ fi
 
 mkdir -p "$STATE_ROOT" "$BENCH_ARTIFACT_DIR"
 
+# Drop bulky top-level result trees from the 15-minute rebuild. archived/
+# holds the 10-47MB *_conc320.json files; the slim data.archived.json artifact
+# is left as last-written unless BENCH_INCLUDE_ARCHIVED=1.
+if [[ "${BENCH_INCLUDE_ARCHIVED:-0}" != "1" ]]; then
+    BENCH_SKIP_RESULT_DIRS="${BENCH_SKIP_RESULT_DIRS:-archived}"
+fi
+if [[ -n "${BENCH_SKIP_RESULT_DIRS:-}" ]]; then
+    filtered="$(mktemp -d "${TMPDIR:-/tmp}/bench-results-view.XXXXXX")"
+    cleanup_filtered() { rm -rf "$filtered"; }
+    trap cleanup_filtered EXIT
+    IFS=',' read -r -a skip_names <<< "$BENCH_SKIP_RESULT_DIRS"
+    for entry in "$RESULTS_DIR"/*; do
+        [[ -e "$entry" ]] || continue
+        base="$(basename "$entry")"
+        skip=0
+        for raw_name in "${skip_names[@]}"; do
+            name="${raw_name// /}"
+            [[ -n "$name" && "$base" == "$name" ]] && skip=1 && break
+        done
+        [[ "$skip" -eq 1 ]] && continue
+        ln -s "$(realpath "$entry")" "$filtered/$base"
+    done
+    echo "Skipping result dirs: $BENCH_SKIP_RESULT_DIRS"
+    RESULTS_DIR="$filtered"
+fi
+
 echo "Building sweep-state.json from $STATE_ROOT"
 python3 "$SCRIPT_DIR/publish_sweep_state.py" \
     --state-dir "$STATE_ROOT" \
@@ -117,7 +143,13 @@ echo "Building data.json from $RESULTS_DIR into $BENCH_ARTIFACT_DIR"
 # it at BENCH_ARTIFACT_DIR keeps every produced JSON out of the QuettaBoard checkout.
 (
     cd "$DASHBOARD_DIR"
-    BENCHMARK_RESULTS_DIR="$RESULTS_DIR" DASHBOARD_DATA_OUTPUT="$BENCH_ARTIFACT_DIR/data.json" npm run build:data
+    # Omit per_request before JSON.parse. Those arrays are 10-47MB and are
+    # discarded after parse; reading them charged ~40G of page cache to this
+    # oneshot and OOMed ns3187073 on 2026-09-13.
+    export BENCHMARK_RESULTS_DIR="$RESULTS_DIR"
+    export DASHBOARD_DATA_OUTPUT="$BENCH_ARTIFACT_DIR/data.json"
+    export NODE_OPTIONS="${NODE_OPTIONS:-} --require ${SCRIPT_DIR}/omit-per-request-fs-hook.cjs"
+    npm run build:data
 )
 
 echo "Validating data.json"
@@ -200,7 +232,7 @@ if [[ "$MIRROR_R2" == "1" ]]; then
                 # decompress transparently and the wire size drops ~5-10x.
                 # Uploading raw here would undo that for every consumer.
                 gz_tmp="$(mktemp)"
-                gzip -9 -c "$path" > "$gz_tmp"
+                gzip -1 -c "$path" > "$gz_tmp"
                 aws --profile "$PROFILE" --endpoint-url "$ENDPOINT" s3 cp \
                     "$gz_tmp" "s3://$BUCKET/json/current/$artifact" \
                     --content-encoding gzip --content-type application/json \

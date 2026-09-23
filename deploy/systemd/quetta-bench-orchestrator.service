@@ -21,4 +21,9 @@ Environment=BENCH_RECLAIM_BEFORE_DISPATCH=1
 Environment=BENCH_RECLAIM_EXECUTE=1
 Environment=BENCH_ARTIFACT_DIR=/mnt/100g/agent-bench/artifacts
 Environment=DASHBOARD_DIR=/root/QuettaBoard
+MemoryAccounting=yes
+MemoryHigh=2G
+MemoryMax=4G
+OOMPolicy=stop
+TimeoutStartSec=15min
 ExecStart=/usr/bin/env bash /root/QuettaBench/scripts/run-bench-orchestrator-service.sh
