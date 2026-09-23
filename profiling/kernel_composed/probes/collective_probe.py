@@ -4,7 +4,7 @@
 Method B for the kernel-composed backend. Sweeps message size across the ranks for
 EVERY collective LLM inference emits, and writes the whole curve to
 
-    kernel_data/ncu/collectives/{GPU}_tp{world}.csv   (op, world, bytes, latency_us, ...)
+    kernel_data/graph/collectives/{GPU}_tp{world}.csv   (op, world, bytes, latency_us, ...)
 
   all_reduce      TP: 2 per layer (after o-proj, after down-proj)
   reduce_scatter  TP + sequence parallelism: replaces half of each all-reduce
@@ -92,7 +92,7 @@ def main():
     ap.add_argument("--hidden", type=int, required=True, help="model hidden_size (for prefill rate)")
     ap.add_argument("--layers", type=int, required=True, help="model n_layers (for prefill rate)")
     ap.add_argument("--out-dir", default=None,
-                    help="kernel_data root; the grid lands in <out-dir>/ncu/allreduce/ "
+                    help="kernel_data root; the grid lands in <out-dir>/graph/allreduce/ "
                          "(default: $KDATA, else engine/data/kernel_data). '-' skips the write.")
     ap.add_argument("--prefill-tokens", type=int, default=2048, help="chunk width for the per-token rate")
     ap.add_argument("--ops", default="all_reduce,all_gather,reduce_scatter,all_to_all",
@@ -139,7 +139,7 @@ def main():
         # ── Method B: the whole curve, as a grid ──────────────────────────────
         if a.out_dir != "-":
             root = Path(a.out_dir or os.environ.get("KDATA") or kernel_data_root())
-            out = root / "ncu" / "collectives" / f"{a.gpu_label}_tp{world}.csv"
+            out = root / "graph" / "collectives" / f"{a.gpu_label}_tp{world}.csv"
             out.parent.mkdir(parents=True, exist_ok=True)
             with out.open("w", newline="") as f:
                 w = csv.writer(f)
@@ -148,6 +148,13 @@ def main():
                     w.writerow([op, wd, nbytes, round(t_us, 4), 2])
             got = sorted({op for op, _, _, _ in rows})
             print(f"wrote {out}  ({len(rows)} points, world={world}, ops={got})\n")
+            import sys as _sys  # noqa: PLC0415
+            _sys.path.insert(0, str(Path(__file__).resolve().parent))
+            from _manifest import write_manifest  # noqa: PLC0415
+            write_manifest(out, mode="amortized_wallclock", tool="collective_probe.py",
+                           reduce="whole back-to-back loop / iters (see _time_op)", gpu_label=a.gpu_label,
+                           reps=_ITERS, warmup=_WARMUP, upsert=True,
+                           notes=f"plain NCCL via torchrun, world={world}, ops={got}; amortized timing as graphed decode replays collectives")
 
         # ── legacy two-scalar block (tp-invariant; kept for refreshes) ────────
         print(f"[{a.gpu_label}] all-reduce over {world} ranks, hidden={a.hidden} layers={a.layers}\n")

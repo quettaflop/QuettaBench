@@ -1,6 +1,6 @@
 # Kernel-composed tables for QuettaSim (`engine/data/kernel_data/`).
 #
-# These probes write the ncu/ vs cuda_event/ layout kernel_composed interpolates.
+# These probes write the graph/ vs eager/ layout kernel_composed interpolates.
 # They are a different family from profiling/probes/ (live-server / serving-wall).
 #
 # When QuettaBench is a submodule of QuettaSim, tables land in the parent checkout.
@@ -40,42 +40,77 @@ gpu-info:
         nvidia-smi --query-gpu=index,name,memory.used,utilization.gpu --format=csv
     fi
 
-# Storage is method-explicit: ncu/ = graphed-decode-faithful, cuda_event/ =
-# eager-prefill-faithful. The QuettaSim loader reads decode+gemm+elementwise from
-# ncu/, prefill from cuda_event/.
+# Storage is method-explicit (QuettaSim kernel_composed/provenance.py):
+#   graph/  dispatch-free timing = CUDA-graph replay (the standard, `--graph`),
+#           faithful for CUDA-graphed DECODE. `*-ncu` recipes are the NCU cross-check.
+#   eager/  wall-clock incl. per-launch dispatch (`*-eager`), faithful for PREFILL.
+# The loader reads decode grids + gemm + elementwise from graph/, prefill from eager/,
+# and reports any cross-dir fallback. Every recipe writes <table>.meta.json beside the
+# table (probes/_manifest.py); `just -f $QUETTASIM/justfile kernel-manifest` checks them.
 
-gemm-cuda-event gpu=gpu:
+# GEMM grid, graph-replay timed (default). `wide` for the MoE wide-shape table.
+gemm gpu=gpu:
+    ./run_probe.sh gemm_probe.py --gpu-label {{gpu}} --graph
+
+gemm-wide gpu=gpu:
+    ./run_probe.sh gemm_probe.py --gpu-label {{gpu}} --graph --wide
+
+gemm-fp8 gpu=gpu:
+    ./run_probe.sh gemm_probe.py --gpu-label {{gpu}} --graph --dtype fp8
+
+gemm-eager gpu=gpu:
     ./run_probe.sh gemm_probe.py --gpu-label {{gpu}}
 
-gemm-cuda-event-wide gpu=gpu:
+gemm-eager-wide gpu=gpu:
     ./run_probe.sh gemm_probe.py --gpu-label {{gpu}} --wide
 
-# NCU GEMM (the STANDARD). Needs a real ncu: NCU_BIN=/opt/nvidia/nsight-compute/.../ncu
+# NCU cross-check of the graph grid. Needs a real ncu: NCU_BIN=/opt/nvidia/nsight-compute/.../ncu
 gemm-ncu gpu=gpu:
     ./run_probe.sh gemm_probe.py --gpu-label {{gpu}} --ncu
 
 gemm-ncu-wide gpu=gpu:
     ./run_probe.sh gemm_probe.py --gpu-label {{gpu}} --ncu --wide
 
+# Elementwise affine fits on the REAL vLLM fused kernels, graph-replay timed (needs vllm).
 elementwise gpu=gpu:
-    ./run_probe.sh elementwise_probe.py --gpu-label {{gpu}}
+    ./run_probe.sh elementwise_probe.py --gpu-label {{gpu}} --graph --vllm
 
+elementwise-eager gpu=gpu:
+    ./run_probe.sh elementwise_probe.py --gpu-label {{gpu}} --vllm
+
+# torch-chain proxies (no vllm in the env); the fused-kernel fit above is preferred.
+elementwise-torch gpu=gpu:
+    ./run_probe.sh elementwise_probe.py --gpu-label {{gpu}} --graph
+
+# Flash decode grid (graph-replay) + prefill grid (eager), one head config per run.
 flash gpu=gpu tag="tp1" nh="32" nkv="8" hd="128" layers="32":
+    ./run_probe.sh flash_attn_probe.py --gpu-label {{gpu}} --tag {{tag}} --n-heads {{nh}} --n-kv-heads {{nkv}} --head-dim {{hd}} --layers {{layers}} --graph
+
+flash-eager gpu=gpu tag="tp1" nh="32" nkv="8" hd="128" layers="32":
     ./run_probe.sh flash_attn_probe.py --gpu-label {{gpu}} --tag {{tag}} --n-heads {{nh}} --n-kv-heads {{nkv}} --head-dim {{hd}} --layers {{layers}}
 
 flash-ncu gpu=gpu tag="tp1" nh="32" nkv="8" hd="128" layers="32":
     ./run_probe.sh flash_attn_probe.py --gpu-label {{gpu}} --tag {{tag}} --n-heads {{nh}} --n-kv-heads {{nkv}} --head-dim {{hd}} --layers {{layers}} --ncu
 
-moe gpu=gpu geoms="qwen3-30b-a3b,mixtral-8x7b,gpt-oss-20b,gpt-oss-120b" tp="1,2,4":
-    ./run_probe.sh moe_probe.py --gpu-label {{gpu}} --geometries {{geoms}} --tp {{tp}}
+# Grouped-MoE grid, graph-replay timed. backend: triton (vLLM < 0.28 fused_experts)
+# or flashinfer (the CUTLASS kernel vLLM >= 0.28 serves bf16 MoE with).
+moe gpu=gpu geoms="qwen3-30b-a3b,mixtral-8x7b,gpt-oss-20b,gpt-oss-120b" tp="1,2,4" backend="triton":
+    ./run_probe.sh moe_probe.py --gpu-label {{gpu}} --geometries {{geoms}} --tp {{tp}} --graph --backend {{backend}}
 
+moe-eager gpu=gpu geoms="qwen3-30b-a3b,mixtral-8x7b,gpt-oss-20b,gpt-oss-120b" tp="1,2,4" backend="triton":
+    ./run_probe.sh moe_probe.py --gpu-label {{gpu}} --geometries {{geoms}} --tp {{tp}} --backend {{backend}}
+
+# Gated-DeltaNet decode (graph-replay) + prefill (eager) grids, Qwen3.5-style hybrids.
 gdn gpu=gpu geom="9b" hv="32" dk="128" dv="128" nlin="24" mode="full":
+    ./run_probe.sh gdn_probe.py --gpu-label {{gpu}} --geometry-tag {{geom}} --hv {{hv}} --dk {{dk}} --dv {{dv}} --n-linear {{nlin}} --mode {{mode}} --graph
+
+gdn-eager gpu=gpu geom="9b" hv="32" dk="128" dv="128" nlin="24" mode="full":
     ./run_probe.sh gdn_probe.py --gpu-label {{gpu}} --geometry-tag {{geom}} --hv {{hv}} --dk {{dk}} --dv {{dv}} --n-linear {{nlin}} --mode {{mode}}
 
 gdn-ncu gpu=gpu geom="9b" hv="32" dk="128" dv="128" nlin="24":
     ./run_probe.sh gdn_probe.py --gpu-label {{gpu}} --geometry-tag {{geom}} --hv {{hv}} --dk {{dk}} --dv {{dv}} --n-linear {{nlin}} --ncu
 
-# NCCL grid -> kernel_data/ncu/collectives/. Also prints a legacy tp_comm: YAML block.
+# NCCL grid -> kernel_data/graph/collectives/. Also prints a legacy tp_comm: YAML block.
 collectives gpu=gpu world="2" hidden="4096" layers="32" ops="all_reduce,all_gather,reduce_scatter,all_to_all" gpu_ids="0,1":
     NPROC={{world}} GPU_IDS={{gpu_ids}} ./run_probe.sh collective_probe.py --gpu-label {{gpu}} --hidden {{hidden}} --layers {{layers}} --ops {{ops}}
 
@@ -104,14 +139,16 @@ serving-profile gpu=gpu model="Qwen3.5-9B" model_yaml=_default_model_yaml base_u
     {{py}} probes/serving_frontend_probe.py --gpu-label {{gpu}} --model {{model}} \
         --model-yaml {{model_yaml}} --base-url {{base_url}} --tp {{tp}}
 
+# GPU-generic tables, graph-replay timed (what the loader prefers).
 profile-gpu gpu=gpu:
-    just gpu={{gpu}} gemm-ncu
+    just gpu={{gpu}} gemm
     just gpu={{gpu}} elementwise
     @echo ""
     @echo "GPU-generic tables done for {{gpu}}. Head-config-specific next:"
     @echo "  just gpu={{gpu}} flash tag=tp1 nh=<Hq> nkv=<Hkv> hd=<head_dim>"
+    @echo "  just gpu={{gpu}} moe backend=flashinfer   # MoE models on vLLM >= 0.28"
     @echo "  just gpu={{gpu}} gdn  geom=9b     # Qwen3.5 hybrids only"
-    @echo "Then in QuettaSim: just derive-device gpu={{gpu}}"
+    @echo "Then in QuettaSim: just derive-device gpu={{gpu}} && just kernel-manifest"
 
 mirror-preview:
     aws --profile {{r2_profile}} --endpoint-url {{r2_endpoint}} s3 sync {{kdata}}/ s3://{{r2_bucket}}/{{r2_prefix}}/ --dryrun --exclude '*/__pycache__/*' --exclude '*.pyc'

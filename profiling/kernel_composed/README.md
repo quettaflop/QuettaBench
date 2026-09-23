@@ -1,6 +1,6 @@
 # kernel_composed probes — tables for QuettaSim
 
-Writes the `ncu/` vs `cuda_event/` layout that QuettaSim `kernel_composed`
+Writes the `graph/` vs `eager/` layout that QuettaSim `kernel_composed`
 interpolates. Not the live-server / serving-wall probes in `profiling/probes/`.
 
 The `kernel_composed` cost backend prices each serving step from **measured**
@@ -9,8 +9,14 @@ new GPU, you profile that GPU's kernels once and drop the tables into that tree.
 This harness automates the collection.
 
 All probes are **CUDA-event timed** against the production kernels (vLLM's
-`flash_attn_varlen_func`, `torch.matmul`, vLLM's vendored Gated-DeltaNet ops) — no
-NCU required — so a user/client can run them with just a torch+vLLM environment.
+`flash_attn_varlen_func`, `torch.matmul`, vLLM's fused MoE / Gated-DeltaNet ops), in
+one of two modes (`probes/_timing.py`): **graph** (the op captured into a CUDA graph
+and its replay timed -- dispatch-free, how vLLM runs decode; tables go to `graph/`)
+or **eager** (each launch timed as issued, dispatch included -- how vLLM runs
+prefill; tables go to `eager/`). No NCU required, so a user/client can run them with
+just a torch+vLLM environment; `*-ncu` recipes exist only as a cross-check. Every
+table is written with a `<table>.meta.json` sidecar (`probes/_manifest.py`) naming
+the mode, tool, reduce, host and software versions.
 
 ```bash
 # from a QuettaSim checkout (QuettaBench as submodule):
@@ -23,8 +29,9 @@ QUETTASIM=/path/to/QuettaSim just gpu=A100 profile-gpu
 ```
 
 Tables land in `$QUETTASIM/data/kernel_data/` (or `KERNEL_DATA`). Schema
-contract: filenames `{gpu}[_tpN].csv`, method split `ncu/` (graphed decode) vs
-`cuda_event/` (eager prefill), columns as the current H100/A100 tables.
+contract: filenames `{gpu}[_fp8].csv`, method split `graph/` (dispatch-free, decode)
+vs `eager/` (dispatch included, prefill), columns as the current tables, one
+`.meta.json` beside each table.
 
 ## Requirements
 - `just` (recipe runner), and on the GPU box: python with `torch` + `vllm`.
@@ -48,15 +55,15 @@ contract: filenames `{gpu}[_tpN].csv`, method split `ncu/` (graphed decode) vs
    just gpu=X flash tag=tp1 nh=<Hq> nkv=<Hkv> hd=<head_dim>   # per model head config
    just gpu=X flash tag=tp2 nh=<Hq/2> nkv=<Hkv/2> hd=<head_dim>   # sharded, if you run tp2
    just gpu=X gdn geom=9b                         # ONLY for Qwen3.5-style hybrids
-   just gpu=X moe                                 # ONLY if you serve MoE models
+   just gpu=X moe backend=flashinfer              # ONLY if you serve MoE models
    ```
-   Tables land in the method-explicit layout under `$QUETTASIM/data/kernel_data/`
-   (`ncu/` = graphed-decode-faithful, `cuda_event/` = eager-prefill-faithful):
-   `ncu/gemm/X.csv`, `cuda_event/elementwise/X.json`,
-   `{ncu,cuda_event}/flash_attn/X[_tpN].csv` (decode; ncu with `flash-ncu`),
-   `cuda_event/fa3_prefill/X[_tpN].csv` (prefill),
-   `{ncu,cuda_event}/gdn/X_<geom>_{decode,prefill}.csv`,
-   `cuda_event/moe/X.csv` + `cuda_event/moe/X_routing.json`.
+   Every recipe is graph-replay timed by default; `*-eager` writes the eager
+   companion. Tables land under `$QUETTASIM/data/kernel_data/`:
+   `graph/gemm/X.csv`, `graph/elementwise/X.json`,
+   `graph/flash_attn/X.csv` (decode) + `eager/fa3_prefill/X.csv` (prefill),
+   `graph/gdn/X_<geom>_decode.csv` + `eager/gdn/X_<geom>_prefill.csv`,
+   `graph/moe/X.csv` + `graph/moe/X_routing.json`, each with a `.meta.json`.
+   Then `just -f $QUETTASIM/justfile kernel-manifest` to check the manifests.
 
 3. **Derive `util_flops` / `util_bw`** for `X.yaml` — these anchor the analytic
    roofline *fallback* (used for off-grid cells). Read them off the collected
@@ -94,17 +101,17 @@ when done.
 ## Probes (`probes/`)
 | probe | table | axis |
 |---|---|---|
-| `gemm_probe.py` | `{method}/gemm/{gpu}.csv` (`--wide` → `{method}/gemm_wide/`; `--ncu` → `ncu/`, else `cuda_event/`) | M × (N,K) |
-| `flash_attn_probe.py` | decode → `{ncu if --ncu else cuda_event}/flash_attn/{gpu}[_tpN].csv`; prefill → `cuda_event/fa3_prefill/{gpu}[_tpN].csv` (always) | decode (kv×batch), prefill (seq) |
-| `cross_attn_probe.py` | `cuda_event/fa3_cross/{gpu}.csv` | chunked-prefill attention PER LAYER over (q_len × resident_tokens) — the rectangular shape neither the decode (q=1) nor the full-causal prefill grid covers; on long-ISL traces it dominates prefill attention FLOPs. One run per head config (`--n-heads/--n-kv-heads/--head-dim`), upserts |
-| `collective_probe.py` | `ncu/collectives/{gpu}_tp{N}.csv` | plain-NCCL collectives over decode-step payloads (torchrun); also prints a legacy `tp_comm:` YAML block |
-| `vllm_allreduce_probe.py` | `ncu/collectives/{gpu}_tp{N}.csv` (all_reduce rows, `path=vllm`) | torchrun; times TP all-reduce through vLLM's OWN `GroupCoordinator` (custom allreduce on) next to plain NCCL. NOTE: vLLM ≥0.27 fuses allreduce+rmsnorm under torch.compile (`fuse_allreduce_rms`), so this standalone grid over-prices graphed decode — see h200.yaml `tp_comm.source` |
-| `elementwise_probe.py` | `cuda_event/elementwise/{gpu}.json` | affine `floor_us + bytes/eff_bw` per kernel. **Prefer `--vllm --graph`** (needs a vLLM env): times the REAL fused kernels (`rms_norm`, `fused_add_rms_norm`, `silu_and_mul`, `rotary_embedding`, `reshape_and_cache_flash`) instead of multi-kernel torch-chain proxies, and adds the `fused_add_rmsnorm` + `kv_cache_write` entries the composition prefers when present (each fused entry replaces a two-kernel proxy pair). The torch-chain default overpriced vLLM's fused ops ~2-3 ms/step at 48 layers |
-| `gdn_probe.py` | decode → `{ncu if --ncu else cuda_event}/gdn/{gpu}_{geom}_decode.csv`; prefill → `cuda_event/gdn/…_prefill.csv` (always) | Gated-DeltaNet; prefill (seq), decode (batch) |
-| `moe_probe.py` | `cuda_event/moe/{gpu}.csv` + `cuda_event/moe/{gpu}_routing.json` (cuda_event **always**) | tokens × (n_experts, top_k, intermediate, hidden) |
-| `reparallel_probe.py` | `cuda_event/reparallel/{gpu}_reshard[_dp\|_ep].csv` | torchrun; NVLink cost of switching parallelism in place (tp reshard, dp replica broadcast, ep expert restage; `--mode xnode/plan` for cross-node, see the probe header) |
-| `kv_transfer_probe.py` | `cuda_event/kv_transfer/{gpu}.csv` | PD KV hand-off through NIXL/UCX, laid out as vLLM's NixlConnector issues it (descriptor list per (layer, block)) |
-| `pd_host_probe.py` | `cuda_event/pd_host/{gpu}.csv` | per-request HOST cost of a PD pair by prompt length (parse/template/tokenize/hash, paid on P and again on D) |
+| `gemm_probe.py` | `{graph if --graph/--ncu else eager}/gemm/{gpu}[_fp8].csv` (`--wide` → `gemm_wide/`) | M × (N,K) |
+| `flash_attn_probe.py` | decode → `{graph if --graph/--ncu else eager}/flash_attn/{gpu}.csv`; prefill → `eager/fa3_prefill/{gpu}.csv` (always) | decode (kv×batch), prefill (seq) |
+| `cross_attn_probe.py` | `eager/fa3_cross/{gpu}.csv` | chunked-prefill attention PER LAYER over (q_len × resident_tokens) — the rectangular shape neither the decode (q=1) nor the full-causal prefill grid covers; on long-ISL traces it dominates prefill attention FLOPs. One run per head config (`--n-heads/--n-kv-heads/--head-dim`), upserts |
+| `collective_probe.py` | `graph/collectives/{gpu}_tp{N}.csv` | plain-NCCL collectives over decode-step payloads (torchrun); also prints a legacy `tp_comm:` YAML block |
+| `vllm_allreduce_probe.py` | `graph/collectives/{gpu}_tp{N}.csv` (all_reduce rows, `path=vllm`) | torchrun; times TP all-reduce through vLLM's OWN `GroupCoordinator` (custom allreduce on) next to plain NCCL. NOTE: vLLM ≥0.27 fuses allreduce+rmsnorm under torch.compile (`fuse_allreduce_rms`), so this standalone grid over-prices graphed decode — see h200.yaml `tp_comm.source` |
+| `elementwise_probe.py` | `{graph if --graph else eager}/elementwise/{gpu}.json` | affine `floor_us + bytes/eff_bw` per kernel. **Prefer `--vllm --graph`** (needs a vLLM env): times the REAL fused kernels (`rms_norm`, `fused_add_rms_norm`, `silu_and_mul`, `rotary_embedding`, `reshape_and_cache_flash`) instead of multi-kernel torch-chain proxies, and adds the `fused_add_rmsnorm` + `kv_cache_write` entries the composition prefers when present (each fused entry replaces a two-kernel proxy pair). The torch-chain default overpriced vLLM's fused ops ~2-3 ms/step at 48 layers |
+| `gdn_probe.py` | decode → `{graph if --graph/--ncu else eager}/gdn/{gpu}_{geom}_decode.csv`; prefill → `eager/gdn/…_prefill.csv` (always) | Gated-DeltaNet; prefill (seq), decode (batch) |
+| `moe_probe.py` | `{graph if --graph else eager}/moe/{gpu}[_fp8].csv` + `…/{gpu}_routing.json` (`--backend triton|flashinfer`) | tokens × (n_experts, top_k, intermediate, hidden) |
+| `reparallel_probe.py` | `eager/reparallel/{gpu}_reshard[_dp\|_ep].csv` | torchrun; NVLink cost of switching parallelism in place (tp reshard, dp replica broadcast, ep expert restage; `--mode xnode/plan` for cross-node, see the probe header) |
+| `kv_transfer_probe.py` | `eager/kv_transfer/{gpu}.csv` | PD KV hand-off through NIXL/UCX, laid out as vLLM's NixlConnector issues it (descriptor list per (layer, block)) |
+| `pd_host_probe.py` | `eager/pd_host/{gpu}.csv` | per-request HOST cost of a PD pair by prompt length (parse/template/tokenize/hash, paid on P and again on D) |
 | `decode_batch_probe.py` | mixed-step profile CSV | controlled decode-step-vs-batch curve, pins batched-decode pricing at concurrency |
 | `fused_block_probe.py` | mixed-step profile CSV | ONE real transformer-block forward, to check the additivity assumption in `fused_step_ms` without a checkpoint |
 
@@ -128,39 +135,53 @@ more than one operating point. Measure the kernel and the constant can go.
 
 Timing method: the launch-cost rationale above only holds for EAGER execution —
 vLLM **CUDA-graphs MoE decode**, so the decode-faithful grid is dispatch-free.
-Use `--graph` (CUDA-graph-replay timing -> `ncu/moe/`, preferred by the loader);
-the eager default (`cuda_event/moe/`) overpriced H200 graphed decode 2.3x
-(188us vs 80.8us/layer at 8 tokens). `--graph` works on hosts where NCU counters
-are locked (`RmProfilingAdminOnly: 1`) — see `probes/_graph.py`. Loading a
-measured MoE grid also retires the `_decode_host_floor_us` patch automatically.
+The `moe` recipe passes `--graph` (CUDA-graph-replay timing -> `graph/moe/`, what
+the loader prefers); the eager companion (`moe-eager` -> `eager/moe/`) overpriced
+H200 graphed decode 2.3x (188us vs 80.8us/layer at 8 tokens). Loading a measured
+MoE grid also retires the `_decode_host_floor_us` patch automatically. The
+RTXPRO6000 grid was swept with a v2 harness (real routing replayed, weight sets
+cycled) that is not yet in this tree — see PROVENANCE.md "MoE grid sweep
+methodology" for what the plain probe's uniform-routing sweep gets wrong at decode.
 
 **MXFP4-expert models (gpt-oss) are swept for shape coverage but deliberately are not
 priced off this bf16 grid** — only the weight-read term scales with expert dtype, and
 a measured latency can't be decomposed after the fact. They keep the roofline until an
 MXFP4 grid exists.
 
-## Measurement method (important): decode → NCU, prefill → cuda_event
+## Measurement method (important): decode → graph, prefill → eager
 
-Which timing method is *faithful* depends on how the kernel runs in serving, so
-`kernel_data` is split by method (`ncu/` vs `cuda_event/`) and the loader reads
-each kernel from the right one:
+Which timing mode is *faithful* depends on how the kernel runs in serving, so
+`kernel_data` is split by mode (`graph/` vs `eager/`) and the loader reads each
+kernel from the right one (`kernel_composed/provenance.py` in QuettaSim):
 
 - **Decode is CUDA-graphed** — the graph replays all decode kernels with no
-  per-launch CPU dispatch, so NCU (pure kernel time) equals the achieved time.
-  Decode grids + gemm + elementwise come from `ncu/`. Use `gemm-ncu`, `flash-ncu`,
-  `gdn-ncu` (need a real `ncu`: `NCU_BIN=/opt/nvidia/nsight-compute/2024.3.2/ncu`,
-  NOT stock `/usr/bin/ncu`).
+  per-launch CPU dispatch, so dispatch-free time equals the achieved time. Decode
+  grids + gemm + elementwise + MoE come from `graph/`, measured by capturing the op
+  into a `torch.cuda.CUDAGraph` and timing `replay()` (`probes/_graph.py`; MIN over
+  replays). This is what every default recipe does (`gemm`, `elementwise`, `flash`,
+  `moe`, `gdn` all pass `--graph`). It needs no profiler counters, so it runs on
+  boxes with `RmProfilingAdminOnly=1`, and it runs at the clocks the GPU serves at.
 - **Prefill is eager** (dynamic shapes, not graphed) — every kernel pays its
-  dispatch cost, which cuda_event captures and NCU misses. Prefill grids come from
-  `cuda_event/`. The `flash`/`gdn` probes always emit prefill via cuda_event (even
-  under `--ncu`, which only switches the *decode* grid).
+  dispatch cost, which eager timing captures (MEDIAN over calls) and dispatch-free
+  timing misses. Prefill grids come from `eager/`. The `flash`/`gdn` probes always
+  emit prefill eager (even under `--graph`/`--ncu`, which only switch the *decode*
+  grid).
 
 The dispatch overhead is real and host-specific: GDN prefill's 8 tiny Triton
 sub-kernels floor at ~500µs on A100 (~62µs/launch) vs far less on H100 — which is
-exactly why NCU alone can't reconstruct prefill. Every table's method is recorded
-in `$QUETTASIM/data/kernel_data/PROVENANCE.md`; keep a GPU/kernel/phase on ONE
-method and re-collect rather than mix. Note `gemm_probe.py` (default, no `--ncu`)
-times raw `torch.matmul` cuBLAS, not vLLM's GEMM — prefer `--ncu`.
+exactly why kernel time alone can't reconstruct prefill.
+
+**NCU is a cross-check, not a source.** `*-ncu` recipes time the same ops with
+Nsight Compute `gpu__time_duration` (mode `ncu`, also under `graph/`). The legacy
+H100/A100/RTX3090 tables were taken that way at NCU's default base-clock lock and
+cache flush, which reads slower than graph replay; `_ncu.py` now runs with
+clock/cache control off so a cross-check is comparable. Needs a real `ncu`
+(`NCU_BIN=/opt/nvidia/nsight-compute/2024.3.2/ncu`, NOT stock `/usr/bin/ncu`).
+
+Every table's mode is in its `.meta.json` (and the history in
+`$QUETTASIM/data/kernel_data/PROVENANCE.md`); keep a GPU/kernel/phase on ONE mode
+and re-collect rather than mix -- the loader flags a cross-dir fallback when it
+has to.
 
 ## Notes / TODO
 - `flash` and `gdn` grids are **head-config specific** — run them per model head

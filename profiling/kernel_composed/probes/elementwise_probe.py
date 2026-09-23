@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Elementwise kernel affine fits -> cuda_event/elementwise/{gpu}.json, matching the
+"""Elementwise kernel affine fits -> eager/elementwise/{gpu}.json, matching the
 kernel_composed ElementwiseTable model: latency_us = floor_us + bytes / eff_bw,
 bytes = elements * dtype_bytes * (reads + writes). For each kernel we CUDA-event
 time a torch equivalent across element counts and least-squares fit (floor_us,
@@ -8,7 +8,7 @@ eff_bw_gb_s). eff_bw is *effective* (may exceed peak HBM: cache/fusion).
   CUDA_VISIBLE_DEVICES=0 python elementwise_probe.py --gpu-label A100 --out-dir <dir>
 """
 from __future__ import annotations
-import argparse, json, statistics as st
+import argparse, json
 from pathlib import Path
 import torch
 import torch.nn.functional as F
@@ -25,16 +25,10 @@ DT_BYTES = 2
 HIDDEN = 4096                            # row width for the 2-D vLLM ops
 
 
-def time_op(fn) -> float:
-    for _ in range(WARMUP):
-        fn()
-    torch.cuda.synchronize()
-    ts = []
-    for _ in range(REPS):
-        s, e = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
-        s.record(); fn(); e.record(); torch.cuda.synchronize()
-        ts.append(s.elapsed_time(e) * 1000.0)  # us
-    return st.median(ts)
+def time_op(fn, *, graph: bool = False) -> float:
+    """One point (us): graph-replay min under --graph, else eager median."""
+    from _timing import time_us  # noqa: PLC0415
+    return time_us(fn, graph=graph, reps=REPS, warmup=WARMUP)
 
 
 def op_for(kernel, n, dev, dt):
@@ -123,7 +117,7 @@ def main():
     ap.add_argument("--max-mem-gb", type=float, default=20.0)
     ap.add_argument("--graph", action="store_true",
                     help="CUDA-graph-replay timing (graphed-decode-faithful, no NCU "
-                         "needed) -> ncu/elementwise/; default eager -> cuda_event/")
+                         "needed) -> graph/elementwise/; default eager -> eager/")
     ap.add_argument("--vllm", action="store_true",
                     help="time the REAL vLLM fused kernels (rms_norm, "
                          "fused_add_rms_norm, silu_and_mul, rotary_embedding, "
@@ -132,8 +126,6 @@ def main():
                          "composition prefers when present")
     a = ap.parse_args()
     dev = torch.device("cuda"); dt = torch.bfloat16
-    if a.graph:
-        from _graph import graph_median_us  # noqa: PLC0415
     tag = ("/graph" if a.graph else "") + ("/vllm" if a.vllm else "")
     print(f"[elem{tag}] {torch.cuda.get_device_name(0)}", flush=True)
     io_map = VLLM_IO if a.vllm else IO
@@ -144,18 +136,24 @@ def main():
             if n * DT_BYTES * (r + w + 1) / 1e9 > a.max_mem_gb:
                 continue
             fn = op_for_vllm(kernel, n, dev, dt) if a.vllm else op_for(kernel, n, dev, dt)
-            us = graph_median_us(fn) if a.graph else time_op(fn)
+            us = time_op(fn, graph=a.graph)
             bl.append(n * DT_BYTES * (r + w)); ul.append(us)
         floor, bw = fit(bl, ul)
         result[kernel] = {"floor_us": floor, "eff_bw_gb_s": bw}
         print(f"  {kernel:14} floor={floor} us  eff_bw={bw} GB/s", flush=True)
-    # ncu/ = graphed-decode-faithful (NCU or --graph replay, both dispatch-free);
-    # cuda_event/ = eager incl. dispatch. The loader prefers ncu/ and falls back.
-    method = "ncu" if a.graph else "cuda_event"
+    # graph/ = graphed-decode-faithful (NCU or --graph replay, both dispatch-free);
+    # eager/ = eager incl. dispatch. The loader prefers graph/ and falls back.
+    method = "graph" if a.graph else "eager"
     out = Path(a.out_dir) / method / "elementwise"; out.mkdir(parents=True, exist_ok=True)
     path = out / f"{a.gpu_label}.json"
     path.write_text(json.dumps(result, indent=2))
     print(f"[elem] wrote {path}", flush=True)
+    from _manifest import write_manifest  # noqa: PLC0415
+    write_manifest(path, mode="graph_replay" if a.graph else "eager",
+                   tool="elementwise_probe.py" + (" --graph" if a.graph else "") + (" --vllm" if a.vllm else ""),
+                   reduce="min" if a.graph else "median", gpu_label=a.gpu_label, reps=REPS, warmup=WARMUP,
+                   notes=("real vLLM fused kernels" if a.vllm else "torch-chain PROXIES of the fused kernels (prefer --vllm)")
+                         + "; affine floor_us + bytes/eff_bw fit per kernel")
 
 
 if __name__ == "__main__":

@@ -33,7 +33,7 @@ Run (two GPUs, same node -> NVLink):
     CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 profiling/probes/kv_transfer_probe.py \
         --gpu-label H200 --out-dir data/kernel_data
 
-Writes cuda_event/kv_transfer/<gpu>_nixl.csv (upsert on the key columns) and prints,
+Writes eager/kv_transfer/<gpu>_nixl.csv (upsert on the key columns) and prints,
 per (kv_heads_per_rank, layout), the floor + per-byte fit to paste into a system YAML's
 ``links.intra_node`` (per GPU PAIR: the replay divides the unsharded bytes by the
 reader tp, see engine/sim/disagg.py::Link.transfer_ms).
@@ -208,9 +208,15 @@ def main() -> None:
         dist.barrier()
 
     if rank == 1:
-        path = Path(a.out_dir) / "cuda_event" / "kv_transfer" / f"{a.gpu_label}_nixl.csv"
+        path = Path(a.out_dir) / "eager" / "kv_transfer" / f"{a.gpu_label}_nixl.csv"
         _upsert(path, out_rows)
         print(f"\nwrote {path}")
+        import sys as _sys  # noqa: PLC0415
+        _sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from _manifest import write_manifest  # noqa: PLC0415
+        write_manifest(path, mode="host_wallclock", tool="kv_transfer_probe.py",
+                       reduce="per-cell host wall-clock incl. NIXL prep + completion polling",
+                       gpu_label=a.gpu_label, upsert=True, notes="PD KV hand-off as vLLM's NixlConnector issues it")
         print("\nfit total_ms = floor + bytes/bw   (per GPU pair; system YAML links.intra_node)")
         for heads in a.kv_heads_per_rank:
             for layout in a.layouts:

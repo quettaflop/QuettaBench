@@ -7,7 +7,7 @@ the custom all-reduce kernel (one-/two-shot over NVLink P2P) and only large ones
 NCCL. On H200 tp2 the plain-NCCL grid over-priced graphed decode comm by ~1.5 ms/step
 (legacy 15.8 us/op x 96 sub-layers), which showed up as a 15-17pp TPOT MAPE gap vs a
 zero-latency analytic ring (Mooncake GT, 2026-08-25). This probe measures the path
-vLLM actually takes and UPSERTS the all_reduce rows of ncu/collectives/{gpu}_tp{N}.csv
+vLLM actually takes and UPSERTS the all_reduce rows of graph/collectives/{gpu}_tp{N}.csv
 (other ops keep their NCCL rows -- vLLM uses NCCL for those).
 
   CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 vllm_allreduce_probe.py \
@@ -76,7 +76,7 @@ def main():
         if rank == 0:
             print(f"  {nbytes:>9d} B: vllm path {us_vllm:8.2f} us   plain nccl {us_nccl:8.2f} us", flush=True)
     if rank == 0:
-        root = Path(a.out_dir); out = root / "ncu" / "collectives" / f"{a.gpu_label}_tp{world}.csv"
+        root = Path(a.out_dir); out = root / "graph" / "collectives" / f"{a.gpu_label}_tp{world}.csv"
         out.parent.mkdir(parents=True, exist_ok=True)
         kept = []
         if out.exists():
@@ -93,7 +93,13 @@ def main():
                 w.writerow({"op": "all_reduce", "world": world, "bytes": nbytes,
                             "latency_us": round(us_v, 4), "dtype_bytes": 2, "path": "vllm"})
         print(f"[vllm-ar] wrote {out}: {len(rows)} all_reduce rows (vllm path) + {len(kept)} other-op rows kept", flush=True)
-        ref = root / "ncu" / "collectives" / f"{a.gpu_label}_tp{world}_nccl_vs_vllm.csv"
+        import sys as _sys  # noqa: PLC0415
+        _sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from _manifest import write_manifest  # noqa: PLC0415
+        write_manifest(out, mode="amortized_wallclock", tool="vllm_allreduce_probe.py (all_reduce rows, path=vllm)",
+                       reduce="whole back-to-back loop / iters", gpu_label=a.gpu_label, reps=_ITERS, warmup=_WARMUP,
+                       upsert=True, notes=f"all_reduce rows re-measured through vLLM's GroupCoordinator at world={world}")
+        ref = root / "graph" / "collectives" / f"{a.gpu_label}_tp{world}_nccl_vs_vllm.csv"
         with ref.open("w", newline="") as f:
             w = csv.writer(f); w.writerow(["bytes", "vllm_us", "nccl_us"])
             for r in rows: w.writerow([r[0], round(r[1], 4), round(r[2], 4)])

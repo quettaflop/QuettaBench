@@ -24,7 +24,7 @@ step time at batch B. Sweep B and compare to KernelComposed.fused_step_ms(0, B, 
       --ctx 20000 --batches 1 2 4 8 11 16 24 --gen 64
 
 Prints the measured vs sim decode-step curve and the per-batch ratio; writes
-cuda_event/decode_batch/<gpu>_tp<N>.csv. Disjoint from the pd_sweep trace eval (synthetic
+eager/decode_batch/<gpu>_tp<N>.csv. Disjoint from the pd_sweep trace eval (synthetic
 shared-prefix content), so its curve is legitimate calibration for the batched-decode
 composition. Does NOT edit any grid -- it reports the correction to apply.
 """
@@ -151,11 +151,16 @@ def main() -> None:
             print(f"\nmedian sim/real at batch>=8: {st.median(r['ratio'] for r in over):.2f} "
                   f"(1.00 = perfect; >1 = sim over-prices batched decode)")
     out = Path(a.out) if a.out else (Path(a.device_yaml).parent.parent / "data" / "kernel_data"
-                                     / "cuda_event" / "decode_batch" / f"{a.gpu_label}_tp{a.tp}.csv")
+                                     / "eager" / "decode_batch" / f"{a.gpu_label}_tp{a.tp}.csv")
     out.parent.mkdir(parents=True, exist_ok=True)
     with out.open("w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=list(rows[0])); w.writeheader(); w.writerows(rows)
     print(f"\nwrote {out}")
+    import sys as _sys  # noqa: PLC0415
+    _sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from _manifest import write_manifest  # noqa: PLC0415
+    write_manifest(out, mode="host_wallclock", tool="decode_batch_probe.py", reduce="median ITL over the pool",
+                   gpu_label=a.gpu_label, notes="calibration record (real vs sim decode step by batch), not a kernel table")
 
 
 if __name__ == "__main__":

@@ -123,24 +123,10 @@ def _flashinfer_moe():
 
 
 def _time(fn) -> float:
-    """min-of-REPS CUDA-event time (us). MIN, not mean: it matches GemmTable's
-    min-on-load reduce and the warm, back-to-back kernels of a real decode step."""
-    if _GRAPH:
-        from _graph import graph_time_us  # noqa: PLC0415
-        return graph_time_us(fn)
-    for _ in range(WARMUP):
-        fn()
-    torch.cuda.synchronize()
-    ts = []
-    for _ in range(REPS):
-        s = torch.cuda.Event(enable_timing=True)
-        e = torch.cuda.Event(enable_timing=True)
-        s.record()
-        fn()
-        e.record()
-        torch.cuda.synchronize()
-        ts.append(s.elapsed_time(e) * 1000.0)
-    return min(ts)
+    """One cell (us): graph-replay MIN under --graph (warm, back-to-back kernels of
+    a real decode step; matches the table's min-on-load reduce), else eager MEDIAN."""
+    from _timing import time_us  # noqa: PLC0415
+    return time_us(fn, graph=_GRAPH, reps=REPS, warmup=WARMUP)
 
 
 def _fp8_quant_config(e, inter, hidden, dev):
@@ -337,7 +323,7 @@ def main() -> None:
     ap.add_argument("--append", action="store_true",
                     help="merge into the target CSV instead of truncating it")
     ap.add_argument("--graph", action="store_true",
-                    help="CUDA-graph-replay timing -> ncu/moe/. Faithful for vLLM's "
+                    help="CUDA-graph-replay timing -> graph/moe/. Faithful for vLLM's "
                          "CUDA-graphed MoE DECODE (the eager rationale below only "
                          "holds for eager execution); slight underprice of small "
                          "eager prefill chunks, negligible at real chunk sizes.")
@@ -390,11 +376,14 @@ def main() -> None:
             rows += sweep_expert_kernel(f"{key}/tp{tp}", e, k, shard, hidden,
                                         tokens_axis, dev, a.max_mem_gb)
 
-    # Default cuda_event: the grouped kernel's LAUNCH cost is the term the roofline
+    # Default eager: the grouped kernel's LAUNCH cost is the term the roofline
     # misses -- but that is only faithful for EAGER execution. vLLM CUDA-graphs MoE
-    # decode, so --graph (dispatch-free, ncu/-equivalent) is the decode-faithful
-    # method; H200 GT showed the eager grid overprices graphed decode 2.3x.
-    dst = Path(a.out_dir) / ("ncu" if _GRAPH else "cuda_event") / "moe"
+    # decode, so --graph (dispatch-free -> graph/) is the decode-faithful method;
+    # H200 GT showed the eager grid overprices graphed decode 2.3x.
+    dst = Path(a.out_dir) / ("graph" if _GRAPH else "eager") / "moe"
+    _mode = "graph_replay" if _GRAPH else "eager"
+    _tool = ("moe_probe.py" + (" --graph" if _GRAPH else "") + f" --backend {a.backend}"
+             + (f" --dtype {a.dtype}" if a.dtype != "bf16" else ""))
     dst.mkdir(parents=True, exist_ok=True)
     path = dst / f"{a.gpu_label}{'' if a.dtype == 'bf16' else '_' + a.dtype}.csv"
     n_new = len(rows)
@@ -412,6 +401,11 @@ def main() -> None:
         w.writeheader()
         w.writerows(rows)
     print(f"[moe] wrote {path} ({len(rows)} rows, {n_new} new)", flush=True)
+    from _manifest import write_manifest  # noqa: PLC0415
+    write_manifest(path, mode=_mode, tool=_tool, reduce="min" if _GRAPH else "median",
+                   gpu_label=a.gpu_label, reps=REPS, warmup=WARMUP, upsert=bool(a.append),
+                   notes="uniform-random router logits, ONE weight set per cell (see PROVENANCE.md "
+                         "'MoE grid sweep methodology' for the two decode-regime biases this carries)")
 
     if not a.skip_routing and a.dtype == "bf16":
         # Routing (topk / permute / align) is dtype-agnostic -- it moves indices and
@@ -420,6 +414,9 @@ def main() -> None:
         rp = dst / f"{a.gpu_label}_routing.json"
         rp.write_text(json.dumps(routing, indent=1) + "\n")
         print(f"[moe] wrote {rp}", flush=True)
+        write_manifest(rp, mode=_mode, tool=_tool, reduce="min" if _GRAPH else "median",
+                       gpu_label=a.gpu_label, reps=REPS, warmup=WARMUP,
+                       notes="routing kernels (topk / permute / align) affine fits")
         if "_moe_align_launch_us" in routing:
             print(f"[moe] set `moe.routing_launch_us: "
                   f"{routing['_moe_align_launch_us']}` in the {a.gpu_label} device YAML",

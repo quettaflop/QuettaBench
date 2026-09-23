@@ -9,7 +9,7 @@ emitters that turn raw probe output into curated tables. Peer of the runner
 
 ```
 profiling/probes/              live-server + serving-wall probes (need a GPU)
-profiling/kernel_composed/     QuettaSim kernel tables (ncu/ vs cuda_event/ schema)
+profiling/kernel_composed/     QuettaSim kernel tables (graph/ vs eager/ timing modes)
 profiling/emit/                emitters: raw CSV/JSONL.gz -> curated tables (no GPU)
 profiling/runbooks/            how-to-measure docs and preflight scripts
 profiling/tests/               emitter tests (run against fixtures, no GPU)
@@ -41,8 +41,9 @@ Live-server probes (drive a running vLLM OpenAI server over SSE):
 
 ### kernel_composed/
 
-Probes that write QuettaSim's `engine/data/kernel_data/` layout (`ncu/` vs
-`cuda_event/`). Separate from the serving-wall probes above; schema is frozen to
+Probes that write QuettaSim's `data/kernel_data/` layout (`graph/` = dispatch-free
+CUDA-graph replay, decode-faithful; `eager/` = dispatch included, prefill-faithful;
+one `.meta.json` per table). Separate from the serving-wall probes above; schema is frozen to
 what `kernel_composed` interpolates. Runbook: `profiling/kernel_composed/README.md`.
 
 ```bash

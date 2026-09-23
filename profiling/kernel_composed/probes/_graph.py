@@ -6,11 +6,11 @@ vLLM's decode is CUDA-graphed: kernels replay with no per-launch CPU dispatch,
 so the faithful decode number is pure kernel time. NCU measures that by
 counter; capturing the op into a torch.cuda.CUDAGraph and timing replay()
 measures the same thing by construction (H200 spot-check, vLLM fused_experts
-at 8 decode tokens: eager cuda_event 182us -> graph replay 78.5us — the 57%
+at 8 decode tokens: eager 182us -> graph replay 78.5us — the 57%
 delta is exactly the dispatch cost graphs eliminate). Replay timing even keeps
 real back-to-back kernel behaviour that per-kernel NCU isolation loses.
 
-Prefill stays eager in serving, so prefill grids keep plain cuda_event timing.
+Prefill stays eager in serving, so prefill grids keep plain eager (CUDA-event) timing.
 """
 from __future__ import annotations
 

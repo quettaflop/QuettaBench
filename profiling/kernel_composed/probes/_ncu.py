@@ -1,5 +1,15 @@
 #!/usr/bin/env python3
-"""Shared NCU timing for the kernel probes (the STANDARD; matches gemm_probe --ncu).
+"""NCU per-kernel timing -- a CROSS-CHECK of the graph-replay numbers, not a source.
+
+The standard for graph/ tables is CUDA-graph replay (_timing.py / _graph.py): it
+is exactly how vLLM runs decode, needs no counters, and runs at the clocks the
+GPU actually serves at. NCU differs in ways that matter: by default it locks the
+GPU to base clocks (--clock-control base) and flushes caches before every kernel
+replay (--cache-control all), which systematically lengthens kernels -- the H100
+tables measured that way derive util_bw ~0.82 where the serving-calibrated value
+is 0.93. This helper therefore runs NCU with clock and cache control OFF so a
+`--ncu` run is comparable to a `--graph` run; the legacy H100/A100/RTX3090
+tables under graph/ predate that and carry `mode: ncu` in their manifests.
 
 Runs a self-contained python snippet under NCU, reads per-kernel
 `gpu__time_duration.sum`, and returns the min-over-invocations SUM of the op's
@@ -23,6 +33,7 @@ import sys
 def ncu_kernel_durations(inner: str, ncu_bin: str) -> list[tuple[str, float]]:
     """[(kernel_name, us)] for every profiled kernel launch, in launch order."""
     cmd = [ncu_bin, "--csv", "--metrics", "gpu__time_duration.sum",
+           "--clock-control", "none", "--cache-control", "none",
            "--target-processes", "all", sys.executable, "-c", inner]
     out = subprocess.run(cmd, capture_output=True, text=True).stdout
     lines = out.splitlines()

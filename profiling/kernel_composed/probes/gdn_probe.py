@@ -6,9 +6,9 @@ kernels vllm/sglang serve Qwen3.5 with):
   decode:  fla.ops.fused_recurrent_gated_delta_rule (T=1 + state)      batch grid
 
 Method follows the serving reality (see kernel_data/PROVENANCE.md): decode is
-CUDA-graphed -> NCU faithful (`--ncu` -> ncu/gdn/…_decode.csv); prefill is eager ->
-always cuda_event -> cuda_event/gdn/…_prefill.csv (the multi-kernel dispatch floor
-is real). The delta-rule core is the GDN analog of the flash-attention grid;
+CUDA-graphed -> `--graph` (graph-replay timing -> graph/gdn/…_decode.csv; `--ncu`
+is the NCU cross-check); prefill is eager -> always eager wall-clock ->
+eager/gdn/…_prefill.csv (the multi-kernel dispatch floor is real). The delta-rule core is the GDN analog of the flash-attention grid;
 projections are GEMMs (gemm table) and conv/gating are elementwise. Emits per-call
 median us and us x n_linear (all-GDN-layers convention).
 
@@ -16,7 +16,7 @@ median us and us x n_linear (all-GDN-layers convention).
       --mode smoke --out-dir <dir>
 """
 from __future__ import annotations
-import argparse, csv, os, statistics as st, traceback
+import argparse, csv, os, traceback
 from pathlib import Path
 import torch
 import triton
@@ -51,7 +51,7 @@ BATCH_SMOKE = [1, 32, 256]
 SEQ_SMOKE   = [128, 2048]
 # NCU is slow -> curated grids; the loader interpolates. Decode capped at 80 (the
 # fused_recurrent proxy hits a synthetic-input bug at B>=120 -- same limit as the
-# cuda_event grid). NCU_REPS invocations profiled per point; min = warm steady state.
+# eager grid). NCU_REPS invocations profiled per point; min = warm steady state.
 BATCH_NCU = [1, 8, 32, 80]
 NCU_REPS = 5
 
@@ -71,16 +71,10 @@ def _ncu_decode_inner(B, H, K, V) -> str:
     )
 
 
-def time_call(fn) -> float:
-    for _ in range(WARMUP):
-        fn()
-    torch.cuda.synchronize()
-    ts = []
-    for _ in range(REPS):
-        s, e = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
-        s.record(); fn(); e.record(); torch.cuda.synchronize()
-        ts.append(s.elapsed_time(e) * 1000.0)  # ms -> us
-    return st.median(ts)
+def time_call(fn, *, graph: bool = False) -> float:
+    """One point (us): graph-replay min under --graph, else eager median."""
+    from _timing import time_us  # noqa: PLC0415
+    return time_us(fn, graph=graph, reps=REPS, warmup=WARMUP)
 
 
 def mk(B, T, H, K, V, dev, dt):
@@ -103,21 +97,24 @@ def main():
     ap.add_argument("--geometry-tag", default="9b", help="GDN head geometry tag, e.g. 9b (H_v=32) / 27b (H_v=48)")
     ap.add_argument("--out-dir", default=".")
     ap.add_argument("--max-mem-gb", type=float, default=30.0)
-    ap.add_argument("--ncu", action="store_true", help="NCU per-kernel timing (the standard); curated grid")
+    ap.add_argument("--ncu", action="store_true", help="NCU per-kernel DECODE timing (cross-check); curated grid")
     ap.add_argument("--ncu-bin", default=os.environ.get("NCU_BIN", "ncu"))
+    ap.add_argument("--graph", action="store_true",
+                    help="CUDA-graph-replay DECODE timing (graphed-decode-faithful, the standard) "
+                         "-> graph/gdn/; prefill stays eager")
     a = ap.parse_args()
     dev = torch.device("cuda"); dt = torch.bfloat16
     H, K, V = a.hv, a.dk, a.dv
     scale = 1.0 / (K ** 0.5)
     out = Path(a.out_dir); out.mkdir(parents=True, exist_ok=True)
     # Decode is CUDA-graphed in serving -> NCU (--ncu) is faithful; prefill is eager
-    # -> always cuda_event (the multi-kernel dispatch floor is real), never NCU.
+    # -> always eager (the multi-kernel dispatch floor is real), never NCU.
     batch_ax = BATCH_NCU if a.ncu else (BATCH_SMOKE if a.mode == "smoke" else BATCH_FULL)
     seq_ax = SEQ_SMOKE if a.mode == "smoke" else SEQ_FULL
     print(f"[gdn{'/ncu' if a.ncu else ''}] dev={torch.cuda.get_device_name(0)} H={H} K={K} V={V} n_linear={a.n_linear}", flush=True)
 
     # PREFILL grid FIRST: chunk_gated_delta_rule, B=1, T=seq (eager in serving ->
-    # always cuda_event). Deliberately before decode: the fragile fused_recurrent
+    # always eager). Deliberately before decode: the fragile fused_recurrent
     # decode proxy hits an illegal-memory bug (B=16 on 3090, B>=120 on A100/H100)
     # that corrupts the CUDA context; running prefill first saves the floor grid
     # regardless of where decode dies.
@@ -156,7 +153,7 @@ def main():
                     return fused_recurrent_gated_delta_rule(
                         q, k, v, g, beta, scale=scale, initial_state=state,
                         inplace_final_state=False, use_qk_l2norm_in_kernel=True)
-                us = time_call(call)
+                us = time_call(call, graph=a.graph)
             dec_rows.append((B, round(us, 3), round(us * a.n_linear, 3)))
             print(f"  {'ncu ' if a.ncu else ''}decode B={B:4d}: {us:8.2f} us/call  x{a.n_linear}L={us*a.n_linear:9.1f} us", flush=True)
         except Exception as ex:
@@ -164,16 +161,28 @@ def main():
             traceback.print_exc()
             break
 
-    # decode -> {ncu,cuda_event}/gdn/ (follows --ncu); prefill -> cuda_event/gdn/.
+    # decode -> graph/gdn/ under --graph or --ncu, else eager/gdn/; prefill -> eager/gdn/.
     base = f"{a.gpu_label}_{a.geometry_tag}"
-    dec_method = "ncu" if a.ncu else "cuda_event"
+    dec_method = "graph" if (a.ncu or a.graph) else "eager"
     ddir = out / dec_method / "gdn"; ddir.mkdir(parents=True, exist_ok=True)
-    pdir = out / "cuda_event" / "gdn"; pdir.mkdir(parents=True, exist_ok=True)
+    pdir = out / "eager" / "gdn"; pdir.mkdir(parents=True, exist_ok=True)
     with open(ddir / f"{base}_decode.csv", "w", newline="") as f:
         w = csv.writer(f); w.writerow(["batch", "us_per_call", "us_x_nlinear"]); w.writerows(dec_rows)
     with open(pdir / f"{base}_prefill.csv", "w", newline="") as f:
         w = csv.writer(f); w.writerow(["seq_len", "us_per_call", "us_x_nlinear"]); w.writerows(pre_rows)
     print(f"[gdn] wrote {ddir}/{base}_decode.csv + {pdir}/{base}_prefill.csv ({len(dec_rows)}/{len(pre_rows)} rows)", flush=True)
+    from _manifest import write_manifest  # noqa: PLC0415
+    geom = f"H_v={H} d_k={K} d_v={V} n_linear={a.n_linear}"
+    write_manifest(ddir / f"{base}_decode.csv",
+                   mode="ncu" if a.ncu else ("graph_replay" if a.graph else "eager"),
+                   tool="gdn_probe.py" + (" --ncu" if a.ncu else " --graph" if a.graph else ""),
+                   reduce="min" if (a.ncu or a.graph) else "median", gpu_label=a.gpu_label,
+                   reps=NCU_REPS if a.ncu else REPS, warmup=WARMUP,
+                   notes=f"decode over batch; generic fused_recurrent_gated_delta_rule PROXY of the serving "
+                         f"fused_sigmoid_gating_delta_rule_update; {geom}")
+    write_manifest(pdir / f"{base}_prefill.csv", mode="eager", tool="gdn_probe.py", reduce="median",
+                   gpu_label=a.gpu_label, reps=REPS, warmup=WARMUP,
+                   notes=f"prefill over seq; chunk_gated_delta_rule; {geom}")
 
 
 if __name__ == "__main__":

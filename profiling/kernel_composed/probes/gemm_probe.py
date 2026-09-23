@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """GEMM latency grid (M, N, K) -> us for the kernel_composed GemmTable
-(min-on-load semantics: a decode step runs its GEMMs warm). Two methods:
+(min-on-load semantics: a decode step runs its GEMMs warm). Timing (see _timing.py):
 
-  default  CUDA-event timed torch.matmul (bf16)         -- portable, no ncu
-  --ncu    NCU per-kernel gpu__time_duration (the STANDARD; matches the H100
-           tables) -- slower, so a curated shape grid; needs a working ncu
-  --graph  CUDA-graph-replay timing (dispatch-free, NCU-equivalent)
+  --graph  CUDA-graph-replay timing, dispatch-free -> graph/  (the STANDARD: how
+           vLLM runs decode; min over replays)
+  default  eager CUDA-event timing, dispatch included -> eager/ (median over calls)
+  --ncu    NCU per-kernel gpu__time_duration -> graph/, mode "ncu" -- a CROSS-CHECK
+           of --graph on a curated shape grid; needs a working ncu
 
 PRECISION (--dtype). bf16 (default) times torch.matmul. fp8 times vLLM's OWN
 block-scaled FP8 linear op (`W8A8BlockFp8LinearOp`, weight blocks 128x128 +
@@ -22,7 +23,7 @@ FP8 rows carry dtype_bytes=1 and are written to a SEPARATE table
 precisions in one file would silently collapse two different kernels into one cell.
 
 Feeds {method}/gemm/{gpu}.csv (default) or {method}/gemm_wide/{gpu}.csv (--wide),
-where method is ncu/ or cuda_event/. M is the token count; (N, K) are
+where method is graph/ or eager/. M is the token count; (N, K) are
 (out_features, in_features) of each projection (qkv / o / gate_up / down /
 lm_head / router). The table interpolates off-grid.
 
@@ -138,18 +139,8 @@ class Fp8Op:
               f"(CutlassFp8BlockScaledMMKernel path)", flush=True)
 
     def _time(self, run, graph: bool) -> float:
-        if graph:
-            from _graph import graph_time_us  # noqa: PLC0415
-            return graph_time_us(run)
-        for _ in range(WARMUP):
-            run()
-        torch.cuda.synchronize()
-        ts = []
-        for _ in range(REPS):
-            s, e = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
-            s.record(); run(); e.record(); torch.cuda.synchronize()
-            ts.append(s.elapsed_time(e) * 1000.0)
-        return min(ts)
+        from _timing import time_us  # noqa: PLC0415
+        return time_us(run, graph=graph, reps=REPS, warmup=WARMUP)
 
     def gemm_us(self, m, n, k, dev, graph: bool = False) -> float:
         """GEMM kernel alone (us), input already quantized. Also times the quant kernel
@@ -198,21 +189,10 @@ def time_matmul_fp8(op, m, n, k, dev, graph: bool = False) -> float:
 def time_matmul(m, n, k, dev, dt, graph: bool = False) -> float:
     a = torch.randn(m, k, device=dev, dtype=dt)
     b = torch.randn(k, n, device=dev, dtype=dt)
-    if graph:
-        from _graph import graph_time_us  # noqa: PLC0415
-        us = graph_time_us(lambda: torch.matmul(a, b))
-        del a, b; torch.cuda.empty_cache()
-        return us
-    for _ in range(WARMUP):
-        torch.matmul(a, b)
-    torch.cuda.synchronize()
-    ts = []
-    for _ in range(REPS):
-        s, e = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
-        s.record(); torch.matmul(a, b); e.record(); torch.cuda.synchronize()
-        ts.append(s.elapsed_time(e) * 1000.0)  # ms -> us
+    from _timing import time_us  # noqa: PLC0415
+    us = time_us(lambda: torch.matmul(a, b), graph=graph, reps=REPS, warmup=WARMUP)
     del a, b; torch.cuda.empty_cache()
-    return min(ts)  # min-reduce, matching the table
+    return us
 
 
 def _default_out_dir() -> str:
@@ -241,7 +221,7 @@ def main():
     ap.add_argument("--wide", action="store_true", help="emit {method}/gemm_wide/{gpu}.csv (wide MoE shapes) instead of {method}/gemm/{gpu}.csv")
     ap.add_argument("--dims", type=int, nargs="*", default=None, help="override the (N,K) dim set")
     ap.add_argument("--max-mem-gb", type=float, default=30.0)
-    ap.add_argument("--ncu", action="store_true", help="NCU per-kernel timing (the standard); curated grid")
+    ap.add_argument("--ncu", action="store_true", help="NCU per-kernel timing (cross-check of --graph); curated grid")
     ap.add_argument("--ncu-bin", default=os.environ.get("NCU_BIN", "ncu"))
     ap.add_argument("--graph", action="store_true",
                     help="CUDA-graph-replay timing: NCU-equivalent (graphed-decode-"
@@ -320,10 +300,14 @@ def main():
                 rows.append({"M": m, "N": n, "K": k, "dtype_bytes": dtype_bytes,
                              "latency_us": round(us, 3)})
                 print(f"  M={m:5d} N={n:6d} K={k:6d}: {us:9.2f} us", flush=True)
-    # Method-explicit layout: ncu/ = graphed-decode-faithful (per-kernel NCU or
-    # CUDA-graph replay, both dispatch-free) vs cuda_event/ (eager, incl. dispatch);
-    # gemm_wide/ for MoE wide-shape tables, gemm/ for the default narrow set.
-    method = "ncu" if (a.ncu or a.graph) else "cuda_event"
+    # Method-explicit layout: graph/ = dispatch-free (CUDA-graph replay, or NCU as a
+    # cross-check) vs eager/ (incl. dispatch); gemm_wide/ for MoE wide-shape tables,
+    # gemm/ for the default narrow set. See _timing.py.
+    method = "graph" if (a.ncu or a.graph) else "eager"
+    mode = "ncu" if a.ncu else ("graph_replay" if a.graph else "eager")
+    reduce = "min" if (a.ncu or a.graph) else "median"
+    tool = "gemm_probe.py" + (" --ncu" if a.ncu else " --graph" if a.graph else "") \
+        + (" --wide" if a.wide else "") + (f" --dtype {a.dtype}" if a.dtype != "bf16" else "")
     sub = f"{method}/{'gemm_wide' if a.wide else 'gemm'}"
     dst = out / sub
     dst.mkdir(parents=True, exist_ok=True)
@@ -354,6 +338,10 @@ def main():
         w = csv.DictWriter(f, fieldnames=["M", "N", "K", "dtype_bytes", "latency_us"])
         w.writeheader(); w.writerows(rows)
     print(f"[gemm] wrote {path} ({len(rows)} rows, {n_new} new)", flush=True)
+    from _manifest import write_manifest  # noqa: PLC0415
+    write_manifest(path, mode=mode, tool=tool, reduce=reduce, gpu_label=a.gpu_label,
+                   reps=NCU_REPS if a.ncu else REPS, warmup=WARMUP, upsert=bool(a.append),
+                   notes="torch.matmul cuBLAS (bf16) / cutlass_scaled_mm (fp8); M = tokens, (N, K) = projection dims")
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Rectangular (chunked-prefill) attention grid -> cuda_event/fa3_cross/{gpu}.csv.
+"""Rectangular (chunked-prefill) attention grid -> eager/fa3_cross/{gpu}.csv.
 
 A chunk of ``q_len`` new tokens attending ``resident`` already-cached tokens plus
 itself is ONE flash_attn_varlen_func call with q_len queries over kv_len =
@@ -9,14 +9,14 @@ grids are q=1, fa3_prefill grids are full-causal q == kv. On long-ISL traces
 attention FLOPs, so pricing it off the roofline left a ~20% under-estimate at
 16-32k prompts (H200 tp2 sweep, 2026-08-25).
 
-Eager cuda_event timing (prefill runs eager in vLLM). Rows are PER LAYER, one
+Eager wall-clock timing (prefill runs eager in vLLM). Rows are PER LAYER, one
 call; the loader multiplies by the model's full-attention layer count.
 
   CUDA_VISIBLE_DEVICES=7 python cross_attn_probe.py --gpu-label H200 \
       --n-heads 16 --n-kv-heads 2 --head-dim 128 --out-dir <kernel_data>
 """
 from __future__ import annotations
-import argparse, csv, statistics as st
+import argparse, csv
 import os
 from pathlib import Path
 import torch
@@ -28,15 +28,9 @@ REPS, WARMUP = 30, 5
 
 
 def time_call(fn) -> float:
-    for _ in range(WARMUP):
-        fn()
-    torch.cuda.synchronize()
-    ts = []
-    for _ in range(REPS):
-        s, e = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
-        s.record(); fn(); e.record(); torch.cuda.synchronize()
-        ts.append(s.elapsed_time(e) * 1000.0)
-    return st.median(ts)
+    """Eager median (prefill runs eager in vLLM); see _timing.py."""
+    from _timing import eager_time_us  # noqa: PLC0415
+    return eager_time_us(fn, reps=REPS, warmup=WARMUP)
 
 
 def _default_out_dir() -> str:
@@ -112,7 +106,7 @@ def main():
                          "fa_version": f"vllm-fa{a.fa_version}", "dtype": "bfloat16",
                          "latency_us": round(us, 3)})
             print(f"  q={ql:5d} resident={ctx:6d} kv={kv:6d}: {us:8.1f} us/layer", flush=True)
-    out = Path(a.out_dir) / "cuda_event" / "fa3_cross"; out.mkdir(parents=True, exist_ok=True)
+    out = Path(a.out_dir) / "eager" / "fa3_cross"; out.mkdir(parents=True, exist_ok=True)
     path = out / f"{a.gpu_label}.csv"
     geom = (str(a.n_heads), str(a.n_kv_heads), str(a.head_dim))
     kept = []
@@ -123,6 +117,11 @@ def main():
     with path.open("w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=list(rows[0].keys())); w.writeheader(); w.writerows(kept + rows)
     print(f"[cross] wrote {path} ({len(rows)} new rows, {len(kept)} kept)", flush=True)
+    from _manifest import write_manifest  # noqa: PLC0415
+    write_manifest(path, mode="eager", tool="cross_attn_probe.py", reduce="median", gpu_label=a.gpu_label,
+                   reps=REPS, warmup=WARMUP, upsert=True,
+                   notes=f"chunked-prefill attention PER LAYER over (q_len x resident); last upsert at "
+                         f"{a.n_heads}q{a.n_kv_heads}kv{a.head_dim}")
 
 
 if __name__ == "__main__":

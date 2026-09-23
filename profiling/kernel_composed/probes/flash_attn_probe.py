@@ -13,7 +13,6 @@ from __future__ import annotations
 import argparse
 import csv
 import os
-import statistics as st
 from pathlib import Path
 
 import torch
@@ -33,7 +32,7 @@ def _ncu_us(inner: str, ncu_bin: str) -> float | None:
     """Per-call pure-kernel us via NCU (sums the flash sub-kernels, drops torch setup).
 
     ``_ncu`` is imported lazily: it is needed only on the --ncu path, and importing it
-    at module scope made the whole probe unrunnable (including the default cuda_event
+    at module scope made the whole probe unrunnable (including the default eager
     and --graph paths) once the helper stopped shipping alongside this file.
     """
     from _ncu import ncu_op_us  # noqa: PLC0415
@@ -54,19 +53,10 @@ def _decode_inner(b, nh, nkv, hd, kv, fav) -> str:
     )
 
 
-def time_call(fn) -> float:
-    for _ in range(WARMUP):
-        fn()
-    torch.cuda.synchronize()
-    times = []
-    for _ in range(REPS):
-        s, e = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
-        s.record()
-        fn()
-        e.record()
-        torch.cuda.synchronize()
-        times.append(s.elapsed_time(e) * 1000.0)  # ms -> us
-    return st.median(times)
+def time_call(fn, *, graph: bool = False) -> float:
+    """One cell (us): graph-replay min (decode under --graph) or eager median."""
+    from _timing import time_us  # noqa: PLC0415
+    return time_us(fn, graph=graph, reps=REPS, warmup=WARMUP)
 
 
 def _default_out_dir() -> str:
@@ -104,11 +94,11 @@ def main():
                          "at 16384; a 64k-context workload needs 32768,65536 measured "
                          "rather than linearly extrapolated)")
     ap.add_argument("--batch-axis", default=None, help="comma-separated decode batch axis override")
-    ap.add_argument("--ncu", action="store_true", help="NCU per-kernel timing (the standard); curated grid")
+    ap.add_argument("--ncu", action="store_true", help="NCU per-kernel DECODE timing (cross-check of --graph); curated grid")
     ap.add_argument("--ncu-bin", default=os.environ.get("NCU_BIN", "ncu"))
     ap.add_argument("--graph", action="store_true",
                     help="CUDA-graph-replay DECODE timing (graphed-decode-faithful, "
-                         "no NCU needed) -> ncu/flash_attn/; prefill stays cuda_event")
+                         "no NCU needed) -> graph/flash_attn/; prefill stays eager")
     a = ap.parse_args()
     if a.fa_version == 0:   # auto: FA3 is Hopper-only (sm90+); Ampere/older need FA2
         a.fa_version = 3 if torch.cuda.get_device_capability()[0] >= 9 else 2
@@ -142,11 +132,7 @@ def main():
                 fn = lambda: flash_attn_varlen_func(  # noqa: E731
                     q, k, v, 1, cu_q, kv, cu_seqlens_k=cu_k, causal=True,
                     fa_version=a.fa_version)
-                if a.graph:
-                    from _graph import graph_median_us  # noqa: PLC0415
-                    us = graph_median_us(fn)
-                else:
-                    us = time_call(fn)
+                us = time_call(fn, graph=a.graph)
                 del q, k, v
                 torch.cuda.empty_cache()
             dec_rows.append({"q_len": 1, "kv_len": kv, "n_heads": a.n_heads,
@@ -157,7 +143,7 @@ def main():
             print(f"{'ncu ' if a.ncu else ''}decode kv={kv} b={b}: {us:.1f}us/call", flush=True)
 
     # Prefill is EAGER in serving (dynamic shapes, not CUDA-graphed) so dispatch
-    # overhead is real -> always cuda_event, never NCU (which would drop it).
+    # overhead is real -> always eager, never NCU (which would drop it).
     pf_rows = []
     for seq in SEQ_AXIS:
         q = torch.randn(seq, a.n_heads, a.head_dim, device=dev, dtype=dt)
@@ -181,9 +167,9 @@ def main():
         print(f"prefill seq={seq}: {us:.1f}us/call", flush=True)
 
     # Method-explicit kernel_data layout the loader resolves: decode grids read
-    # from ncu/ (CUDA-graphed decode -> NCU faithful), prefill from cuda_event/
+    # from graph/ (CUDA-graphed decode -> NCU faithful), prefill from eager/
     # (eager prefill -> dispatch real). Decode's method follows --ncu; prefill is
-    # always cuda_event. Grids are CONSOLIDATED per (method, kind, GPU): one
+    # always eager. Grids are CONSOLIDATED per (method, kind, GPU): one
     # {gpu_label}.csv holds every measured head config (rows carry the geometry;
     # the loader selects by (n_heads, n_kv_heads, head_dim)), so a probe run
     # UPSERTS: it replaces rows at the head config it just measured and keeps
@@ -207,15 +193,25 @@ def main():
             w.writerows(kept + rows)
         return len(kept)
 
-    dec_method = "ncu" if (a.ncu or a.graph) else "cuda_event"
+    dec_method = "graph" if (a.ncu or a.graph) else "eager"
     (out / dec_method / "flash_attn").mkdir(parents=True, exist_ok=True)
     dec_path = out / dec_method / "flash_attn" / f"{a.gpu_label}.csv"
     dec_kept = _upsert(dec_path, dec_rows)
-    (out / "cuda_event" / "fa3_prefill").mkdir(parents=True, exist_ok=True)
-    pf_path = out / "cuda_event" / "fa3_prefill" / f"{a.gpu_label}.csv"
+    (out / "eager" / "fa3_prefill").mkdir(parents=True, exist_ok=True)
+    pf_path = out / "eager" / "fa3_prefill" / f"{a.gpu_label}.csv"
     pf_kept = _upsert(pf_path, pf_rows)
     print(f"upserted {dec_path} ({len(dec_rows)} new cells, {dec_kept} kept) and "
           f"{pf_path} ({len(pf_rows)} new rows, {pf_kept} kept)")
+    from _manifest import write_manifest  # noqa: PLC0415
+    geom = f"{a.n_heads}q{a.n_kv_heads}kv{a.head_dim} fa{a.fa_version} layers={a.layers}"
+    write_manifest(dec_path, mode="ncu" if a.ncu else ("graph_replay" if a.graph else "eager"),
+                   tool="flash_attn_probe.py" + (" --ncu" if a.ncu else " --graph" if a.graph else ""),
+                   reduce="min" if (a.ncu or a.graph) else "median", gpu_label=a.gpu_label,
+                   reps=NCU_REPS if a.ncu else REPS, warmup=WARMUP, upsert=True,
+                   notes=f"decode grid (q_len=1) over (kv_len x batch); last upsert at {geom}")
+    write_manifest(pf_path, mode="eager", tool="flash_attn_probe.py", reduce="median",
+                   gpu_label=a.gpu_label, reps=REPS, warmup=WARMUP, upsert=True,
+                   notes=f"full-causal prefill over seq; last upsert at {geom}")
 
 
 if __name__ == "__main__":

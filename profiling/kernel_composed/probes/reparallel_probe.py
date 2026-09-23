@@ -30,7 +30,7 @@ Run (all 8 GPUs of the node, over NVLink):
     python3 -m torch.distributed.run --nproc_per_node=8 \
         profiling/probes/reparallel_probe.py --gpu-label H200 --out-dir data/kernel_data
 
-Writes cuda_event/reparallel/<gpu>_reshard.csv (upsert on the key columns) and prints,
+Writes eager/reparallel/<gpu>_reshard.csv (upsert on the key columns) and prints,
 per (tp_from, tp_to), the floor + per-byte fit to paste into a device YAML's
 ``reshard:`` block (see engine/reparallel.py::ReshardLink).
 """
@@ -175,9 +175,15 @@ def main() -> None:
                         "pp": "reshard_pp", "kv": "reshard_kv",
                         "plan": "reshard_plan", "xnode": "reshard_xnode"}[a.mode]
         stem = a.out_name or f"{a.gpu_label}_{default_stem}"
-        path = Path(a.out_dir) / "cuda_event" / "reparallel" / f"{stem}.csv"
+        path = Path(a.out_dir) / "eager" / "reparallel" / f"{stem}.csv"
         _upsert(path, out_rows)
         print(f"\nwrote {path}")
+        import sys as _sys  # noqa: PLC0415
+        _sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from _manifest import write_manifest  # noqa: PLC0415
+        write_manifest(path, mode="host_wallclock", tool=f"reparallel_probe.py --mode {a.mode}",
+                       reduce="per-cell wall-clock (see _measure_*)", gpu_label=a.gpu_label, upsert=True,
+                       notes=f"in-place parallelism switch cost, world={world}")
         print(f"\nfit comm_ms = floor + bytes/bw   (mode={a.mode}, per GPU)")
         seen = []
         pairs = sorted({(r["tp_from"], r["tp_to"]) for r in out_rows})
