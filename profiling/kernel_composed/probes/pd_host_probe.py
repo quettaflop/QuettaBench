@@ -57,7 +57,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE / ".." / ".."))
 from engine.factory import build_kernel_composed_cost  # noqa: E402
-from engine.sim.queue_sim import _step_host_ms  # noqa: E402
+from engine.core.cost import step_host_ms as _step_host_ms  # noqa: E402
 from engine.sim.disagg import Link  # noqa: E402
 
 COLS = ("gpu", "phase", "conc", "tokens_total", "tokens_new_p", "tokens_cached_d",
