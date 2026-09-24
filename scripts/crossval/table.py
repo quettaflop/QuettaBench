@@ -122,6 +122,14 @@ def main():
     elif nccl_proto and eng_nccl_proto and nccl_proto != eng_nccl_proto:
         print(f"NCCL MISMATCH engine={eng_nccl_algo}/{eng_nccl_proto} vllm={nccl_algo}/{nccl_proto}")
 
+    # Serving topology must match on both sides; a disaggregated engine row
+    # against an aggregated baseline is a category error, never a ratio.
+    base_style = cache.get("serving_style", "aggregated")
+    eng_style = os.environ.get("XVAL_SERVING_STYLE", "aggregated")
+    serving_mismatch = not _xval.serving_style_compatible(base_style, eng_style)
+    if serving_mismatch:
+        print(f"SERVING MISMATCH engine={eng_style} vllm={base_style}; ratios withheld")
+
     # comm_bound_bs from the merged workloads, matched on crate key or record
     # name. Absent means never comm-bound (tp1 has no TP allreduce); no default.
     crate = cache.get("model", "")
@@ -134,6 +142,8 @@ def main():
     matched = method == "loop" and cache.get("method", "slope") == "slope"
     if not matched and os.environ.get("XVAL_ALLOW_METHOD_MISMATCH"):
         matched = True
+    if serving_mismatch:
+        matched = False  # topologies are never comparable; no override flag
     if not matched:
         print("engine log times one synchronized step per iteration; the baseline "
               "is a pipelined slope. Not the same quantity, so ratios are withheld "

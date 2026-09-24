@@ -36,6 +36,7 @@ def main():
         "vllm": meta.get("vllm", "?"),
         "mode": meta.get("mode", "FULL"),
         "pp": int(meta.get("pp", "1")),
+        "serving_style": meta.get("serving_style", "aggregated"),
         "model": meta.get("model", "?"),
         "dtype": meta.get("dtype", "?"),
         "grid": meta.get("grid", "?"),

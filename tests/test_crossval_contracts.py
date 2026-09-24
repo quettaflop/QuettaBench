@@ -517,7 +517,7 @@ class TableParity(unittest.TestCase):
     criterion per-step log gets its cells printed with ratios withheld, and
     rows whose KV formats differ carry a KV flag."""
 
-    def _table(self, bench_text, kv="float16", env=None, expect_rc=0):
+    def _table(self, bench_text, kv="float16", env=None, expect_rc=0, serving_style="aggregated"):
         import sys
         import time
 
@@ -526,6 +526,7 @@ class TableParity(unittest.TestCase):
             "gpu": "test", "vllm": "0", "mode": "FULL", "model": "m",
             "dtype": "float16", "grid": "g", "method": "slope", "kv_dtype": kv,
             "nccl_algo": "allreduce:tree;allgather:ring", "nccl_proto": "Simple",
+            "serving_style": serving_style,
             "points": [{"ctx": 1024, "bs": 1, "tp": 1, "ms_per_step": 5.0,
                         "tok_s": 200.0, "r2": 1.0, "kv": kv}],
         }
@@ -545,6 +546,19 @@ class TableParity(unittest.TestCase):
         out = self._table("LOOP ctx=1024 bs=1 kv=fp16 ms_per_step=10.000 k=100\n")
         self.assertIn("0.50x", out)
         self.assertNotIn("withheld", out)
+
+    def test_serving_style_mismatch_withholds(self):
+        # A disagg baseline against an aggregated engine row is never a ratio.
+        out = self._table(
+            "LOOP ctx=1024 bs=1 kv=fp16 ms_per_step=10.000 k=100\n",
+            serving_style="disagg:1p1d", env={"XVAL_SERVING_STYLE": "aggregated"})
+        self.assertIn("SERVING MISMATCH", out)
+        self.assertNotIn("0.50x", out)
+        # matching topology still earns its ratio
+        out2 = self._table(
+            "LOOP ctx=1024 bs=1 kv=fp16 ms_per_step=10.000 k=100\n",
+            serving_style="aggregated", env={"XVAL_SERVING_STYLE": "aggregated"})
+        self.assertIn("0.50x", out2)
 
     def test_eager_loop_row_is_grouped_and_flagged(self):
         # eager rows keep the ratio but get their own group and an EAGER flag.
