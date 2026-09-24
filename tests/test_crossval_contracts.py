@@ -204,6 +204,33 @@ class CrossvalScripts(unittest.TestCase):
             self.assertIn("after_mape=0.0%", out.stdout)
             self.assertIn("first_token_overhead_us: 6300", meta.read_text())
 
+    def test_goodput_search_and_verdict(self):
+        # The sweep must bracket the PASS/FAIL boundary within its probe cap;
+        # an uncapped search would double forever on a flat SLA response.
+        sys.path.insert(0, str(CROSSVAL))
+        try:
+            import trace_serve
+            importlib.reload(trace_serve)
+            gen = trace_serve.goodput_search(start=1.0)
+            speeds, speed = [], next(gen)
+            try:
+                while True:
+                    speeds.append(speed)
+                    speed = gen.send(speed < 4.0)  # SLA passes strictly below 4.0
+            except StopIteration:
+                pass
+            self.assertLessEqual(len(speeds), 6)
+            passing = [x for x in speeds if x < 4.0]
+            failing = [x for x in speeds if x >= 4.0]
+            self.assertTrue(passing and failing, speeds)
+            self.assertGreater(max(passing), 3.0, speeds)  # tightened to the boundary
+            s = {"ttft_ms": {"p99": 900.0}, "tpot_ms": {"p99": 40.0}}
+            self.assertEqual(trace_serve.sla_verdict(s, 500.0, 50.0), ["ttft_p99"])
+            self.assertEqual(trace_serve.sla_verdict(s, None, None), [])
+            self.assertIn("GOODPUTSUM", (CROSSVAL / "trace_serve.py").read_text())
+        finally:
+            sys.path.pop(0)
+
     def test_agreement_inputs_present(self):
         for name in ("prompts.txt", "texts.txt"):
             lines = [l for l in (CROSSVAL / name).read_text().splitlines() if l.strip()]

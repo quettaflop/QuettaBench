@@ -79,12 +79,44 @@ def _acceptance(reference_ids, generated_ids):
     return n, (n / len(reference_ids) if reference_ids else 0.0)
 
 
-async def _replay_vllm(reqs, offsets, args):
-    from vllm import SamplingParams
-    from vllm.engine.arg_utils import AsyncEngineArgs
-    from vllm.engine.async_llm_engine import AsyncLLMEngine
+def sla_verdict(s, sla_ttft_ms, sla_tpot_ms):
+    """Which p99 bound breaks at this operating point; empty means PASS."""
+    bound = []
+    if sla_ttft_ms and s["ttft_ms"]["p99"] > sla_ttft_ms:
+        bound.append("ttft_p99")
+    tp = s["tpot_ms"]
+    if sla_tpot_ms and tp and tp["p99"] > sla_tpot_ms:
+        bound.append("tpot_p99")
+    return bound
 
-    engine = AsyncLLMEngine.from_engine_args(AsyncEngineArgs(
+
+def goodput_search(start=1.0, max_iters=6, tol=0.1):
+    """Generator bisection for --goodput: yields the next speed, receives
+    whether that probe met the SLA. Doubles from start to find the first FAIL,
+    halves to find the first PASS, then bisects; stops once the bracket is
+    within tol. Capped at max_iters probes so a sweep can never hold the GPU
+    unbounded; without the cap a flat SLA response would double forever."""
+    lo = hi = None
+    speed = start
+    for _ in range(max_iters):
+        passed = yield speed
+        if passed:
+            lo = speed
+        else:
+            hi = speed
+        if lo is not None and hi is not None:
+            if (hi - lo) <= tol * hi:
+                return
+            speed = (lo + hi) / 2
+        elif passed:
+            speed = speed * 2
+        else:
+            speed = speed / 2
+
+
+def _engine_args(args):
+    from vllm.engine.arg_utils import AsyncEngineArgs
+    return AsyncEngineArgs(
         model=args.model,
         tensor_parallel_size=args.tp,
         pipeline_parallel_size=args.pp,
@@ -94,7 +126,15 @@ async def _replay_vllm(reqs, offsets, args):
         gpu_memory_utilization=args.gpu_util,
         enable_prefix_caching=args.prefix_caching,
         trust_remote_code=True,
-    ))
+    )
+
+
+async def _serve(engine, reqs, offsets, args):
+    """One replay pass on an existing engine. The engine is passed in so a
+    goodput sweep reuses one model load across probes; an engine built in a
+    previous event loop cannot be reused in a new asyncio.run."""
+    from vllm import SamplingParams
+
     t_start = time.perf_counter()
     records = []
     done = []  # requests the engine actually completed, for the workload-identity gate
@@ -134,6 +174,50 @@ async def _replay_vllm(reqs, offsets, args):
     return records, wall, done
 
 
+def _run_goodput(args, reqs, expected):
+    """Swept goodput: replay at bisected speeds on one engine until the SLA
+    flips PASS to FAIL, then report the highest passing rate. Every probe runs
+    the workload-identity gate; a mismatch voids the whole sweep because a
+    partially completed probe would inflate the reported rate."""
+    async def sweep():
+        from vllm.engine.async_llm_engine import AsyncLLMEngine
+        engine = AsyncLLMEngine.from_engine_args(_engine_args(args))
+        gen = goodput_search(start=args.speed)
+        speed = next(gen)
+        best, fail_bound, iters = None, None, 0
+        while True:
+            records, wall, done = await _serve(engine, reqs, plan_arrivals(reqs, speed), args)
+            iters += 1
+            replayed = synth_bench.workload_hash(done)
+            if replayed != expected:
+                print(f"WORKLOADSUM expected={expected} replayed={replayed} match=0 "
+                      f"n={len(done)}/{len(reqs)}", flush=True)
+                print("WORKLOADVOID replayed workload differs from the trace; sweep is void",
+                      flush=True)
+                sys.exit(3)
+            s = summarize(records, wall)
+            bound = sla_verdict(s, args.sla_ttft_ms, args.sla_tpot_ms)
+            print(f"GOODPROBE speed={speed:g} verdict={'FAIL' if bound else 'PASS'} "
+                  f"bound={','.join(bound) or 'none'} req_s={s['req_s']:.3f}", flush=True)
+            if not bound and (best is None or s["req_s"] > best[1]):
+                best = (speed, s["req_s"])
+            if bound:
+                fail_bound = ",".join(bound)
+            try:
+                speed = gen.send(not bound)
+            except StopIteration:
+                break
+        return best, fail_bound, iters
+
+    best, fail_bound, iters = asyncio.run(sweep())
+    if best is None:
+        print(f"GOODPUTSUM max_req_s=none bound={fail_bound or 'na'} iterations={iters} "
+              f"note=no-passing-speed-within-budget", flush=True)
+        sys.exit(1)
+    print(f"GOODPUTSUM max_req_s={best[1]:.3f} speed={best[0]:g} "
+          f"bound={fail_bound or 'none-within-range'} iterations={iters}", flush=True)
+
+
 def main():
     ap = argparse.ArgumentParser(description="open-loop trace replay (serving latency)")
     ap.add_argument("trace", help="JSONL trace (synth_bench gen / Mooncake capture)")
@@ -153,8 +237,12 @@ def main():
     ap.add_argument("--limit", type=int, help="replay only the first N requests")
     ap.add_argument("--sla-ttft-ms", type=float, help="SLA target: max p99 TTFT ms")
     ap.add_argument("--sla-tpot-ms", type=float, help="SLA target: max p99 TPOT ms/token")
+    ap.add_argument("--goodput", action="store_true",
+                    help="sweep --speed to the SLA PASS/FAIL boundary (max 6 probes)")
     ap.add_argument("--json", help="write the aggregate summary to this path")
     args = ap.parse_args()
+    if args.goodput and not (args.sla_ttft_ms or args.sla_tpot_ms):
+        ap.error("--goodput needs --sla-ttft-ms and/or --sla-tpot-ms")
 
     reqs = synth_bench.load_trace(args.trace)
     if args.limit:
@@ -167,7 +255,16 @@ def main():
           f"speed={args.speed} prefix_caching={int(args.prefix_caching)} "
           f"source={sources} text_mode={text_mode}", flush=True)
     expected = synth_bench.workload_hash(reqs)
-    records, wall, done = asyncio.run(_replay_vllm(reqs, offsets, args))
+    if args.goodput:
+        _run_goodput(args, reqs, expected)
+        return
+
+    async def _single():
+        from vllm.engine.async_llm_engine import AsyncLLMEngine
+        engine = AsyncLLMEngine.from_engine_args(_engine_args(args))
+        return await _serve(engine, reqs, offsets, args)
+
+    records, wall, done = asyncio.run(_single())
     replayed = synth_bench.workload_hash(done)
     match = expected == replayed
     print(f"WORKLOADSUM expected={expected} replayed={replayed} match={int(match)} "
@@ -183,11 +280,7 @@ def main():
           + (" ".join(f"tpot_ms_p{q}={tp[f'p{q}']:.3f}" for q in qs) + " " if tp else "tpot_ms_p50=- ")
           + f"req_s={s['req_s']:.3f} tok_s={s['tok_s']:.1f}", flush=True)
     if args.sla_ttft_ms or args.sla_tpot_ms:
-        bound = []
-        if args.sla_ttft_ms and s["ttft_ms"]["p99"] > args.sla_ttft_ms:
-            bound.append("ttft_p99")
-        if args.sla_tpot_ms and tp and tp["p99"] > args.sla_tpot_ms:
-            bound.append("tpot_p99")
+        bound = sla_verdict(s, args.sla_ttft_ms, args.sla_tpot_ms)
         print(f"SLASUM verdict={'PASS' if not bound else 'FAIL'} bound={','.join(bound) or 'none'} "
               f"ttft_p99={s['ttft_ms']['p99']:.1f}/{args.sla_ttft_ms or '-'} "
               f"tpot_p99={(tp['p99'] if tp else 0):.3f}/{args.sla_tpot_ms or '-'} "
