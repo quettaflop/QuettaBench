@@ -1,4 +1,4 @@
-import json, re, subprocess, sys, time
+import json, os, re, subprocess, sys, time
 
 
 def main():
@@ -18,20 +18,26 @@ def main():
         })
     if not points:
         sys.exit(f"no RESULT lines in {raw}")
-    # bench_sha: QuettaBench commit at capture time (cwd is the bench repo).
-    bench_sha = subprocess.run(
-        ["git", "rev-parse", "--short", "HEAD"],
-        capture_output=True, text=True,
-    ).stdout.strip()
+    # bench_sha: QuettaBench commit at capture time; empty when the capture box
+    # has no git or the tree is an rsync copy, never a crash.
+    try:
+        bench_sha = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True,
+        ).stdout.strip()
+    except OSError:
+        bench_sha = ""
     # engine_sha: QuettaServe/DS engine commit; must be set by caller via
     # QS_SHA or DS_ENGINE_SHA env var. Not inferred from cwd (wrong repo).
-    import os as _os
-    engine_sha = _os.environ.get("QS_SHA") or _os.environ.get("DS_ENGINE_SHA") or None
+    engine_sha = os.environ.get("QS_SHA") or os.environ.get("DS_ENGINE_SHA") or None
     json.dump({
         "recorded_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "gpu": meta.get("gpu", "?"),
         "vllm": meta.get("vllm", "?"),
         "mode": meta.get("mode", "FULL"),
+        "pp": int(meta.get("pp", "1")),
+        "serving_style": meta.get("serving_style", "aggregated"),
+        "quant": meta.get("quant", meta.get("dtype", "?")),
         "model": meta.get("model", "?"),
         "dtype": meta.get("dtype", "?"),
         "grid": meta.get("grid", "?"),

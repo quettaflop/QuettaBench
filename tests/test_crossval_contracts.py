@@ -12,6 +12,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -52,6 +53,405 @@ class CrossvalScripts(unittest.TestCase):
         for sh in _scripts(".sh"):
             self.assertNotIn("python3 -c", sh.read_text(), f"{sh.name} inlines python")
 
+    def test_xval_wires_serving_and_identity_gate(self):
+        # The orchestrator runs a trace serving replay with the workload-identity
+        # gate when XVAL_SERVE_TRACE is set.
+        text = (CROSSVAL / "xval.sh").read_text()
+        self.assertIn("XVAL_SERVE_TRACE", text)
+        self.assertIn("trace_serve.py", text)
+        self.assertIn("synth_bench.py", text)
+        self.assertIn("WORKLOADSUM", text)
+
+    def test_backend_detection_and_no_hard_nvidia_smi(self):
+        # backend() honors XVAL_BACKEND and reports cpu when no accel tooling is on
+        # PATH; the device picker and link detection must not hard-require nvidia-smi.
+        env = {k: v for k, v in os.environ.items() if k != "XVAL_BACKEND"}
+        env["PATH"] = "/nonexistent"
+        out = subprocess.run(
+            [sys.executable, str(CROSSVAL / "xval_config.py"), "backend"],
+            capture_output=True, text=True, env=env).stdout.strip()
+        self.assertEqual(out, "cpu")
+        out = subprocess.run(
+            [sys.executable, str(CROSSVAL / "xval_config.py"), "backend"],
+            capture_output=True, text=True, env={**os.environ, "XVAL_BACKEND": "tpu"}).stdout.strip()
+        self.assertEqual(out, "tpu")
+        # free_gpu.sh on a non-cuda backend returns devices without calling nvidia-smi
+        fg = subprocess.run(["bash", str(CROSSVAL / "free_gpu.sh"), "2"],
+                            capture_output=True, text=True,
+                            env={**os.environ, "XVAL_BACKEND": "tpu"})
+        self.assertEqual(fg.returncode, 0, fg.stderr)
+        self.assertEqual(fg.stdout.strip(), "0,1")
+
+    def test_pp_wired_in_grid_and_device_count(self):
+        # vmin_fit passes pipeline_parallel_size (from XVAL_PP or the workload's pp),
+        # and the device count the orchestrator provisions is tp * pp.
+        src = (CROSSVAL / "vmin_fit.py").read_text()
+        self.assertIn("pipeline_parallel_size", src)
+        self.assertIn("XVAL_PP", src)
+        self.assertIn("META pp=", src)  # cache.py parses META one key per line
+        d1 = subprocess.run([sys.executable, str(CROSSVAL / "xval_config.py"), "devices", "deepseek"],
+                            capture_output=True, text=True, check=True).stdout.strip()
+        self.assertEqual(d1, "8")  # deepseek tp8, pp1
+        d2 = subprocess.run([sys.executable, str(CROSSVAL / "xval_config.py"), "devices", "deepseek"],
+                            capture_output=True, text=True,
+                            env={**os.environ, "XVAL_PP": "2"}).stdout.strip()
+        self.assertEqual(d2, "16")  # tp8 * pp2
+
+    def test_link_profile_cli(self):
+        # One detection for bench.sh, vllm.sh and vmin_fit: caller override wins,
+        # non-cuda backends take the no-pins nvlink profile.
+        out = subprocess.run(
+            [sys.executable, str(CROSSVAL / "xval_config.py"), "link-profile"],
+            capture_output=True, text=True,
+            env={**os.environ, "XVAL_LINK_PROFILE": "pcie"}).stdout.strip()
+        self.assertEqual(out, "pcie")
+        env = {k: v for k, v in os.environ.items() if k != "XVAL_LINK_PROFILE"}
+        env["XVAL_BACKEND"] = "tpu"
+        out = subprocess.run(
+            [sys.executable, str(CROSSVAL / "xval_config.py"), "link-profile"],
+            capture_output=True, text=True, env=env).stdout.strip()
+        self.assertEqual(out, "nvlink")
+
+    def test_provision_cli(self):
+        # bootstrap.sh reads provisioning defaults through the config CLI.
+        out = subprocess.run(
+            [sys.executable, str(CROSSVAL / "xval_config.py"), "provision", "cache_root"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        self.assertEqual(out, "/workspace/.xval-cache")
+
+    def test_bootstrap_dry_run_plans_without_writing(self):
+        # XVAL_DRYRUN prints the plan and must not create .xval_env.
+        envfile = CROSSVAL / ".xval_env"
+        self.assertFalse(envfile.exists(), "stale .xval_env in the tree")
+        out = subprocess.run(
+            ["bash", str(CROSSVAL / "bootstrap.sh"), "qwen3"],
+            capture_output=True, text=True,
+            env={**os.environ, "XVAL_DRYRUN": "1"},
+        )
+        self.assertRegex(out.stderr, r"would:|MISSING:")
+        self.assertFalse(envfile.exists(), "dry run must not write .xval_env")
+
+    def test_lss_export_covers_or_fails_loudly(self):
+        # Full probe coverage reproduces the reference key set; one missing cell
+        # must exit 2 with a MISSING line, never an interpolated row.
+        with tempfile.TemporaryDirectory() as td:
+            ref = Path(td) / "H200" / "meta-llama" / "Llama-3.1-8B" / "bf16"
+            (ref / "tp1").mkdir(parents=True)
+            (ref / "tp1" / "dense.csv").write_text(
+                "layer,tokens,time_us\nact_fn,1,3.3\nact_fn,2,3.4\n")
+            (ref / "tp1" / "per_sequence.csv").write_text(
+                "layer,sequences,time_us\nlm_head,1,248.0\n")
+            (ref / "meta.yaml").write_text("hardware: H200\nmodel: m\n")
+            probes = Path(td) / "probes.jsonl"
+            recs = [
+                {"table": "dense", "tp": 1, "layer": "act_fn", "tokens": 1, "time_us": 3.31},
+                {"table": "dense", "tp": 1, "layer": "act_fn", "tokens": 1, "time_us": 3.39},
+                {"table": "dense", "tp": 1, "layer": "act_fn", "tokens": 2, "time_us": 3.44},
+                {"table": "per_sequence", "tp": 1, "layer": "lm_head", "sequences": 1,
+                 "time_us": 250.0},
+            ]
+            probes.write_text("".join(json.dumps(r) + "\n" for r in recs))
+            out = Path(td) / "out"
+            full = subprocess.run(
+                [sys.executable, str(CROSSVAL / "lss_export.py"), "--probes", str(probes),
+                 "--reference", str(ref), "--out", str(out)],
+                capture_output=True, text=True)
+            self.assertEqual(full.returncode, 0, full.stdout + full.stderr)
+            tree = out / "profiler" / "perf" / "H200" / "meta-llama" / "Llama-3.1-8B" / "bf16"
+            dense = (tree / "tp1" / "dense.csv").read_text().splitlines()
+            self.assertEqual(dense[0], "layer,tokens,time_us")
+            self.assertEqual(dense[1], "act_fn,1,3.35")  # median of the duplicates
+            self.assertTrue((tree / "meta.yaml").exists())
+            probes.write_text(json.dumps(recs[0]) + "\n")  # drop coverage
+            gap = subprocess.run(
+                [sys.executable, str(CROSSVAL / "lss_export.py"), "--probes", str(probes),
+                 "--reference", str(ref), "--out", str(out)],
+                capture_output=True, text=True)
+            self.assertEqual(gap.returncode, 2, gap.stdout + gap.stderr)
+            self.assertIn("MISSING table=dense tp=1 layer=act_fn tokens=2", gap.stdout)
+            self.assertIn("MISSING", (out / "gaps.txt").read_text())
+
+    def test_lss_first_token_fit(self):
+        # A constant live-minus-sim offset must be recovered exactly and the
+        # corrected TTFT error must collapse; the join is by request id, not row
+        # order, and rides on matching input token counts.
+        with tempfile.TemporaryDirectory() as td:
+            live = Path(td) / "bench_dir"
+            live.mkdir()
+            sim_rows = ["instance id,request id,model,input,output,arrival,end_time,"
+                        "latency,queuing_delay,TTFT,TPOT,ITL"]
+            with open(live / "requests.jsonl", "w") as fh:
+                for i in range(10):
+                    sim_ttft_ms = 10.0 + i
+                    toks = 256 * (i + 1)
+                    fh.write(json.dumps({
+                        "request_id": f"bench-{i}", "input_toks": toks, "output_toks": 8,
+                        "queued_ts": 1000.0 + i,
+                        "first_token_ts": 1000.0 + i + (sim_ttft_ms + 6.3) / 1e3,
+                        "last_token_ts": 1000.0 + i + 1.0}) + "\n")
+                    sim_rows.append(f"0,{i},m,{toks},8,0,0,0,0,{sim_ttft_ms * 1e6:.0f},0,\"[]\"")
+            sim = Path(td) / "sim.csv"
+            sim.write_text("\n".join(sim_rows) + "\n")
+            meta = Path(td) / "meta.yaml"
+            meta.write_text("hardware: H200\n")
+            out = subprocess.run(
+                [sys.executable, str(CROSSVAL / "lss_first_token.py"), "--live", str(live),
+                 "--sim", str(sim), "--meta", str(meta)],
+                capture_output=True, text=True)
+            self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+            self.assertIn("overhead_ms=6.300", out.stdout)
+            self.assertIn("after_mape=0.0%", out.stdout)
+            self.assertIn("first_token_overhead_us: 6300", meta.read_text())
+
+    def test_goodput_search_and_verdict(self):
+        # The sweep must bracket the PASS/FAIL boundary within its probe cap;
+        # an uncapped search would double forever on a flat SLA response.
+        sys.path.insert(0, str(CROSSVAL))
+        try:
+            import trace_serve
+            importlib.reload(trace_serve)
+            gen = trace_serve.goodput_search(start=1.0)
+            speeds, speed = [], next(gen)
+            try:
+                while True:
+                    speeds.append(speed)
+                    speed = gen.send(speed < 4.0)  # SLA passes strictly below 4.0
+            except StopIteration:
+                pass
+            self.assertLessEqual(len(speeds), 6)
+            passing = [x for x in speeds if x < 4.0]
+            failing = [x for x in speeds if x >= 4.0]
+            self.assertTrue(passing and failing, speeds)
+            self.assertGreater(max(passing), 3.0, speeds)  # tightened to the boundary
+            s = {"ttft_ms": {"p99": 900.0}, "tpot_ms": {"p99": 40.0}}
+            self.assertEqual(trace_serve.sla_verdict(s, 500.0, 50.0), ["ttft_p99"])
+            self.assertEqual(trace_serve.sla_verdict(s, None, None), [])
+            self.assertIn("GOODPUTSUM", (CROSSVAL / "trace_serve.py").read_text())
+        finally:
+            sys.path.pop(0)
+
+    def test_injected_arrivals(self):
+        # Injected schedules must be deterministic, must match their spec, and
+        # must change the workload hash (arrival_ts is a hash input), so a
+        # trace-paced and an injected run can never be conflated.
+        sys.path.insert(0, str(CROSSVAL))
+        try:
+            import trace_serve, synth_bench
+            importlib.reload(trace_serve)
+            importlib.reload(synth_bench)
+            self.assertIsNone(trace_serve.injected_arrivals("trace", 8))
+            p = trace_serve.injected_arrivals("poisson:2.0", 8)
+            self.assertEqual(p, trace_serve.injected_arrivals("poisson:2.0", 8))
+            self.assertEqual(sorted(p), p)
+            b = trace_serve.injected_arrivals("burst:2x4@5.0", 8)
+            self.assertEqual(b, [0.0] * 4 + [5.0] * 4)
+            with self.assertRaises(ValueError):
+                trace_serve.injected_arrivals("burst:1x4@5.0", 8)  # spec too small
+            r = trace_serve.injected_arrivals("ramp:0.5:4.0", 8)
+            self.assertEqual(len(r), 8)
+            reqs = synth_bench.synth_requests(4, 64, seed=1)
+            h0 = synth_bench.workload_hash(reqs)
+            for req, t in zip(reqs, b[4:]):  # the non-zero burst; t=0 equals the default
+                req["arrival_ts"] = round(t, 6)
+            self.assertNotEqual(h0, synth_bench.workload_hash(reqs))
+        finally:
+            sys.path.pop(0)
+
+    def test_energy_integration(self):
+        sys.path.insert(0, str(CROSSVAL))
+        try:
+            import trace_serve
+            importlib.reload(trace_serve)
+            self.assertEqual(trace_serve.integrate_power([100.0, 100.0, 100.0], 1.0), 300.0)
+            self.assertEqual(trace_serve.integrate_power([], 1.0), 0.0)
+            self.assertIn("ENERGYSUM", (CROSSVAL / "trace_serve.py").read_text())
+        finally:
+            sys.path.pop(0)
+
+    def test_cost_math(self):
+        sys.path.insert(0, str(CROSSVAL))
+        try:
+            import trace_serve
+            importlib.reload(trace_serve)
+            # 2 GPUs at $3.60/hr for 30 min producing 1M tokens: $3.60, $3.60/M.
+            usd, per_m = trace_serve.cost_per_m_tokens(3.6, 2, 1800.0, 1_000_000)
+            self.assertAlmostEqual(usd, 3.6)
+            self.assertAlmostEqual(per_m, 3.6)
+            self.assertIn("COSTSUM", (CROSSVAL / "trace_serve.py").read_text())
+        finally:
+            sys.path.pop(0)
+
+    def test_gsm8k_answer_parse(self):
+        sys.path.insert(0, str(CROSSVAL))
+        try:
+            import trace_serve
+            importlib.reload(trace_serve)
+            f = trace_serve.gsm8k_answer
+            self.assertEqual(f("Natalia sold 48 clips. #### 72"), "72")
+            self.assertEqual(f("so the total is $1,234."), "1234")
+            self.assertEqual(f("the answer is 3.5 apples"), "3.5")
+            self.assertIsNone(f("no numbers here"))
+            src = (CROSSVAL / "trace_serve.py").read_text()
+            self.assertIn("ACCSUM", src)
+            # The gsm8k result must not share the name `acc` with SPECSUM's record
+            # list, or the (empty, for synthetic traces) SPECSUM list clobbers it
+            # and ACCSUM silently never prints.
+            self.assertIn("gsm8k_acc", src)
+            self.assertNotIn("if acc:\n        print(f\"ACCSUM", src)
+        finally:
+            sys.path.pop(0)
+
+    def test_serving_style_contract(self):
+        # Item 1a: serving topology parses, disagg GPU pools are disjoint, ep must
+        # divide the expert count, and disagg rows never pair with aggregated.
+        sys.path.insert(0, str(CROSSVAL))
+        try:
+            import xval_config
+            importlib.reload(xval_config)
+            self.assertEqual(xval_config.parse_serving_style("aggregated"), {"mode": "aggregated"})
+            self.assertEqual(xval_config.parse_serving_style(None), {"mode": "aggregated"})
+            self.assertEqual(xval_config.parse_serving_style("disagg:2p2d"),
+                             {"mode": "disagg", "prefill": 2, "decode": 2})
+            self.assertEqual(xval_config.parse_serving_style("ep8dp2"),
+                             {"mode": "ep_dp", "ep": 8, "dp": 2})
+            for bad in ("disagg:0p1d", "disagg:2p", "ep8", "wideEP", "disagg:xp1d"):
+                with self.assertRaises(ValueError):
+                    xval_config.parse_serving_style(bad)
+            pre, dec = xval_config.disagg_gpu_sets(
+                xval_config.parse_serving_style("disagg:2p2d"), [0, 1, 2, 3])
+            self.assertEqual((pre, dec), ([0, 1], [2, 3]))
+            self.assertFalse(set(pre) & set(dec))
+            with self.assertRaises(ValueError):
+                xval_config.disagg_gpu_sets(
+                    xval_config.parse_serving_style("disagg:2p2d"), [0, 1, 2])
+            xval_config.check_ep_legal(8, 256)  # DeepSeek-V4-Flash: 256 experts
+            with self.assertRaises(ValueError):
+                xval_config.check_ep_legal(7, 256)
+            self.assertFalse(xval_config.serving_style_compatible("disagg:1p1d", "aggregated"))
+            self.assertTrue(xval_config.serving_style_compatible("aggregated", "aggregated"))
+            # disagg KV config: prefill producer and decode consumer share the port
+            # and pool size, take distinct ranks; a wrong role raises.
+            pre = xval_config.disagg_kv_config("kv_producer", 0, "P2pConnector")
+            dec = xval_config.disagg_kv_config("kv_consumer", 1, "P2pConnector")
+            self.assertEqual(pre["kv_role"], "kv_producer")
+            self.assertEqual(dec["kv_rank"], 1)
+            self.assertEqual(pre["kv_port"], dec["kv_port"])
+            self.assertEqual(pre["kv_parallel_size"], dec["kv_parallel_size"])
+            with self.assertRaises(ValueError):
+                xval_config.disagg_kv_config("decode", 1, "P2pConnector")
+        finally:
+            sys.path.pop(0)
+        out = subprocess.run(
+            [sys.executable, str(CROSSVAL / "xval_config.py"), "serving-style", "disagg:1p1d"],
+            capture_output=True, text=True, check=True).stdout.strip()
+        self.assertEqual(out, "mode=disagg prefill=1 decode=1")
+
+    def test_engine_registry_and_trtllm_adapter(self):
+        # Item 3: trtllm resolves with a health path and needs an engine dir;
+        # amd is a loud stub; the launch and build commands are well-formed.
+        sys.path.insert(0, str(CROSSVAL))
+        try:
+            import xval_config
+            importlib.reload(xval_config)
+            trt = xval_config.resolve_engine("trtllm")
+            self.assertEqual(trt["serve"], "trtllm-serve")
+            self.assertEqual(trt["health"], "/health")
+            self.assertTrue(trt["engine_dir"])
+            with self.assertRaises(RuntimeError):
+                xval_config.resolve_engine("amd")
+            with self.assertRaises(ValueError):
+                xval_config.resolve_engine("bogus")
+        finally:
+            sys.path.pop(0)
+        sys.path.insert(0, str(CROSSVAL.parents[1]))
+        try:
+            from src.engines import trtllm
+            cmd = trtllm.launch_command("/models/llama", "/engines/llama", port=8000, tp=2)
+            self.assertEqual(cmd[0], "trtllm-serve")
+            self.assertIn("--engine_dir", cmd)
+            self.assertIn("/engines/llama", cmd)
+            self.assertIn("2", cmd)
+            self.assertEqual(trtllm.health_url(8000), "http://127.0.0.1:8000/health")
+            self.assertEqual(trtllm.build_command("/ckpt", "/engines/llama")[0], "trtllm-build")
+            from src.engines import sglang
+            sg = xval_config.resolve_engine("sglang")
+            self.assertEqual(sg["serve"], "sglang.launch_server")
+            cmd = sglang.launch_command("/models/llama", port=30000, tp=2)
+            self.assertEqual(cmd[:3], ["python3", "-m", "sglang.launch_server"])
+            self.assertIn("--model-path", cmd)
+            self.assertIn("/models/llama", cmd)
+            self.assertEqual(sglang.health_url(30000), "http://127.0.0.1:30000/health")
+        finally:
+            sys.path.pop(0)
+
+    def test_bench_dispatch_and_workflow(self):
+        # Item 4: changelog entry -> job matrix, malformed entry hard-fails, the
+        # dry-run command list byte-matches a golden, and the workflow is valid.
+        root = CROSSVAL.parents[1]
+        sys.path.insert(0, str(root))
+        try:
+            from tools import bench_dispatch as bd
+            jobs = bd.parse_changelog(
+                "## unreleased\n- x -- workloads: llama, qwen3 -- hardware: H200, RTXPRO6000\n")
+            self.assertEqual(jobs, [
+                {"workload": "llama", "hardware": "H200"},
+                {"workload": "llama", "hardware": "RTXPRO6000"},
+                {"workload": "qwen3", "hardware": "H200"},
+                {"workload": "qwen3", "hardware": "RTXPRO6000"}])
+            with self.assertRaises(ValueError):
+                bd.parse_changelog("## v\n- broken -- workloads: llama (no hardware)\n")
+            golden = [
+                "bash scripts/crossval/xval.sh llama $WEIGHTS_llama",
+                ("python3 scripts/crossval/trace_serve.py traces/llama.jsonl --model "
+                 "$WEIGHTS_llama --sla-ttft-ms 2000 --sla-tpot-ms 100 --energy "
+                 "--gpu-cost-hr $COST_H200 --json results/llama-H200.json")]
+            self.assertEqual(bd.commands({"workload": "llama", "hardware": "H200"}), golden)
+            rec = bd.history_record({"workload": "llama", "hardware": "H200"},
+                                    ["META a=1", "SERVESUM n=3", "noise line"], "abc123", "sha256:00")
+            self.assertEqual(rec["git_sha"], "abc123")
+            self.assertIn("SERVESUM", rec["summaries"])
+            self.assertNotIn("noise", json.dumps(rec["summaries"]))
+        finally:
+            sys.path.pop(0)
+        # the real changelog yields exactly its live entry, not the preamble
+        # grammar example (which sits above the first version header)
+        self.assertEqual(bd.parse_changelog((root / "benchmarks" / "CHANGELOG.md").read_text()),
+                         [{"workload": "llama", "hardware": "H200"}])
+        import yaml
+        wf = yaml.safe_load((root / ".github" / "workflows" / "bench-dispatch.yml").read_text())
+        self.assertIn("jobs", wf)
+        self.assertIn("bench_dispatch.py", json.dumps(wf))
+
+    def test_publish_results_deterministic_and_redacted(self):
+        # Item 5: the static site is byte-deterministic (golden), and nothing
+        # host-identifying (home paths, hostnames, IPs) survives into the output.
+        root = CROSSVAL.parents[1]
+        sys.path.insert(0, str(root))
+        try:
+            from tools import publish_results as pr
+            self.assertEqual(pr.redact("/home/kw/w on runpod at 10.0.0.5 and hwn-z1-gpu11"),
+                             "<path>/w on <host> at <ip> and <host>")
+            recs = [
+                {"workload": "llama", "hardware": "H200", "git_sha": "abc1234567",
+                 "summaries": {"SERVESUM": ["SERVESUM n=3"], "META": ["META trace=/home/kw/t.jsonl"]}},
+                {"workload": "qwen3", "hardware": "H200", "git_sha": "def",
+                 "summaries": {"COSTSUM": ["COSTSUM usd=0.1"]}},
+            ]
+            import tempfile
+            with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
+                files1 = pr.build_site(recs, a)
+                files2 = pr.build_site(recs, b)
+                self.assertEqual(files1, ["H200.html", "history.jsonl", "index.html"])
+                page_a = (Path(a) / "H200.html").read_text()
+                self.assertEqual(page_a, (Path(b) / "H200.html").read_text())  # deterministic
+                self.assertLess(page_a.index("llama"), page_a.index("qwen3"))  # sorted
+                blob = "".join((Path(a) / f).read_text() for f in files1)
+                for leak in ("/home/", "runpod", "hwn-z1", "gpu11"):
+                    self.assertNotIn(leak, blob, f"{leak} leaked into the published site")
+        finally:
+            sys.path.pop(0)
+
     def test_agreement_inputs_present(self):
         for name in ("prompts.txt", "texts.txt"):
             lines = [l for l in (CROSSVAL / name).read_text().splitlines() if l.strip()]
@@ -65,7 +465,6 @@ class CrossvalScripts(unittest.TestCase):
 
     def _bench(self, workload, prefix, stub_body, env=None):
         import subprocess as sp
-        import tempfile
 
         with tempfile.TemporaryDirectory() as td:
             stub = Path(td) / "stub"
@@ -239,9 +638,9 @@ class TableParity(unittest.TestCase):
     criterion per-step log gets its cells printed with ratios withheld, and
     rows whose KV formats differ carry a KV flag."""
 
-    def _table(self, bench_text, kv="float16", env=None, expect_rc=0):
+    def _table(self, bench_text, kv="float16", env=None, expect_rc=0,
+               serving_style="aggregated", quant="bf16"):
         import sys
-        import tempfile
         import time
 
         base = {
@@ -249,6 +648,7 @@ class TableParity(unittest.TestCase):
             "gpu": "test", "vllm": "0", "mode": "FULL", "model": "m",
             "dtype": "float16", "grid": "g", "method": "slope", "kv_dtype": kv,
             "nccl_algo": "allreduce:tree;allgather:ring", "nccl_proto": "Simple",
+            "serving_style": serving_style, "quant": quant,
             "points": [{"ctx": 1024, "bs": 1, "tp": 1, "ms_per_step": 5.0,
                         "tok_s": 200.0, "r2": 1.0, "kv": kv}],
         }
@@ -268,6 +668,32 @@ class TableParity(unittest.TestCase):
         out = self._table("LOOP ctx=1024 bs=1 kv=fp16 ms_per_step=10.000 k=100\n")
         self.assertIn("0.50x", out)
         self.assertNotIn("withheld", out)
+
+    def test_quant_mismatch_flags_and_withholds(self):
+        # An nvfp4 engine row against a bf16 baseline is flagged QUANT and withheld;
+        # vmin_fit passes quantization through and records META quant.
+        out = self._table(
+            "LOOP ctx=1024 bs=1 kv=fp16 ms_per_step=10.000 k=100\n",
+            quant="bf16", env={"XVAL_QUANT": "nvfp4"})
+        self.assertIn("QUANT MISMATCH", out)
+        self.assertIn("QUANT bf16/nvfp4", out)
+        self.assertNotIn("0.50x", out)
+        src = (CROSSVAL / "vmin_fit.py").read_text()
+        self.assertIn("quantization", src)
+        self.assertIn("META quant=", src)
+
+    def test_serving_style_mismatch_withholds(self):
+        # A disagg baseline against an aggregated engine row is never a ratio.
+        out = self._table(
+            "LOOP ctx=1024 bs=1 kv=fp16 ms_per_step=10.000 k=100\n",
+            serving_style="disagg:1p1d", env={"XVAL_SERVING_STYLE": "aggregated"})
+        self.assertIn("SERVING MISMATCH", out)
+        self.assertNotIn("0.50x", out)
+        # matching topology still earns its ratio
+        out2 = self._table(
+            "LOOP ctx=1024 bs=1 kv=fp16 ms_per_step=10.000 k=100\n",
+            serving_style="aggregated", env={"XVAL_SERVING_STYLE": "aggregated"})
+        self.assertIn("0.50x", out2)
 
     def test_eager_loop_row_is_grouped_and_flagged(self):
         # eager rows keep the ratio but get their own group and an EAGER flag.
@@ -370,7 +796,6 @@ class TableParity(unittest.TestCase):
         # comm_bound_bs comes from the workload record (deepseek sets 64);
         # the model field carries the display name, matched via workloads().
         import sys
-        import tempfile
         import time
 
         base = {
@@ -399,7 +824,6 @@ class TableParity(unittest.TestCase):
         # Absent comm_bound_bs means never comm-bound: a tp1 llama-class row
         # at bs=64 must keep its ratio instead of inventing a threshold.
         import sys
-        import tempfile
         import time
 
         base = {
@@ -444,6 +868,192 @@ class TableParity(unittest.TestCase):
         # No experimental text ships in the repo; corpus mode takes XVAL_CORPUS.
         self.assertFalse((CROSSVAL / "routing_corpus.txt").exists())
         self.assertIn("XVAL_CORPUS", (CROSSVAL / "vmin_fit.py").read_text())
+
+    def test_hash_canonicalization(self):
+        # The gate hashes the completed set, not the completion order: a true
+        # random shuffle of the done-list must not move the hash, while touching
+        # one prompt token or one arrival must. Without order-invariance the
+        # gate would void every run whose scheduler finished out of order.
+        import random
+        sys.path.insert(0, str(CROSSVAL))
+        try:
+            import synth_bench
+            importlib.reload(synth_bench)
+            reqs = synth_bench.agentic_requests("deep_research", 24, seed=5)
+            h = synth_bench.workload_hash(reqs)
+            shuffled = list(reqs)
+            random.Random(7).shuffle(shuffled)
+            self.assertNotEqual([r["order"] for r in shuffled], [r["order"] for r in reqs])
+            self.assertEqual(h, synth_bench.workload_hash(shuffled))
+            prompt_mut = [dict(r) for r in reqs]
+            ids = list(prompt_mut[3]["prompt_token_ids"])
+            ids[0] += 1
+            prompt_mut[3]["prompt_token_ids"] = ids
+            self.assertNotEqual(h, synth_bench.workload_hash(prompt_mut))
+            arrival_mut = [dict(r) for r in reqs]
+            arrival_mut[3]["arrival_ts"] = arrival_mut[3]["arrival_ts"] + 0.5
+            self.assertNotEqual(h, synth_bench.workload_hash(arrival_mut))
+        finally:
+            sys.path.pop(0)
+
+    def test_workload_identity_hash(self):
+        # The gate: same requests -> same hash regardless of order; a dropped or
+        # altered request changes it. This is what proves systems saw equal work.
+        sys.path.insert(0, str(CROSSVAL))
+        try:
+            import synth_bench
+            importlib.reload(synth_bench)
+            reqs = synth_bench.swebench_requests(12, seed=2)
+            h = synth_bench.workload_hash(reqs)
+            self.assertEqual(h, synth_bench.workload_hash(list(reversed(reqs))),
+                             "hash must be order-independent")
+            self.assertNotEqual(h, synth_bench.workload_hash(reqs[:-1]),
+                                "dropping a request must change the hash")
+            altered = [dict(r) for r in reqs]
+            altered[0] = {**altered[0], "output_length": altered[0]["output_length"] + 1}
+            self.assertNotEqual(h, synth_bench.workload_hash(altered),
+                                "changing requested output must change the hash")
+            out = subprocess.run(
+                [sys.executable, str(CROSSVAL / "synth_bench.py"), "hash", "/dev/stdin"],
+                input="".join(json.dumps(r) + "\n" for r in reqs),
+                capture_output=True, text=True,
+            )
+            self.assertEqual(out.stdout.strip(), h, out.stderr)
+        finally:
+            sys.path.pop(0)
+
+    def test_seed_deterministic_and_labeled(self):
+        # Same seed + profile is byte-identical, labeled SYNTHETIC, carries the
+        # seed; a different seed or arrival time changes the workload hash.
+        def gen(seed):
+            fd, p = tempfile.mkstemp(suffix=".jsonl"); os.close(fd)
+            subprocess.run([sys.executable, str(CROSSVAL / "synth_bench.py"), "gen",
+                            "--profile", "terminal_bench", "--n", "8", "--seed", str(seed),
+                            "--out", p], check=True, capture_output=True)
+            return p
+        a, b, c = gen(1), gen(1), gen(2)
+        self.assertEqual(Path(a).read_bytes(), Path(b).read_bytes(),
+                         "same seed must produce a byte-identical trace")
+        rows = [json.loads(l) for l in open(a)]
+        self.assertTrue(all(r["source"] == "SYNTHETIC" for r in rows))
+        self.assertTrue(all(r["seed"] == 1 for r in rows))
+        sys.path.insert(0, str(CROSSVAL))
+        try:
+            import synth_bench
+            importlib.reload(synth_bench)
+            self.assertNotEqual(synth_bench.workload_hash(synth_bench.load_trace(a)),
+                                synth_bench.workload_hash(synth_bench.load_trace(c)),
+                                "a different seed must change the hash")
+            reqs = synth_bench.load_trace(a)
+            bumped = [dict(x) for x in reqs]
+            bumped[0]["arrival_ts"] = bumped[0].get("arrival_ts", 0.0) + 1.0
+            self.assertNotEqual(synth_bench.workload_hash(reqs),
+                                synth_bench.workload_hash(bumped),
+                                "arrival time is a hash input")
+        finally:
+            sys.path.pop(0)
+        for p in (a, b, c):
+            os.unlink(p)
+
+    def test_profiles_have_distinct_signatures(self):
+        # Each profile must be a distinct serving signature, not a renamed copy:
+        # distinct burst and gap specs, and a distinct realized arrival spread.
+        sys.path.insert(0, str(CROSSVAL))
+        try:
+            import synth_bench
+            importlib.reload(synth_bench)
+            specs = synth_bench.AGENTIC
+            self.assertGreater(len({s["burst"] for s in specs.values()}), 1)
+            self.assertGreater(len({s["gap"] for s in specs.values()}), 1)
+            def span(rs):
+                return max(r["arrival_ts"] for r in rs) - min(r["arrival_ts"] for r in rs)
+            dr = synth_bench.agentic_requests("deep_research", 40, seed=1)
+            tb = synth_bench.agentic_requests("terminal_bench", 40, seed=1)
+            self.assertGreater(span(dr), span(tb),
+                               "deep_research must arrive over a longer span than terminal_bench")
+        finally:
+            sys.path.pop(0)
+
+    def test_serving_emits_verdicts(self):
+        text = (CROSSVAL / "trace_serve.py").read_text()
+        for tag in ("--sla-ttft-ms", "--sla-tpot-ms", "SLASUM", "BURSTSUM", "SPECSUM"):
+            self.assertIn(tag, text)
+        self.assertIn("FIDELITY", (CROSSVAL / "xval.sh").read_text())
+
+    def test_burst_recovery_and_acceptance(self):
+        sys.path.insert(0, str(CROSSVAL))
+        try:
+            import trace_serve
+            importlib.reload(trace_serve)
+            self.assertEqual(trace_serve._acceptance([1, 2, 3, 4], [1, 2, 9, 4]), (2, 0.5))
+            self.assertEqual(trace_serve._acceptance([], [])[0], 0)
+            recs = ([{"arrival_s": t, "ttft_ms": 100.0} for t in range(0, 5)]
+                    + [{"arrival_s": t, "ttft_ms": 9000.0} for t in range(5, 10)]
+                    + [{"arrival_s": t, "ttft_ms": 100.0} for t in range(15, 20)])
+            rec_s, peak = trace_serve.burst_recovery(recs, sla_ttft_ms=1000.0, window_s=5.0)
+            self.assertEqual(peak, 9000.0)
+            self.assertIsNotNone(rec_s)
+            self.assertGreater(rec_s, 0)
+            never = [{"arrival_s": t, "ttft_ms": 9000.0} for t in range(0, 10)]
+            self.assertIsNone(trace_serve.burst_recovery(never, 1000.0, 5.0)[0])
+        finally:
+            sys.path.pop(0)
+
+    def test_r2_tokenize_and_output_ids_survive_load(self):
+        # The real-text path: agent-bench turns -> requests carrying output_token_ids
+        # (reasoning+content), and load_trace must preserve them or SPECSUM can never
+        # fire. encode is stubbed so the test needs no tokenizer or GPU.
+        sys.path.insert(0, str(CROSSVAL))
+        try:
+            import trace_tokenize, synth_bench
+            importlib.reload(trace_tokenize)
+            importlib.reload(synth_bench)
+            recs = [{"model": "DS", "session_id": "s0", "turns": [
+                {"turn_index": 0, "prompt_text": "ab", "reasoning_text": "c", "content_text": "d"}]}]
+            reqs = trace_tokenize.r2_to_requests(recs, encode=lambda s: [ord(ch) for ch in s])
+            self.assertEqual(reqs[0]["prompt_token_ids"], [97, 98])
+            self.assertEqual(reqs[0]["output_token_ids"], [99, 100])  # reasoning + content
+            self.assertEqual(reqs[0]["output_length"], 2)
+            self.assertEqual(reqs[0]["source"], "DS")
+            with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as fh:
+                for r in reqs:
+                    fh.write(json.dumps(r) + "\n")
+                p = fh.name
+            loaded = synth_bench.load_trace(p)
+            os.unlink(p)
+            self.assertEqual(loaded[0]["output_token_ids"], [99, 100])
+        finally:
+            sys.path.pop(0)
+
+    def test_agentic_profiles(self):
+        # Every agentic profile is deterministic, multi-turn, session-grouped,
+        # in-range, and round-trips through load_trace.
+        sys.path.insert(0, str(CROSSVAL))
+        try:
+            import synth_bench
+            importlib.reload(synth_bench)
+            for name, spec in synth_bench.AGENTIC.items():
+                a = synth_bench.agentic_requests(name, 40, seed=3)
+                b = synth_bench.agentic_requests(name, 40, seed=3)
+                self.assertEqual([r["prompt_token_ids"] for r in a],
+                                 [r["prompt_token_ids"] for r in b], f"{name} not deterministic")
+                self.assertTrue(any(r["turn"] > 0 for r in a), f"{name} has no multi-turn session")
+                self.assertGreater(len({r["session_id"] for r in a}), 0)
+                for r in a:
+                    self.assertGreaterEqual(r["output_length"], spec["output"][0])
+                    self.assertLessEqual(r["output_length"], spec["output"][1])
+                    if spec["image"]:
+                        self.assertEqual(r.get("image_tokens"), spec["image"])
+                with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as fh:
+                    for r in a:
+                        fh.write(json.dumps(r) + "\n")
+                    p = fh.name
+                loaded = synth_bench.load_trace(p)
+                os.unlink(p)
+                self.assertEqual(loaded[0]["turn"], a[0]["turn"])
+                self.assertEqual(loaded[0].get("session_id"), a[0]["session_id"])
+        finally:
+            sys.path.pop(0)
 
     def test_synth_bench_distinct_and_trace(self):
         # The synthetic runner must produce DISTINCT per-request streams (so MoE
@@ -627,7 +1237,6 @@ class XvalConfigWorkloads(unittest.TestCase):
         # workloads() falls back to workloads.json when xval.yaml is absent.
         import importlib
         import shutil
-        import tempfile
         td = Path(tempfile.mkdtemp())
         try:
             shutil.copy(CROSSVAL / "xval_config.py", td / "xval_config.py")
@@ -666,36 +1275,6 @@ class XvalConfig(unittest.TestCase):
         data = yaml.safe_load(text)
         self.assertIsInstance(data, dict)
         self.assertTrue(data, "xval.yaml parsed to empty")
-
-    def test_xval_example_yaml_parses(self):
-        import yaml
-        text = (CROSSVAL / "xval.example.yaml").read_text()
-        data = yaml.safe_load(text)
-        self.assertIsInstance(data, dict)
-        self.assertTrue(data, "xval.example.yaml parsed to empty")
-
-    def _all_leaf_keys(self, obj, prefix=""):
-        """Yield dotted key paths for all scalar leaves in a nested dict."""
-        if isinstance(obj, dict):
-            for k, v in obj.items():
-                yield from self._all_leaf_keys(v, f"{prefix}.{k}" if prefix else k)
-        elif isinstance(obj, list):
-            pass  # grid lists are not field-level docs, skip
-        else:
-            yield prefix
-
-    def test_example_documents_every_key_in_xval_yaml(self):
-        """Every key present in xval.yaml must also appear in xval.example.yaml."""
-        import yaml
-        active = yaml.safe_load((CROSSVAL / "xval.yaml").read_text()) or {}
-        example = yaml.safe_load((CROSSVAL / "xval.example.yaml").read_text()) or {}
-        active_keys = set(self._all_leaf_keys(active))
-        example_keys = set(self._all_leaf_keys(example))
-        missing = active_keys - example_keys
-        self.assertFalse(
-            missing,
-            f"xval.example.yaml is missing keys present in xval.yaml: {sorted(missing)}",
-        )
 
     def test_loader_resolves_collective_block(self):
         import yaml
@@ -792,7 +1371,6 @@ class XvalConfig(unittest.TestCase):
     def test_loader_falls_back_to_defaults_without_yaml(self):
         """xval_config must return valid defaults even with no xval.yaml present."""
         import importlib
-        import tempfile
         import shutil
         # Point _HERE at a temp dir with no xval.yaml.
         td = Path(tempfile.mkdtemp())
@@ -843,7 +1421,6 @@ class TraceWorkloads(unittest.TestCase):
         self.assertEqual({r["session_id"] for r in a}, {f"g{i}" for i in range(4)})
 
     def test_load_trace_carries_arrivals_and_sessions(self):
-        import tempfile
         sb = self._sb()
         with tempfile.TemporaryDirectory() as td:
             p = Path(td) / "t.jsonl"

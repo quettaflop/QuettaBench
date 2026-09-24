@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
-# xval.sh <crate> <weights-dir> [bench-log] -- run the whole cross-validation.
-# Picks idle GPUs once (honoring a caller-set CUDA_VISIBLE_DEVICES) so every
-# stage lands on the same devices. Captures the vLLM baseline if it is not
-# cached, logit-checks it against the transformers reference (result cached
-# beside the baseline; LOGIT=1 reruns, LOGIT=0 skips), runs the greedy check
-# when QS_BIN points at an engine binary, and prints the comparison table
-# when a criterion bench log is given. PY selects the python with vllm.
-# PROF=1 nsys-captures the profiling cell afterwards: the vLLM baseline, and
-# the engine decode_loop when QS_BENCH_BIN names the bench.
+# xval.sh <crate> <weights-dir> [bench-log]: run the whole cross-validation.
+# Picks idle GPUs once so every stage lands on the same devices: vLLM baseline
+# (cached), logit check (LOGIT=1 reruns, 0 skips), greedy check when QS_BIN is
+# set, comparison table, PROF=1 nsys capture, XVAL_SERVE_TRACE serving replay.
+# PY selects the python with vllm.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Pick up bootstrap.sh's resolved env (PY, caches, engine bins) when present.
+# shellcheck source=/dev/null
+[ -f "$HERE/.xval_env" ] && . "$HERE/.xval_env"
 CRATE="${1:?crate}"
 MDIR="${2:?weights dir}"
 BENCH_LOG="${3:-}"
-PY="${PY:-python3}"
+PY="${PY:-${XVAL_PY:-python3}}"
 
 TP="$(python3 "$HERE/xval_config.py" tp "$CRATE")"
-GPUS="${CUDA_VISIBLE_DEVICES:-$("$HERE/free_gpu.sh" "$TP")}"
+N_DEV="$(python3 "$HERE/xval_config.py" devices "$CRATE")"  # tp * pp
+GPUS="${CUDA_VISIBLE_DEVICES:-$("$HERE/free_gpu.sh" "$N_DEV")}"
 export CUDA_VISIBLE_DEVICES="$GPUS"
 ONE="${GPUS%%,*}"
 echo "GPU=$GPUS"
@@ -37,6 +37,12 @@ if [ "$_HAS_REFERENCE" = 1 ] && [ "${LOGIT:-}" != 0 ] && \
 fi
 if [ "$_HAS_REFERENCE" = 1 ] && [ -f "$LOGIT_LOG" ]; then
     grep -E "SUMMARY|DISAGREE|NEAR_TIE" "$LOGIT_LOG"
+    # Fidelity verdict beside the perf numbers: a fast-but-wrong run must be
+    # flagged. Near-ties are the precision floor; only hard disagreements fail.
+    _hard=$(grep -oE 'hard_disagreements=[0-9]+' "$LOGIT_LOG" | grep -oE '[0-9]+' | head -1)
+    echo "FIDELITY verdict=$([ "${_hard:-1}" = 0 ] && echo PASS || echo FAIL) hard_disagreements=${_hard:-?} crate=$CRATE"
+elif [ "$_HAS_REFERENCE" = 0 ]; then
+    echo "FIDELITY verdict=SKIP reason=no-transformers-reference crate=$CRATE"
 fi
 
 # greedy_agreement uses the llama/transformers reference binary; skip for deepseek.
@@ -59,4 +65,13 @@ if [ "${PROF:-0}" = 1 ]; then
         MODEL="$MDIR" CUDA_VISIBLE_DEVICES="$GPUS" "$HERE/prof.sh" "qserve-$CRATE" \
             "$QS_BENCH_BIN" decode_loop --bench
     fi
+fi
+
+# Serving replay with the workload-identity gate; XVAL_SERVE_ARGS passes extra
+# trace_serve flags (--prefix-caching, --speed, --ep, ...).
+if [ -n "${XVAL_SERVE_TRACE:-}" ]; then
+    echo "workload_hash=$("$PY" "$HERE/synth_bench.py" hash "$XVAL_SERVE_TRACE")"
+    CUDA_VISIBLE_DEVICES="$GPUS" "$PY" "$HERE/trace_serve.py" "$XVAL_SERVE_TRACE" \
+        --model "$MDIR" --tp "$TP" ${XVAL_SERVE_ARGS:-} \
+        | grep -E "^META|^WORKLOADSUM|^WORKLOADVOID|^SERVESUM|^SLASUM"
 fi

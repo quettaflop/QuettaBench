@@ -3,8 +3,6 @@
 import argparse
 import json
 import os
-import re
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -17,21 +15,15 @@ from vllm import LLM, SamplingParams
 sys.path.insert(0, str(Path(__file__).parent))
 from xval_config import collective as _xval_collective, workloads as _xval_workloads
 from xval_config import grids as _xval_grids, step_points as _xval_step_points
+from xval_config import link_profile as _xval_link_profile
 CFG = {
     "workloads": _xval_workloads(),
     "grids": _xval_grids(),
     "step_points": _xval_step_points(),
 }
-# Same link-profile rule as bench.sh: NVLink boxes take no pins (empty
-# values are skipped, not exported) so both sides run their native TP path.
-if "XVAL_LINK_PROFILE" not in os.environ:
-    try:
-        _topo = subprocess.run(
-            ["nvidia-smi", "topo", "-m"], capture_output=True, text=True
-        ).stdout
-    except OSError:
-        _topo = ""
-    os.environ["XVAL_LINK_PROFILE"] = "nvlink" if re.search(r"NV\d", _topo) else "pcie"
+# Same link-profile rule as bench.sh (one detection, in xval_config); empty
+# collective values are skipped, not exported.
+os.environ.setdefault("XVAL_LINK_PROFILE", _xval_link_profile())
 for _k, _v in _xval_collective().items():
     if _v:
         os.environ.setdefault(_k, _v)
@@ -119,6 +111,7 @@ def main():
 
     mode = "NOGRAPH" if args.nograph else "FULL"
     tp = int(wl.get("tp", 1))
+    pp = int(os.environ.get("XVAL_PP", wl.get("pp", 1)))
     dtype = wl["dtype"]
     kv_dtype = wl.get("kv_dtype")
     weights_gib = float(wl["weights_gib"])
@@ -134,7 +127,8 @@ def main():
     if prompt_mode == "trace":
         import synth_bench
         trace_reqs = synth_bench.load_trace(os.environ["XVAL_TRACE"])
-        print(f"META trace={os.environ['XVAL_TRACE']} reqs={len(trace_reqs)}", flush=True)
+        print(f"META trace={os.environ['XVAL_TRACE']} reqs={len(trace_reqs)} "
+              f"workload_hash={synth_bench.workload_hash(trace_reqs)}", flush=True)
 
     print(f"META gpu={torch.cuda.get_device_name(0)}", flush=True)
     print(f"META vllm={vllm.__version__}", flush=True)
@@ -146,12 +140,23 @@ def main():
     print(f"META nccl_proto={os.environ.get('NCCL_PROTO','auto')}", flush=True)
     print(f"META link_profile={os.environ['XVAL_LINK_PROFILE']}", flush=True)
     print(f"META prompt_mode={prompt_mode}", flush=True)
+    # cache.py parses META one key per line; never combine keys.
+    print(f"META tp={tp}", flush=True)
+    print(f"META pp={pp}", flush=True)
 
     kw = {}
+    if pp > 1:
+        kw["pipeline_parallel_size"] = pp
     if args.nograph:
         kw["compilation_config"] = {"cudagraph_mode": "NONE"}
     if kv_dtype:
         kw["kv_cache_dtype"] = kv_dtype
+    # Quantized weights (nvfp4 / fp8): pass through to vLLM and record it so the
+    # table never pairs an fp4 row against a bf16 baseline as if equal.
+    quant = wl.get("quant")
+    if quant:
+        kw["quantization"] = quant
+    print(f"META quant={quant or dtype}", flush=True)
     # MoE workloads shard their experts across the tp ranks.
     if wl.get("expert_parallel"):
         kw["enable_expert_parallel"] = True

@@ -1,9 +1,10 @@
-# xval_config.py -- load xval.yaml merged over workloads.json; fall back to
-# hardcoded defaults when xval.yaml is absent.
-# Used by: the shell scripts (as a cli), vmin_fit.py, table.py.
-# PyYAML is available in the crossval environment (yaml 6.0.x).
+# Load xval.yaml merged over workloads.json; fall back to hardcoded defaults
+# when xval.yaml is absent. Runs as a library and as a shell-callable cli.
 import json
 import os
+import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -16,7 +17,6 @@ _DEFAULTS = {
         "world": 8,
         "timing_steps": 100,
         "max_seq_headroom": 28,
-        "clone_slots": 1,
     },
     "collective": {
         # per-collective syntax required: NCCL rejects plain Tree for all-gather.
@@ -30,9 +30,14 @@ _DEFAULTS = {
         "llmsrv_no_nvls": 1,
         "llmsrv_twoshot_min_bytes": 0,
     },
-    "runtime": {
-        # Blackwell sm_120 requires NCCL >= 2.28; 2.25.1 fails with "invalid argument".
-        "nccl_min_version": "2.28",
+    "provision": {
+        # bootstrap.sh reads these; empty means supply via env or optional.
+        "cache_root": "/workspace/.xval-cache",
+        "py": "",
+        "vllm_spec": "",
+        "qs_repo": "",
+        "qs_commit": "",
+        "nccl_lib": "",
     },
 }
 
@@ -63,15 +68,12 @@ def load():
 
 
 def collective(cfg=None, profile=None):
-    """Return the collective env block as a dict of uppercase env-var names.
+    """Collective env block as uppercase env-var names, keyed by link profile.
 
-    profile "pcie" (the default) applies the tuned pins from xval.yaml.
-    profile "nvlink" returns them as empty strings (empty = do not export):
-    on NVLink boxes NCCL's own NVLS/LL128 selection and the engine's
-    peer-allreduce beat the PCIe pins, and vLLM's TP path bypasses NCCL_ALGO
-    entirely, so exporting the pins there slows only the engine. A
-    collective_nvlink block in xval.yaml overrides individual values.
-    Resolution order: argument, then $XVAL_LINK_PROFILE, then "pcie".
+    "pcie" (default) exports the tuned NCCL pins from xval.yaml. "nvlink" blanks
+    them (empty = do not export): on NVLink, NCCL's own selection and the engine's
+    peer-allreduce beat the pins, and vLLM's TP path ignores NCCL_ALGO anyway.
+    Profile resolves from the argument, then $XVAL_LINK_PROFILE, then "pcie".
     """
     if profile is None:
         profile = os.environ.get("XVAL_LINK_PROFILE", "pcie")
@@ -107,7 +109,6 @@ def run_params(cfg=None):
         "world": int(r.get("world", _DEFAULTS["run"]["world"])),
         "timing_steps": int(r.get("timing_steps", _DEFAULTS["run"]["timing_steps"])),
         "max_seq_headroom": int(r.get("max_seq_headroom", _DEFAULTS["run"]["max_seq_headroom"])),
-        "clone_slots": int(r.get("clone_slots", _DEFAULTS["run"]["clone_slots"])),
     }
 
 
@@ -164,8 +165,136 @@ def step_points(cfg=None):
     return _load_json()["step_points"]
 
 
+def provision(cfg=None):
+    """Return the provision block (bootstrap.sh inputs) merged over defaults."""
+    if cfg is None:
+        cfg = load()
+    p = dict(_DEFAULTS["provision"])
+    p.update(cfg.get("provision", {}))
+    return p
+
+
+def backend():
+    """Detect the accelerator backend: XVAL_BACKEND override, else from the tooling
+    present (nvidia-smi -> cuda, rocm-smi -> rocm, neuron-ls -> neuron, libtpu ->
+    tpu, else cpu). Only device picking and the NCCL pins are cuda-specific; the
+    rest of the harness is backend-agnostic."""
+    b = os.environ.get("XVAL_BACKEND")
+    if b:
+        return b
+    if shutil.which("nvidia-smi"):
+        return "cuda"
+    if shutil.which("rocm-smi"):
+        return "rocm"
+    if shutil.which("neuron-ls"):
+        return "neuron"
+    if os.environ.get("TPU_NAME") or os.path.exists("/lib/libtpu.so"):
+        return "tpu"
+    return "cpu"
+
+
+def parse_serving_style(spec):
+    """Serving topology for a run, recorded so aggregated and disaggregated
+    numbers are never mixed in one table. 'aggregated' (default) is one server
+    over tp*pp GPUs. 'disagg:<P>p<D>d' splits prefill and decode onto disjoint
+    GPU pools with a KV-transfer connector between them (vLLM PD). 'ep<N>dp<M>'
+    is wide expert parallelism (N-way experts across M data-parallel replicas).
+    Returns {mode, ...degrees}; raises ValueError on a malformed spec so a
+    fat-fingered topology fails at parse rather than silently running aggregated."""
+    if spec in (None, "", "aggregated"):
+        return {"mode": "aggregated"}
+    m = re.fullmatch(r"disagg:(\d+)p(\d+)d", spec)
+    if m:
+        p, d = int(m.group(1)), int(m.group(2))
+        if p < 1 or d < 1:
+            raise ValueError(f"disagg needs >=1 prefill and >=1 decode: {spec!r}")
+        return {"mode": "disagg", "prefill": p, "decode": d}
+    m = re.fullmatch(r"ep(\d+)dp(\d+)", spec)
+    if m:
+        return {"mode": "ep_dp", "ep": int(m.group(1)), "dp": int(m.group(2))}
+    raise ValueError(f"unknown serving_style {spec!r}; use aggregated, "
+                     "disagg:<P>p<D>d, or ep<N>dp<M>")
+
+
+def disagg_gpu_sets(style, available):
+    """(prefill_ids, decode_ids): disjoint device-id slices for a disagg style.
+    The pools never share a GPU because a shared device would let prefill and
+    decode contend, voiding the separation the P/D split exists to measure."""
+    p, d = style["prefill"], style["decode"]
+    if p + d > len(available):
+        raise ValueError(f"disagg:{p}p{d}d needs {p + d} GPUs, have {len(available)}")
+    prefill, decode = available[:p], available[p:p + d]
+    assert not (set(prefill) & set(decode)), "prefill and decode GPU sets overlap"
+    return prefill, decode
+
+
+def check_ep_legal(ep, num_experts):
+    """Expert parallelism must evenly divide the model's expert count, else a
+    rank ends up with a ragged expert shard the engine cannot place. Raises on
+    an illegal degree rather than letting the engine fail deep in load."""
+    if num_experts % ep != 0:
+        raise ValueError(f"ep={ep} does not divide {num_experts} experts")
+
+
+# Serving engines the benchmark can launch. All expose an OpenAI-compatible API,
+# so the client metric path is shared; only the launch differs. trtllm needs a
+# prebuilt engine dir (the build is manual, see src/engines/trtllm.py).
+ENGINES = {
+    "vllm": {"serve": "vllm serve", "health": "/health", "engine_dir": False},
+    "trtllm": {"serve": "trtllm-serve", "health": "/health", "engine_dir": True},
+    "sglang": {"serve": "sglang.launch_server", "health": "/health", "engine_dir": False},
+}
+
+
+def resolve_engine(name):
+    """Launch metadata for a serving engine. amd/rocm is a stub: no ROCm host is
+    provisioned, so it fails loudly here rather than emitting a launch that would
+    fail deep in an unavailable engine."""
+    if name in ("amd", "rocm"):
+        raise RuntimeError("no ROCm host provisioned; the amd engine backend is a stub")
+    if name not in ENGINES:
+        raise ValueError(f"unknown engine {name!r}; known: {', '.join(ENGINES)}")
+    return ENGINES[name]
+
+
+def disagg_kv_config(role, rank, connector, kv_port=14579, kv_parallel_size=2):
+    """One side of a prefill/decode split as a vLLM kv_transfer_config dict,
+    passed to the server as --kv-transfer-config <json>. role is 'kv_producer'
+    (prefill) or 'kv_consumer' (decode); the two share kv_port and
+    kv_parallel_size so the connector pairs them and take distinct kv_rank. A
+    wrong role raises here rather than starting a server that never pairs."""
+    if role not in ("kv_producer", "kv_consumer"):
+        raise ValueError(f"kv_role must be kv_producer or kv_consumer, got {role!r}")
+    return {"kv_connector": connector, "kv_role": role, "kv_rank": rank,
+            "kv_parallel_size": kv_parallel_size, "kv_port": kv_port}
+
+
+def serving_style_compatible(a, b):
+    """Two rows compare only when their serving topology matches; a disagg
+    number against an aggregated one is a category error the table must refuse,
+    the same way an NCCL or KV mismatch withholds a ratio."""
+    return parse_serving_style(a)["mode"] == parse_serving_style(b)["mode"]
+
+
+def link_profile():
+    """Interconnect profile for the collective env: XVAL_LINK_PROFILE override,
+    else nvlink when nvidia-smi topo shows an NV* link, else pcie. Non-cuda
+    backends take nvlink, the no-pins profile."""
+    p = os.environ.get("XVAL_LINK_PROFILE")
+    if p:
+        return p
+    if backend() != "cuda":
+        return "nvlink"
+    try:
+        topo = subprocess.run(["nvidia-smi", "topo", "-m"],
+                              capture_output=True, text=True).stdout
+    except OSError:
+        topo = ""
+    return "nvlink" if re.search(r"NV\d", topo) else "pcie"
+
+
 def _cli(args):
-    """Shell entry: collective | run-params | tp <wl> | cells <wl> | bench <wl>."""
+    """Shell entry: collective | run-params | provision [key] | tp <wl> | cells <wl> | bench <wl>."""
     cmd = args[0] if args else ""
     if cmd == "collective":
         for k, v in collective().items():
@@ -175,13 +304,38 @@ def _cli(args):
         p = run_params()
         print(p["timing_steps"], p["max_seq_headroom"])
         return
-    if cmd not in ("tp", "cells", "bench") or len(args) != 2:
-        sys.exit("usage: xval_config.py collective|run-params|tp|cells|bench [workload]")
+    if cmd == "provision":
+        p = provision()
+        if len(args) == 2:
+            print(p.get(args[1], ""))
+        else:
+            for k, v in p.items():
+                print(f"{k}={v}")
+        return
+    if cmd == "backend":
+        print(backend())
+        return
+    if cmd == "link-profile":
+        print(link_profile())
+        return
+    if cmd == "serving-style":
+        st = parse_serving_style(args[1] if len(args) > 1 else "aggregated")
+        print(" ".join(f"{k}={v}" for k, v in st.items()))
+        return
+    if cmd == "engine":
+        e = resolve_engine(args[1] if len(args) > 1 else "vllm")
+        print(" ".join(f"{k}={v}" for k, v in e.items()))
+        return
+    if cmd not in ("tp", "devices", "cells", "bench") or len(args) != 2:
+        sys.exit("usage: xval_config.py collective|run-params|provision|backend|link-profile|serving-style|tp|devices|cells|bench [workload]")
     wl = workloads().get(args[1])
     if wl is None:
         sys.exit(f"unknown workload {args[1]}")
     if cmd == "tp":
         print(wl.get("tp", 1))
+    elif cmd == "devices":
+        pp = int(os.environ.get("XVAL_PP", wl.get("pp", 1)))
+        print(int(wl.get("tp", 1)) * pp)
     elif cmd == "cells":
         for ctx, bs in grids()[wl["grid"]]:
             print(ctx, bs)

@@ -92,9 +92,9 @@ def ours_points(path):
 def main():
     bench_path, cache_path = sys.argv[1], sys.argv[2]
     if not os.path.exists(bench_path):
-        sys.exit(f"no bench log at {bench_path} — run `just bench llama` first")
+        sys.exit(f"no bench log at {bench_path}; run `just bench llama` first")
     if not os.path.exists(cache_path):
-        sys.exit(f"no vLLM baseline at {cache_path} — run `just vllm llama`")
+        sys.exit(f"no vLLM baseline at {cache_path}; run `just vllm llama`")
 
     ours, method = ours_points(bench_path)
     if not ours:
@@ -114,13 +114,29 @@ def main():
         + (f"  nccl={nccl_algo}/{nccl_proto}" if nccl_algo or nccl_proto else "")
     )
     if age_d > STALE_DAYS:
-        print(f"WARNING: baseline older than {STALE_DAYS}d — re-run `just vllm`")
+        print(f"WARNING: baseline older than {STALE_DAYS}d; re-run `just vllm`")
     eng_nccl_algo = os.environ.get("NCCL_ALGO")
     eng_nccl_proto = os.environ.get("NCCL_PROTO")
     if nccl_algo and eng_nccl_algo and nccl_algo != eng_nccl_algo:
         print(f"NCCL MISMATCH engine={eng_nccl_algo}/{eng_nccl_proto} vllm={nccl_algo}/{nccl_proto}")
     elif nccl_proto and eng_nccl_proto and nccl_proto != eng_nccl_proto:
         print(f"NCCL MISMATCH engine={eng_nccl_algo}/{eng_nccl_proto} vllm={nccl_algo}/{nccl_proto}")
+
+    # Serving topology must match on both sides; a disaggregated engine row
+    # against an aggregated baseline is a category error, never a ratio.
+    base_style = cache.get("serving_style", "aggregated")
+    eng_style = os.environ.get("XVAL_SERVING_STYLE", "aggregated")
+    serving_mismatch = not _xval.serving_style_compatible(base_style, eng_style)
+    if serving_mismatch:
+        print(f"SERVING MISMATCH engine={eng_style} vllm={base_style}; ratios withheld")
+
+    # Quantization must match; an fp4 engine row against a bf16 baseline is not a
+    # fair ratio, so it is flagged per row and withheld, like a KV mismatch.
+    base_quant = cache.get("quant", cache.get("dtype", "?"))
+    eng_quant = os.environ.get("XVAL_QUANT", base_quant)
+    quant_mismatch = base_quant != eng_quant
+    if quant_mismatch:
+        print(f"QUANT MISMATCH engine={eng_quant} vllm={base_quant}; ratios withheld")
 
     # comm_bound_bs from the merged workloads, matched on crate key or record
     # name. Absent means never comm-bound (tp1 has no TP allreduce); no default.
@@ -134,6 +150,8 @@ def main():
     matched = method == "loop" and cache.get("method", "slope") == "slope"
     if not matched and os.environ.get("XVAL_ALLOW_METHOD_MISMATCH"):
         matched = True
+    if serving_mismatch or quant_mismatch:
+        matched = False  # topology or quant differences are never comparable
     if not matched:
         print("engine log times one synchronized step per iteration; the baseline "
               "is a pipelined slope. Not the same quantity, so ratios are withheld "
@@ -164,6 +182,8 @@ def main():
         if kv_a and kv_short.get(kv_a, kv_a) != kv_short.get(kv_b, kv_b):
             flag += f"  KV {kv_short.get(kv_a, kv_a)}/{kv_short.get(kv_b, kv_b)}"
             kv_flagged = True
+        if quant_mismatch:
+            flag += f"  QUANT {base_quant}/{eng_quant}"
         comm_flagged = comm_bound_bs is not None and bs >= comm_bound_bs
         if comm_flagged:
             flag += "  COMM"
