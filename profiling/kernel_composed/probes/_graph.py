@@ -19,11 +19,16 @@ import statistics as st
 import torch
 
 
-def graph_time_us(fn, *, warmup: int = 10, reps: int = 50, reduce=min) -> float:
+def graph_time_us(fn, *, warmup: int = 10, reps: int = 50, reduce=min, flush_bytes: int = 0) -> float:
     """Capture ``fn`` into a CUDA graph and time replay (us, ``reduce`` over reps).
 
     ``fn`` must be shape-static with all inputs pre-allocated (same contract as
-    vLLM's decode capture). Eager warmup runs first so autotuners (triton
+    vLLM's decode capture). ``flush_bytes`` > 0 = COLD-L2 timing: every captured
+    call is preceded by a write over a ``flush_bytes`` buffer (larger than the L2), so
+    the op reads its weights from HBM the way a real step does, where 94 layers'
+    weights pass through between two uses of the same one; the flush's own time
+    (a second graph of flushes alone) is subtracted. 0 = warm timing (the op's inputs
+    and weights re-read from L2 across replays -- the pre-2026-09-24 method). Eager warmup runs first so autotuners (triton
     fused_moe configs, cuBLAS heuristics) pick their kernels OUTSIDE capture.
 
     Each capture uses its own private memory pool: the pool is retired when the
@@ -51,6 +56,27 @@ def graph_time_us(fn, *, warmup: int = 10, reps: int = 50, reduce=min) -> float:
             fn()
     torch.cuda.current_stream().wait_stream(side)
 
+    flush = None
+    if flush_bytes > 0:
+        flush = torch.empty(flush_bytes, dtype=torch.uint8, device="cuda")
+        fn_flush = lambda: flush.fill_(1)  # noqa: E731
+        base = fn
+        fn = lambda: (fn_flush(), base())  # noqa: E731
+        fn_flush(); torch.cuda.synchronize()
+        gf = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(gf):
+            for _ in range(iters):
+                fn_flush()
+        for _ in range(warmup):
+            gf.replay()
+        torch.cuda.synchronize()
+        tf = []
+        for _ in range(reps):
+            s, e = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+            s.record(); gf.replay(); e.record(); torch.cuda.synchronize()
+            tf.append(s.elapsed_time(e) * 1000.0)
+        del gf
+        flush_us = reduce(tf) / iters
     g = torch.cuda.CUDAGraph()
     with torch.cuda.graph(g):
         for _ in range(iters):
@@ -68,6 +94,9 @@ def graph_time_us(fn, *, warmup: int = 10, reps: int = 50, reduce=min) -> float:
         torch.cuda.synchronize()
         ts.append(s.elapsed_time(e) * 1000.0)  # ms -> us
     del g
+    if flush is not None:
+        del flush
+        return max(0.0, reduce(ts) / iters - flush_us)
     return reduce(ts) / iters
 
 

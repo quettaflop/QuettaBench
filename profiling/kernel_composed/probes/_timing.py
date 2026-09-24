@@ -34,11 +34,15 @@ def eager_time_us(fn, *, reps: int = 50, warmup: int = 10) -> float:
     return st.median(ts)
 
 
+FLUSH_BYTES = int(__import__("os").environ.get("PROBE_FLUSH_L2_BYTES", "0"))   # cold-L2 graph timing (see _graph)
+
+
 def time_us(fn, *, graph: bool, reps: int = 50, warmup: int = 10) -> float:
-    """``graph=True`` -> graph-replay min; ``graph=False`` -> eager median."""
+    """``graph=True`` -> graph-replay min; ``graph=False`` -> eager median.
+    PROBE_FLUSH_L2_BYTES=<n> in the environment makes graph timing cold-L2 (_graph)."""
     if graph:
         from _graph import graph_time_us  # noqa: PLC0415
-        return graph_time_us(fn, warmup=warmup, reps=reps, reduce=min)
+        return graph_time_us(fn, warmup=warmup, reps=reps, reduce=min, flush_bytes=FLUSH_BYTES)
     return eager_time_us(fn, reps=reps, warmup=warmup)
 
 
