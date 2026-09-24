@@ -1,0 +1,29 @@
+name: bench-dispatch
+
+# Changelog-triggered benchmark dispatch. A push to main that touches the
+# benchmark changelog is parsed into a (workload, hardware) job matrix. GPU jobs
+# need self-hosted runners (register runpod and gpu11 in a follow-up); until
+# then the workflow publishes the exact command checklist as an artifact, so the
+# trigger and matrix are exercised end to end without a fleet.
+
+on:
+  push:
+    branches: [main]
+    paths: [benchmarks/CHANGELOG.md]
+  workflow_dispatch:
+
+jobs:
+  matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      jobs: ${{ steps.parse.outputs.jobs }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: parse
+        run: |
+          echo "jobs=$(python3 tools/bench_dispatch.py benchmarks/CHANGELOG.md)" >> "$GITHUB_OUTPUT"
+      - run: python3 tools/bench_dispatch.py benchmarks/CHANGELOG.md --dry-run > checklist.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bench-checklist
+          path: checklist.txt
