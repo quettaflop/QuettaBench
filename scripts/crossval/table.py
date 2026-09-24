@@ -92,9 +92,9 @@ def ours_points(path):
 def main():
     bench_path, cache_path = sys.argv[1], sys.argv[2]
     if not os.path.exists(bench_path):
-        sys.exit(f"no bench log at {bench_path} — run `just bench llama` first")
+        sys.exit(f"no bench log at {bench_path}; run `just bench llama` first")
     if not os.path.exists(cache_path):
-        sys.exit(f"no vLLM baseline at {cache_path} — run `just vllm llama`")
+        sys.exit(f"no vLLM baseline at {cache_path}; run `just vllm llama`")
 
     ours, method = ours_points(bench_path)
     if not ours:
@@ -114,7 +114,7 @@ def main():
         + (f"  nccl={nccl_algo}/{nccl_proto}" if nccl_algo or nccl_proto else "")
     )
     if age_d > STALE_DAYS:
-        print(f"WARNING: baseline older than {STALE_DAYS}d — re-run `just vllm`")
+        print(f"WARNING: baseline older than {STALE_DAYS}d; re-run `just vllm`")
     eng_nccl_algo = os.environ.get("NCCL_ALGO")
     eng_nccl_proto = os.environ.get("NCCL_PROTO")
     if nccl_algo and eng_nccl_algo and nccl_algo != eng_nccl_algo:

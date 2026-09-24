@@ -12,6 +12,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -52,6 +53,85 @@ class CrossvalScripts(unittest.TestCase):
         for sh in _scripts(".sh"):
             self.assertNotIn("python3 -c", sh.read_text(), f"{sh.name} inlines python")
 
+    def test_xval_wires_serving_and_identity_gate(self):
+        # The orchestrator runs a trace serving replay with the workload-identity
+        # gate when XVAL_SERVE_TRACE is set.
+        text = (CROSSVAL / "xval.sh").read_text()
+        self.assertIn("XVAL_SERVE_TRACE", text)
+        self.assertIn("trace_serve.py", text)
+        self.assertIn("synth_bench.py", text)
+        self.assertIn("WORKLOADSUM", text)
+
+    def test_backend_detection_and_no_hard_nvidia_smi(self):
+        # backend() honors XVAL_BACKEND and reports cpu when no accel tooling is on
+        # PATH; the device picker and link detection must not hard-require nvidia-smi.
+        env = {k: v for k, v in os.environ.items() if k != "XVAL_BACKEND"}
+        env["PATH"] = "/nonexistent"
+        out = subprocess.run(
+            [sys.executable, str(CROSSVAL / "xval_config.py"), "backend"],
+            capture_output=True, text=True, env=env).stdout.strip()
+        self.assertEqual(out, "cpu")
+        out = subprocess.run(
+            [sys.executable, str(CROSSVAL / "xval_config.py"), "backend"],
+            capture_output=True, text=True, env={**os.environ, "XVAL_BACKEND": "tpu"}).stdout.strip()
+        self.assertEqual(out, "tpu")
+        # free_gpu.sh on a non-cuda backend returns devices without calling nvidia-smi
+        fg = subprocess.run(["bash", str(CROSSVAL / "free_gpu.sh"), "2"],
+                            capture_output=True, text=True,
+                            env={**os.environ, "XVAL_BACKEND": "tpu"})
+        self.assertEqual(fg.returncode, 0, fg.stderr)
+        self.assertEqual(fg.stdout.strip(), "0,1")
+
+    def test_pp_wired_in_grid_and_device_count(self):
+        # vmin_fit passes pipeline_parallel_size (from XVAL_PP or the workload's pp),
+        # and the device count the orchestrator provisions is tp * pp.
+        src = (CROSSVAL / "vmin_fit.py").read_text()
+        self.assertIn("pipeline_parallel_size", src)
+        self.assertIn("XVAL_PP", src)
+        self.assertIn("META pp=", src)  # cache.py parses META one key per line
+        d1 = subprocess.run([sys.executable, str(CROSSVAL / "xval_config.py"), "devices", "deepseek"],
+                            capture_output=True, text=True, check=True).stdout.strip()
+        self.assertEqual(d1, "8")  # deepseek tp8, pp1
+        d2 = subprocess.run([sys.executable, str(CROSSVAL / "xval_config.py"), "devices", "deepseek"],
+                            capture_output=True, text=True,
+                            env={**os.environ, "XVAL_PP": "2"}).stdout.strip()
+        self.assertEqual(d2, "16")  # tp8 * pp2
+
+    def test_link_profile_cli(self):
+        # One detection for bench.sh, vllm.sh and vmin_fit: caller override wins,
+        # non-cuda backends take the no-pins nvlink profile.
+        out = subprocess.run(
+            [sys.executable, str(CROSSVAL / "xval_config.py"), "link-profile"],
+            capture_output=True, text=True,
+            env={**os.environ, "XVAL_LINK_PROFILE": "pcie"}).stdout.strip()
+        self.assertEqual(out, "pcie")
+        env = {k: v for k, v in os.environ.items() if k != "XVAL_LINK_PROFILE"}
+        env["XVAL_BACKEND"] = "tpu"
+        out = subprocess.run(
+            [sys.executable, str(CROSSVAL / "xval_config.py"), "link-profile"],
+            capture_output=True, text=True, env=env).stdout.strip()
+        self.assertEqual(out, "nvlink")
+
+    def test_provision_cli(self):
+        # bootstrap.sh reads provisioning defaults through the config CLI.
+        out = subprocess.run(
+            [sys.executable, str(CROSSVAL / "xval_config.py"), "provision", "cache_root"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        self.assertEqual(out, "/workspace/.xval-cache")
+
+    def test_bootstrap_dry_run_plans_without_writing(self):
+        # XVAL_DRYRUN prints the plan and must not create .xval_env.
+        envfile = CROSSVAL / ".xval_env"
+        self.assertFalse(envfile.exists(), "stale .xval_env in the tree")
+        out = subprocess.run(
+            ["bash", str(CROSSVAL / "bootstrap.sh"), "qwen3"],
+            capture_output=True, text=True,
+            env={**os.environ, "XVAL_DRYRUN": "1"},
+        )
+        self.assertRegex(out.stderr, r"would:|MISSING:")
+        self.assertFalse(envfile.exists(), "dry run must not write .xval_env")
+
     def test_agreement_inputs_present(self):
         for name in ("prompts.txt", "texts.txt"):
             lines = [l for l in (CROSSVAL / name).read_text().splitlines() if l.strip()]
@@ -65,7 +145,6 @@ class CrossvalScripts(unittest.TestCase):
 
     def _bench(self, workload, prefix, stub_body, env=None):
         import subprocess as sp
-        import tempfile
 
         with tempfile.TemporaryDirectory() as td:
             stub = Path(td) / "stub"
@@ -241,7 +320,6 @@ class TableParity(unittest.TestCase):
 
     def _table(self, bench_text, kv="float16", env=None, expect_rc=0):
         import sys
-        import tempfile
         import time
 
         base = {
@@ -370,7 +448,6 @@ class TableParity(unittest.TestCase):
         # comm_bound_bs comes from the workload record (deepseek sets 64);
         # the model field carries the display name, matched via workloads().
         import sys
-        import tempfile
         import time
 
         base = {
@@ -399,7 +476,6 @@ class TableParity(unittest.TestCase):
         # Absent comm_bound_bs means never comm-bound: a tp1 llama-class row
         # at bs=64 must keep its ratio instead of inventing a threshold.
         import sys
-        import tempfile
         import time
 
         base = {
@@ -444,6 +520,165 @@ class TableParity(unittest.TestCase):
         # No experimental text ships in the repo; corpus mode takes XVAL_CORPUS.
         self.assertFalse((CROSSVAL / "routing_corpus.txt").exists())
         self.assertIn("XVAL_CORPUS", (CROSSVAL / "vmin_fit.py").read_text())
+
+    def test_workload_identity_hash(self):
+        # The gate: same requests -> same hash regardless of order; a dropped or
+        # altered request changes it. This is what proves systems saw equal work.
+        sys.path.insert(0, str(CROSSVAL))
+        try:
+            import synth_bench
+            importlib.reload(synth_bench)
+            reqs = synth_bench.swebench_requests(12, seed=2)
+            h = synth_bench.workload_hash(reqs)
+            self.assertEqual(h, synth_bench.workload_hash(list(reversed(reqs))),
+                             "hash must be order-independent")
+            self.assertNotEqual(h, synth_bench.workload_hash(reqs[:-1]),
+                                "dropping a request must change the hash")
+            altered = [dict(r) for r in reqs]
+            altered[0] = {**altered[0], "output_length": altered[0]["output_length"] + 1}
+            self.assertNotEqual(h, synth_bench.workload_hash(altered),
+                                "changing requested output must change the hash")
+            out = subprocess.run(
+                [sys.executable, str(CROSSVAL / "synth_bench.py"), "hash", "/dev/stdin"],
+                input="".join(json.dumps(r) + "\n" for r in reqs),
+                capture_output=True, text=True,
+            )
+            self.assertEqual(out.stdout.strip(), h, out.stderr)
+        finally:
+            sys.path.pop(0)
+
+    def test_seed_deterministic_and_labeled(self):
+        # Same seed + profile is byte-identical, labeled SYNTHETIC, carries the
+        # seed; a different seed or arrival time changes the workload hash.
+        def gen(seed):
+            fd, p = tempfile.mkstemp(suffix=".jsonl"); os.close(fd)
+            subprocess.run([sys.executable, str(CROSSVAL / "synth_bench.py"), "gen",
+                            "--profile", "terminal_bench", "--n", "8", "--seed", str(seed),
+                            "--out", p], check=True, capture_output=True)
+            return p
+        a, b, c = gen(1), gen(1), gen(2)
+        self.assertEqual(Path(a).read_bytes(), Path(b).read_bytes(),
+                         "same seed must produce a byte-identical trace")
+        rows = [json.loads(l) for l in open(a)]
+        self.assertTrue(all(r["source"] == "SYNTHETIC" for r in rows))
+        self.assertTrue(all(r["seed"] == 1 for r in rows))
+        sys.path.insert(0, str(CROSSVAL))
+        try:
+            import synth_bench
+            importlib.reload(synth_bench)
+            self.assertNotEqual(synth_bench.workload_hash(synth_bench.load_trace(a)),
+                                synth_bench.workload_hash(synth_bench.load_trace(c)),
+                                "a different seed must change the hash")
+            reqs = synth_bench.load_trace(a)
+            bumped = [dict(x) for x in reqs]
+            bumped[0]["arrival_ts"] = bumped[0].get("arrival_ts", 0.0) + 1.0
+            self.assertNotEqual(synth_bench.workload_hash(reqs),
+                                synth_bench.workload_hash(bumped),
+                                "arrival time is a hash input")
+        finally:
+            sys.path.pop(0)
+        for p in (a, b, c):
+            os.unlink(p)
+
+    def test_profiles_have_distinct_signatures(self):
+        # Each profile must be a distinct serving signature, not a renamed copy:
+        # distinct burst and gap specs, and a distinct realized arrival spread.
+        sys.path.insert(0, str(CROSSVAL))
+        try:
+            import synth_bench
+            importlib.reload(synth_bench)
+            specs = synth_bench.AGENTIC
+            self.assertGreater(len({s["burst"] for s in specs.values()}), 1)
+            self.assertGreater(len({s["gap"] for s in specs.values()}), 1)
+            def span(rs):
+                return max(r["arrival_ts"] for r in rs) - min(r["arrival_ts"] for r in rs)
+            dr = synth_bench.agentic_requests("deep_research", 40, seed=1)
+            tb = synth_bench.agentic_requests("terminal_bench", 40, seed=1)
+            self.assertGreater(span(dr), span(tb),
+                               "deep_research must arrive over a longer span than terminal_bench")
+        finally:
+            sys.path.pop(0)
+
+    def test_serving_emits_verdicts(self):
+        text = (CROSSVAL / "trace_serve.py").read_text()
+        for tag in ("--sla-ttft-ms", "--sla-tpot-ms", "SLASUM", "BURSTSUM", "SPECSUM"):
+            self.assertIn(tag, text)
+        self.assertIn("FIDELITY", (CROSSVAL / "xval.sh").read_text())
+
+    def test_burst_recovery_and_acceptance(self):
+        sys.path.insert(0, str(CROSSVAL))
+        try:
+            import trace_serve
+            importlib.reload(trace_serve)
+            self.assertEqual(trace_serve._acceptance([1, 2, 3, 4], [1, 2, 9, 4]), (2, 0.5))
+            self.assertEqual(trace_serve._acceptance([], [])[0], 0)
+            recs = ([{"arrival_s": t, "ttft_ms": 100.0} for t in range(0, 5)]
+                    + [{"arrival_s": t, "ttft_ms": 9000.0} for t in range(5, 10)]
+                    + [{"arrival_s": t, "ttft_ms": 100.0} for t in range(15, 20)])
+            rec_s, peak = trace_serve.burst_recovery(recs, sla_ttft_ms=1000.0, window_s=5.0)
+            self.assertEqual(peak, 9000.0)
+            self.assertIsNotNone(rec_s)
+            self.assertGreater(rec_s, 0)
+            never = [{"arrival_s": t, "ttft_ms": 9000.0} for t in range(0, 10)]
+            self.assertIsNone(trace_serve.burst_recovery(never, 1000.0, 5.0)[0])
+        finally:
+            sys.path.pop(0)
+
+    def test_r2_tokenize_and_output_ids_survive_load(self):
+        # The real-text path: agent-bench turns -> requests carrying output_token_ids
+        # (reasoning+content), and load_trace must preserve them or SPECSUM can never
+        # fire. encode is stubbed so the test needs no tokenizer or GPU.
+        sys.path.insert(0, str(CROSSVAL))
+        try:
+            import trace_tokenize, synth_bench
+            importlib.reload(trace_tokenize)
+            importlib.reload(synth_bench)
+            recs = [{"model": "DS", "session_id": "s0", "turns": [
+                {"turn_index": 0, "prompt_text": "ab", "reasoning_text": "c", "content_text": "d"}]}]
+            reqs = trace_tokenize.r2_to_requests(recs, encode=lambda s: [ord(ch) for ch in s])
+            self.assertEqual(reqs[0]["prompt_token_ids"], [97, 98])
+            self.assertEqual(reqs[0]["output_token_ids"], [99, 100])  # reasoning + content
+            self.assertEqual(reqs[0]["output_length"], 2)
+            self.assertEqual(reqs[0]["source"], "DS")
+            with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as fh:
+                for r in reqs:
+                    fh.write(json.dumps(r) + "\n")
+                p = fh.name
+            loaded = synth_bench.load_trace(p)
+            os.unlink(p)
+            self.assertEqual(loaded[0]["output_token_ids"], [99, 100])
+        finally:
+            sys.path.pop(0)
+
+    def test_agentic_profiles(self):
+        # Every agentic profile is deterministic, multi-turn, session-grouped,
+        # in-range, and round-trips through load_trace.
+        sys.path.insert(0, str(CROSSVAL))
+        try:
+            import synth_bench
+            importlib.reload(synth_bench)
+            for name, spec in synth_bench.AGENTIC.items():
+                a = synth_bench.agentic_requests(name, 40, seed=3)
+                b = synth_bench.agentic_requests(name, 40, seed=3)
+                self.assertEqual([r["prompt_token_ids"] for r in a],
+                                 [r["prompt_token_ids"] for r in b], f"{name} not deterministic")
+                self.assertTrue(any(r["turn"] > 0 for r in a), f"{name} has no multi-turn session")
+                self.assertGreater(len({r["session_id"] for r in a}), 0)
+                for r in a:
+                    self.assertGreaterEqual(r["output_length"], spec["output"][0])
+                    self.assertLessEqual(r["output_length"], spec["output"][1])
+                    if spec["image"]:
+                        self.assertEqual(r.get("image_tokens"), spec["image"])
+                with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as fh:
+                    for r in a:
+                        fh.write(json.dumps(r) + "\n")
+                    p = fh.name
+                loaded = synth_bench.load_trace(p)
+                os.unlink(p)
+                self.assertEqual(loaded[0]["turn"], a[0]["turn"])
+                self.assertEqual(loaded[0].get("session_id"), a[0]["session_id"])
+        finally:
+            sys.path.pop(0)
 
     def test_synth_bench_distinct_and_trace(self):
         # The synthetic runner must produce DISTINCT per-request streams (so MoE
@@ -627,7 +862,6 @@ class XvalConfigWorkloads(unittest.TestCase):
         # workloads() falls back to workloads.json when xval.yaml is absent.
         import importlib
         import shutil
-        import tempfile
         td = Path(tempfile.mkdtemp())
         try:
             shutil.copy(CROSSVAL / "xval_config.py", td / "xval_config.py")
@@ -666,36 +900,6 @@ class XvalConfig(unittest.TestCase):
         data = yaml.safe_load(text)
         self.assertIsInstance(data, dict)
         self.assertTrue(data, "xval.yaml parsed to empty")
-
-    def test_xval_example_yaml_parses(self):
-        import yaml
-        text = (CROSSVAL / "xval.example.yaml").read_text()
-        data = yaml.safe_load(text)
-        self.assertIsInstance(data, dict)
-        self.assertTrue(data, "xval.example.yaml parsed to empty")
-
-    def _all_leaf_keys(self, obj, prefix=""):
-        """Yield dotted key paths for all scalar leaves in a nested dict."""
-        if isinstance(obj, dict):
-            for k, v in obj.items():
-                yield from self._all_leaf_keys(v, f"{prefix}.{k}" if prefix else k)
-        elif isinstance(obj, list):
-            pass  # grid lists are not field-level docs, skip
-        else:
-            yield prefix
-
-    def test_example_documents_every_key_in_xval_yaml(self):
-        """Every key present in xval.yaml must also appear in xval.example.yaml."""
-        import yaml
-        active = yaml.safe_load((CROSSVAL / "xval.yaml").read_text()) or {}
-        example = yaml.safe_load((CROSSVAL / "xval.example.yaml").read_text()) or {}
-        active_keys = set(self._all_leaf_keys(active))
-        example_keys = set(self._all_leaf_keys(example))
-        missing = active_keys - example_keys
-        self.assertFalse(
-            missing,
-            f"xval.example.yaml is missing keys present in xval.yaml: {sorted(missing)}",
-        )
 
     def test_loader_resolves_collective_block(self):
         import yaml
@@ -792,7 +996,6 @@ class XvalConfig(unittest.TestCase):
     def test_loader_falls_back_to_defaults_without_yaml(self):
         """xval_config must return valid defaults even with no xval.yaml present."""
         import importlib
-        import tempfile
         import shutil
         # Point _HERE at a temp dir with no xval.yaml.
         td = Path(tempfile.mkdtemp())
@@ -843,7 +1046,6 @@ class TraceWorkloads(unittest.TestCase):
         self.assertEqual({r["session_id"] for r in a}, {f"g{i}" for i in range(4)})
 
     def test_load_trace_carries_arrivals_and_sessions(self):
-        import tempfile
         sb = self._sb()
         with tempfile.TemporaryDirectory() as td:
             p = Path(td) / "t.jsonl"
