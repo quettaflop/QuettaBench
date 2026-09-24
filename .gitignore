@@ -21,3 +21,5 @@ docs/api/
 
 # nsys captures from scripts/crossval/prof.sh stay local.
 scripts/crossval/profiles/
+# bootstrap.sh writes the resolved run env here; it is host-specific.
+scripts/crossval/.xval_env
