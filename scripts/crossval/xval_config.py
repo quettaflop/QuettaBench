@@ -1,9 +1,10 @@
-# xval_config.py -- load xval.yaml merged over workloads.json; fall back to
-# hardcoded defaults when xval.yaml is absent.
-# Used by: the shell scripts (as a cli), vmin_fit.py, table.py.
-# PyYAML is available in the crossval environment (yaml 6.0.x).
+# Load xval.yaml merged over workloads.json; fall back to hardcoded defaults
+# when xval.yaml is absent. Runs as a library and as a shell-callable cli.
 import json
 import os
+import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -16,7 +17,6 @@ _DEFAULTS = {
         "world": 8,
         "timing_steps": 100,
         "max_seq_headroom": 28,
-        "clone_slots": 1,
     },
     "collective": {
         # per-collective syntax required: NCCL rejects plain Tree for all-gather.
@@ -30,9 +30,14 @@ _DEFAULTS = {
         "llmsrv_no_nvls": 1,
         "llmsrv_twoshot_min_bytes": 0,
     },
-    "runtime": {
-        # Blackwell sm_120 requires NCCL >= 2.28; 2.25.1 fails with "invalid argument".
-        "nccl_min_version": "2.28",
+    "provision": {
+        # bootstrap.sh reads these; empty means supply via env or optional.
+        "cache_root": "/workspace/.xval-cache",
+        "py": "",
+        "vllm_spec": "",
+        "qs_repo": "",
+        "qs_commit": "",
+        "nccl_lib": "",
     },
 }
 
@@ -63,15 +68,12 @@ def load():
 
 
 def collective(cfg=None, profile=None):
-    """Return the collective env block as a dict of uppercase env-var names.
+    """Collective env block as uppercase env-var names, keyed by link profile.
 
-    profile "pcie" (the default) applies the tuned pins from xval.yaml.
-    profile "nvlink" returns them as empty strings (empty = do not export):
-    on NVLink boxes NCCL's own NVLS/LL128 selection and the engine's
-    peer-allreduce beat the PCIe pins, and vLLM's TP path bypasses NCCL_ALGO
-    entirely, so exporting the pins there slows only the engine. A
-    collective_nvlink block in xval.yaml overrides individual values.
-    Resolution order: argument, then $XVAL_LINK_PROFILE, then "pcie".
+    "pcie" (default) exports the tuned NCCL pins from xval.yaml. "nvlink" blanks
+    them (empty = do not export): on NVLink, NCCL's own selection and the engine's
+    peer-allreduce beat the pins, and vLLM's TP path ignores NCCL_ALGO anyway.
+    Profile resolves from the argument, then $XVAL_LINK_PROFILE, then "pcie".
     """
     if profile is None:
         profile = os.environ.get("XVAL_LINK_PROFILE", "pcie")
@@ -107,7 +109,6 @@ def run_params(cfg=None):
         "world": int(r.get("world", _DEFAULTS["run"]["world"])),
         "timing_steps": int(r.get("timing_steps", _DEFAULTS["run"]["timing_steps"])),
         "max_seq_headroom": int(r.get("max_seq_headroom", _DEFAULTS["run"]["max_seq_headroom"])),
-        "clone_slots": int(r.get("clone_slots", _DEFAULTS["run"]["clone_slots"])),
     }
 
 
@@ -164,8 +165,53 @@ def step_points(cfg=None):
     return _load_json()["step_points"]
 
 
+def provision(cfg=None):
+    """Return the provision block (bootstrap.sh inputs) merged over defaults."""
+    if cfg is None:
+        cfg = load()
+    p = dict(_DEFAULTS["provision"])
+    p.update(cfg.get("provision", {}))
+    return p
+
+
+def backend():
+    """Detect the accelerator backend: XVAL_BACKEND override, else from the tooling
+    present (nvidia-smi -> cuda, rocm-smi -> rocm, neuron-ls -> neuron, libtpu ->
+    tpu, else cpu). Only device picking and the NCCL pins are cuda-specific; the
+    rest of the harness is backend-agnostic."""
+    b = os.environ.get("XVAL_BACKEND")
+    if b:
+        return b
+    if shutil.which("nvidia-smi"):
+        return "cuda"
+    if shutil.which("rocm-smi"):
+        return "rocm"
+    if shutil.which("neuron-ls"):
+        return "neuron"
+    if os.environ.get("TPU_NAME") or os.path.exists("/lib/libtpu.so"):
+        return "tpu"
+    return "cpu"
+
+
+def link_profile():
+    """Interconnect profile for the collective env: XVAL_LINK_PROFILE override,
+    else nvlink when nvidia-smi topo shows an NV* link, else pcie. Non-cuda
+    backends take nvlink, the no-pins profile."""
+    p = os.environ.get("XVAL_LINK_PROFILE")
+    if p:
+        return p
+    if backend() != "cuda":
+        return "nvlink"
+    try:
+        topo = subprocess.run(["nvidia-smi", "topo", "-m"],
+                              capture_output=True, text=True).stdout
+    except OSError:
+        topo = ""
+    return "nvlink" if re.search(r"NV\d", topo) else "pcie"
+
+
 def _cli(args):
-    """Shell entry: collective | run-params | tp <wl> | cells <wl> | bench <wl>."""
+    """Shell entry: collective | run-params | provision [key] | tp <wl> | cells <wl> | bench <wl>."""
     cmd = args[0] if args else ""
     if cmd == "collective":
         for k, v in collective().items():
@@ -175,13 +221,30 @@ def _cli(args):
         p = run_params()
         print(p["timing_steps"], p["max_seq_headroom"])
         return
-    if cmd not in ("tp", "cells", "bench") or len(args) != 2:
-        sys.exit("usage: xval_config.py collective|run-params|tp|cells|bench [workload]")
+    if cmd == "provision":
+        p = provision()
+        if len(args) == 2:
+            print(p.get(args[1], ""))
+        else:
+            for k, v in p.items():
+                print(f"{k}={v}")
+        return
+    if cmd == "backend":
+        print(backend())
+        return
+    if cmd == "link-profile":
+        print(link_profile())
+        return
+    if cmd not in ("tp", "devices", "cells", "bench") or len(args) != 2:
+        sys.exit("usage: xval_config.py collective|run-params|provision|backend|link-profile|tp|devices|cells|bench [workload]")
     wl = workloads().get(args[1])
     if wl is None:
         sys.exit(f"unknown workload {args[1]}")
     if cmd == "tp":
         print(wl.get("tp", 1))
+    elif cmd == "devices":
+        pp = int(os.environ.get("XVAL_PP", wl.get("pp", 1)))
+        print(int(wl.get("tp", 1)) * pp)
     elif cmd == "cells":
         for ctx, bs in grids()[wl["grid"]]:
             print(ctx, bs)

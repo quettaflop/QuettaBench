@@ -2,7 +2,6 @@ run:
   world: 8
   timing_steps: 100
   max_seq_headroom: 28
-  clone_slots: 1
 
 collective:
   nccl_algo: "allreduce:tree;allgather:ring"
@@ -12,9 +11,6 @@ collective:
   nccl_socket_ifname: ""
   llmsrv_no_nvls: 1
   llmsrv_twoshot_min_bytes: 0
-
-runtime:
-  nccl_min_version: "2.28"
 
 step_points: [60, 230, 400]
 

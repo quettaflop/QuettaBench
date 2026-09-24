@@ -28,15 +28,7 @@ if [ -z "$BIN" ] && [ ! -f "$QS/$CRATE/Cargo.toml" ]; then
   exit 1
 fi
 
-if [ -z "${XVAL_LINK_PROFILE:-}" ]; then
-  # Capture then match; piping to grep -q would SIGPIPE nvidia-smi and pipefail misreads it.
-  _topo="$(nvidia-smi topo -m 2>/dev/null || true)"
-  case "$_topo" in
-    *NV[0-9]*) XVAL_LINK_PROFILE=nvlink ;;
-    *)         XVAL_LINK_PROFILE=pcie ;;
-  esac
-fi
-export XVAL_LINK_PROFILE
+export XVAL_LINK_PROFILE="${XVAL_LINK_PROFILE:-$(python3 "$HERE/xval_config.py" link-profile)}"
 
 read -r _STEPS _HEADROOM < <(python3 "$HERE/xval_config.py" run-params)
 _V="${P}_TIMING_STEPS"; STEPS="${!_V:-$_STEPS}"
@@ -46,28 +38,11 @@ _V="${P}_WORLD"; WORLD="${!_V:-$TP}"
 CELLS="$(python3 "$HERE/xval_config.py" cells "$WL")"
 [ -n "$CELLS" ] || { echo "no cells for workload $WL" >&2; exit 1; }
 
+# Collective env: caller env wins over yaml; empty values are never exported.
 while IFS='=' read -r _k _v; do
-  case "$_k" in
-    NCCL_ALGO)             _YAML_NCCL_ALGO="$_v" ;;
-    NCCL_PROTO)            _YAML_NCCL_PROTO="$_v" ;;
-    NCCL_P2P_LEVEL)        _YAML_NCCL_P2P_LEVEL="$_v" ;;
-    NCCL_IB_DISABLE)       _YAML_NCCL_IB_DISABLE="$_v" ;;
-    NCCL_SOCKET_IFNAME)    _YAML_NCCL_SOCKET_IFNAME="$_v" ;;
-    LLMSRV_NO_NVLS)        _YAML_LLMSRV_NO_NVLS="$_v" ;;
-    LLMSRV_TWOSHOT_MIN_BYTES) _YAML_LLMSRV_TWOSHOT_MIN_BYTES="$_v" ;;
-  esac
+  if [ -n "${!_k:-}" ]; then _v="${!_k}"; fi
+  if [ -n "$_v" ]; then export "$_k=$_v"; fi
 done < <(python3 "$HERE/xval_config.py" collective)
-NCCL_ALGO="${NCCL_ALGO:-$_YAML_NCCL_ALGO}"
-NCCL_PROTO="${NCCL_PROTO:-$_YAML_NCCL_PROTO}"
-NCCL_P2P_LEVEL="${NCCL_P2P_LEVEL:-$_YAML_NCCL_P2P_LEVEL}"
-NCCL_IB_DISABLE="${NCCL_IB_DISABLE:-$_YAML_NCCL_IB_DISABLE}"
-NCCL_SOCKET_IFNAME="${NCCL_SOCKET_IFNAME:-$_YAML_NCCL_SOCKET_IFNAME}"
-LLMSRV_NO_NVLS="${LLMSRV_NO_NVLS:-$_YAML_LLMSRV_NO_NVLS}"
-LLMSRV_TWOSHOT_MIN_BYTES="${LLMSRV_TWOSHOT_MIN_BYTES:-$_YAML_LLMSRV_TWOSHOT_MIN_BYTES}"
-for _var in NCCL_ALGO NCCL_PROTO NCCL_P2P_LEVEL NCCL_IB_DISABLE \
-  NCCL_SOCKET_IFNAME LLMSRV_NO_NVLS LLMSRV_TWOSHOT_MIN_BYTES; do
-  if [ -n "${!_var}" ]; then export "$_var"; fi
-done
 
 MODE=""
 if [ "$FAMILY" = gdn ]; then
