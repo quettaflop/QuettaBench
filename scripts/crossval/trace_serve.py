@@ -10,6 +10,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -123,6 +124,55 @@ def cost_per_m_tokens(gpu_cost_hr, devices, wall_s, out_tokens):
     it would price the benchmark harness, not the serving."""
     usd = gpu_cost_hr * devices * wall_s / 3600.0
     return usd, usd * 1e6 / max(out_tokens, 1)
+
+
+def gsm8k_answer(text):
+    """Final numeric answer: the last number in the text, comma and dollar
+    stripped; gold answers sit after '####'. Returns None when no number
+    appears, which scores as wrong rather than crashing mid-benchmark."""
+    if "####" in text:
+        text = text.rsplit("####", 1)[-1]
+    nums = re.findall(r"-?\d[\d,]*\.?\d*", text.replace("$", ""))
+    if not nums:
+        return None
+    return nums[-1].replace(",", "").rstrip(".")
+
+
+def load_gsm8k(path, n, model):
+    """(tokenizer, [(prompt_ids, gold_answer)]) for the accuracy sidecar. The
+    tokenizer is loaded here, before the engine exists, because a blocking
+    from_pretrained inside the live async window stalls the engine loop and
+    vLLM tears the engine down (the sidecar first came back empty for exactly
+    this reason). Gold is the number after #### in each answer."""
+    from transformers import AutoTokenizer
+
+    tok = AutoTokenizer.from_pretrained(model, trust_remote_code=True)
+    items = [json.loads(l) for l in open(path) if l.strip()][:n]
+    prompts = [(tok(it["question"])["input_ids"], gsm8k_answer(it["answer"])) for it in items]
+    return tok, prompts
+
+
+async def _gsm8k(engine, tok, prompts):
+    """Greedy answers for pre-tokenized GSM8k prompts on the live replay engine.
+    Task-level ACCSUM beside the token-level FIDELITY gate is the accuracy
+    story: either alone can hide a fast-but-wrong configuration. Only
+    engine.generate and a fast tok.decode run here, no blocking model load, so
+    the engine loop keeps ticking. Returns (n_correct, n)."""
+    from vllm import SamplingParams
+
+    sp = SamplingParams(temperature=0.0, max_tokens=256)
+
+    async def one(i, ids, gold):
+        gen = []
+        async for out in engine.generate(
+            {"prompt_token_ids": ids}, sp, request_id=f"gsm8k-{i}"
+        ):
+            gen = out.outputs[0].token_ids
+        got = gsm8k_answer(tok.decode(gen, skip_special_tokens=True))
+        return got is not None and got == gold
+
+    res = await asyncio.gather(*(one(i, ids, gold) for i, (ids, gold) in enumerate(prompts)))
+    return sum(res), len(prompts)
 
 
 def _acceptance(reference_ids, generated_ids):
@@ -302,6 +352,8 @@ def main():
                     help="1 Hz board-power sampling over the replay; ENERGYSUM")
     ap.add_argument("--gpu-cost-hr", type=float,
                     help="USD per GPU-hour; COSTSUM per million output tokens")
+    ap.add_argument("--gsm8k-file", help="GSM8k JSONL ({question, answer}); ACCSUM sidecar")
+    ap.add_argument("--gsm8k-n", type=int, help="number of GSM8k items to run")
     ap.add_argument("--json", help="write the aggregate summary to this path")
     args = ap.parse_args()
     if args.goodput and not (args.sla_ttft_ms or args.sla_tpot_ms):
@@ -310,6 +362,10 @@ def main():
         ap.error("--energy covers a single replay window; drop --goodput")
     if args.energy and not shutil.which("nvidia-smi"):
         ap.error("--energy needs nvidia-smi on PATH")
+    if bool(args.gsm8k_file) != bool(args.gsm8k_n):
+        ap.error("--gsm8k-file and --gsm8k-n go together")
+    if args.gsm8k_file and args.goodput:
+        ap.error("the gsm8k sidecar runs on a single replay; drop --goodput")
 
     reqs = synth_bench.load_trace(args.trace)
     if args.limit:
@@ -333,6 +389,8 @@ def main():
         _run_goodput(args, reqs, expected)
         return
 
+    # Load the gsm8k tokenizer before the engine exists; see load_gsm8k.
+    gsm8k = load_gsm8k(args.gsm8k_file, args.gsm8k_n, args.model) if args.gsm8k_file else None
     stop, samples = threading.Event(), []
     sampler = threading.Thread(target=_power_sampler, args=(samples, stop), daemon=True)
 
@@ -342,10 +400,11 @@ def main():
         if args.energy:
             sampler.start()  # after the model load so joules cover the replay only
         out = await _serve(engine, reqs, offsets, args)
-        stop.set()
-        return out
+        stop.set()  # energy stops here; the gsm8k sidecar is not replay energy
+        gsm8k_acc = await _gsm8k(engine, gsm8k[0], gsm8k[1]) if gsm8k else None
+        return out, gsm8k_acc
 
-    records, wall, done = asyncio.run(_single())
+    (records, wall, done), gsm8k_acc = asyncio.run(_single())
     replayed = synth_bench.workload_hash(done)
     match = expected == replayed
     print(f"WORKLOADSUM expected={expected} replayed={replayed} match={int(match)} "
@@ -388,6 +447,9 @@ def main():
               f"joules_per_token={joules / max(out_toks, 1):.3f} scope=gpu_board "
               f"devices={len(ids.split(',')) if ids else 'all'} samples={len(samples)}",
               flush=True)
+    if gsm8k_acc:  # distinct from SPECSUM's acc above, which the sidecar must not clobber
+        print(f"ACCSUM dataset=gsm8k exact_match={gsm8k_acc[0] / max(gsm8k_acc[1], 1):.3f} "
+              f"n={gsm8k_acc[1]}", flush=True)
     if args.gpu_cost_hr:
         devices = args.tp * args.pp
         usd, per_m = cost_per_m_tokens(args.gpu_cost_hr, devices, wall,
