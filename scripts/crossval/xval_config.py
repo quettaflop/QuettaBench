@@ -257,6 +257,18 @@ def resolve_engine(name):
     return ENGINES[name]
 
 
+def disagg_kv_config(role, rank, connector, kv_port=14579, kv_parallel_size=2):
+    """One side of a prefill/decode split as a vLLM kv_transfer_config dict,
+    passed to the server as --kv-transfer-config <json>. role is 'kv_producer'
+    (prefill) or 'kv_consumer' (decode); the two share kv_port and
+    kv_parallel_size so the connector pairs them and take distinct kv_rank. A
+    wrong role raises here rather than starting a server that never pairs."""
+    if role not in ("kv_producer", "kv_consumer"):
+        raise ValueError(f"kv_role must be kv_producer or kv_consumer, got {role!r}")
+    return {"kv_connector": connector, "kv_role": role, "kv_rank": rank,
+            "kv_parallel_size": kv_parallel_size, "kv_port": kv_port}
+
+
 def serving_style_compatible(a, b):
     """Two rows compare only when their serving topology matches; a disagg
     number against an aggregated one is a category error the table must refuse,

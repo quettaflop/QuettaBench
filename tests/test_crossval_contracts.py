@@ -324,6 +324,16 @@ class CrossvalScripts(unittest.TestCase):
                 xval_config.check_ep_legal(7, 256)
             self.assertFalse(xval_config.serving_style_compatible("disagg:1p1d", "aggregated"))
             self.assertTrue(xval_config.serving_style_compatible("aggregated", "aggregated"))
+            # disagg KV config: prefill producer and decode consumer share the port
+            # and pool size, take distinct ranks; a wrong role raises.
+            pre = xval_config.disagg_kv_config("kv_producer", 0, "P2pConnector")
+            dec = xval_config.disagg_kv_config("kv_consumer", 1, "P2pConnector")
+            self.assertEqual(pre["kv_role"], "kv_producer")
+            self.assertEqual(dec["kv_rank"], 1)
+            self.assertEqual(pre["kv_port"], dec["kv_port"])
+            self.assertEqual(pre["kv_parallel_size"], dec["kv_parallel_size"])
+            with self.assertRaises(ValueError):
+                xval_config.disagg_kv_config("decode", 1, "P2pConnector")
         finally:
             sys.path.pop(0)
         out = subprocess.run(
