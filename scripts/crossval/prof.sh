@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# prof.sh <name> <cmd...> -- nsys-capture <cmd> into profiles/<name>.nsys-rep.
+# prof.sh <name> <cmd...>: nsys-capture <cmd> into profiles/<name>.nsys-rep.
 # Dumps the kernel summary next to the report so the numbers read without a
 # GUI. Runs the command bare when nsys is not installed.
 set -euo pipefail

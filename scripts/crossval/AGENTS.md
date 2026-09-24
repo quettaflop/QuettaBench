@@ -2,6 +2,27 @@
 
 Working notes for agents and contributors. The human quickstart is README.md.
 
+## Provisioning
+
+`oneshot.sh <workload...>` is the empty-container entry: it runs `bootstrap.sh`
+then, per workload, `bench.sh` + `xval.sh`. `bootstrap.sh` is idempotent and
+`XVAL_DRYRUN=1` prints the plan without acting. It resolves and writes
+`.xval_env` (gitignored, `export VAR=value`, sourced by oneshot.sh and xval.sh):
+
+1. cache dirs off the small container root (VLLM_CACHE_ROOT, TORCHINDUCTOR_CACHE_DIR,
+   HF_HOME, TMPDIR under `provision.cache_root`)
+2. a vLLM python: `provision.py`/`XVAL_PY` if `pip show vllm` passes, else
+   `pip install provision.vllm_spec`
+3. `provision.nccl_lib` prepended to LD_LIBRARY_PATH (Blackwell needs NCCL >= 2.28)
+4. per workload: the engine bench binary (`<ENV>_BENCH_BIN`, or built from a
+   QuettaServe checkout / `provision.qs_repo`), the engine checkpoint
+   `XVAL_CKPT_<wl>` (+ `XVAL_CFG_<wl>` for moe), and the vLLM weights
+   `XVAL_WEIGHTS_<wl>` (a dir, or `XVAL_HF_<wl>` to download)
+
+Anything it cannot resolve is printed as `MISSING:` and the run stops; nothing
+is guessed. `provision` config keys: cache_root, py, vllm_spec, qs_repo,
+qs_commit, nccl_lib (xval.yaml or `xval_config.py provision`).
+
 ## Pipeline
 
 1. `vllm.sh <workload> [grid] <weights-dir> [python]` captures the vLLM
@@ -27,9 +48,15 @@ Working notes for agents and contributors. The human quickstart is README.md.
 3. `table.py <bench-log> <baseline.json>` pairs the two at matched
    (ctx, batch, tp) and prints ours vs vLLM per cell.
 
+Serving replay is an optional last stage: set `XVAL_SERVE_TRACE=<jsonl>` (and
+`XVAL_SERVE_ARGS` for extra trace_serve flags) and xval.sh replays it on the same
+GPUs, printing the workload_hash, `WORKLOADSUM` (identity gate over completed
+requests) and `SERVESUM`. The hash also stamps the static grid path
+(`vmin_fit` META workload_hash), so every run records which exact workload it saw.
+
 Correctness runs alongside: `greedy_agreement.py` (engine vs vLLM text, llama
 only) and `logit_agreement.py` (vLLM vs the transformers reference; skipped for
-deepseek, which has no transformers model -- its correctness comes from the
+deepseek, which has no transformers model; its correctness comes from the
 engine's own batch_gate / tp_batch_gate).
 
 ## Measurement contract
@@ -65,9 +92,18 @@ cache.py records the mode; table.py prints it in the baseline header.
 
 ## Trace workloads
 
+Agentic profiles (`synth_bench.py` `AGENTIC`): terminal_bench, deep_research,
+deep_search, osworld (carries image_tokens), rl_cf. Each emits multi-turn
+sessions with a carried prefix and context growing per turn (session_id + turn
+fields). The token/turn spans are calibratable synthetic defaults, not measured
+captures; real captures replace them via load_trace.
+
 One JSONL schema (see synth_bench.py): `prompt_token_ids`, or `prompt_len`, or
 Mooncake `input_length`/`output_length`/`timestamp` (ms -> `arrival_ts`
-seconds); optional `session_id`. Static grid (`PROMPT_MODE=trace`) ignores
+seconds); optional `session_id` and `output_token_ids` (the real assistant
+tokens, kept for SPECSUM acceptance). `trace_tokenize.py <agent-bench.jsonl>
+--model <dir>` turns a real agent-bench capture (per-turn prompt_text plus
+reasoning_text/content_text) into this shape with the model's tokenizer. Static grid (`PROMPT_MODE=trace`) ignores
 arrivals and fills the usual cells: the apples-to-apples decode cost, works
 for both engines. Serving replay (`trace_serve.py`) submits at arrival times,
 open loop, reports TTFT/TPOT p50/p90/p95/p99 per SERVESUM; vLLM only until
@@ -75,10 +111,34 @@ QuettaServe gains continuous batching, prefix caching, and query routing --
 an engine adapter emitting the same SERVE/SERVESUM lines drops in then.
 `--prefix-caching` is off by default so both engines pay full prefill.
 
+## Cross-accelerator portability
+
+`xval_config.py backend` detects the accelerator (`XVAL_BACKEND` override, else
+nvidia-smi -> cuda, rocm-smi -> rocm, neuron-ls -> neuron, libtpu -> tpu, else
+cpu). Only idle-GPU picking (`free_gpu.sh`) and link-profile detection are
+cuda-specific, and both are guarded on the backend: non-cuda honors a caller-set
+CUDA_VISIBLE_DEVICES (or 0..N-1) and takes the no-pins profile. Everything else
+is backend-agnostic Python.
+
+What each backend needs to actually run, and current status:
+
+| backend | vLLM baseline | QuettaServe engine | harness/orchestrator | to run |
+|---|---|---|---|---|
+| cuda (H200 / H100 / RTX PRO 6000) | native | CUDA sm_90a / sm_120a | works, validated | nothing |
+| rocm (MI300X) | vLLM ROCm build | none (CUDA only) | works (backend=rocm) | ROCm vLLM image; RCCL |
+| tpu (v5e / v6e / Ironwood) | vLLM-TPU / JAX, limited | none | works (backend=tpu) | vLLM-TPU backend; no NCCL |
+| neuron (Trainium) | vLLM-Neuron, limited | none | works (backend=neuron) | Neuron SDK; no NCCL |
+
+Not yet run on a real non-cuda device (no TPU/AMD instance available here); the
+cuda path and the nvidia-smi-absent path are both tested. The engine stays
+NVIDIA-only until a HIP/XLA/Neuron port exists, so on other backends the near-term
+deliverable is the vLLM-baseline column plus the full workload/identity machinery.
+
 ## NCCL link profiles
 
-`XVAL_LINK_PROFILE` (auto from `nvidia-smi topo -m`; any NV* link = nvlink,
-else pcie) selects the collective env in bench.sh and vllm.sh identically.
+`XVAL_LINK_PROFILE` selects the collective env; one detection
+(`xval_config.py link-profile`: any NV* link in `nvidia-smi topo -m` = nvlink,
+else pcie, non-cuda = nvlink) feeds bench.sh, vllm.sh and vmin_fit identically.
 
 - pcie: `NCCL_ALGO=allreduce:tree;allgather:ring NCCL_PROTO=Simple`
   (per-collective form required; NCCL has no Tree all-gather),
@@ -102,10 +162,8 @@ Precedence: caller env > xval.yaml > defaults in xval_config.py.
 - `run.timing_steps`: decode steps timed per cell (`<env>_TIMING_STEPS` overrides)
 - `run.max_seq_headroom`: slack over ctx + steps; the bench asserts
   prompt + steps + 8 <= max_seq
-- `run.clone_slots`: reserved for parallel sweeps, keep 1
 - `collective.*`: the pcie-profile pins listed above; `collective_nvlink`
   optionally pins values on the nvlink profile
-- `runtime.nccl_min_version`: informational floor, scripts warn if violated
 - `step_points`: three increasing token counts for the slope fit; every cell
   needs ctx + max(step_points) + 2 <= maxlen or vmin_fit SKIPs it
 - `workloads.<name>`: `tp`, `grid`, `dtype`, `maxlen`, `kv_dtype`, `kv_bytes`,
@@ -117,7 +175,7 @@ Precedence: caller env > xval.yaml > defaults in xval_config.py.
 ## DeepSeek bring-up notes
 
 vLLM baseline: `ALLOW_UNVERIFIED=1 vllm.sh deepseek "" <weights> <py>`; `<py>`
-must be the DeepSeek vLLM fork -- upstream does not serve this model on
+must be the DeepSeek vLLM fork; upstream does not serve this model on
 sm_120. The workload sets `expert_parallel` and `tp: 8`. Engine:
 `DS_CKPT=<tp-sliced-fp4> DS_CFG=<inference/config.json> bench.sh deepseek`.
 DS_CKPT must be the TP-sliced fp4 layout (ds-0731-tp8-fp4), not the mp8
@@ -131,8 +189,10 @@ ctx+230 vs the engine median near ctx+50 (~17% more KV at the 1024 row, ~1% at
 
 | file | role |
 |---|---|
-| `xval.yaml` / `xval.example.yaml` | active config / bare all-fields example |
+| `xval.yaml` | active config (all fields optional; defaults in `xval_config.py`) |
 | `xval_config.py` | single config loader |
+| `oneshot.sh` | empty container to full run: bootstrap then sweep+table per workload |
+| `bootstrap.sh` | provision the box, write `.xval_env` |
 | `xval.sh` | orchestrator: baseline if missing, logit/greedy checks, table, PROF=1 |
 | `bench.sh` | engine sweep for any workload with a `bench` section |
 | `vllm.sh` | baseline capture into baselines/ |
@@ -140,6 +200,7 @@ ctx+230 vs the engine median near ctx+50 (~17% more KV at the 1024 row, ~1% at
 | `cache.py` | packs a raw run into the baseline json |
 | `table.py` | the comparison at matched (ctx, bs, tp) |
 | `synth_bench.py` | trace generator/loader (uniform, swebench, Mooncake) |
+| `trace_tokenize.py` | agent-bench capture -> tokenized replay trace |
 | `trace_serve.py` | open-loop serving replay (vLLM) |
 | `greedy_agreement.py` / `logit_agreement.py` | correctness lanes |
 | `prof.sh` / `free_gpu.sh` / `with_gpu.sh` | nsys capture, GPU picking |
