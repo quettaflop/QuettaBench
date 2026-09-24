@@ -405,10 +405,10 @@ def main():
             sampler.start()  # after the model load so joules cover the replay only
         out = await _serve(engine, reqs, offsets, args)
         stop.set()  # energy stops here; the gsm8k sidecar is not replay energy
-        acc = await _gsm8k(engine, gsm8k[0], gsm8k[1]) if gsm8k else None
-        return out, acc
+        gsm8k_acc = await _gsm8k(engine, gsm8k[0], gsm8k[1]) if gsm8k else None
+        return out, gsm8k_acc
 
-    (records, wall, done), acc = asyncio.run(_single())
+    (records, wall, done), gsm8k_acc = asyncio.run(_single())
     replayed = synth_bench.workload_hash(done)
     match = expected == replayed
     print(f"WORKLOADSUM expected={expected} replayed={replayed} match={int(match)} "
@@ -451,9 +451,9 @@ def main():
               f"joules_per_token={joules / max(out_toks, 1):.3f} scope=gpu_board "
               f"devices={len(ids.split(',')) if ids else 'all'} samples={len(samples)}",
               flush=True)
-    if acc:
-        print(f"ACCSUM dataset=gsm8k exact_match={acc[0] / max(acc[1], 1):.3f} n={acc[1]}",
-              flush=True)
+    if gsm8k_acc:  # distinct from SPECSUM's acc above, which the sidecar must not clobber
+        print(f"ACCSUM dataset=gsm8k exact_match={gsm8k_acc[0] / max(gsm8k_acc[1], 1):.3f} "
+              f"n={gsm8k_acc[1]}", flush=True)
     if args.gpu_cost_hr:
         devices = args.tp * args.pp
         usd, per_m = cost_per_m_tokens(args.gpu_cost_hr, devices, wall,

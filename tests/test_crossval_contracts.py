@@ -292,7 +292,13 @@ class CrossvalScripts(unittest.TestCase):
             self.assertEqual(f("so the total is $1,234."), "1234")
             self.assertEqual(f("the answer is 3.5 apples"), "3.5")
             self.assertIsNone(f("no numbers here"))
-            self.assertIn("ACCSUM", (CROSSVAL / "trace_serve.py").read_text())
+            src = (CROSSVAL / "trace_serve.py").read_text()
+            self.assertIn("ACCSUM", src)
+            # The gsm8k result must not share the name `acc` with SPECSUM's record
+            # list, or the (empty, for synthetic traces) SPECSUM list clobbers it
+            # and ACCSUM silently never prints.
+            self.assertIn("gsm8k_acc", src)
+            self.assertNotIn("if acc:\n        print(f\"ACCSUM", src)
         finally:
             sys.path.pop(0)
 
