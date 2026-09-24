@@ -361,6 +361,44 @@ class CrossvalScripts(unittest.TestCase):
         finally:
             sys.path.pop(0)
 
+    def test_bench_dispatch_and_workflow(self):
+        # Item 4: changelog entry -> job matrix, malformed entry hard-fails, the
+        # dry-run command list byte-matches a golden, and the workflow is valid.
+        root = CROSSVAL.parents[1]
+        sys.path.insert(0, str(root))
+        try:
+            from tools import bench_dispatch as bd
+            jobs = bd.parse_changelog(
+                "## unreleased\n- x -- workloads: llama, qwen3 -- hardware: H200, RTXPRO6000\n")
+            self.assertEqual(jobs, [
+                {"workload": "llama", "hardware": "H200"},
+                {"workload": "llama", "hardware": "RTXPRO6000"},
+                {"workload": "qwen3", "hardware": "H200"},
+                {"workload": "qwen3", "hardware": "RTXPRO6000"}])
+            with self.assertRaises(ValueError):
+                bd.parse_changelog("## v\n- broken -- workloads: llama (no hardware)\n")
+            golden = [
+                "bash scripts/crossval/xval.sh llama $WEIGHTS_llama",
+                ("python3 scripts/crossval/trace_serve.py traces/llama.jsonl --model "
+                 "$WEIGHTS_llama --sla-ttft-ms 2000 --sla-tpot-ms 100 --energy "
+                 "--gpu-cost-hr $COST_H200 --json results/llama-H200.json")]
+            self.assertEqual(bd.commands({"workload": "llama", "hardware": "H200"}), golden)
+            rec = bd.history_record({"workload": "llama", "hardware": "H200"},
+                                    ["META a=1", "SERVESUM n=3", "noise line"], "abc123", "sha256:00")
+            self.assertEqual(rec["git_sha"], "abc123")
+            self.assertIn("SERVESUM", rec["summaries"])
+            self.assertNotIn("noise", json.dumps(rec["summaries"]))
+        finally:
+            sys.path.pop(0)
+        # the real changelog yields exactly its live entry, not the preamble
+        # grammar example (which sits above the first version header)
+        self.assertEqual(bd.parse_changelog((root / "benchmarks" / "CHANGELOG.md").read_text()),
+                         [{"workload": "llama", "hardware": "H200"}])
+        import yaml
+        wf = yaml.safe_load((root / ".github" / "workflows" / "bench-dispatch.yml").read_text())
+        self.assertIn("jobs", wf)
+        self.assertIn("bench_dispatch.py", json.dumps(wf))
+
     def test_agreement_inputs_present(self):
         for name in ("prompts.txt", "texts.txt"):
             lines = [l for l in (CROSSVAL / name).read_text().splitlines() if l.strip()]
