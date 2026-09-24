@@ -296,6 +296,41 @@ class CrossvalScripts(unittest.TestCase):
         finally:
             sys.path.pop(0)
 
+    def test_serving_style_contract(self):
+        # Item 1a: serving topology parses, disagg GPU pools are disjoint, ep must
+        # divide the expert count, and disagg rows never pair with aggregated.
+        sys.path.insert(0, str(CROSSVAL))
+        try:
+            import xval_config
+            importlib.reload(xval_config)
+            self.assertEqual(xval_config.parse_serving_style("aggregated"), {"mode": "aggregated"})
+            self.assertEqual(xval_config.parse_serving_style(None), {"mode": "aggregated"})
+            self.assertEqual(xval_config.parse_serving_style("disagg:2p2d"),
+                             {"mode": "disagg", "prefill": 2, "decode": 2})
+            self.assertEqual(xval_config.parse_serving_style("ep8dp2"),
+                             {"mode": "ep_dp", "ep": 8, "dp": 2})
+            for bad in ("disagg:0p1d", "disagg:2p", "ep8", "wideEP", "disagg:xp1d"):
+                with self.assertRaises(ValueError):
+                    xval_config.parse_serving_style(bad)
+            pre, dec = xval_config.disagg_gpu_sets(
+                xval_config.parse_serving_style("disagg:2p2d"), [0, 1, 2, 3])
+            self.assertEqual((pre, dec), ([0, 1], [2, 3]))
+            self.assertFalse(set(pre) & set(dec))
+            with self.assertRaises(ValueError):
+                xval_config.disagg_gpu_sets(
+                    xval_config.parse_serving_style("disagg:2p2d"), [0, 1, 2])
+            xval_config.check_ep_legal(8, 256)  # DeepSeek-V4-Flash: 256 experts
+            with self.assertRaises(ValueError):
+                xval_config.check_ep_legal(7, 256)
+            self.assertFalse(xval_config.serving_style_compatible("disagg:1p1d", "aggregated"))
+            self.assertTrue(xval_config.serving_style_compatible("aggregated", "aggregated"))
+        finally:
+            sys.path.pop(0)
+        out = subprocess.run(
+            [sys.executable, str(CROSSVAL / "xval_config.py"), "serving-style", "disagg:1p1d"],
+            capture_output=True, text=True, check=True).stdout.strip()
+        self.assertEqual(out, "mode=disagg prefill=1 decode=1")
+
     def test_agreement_inputs_present(self):
         for name in ("prompts.txt", "texts.txt"):
             lines = [l for l in (CROSSVAL / name).read_text().splitlines() if l.strip()]
