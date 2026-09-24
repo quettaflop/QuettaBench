@@ -331,6 +331,36 @@ class CrossvalScripts(unittest.TestCase):
             capture_output=True, text=True, check=True).stdout.strip()
         self.assertEqual(out, "mode=disagg prefill=1 decode=1")
 
+    def test_engine_registry_and_trtllm_adapter(self):
+        # Item 3: trtllm resolves with a health path and needs an engine dir;
+        # amd is a loud stub; the launch and build commands are well-formed.
+        sys.path.insert(0, str(CROSSVAL))
+        try:
+            import xval_config
+            importlib.reload(xval_config)
+            trt = xval_config.resolve_engine("trtllm")
+            self.assertEqual(trt["serve"], "trtllm-serve")
+            self.assertEqual(trt["health"], "/health")
+            self.assertTrue(trt["engine_dir"])
+            with self.assertRaises(RuntimeError):
+                xval_config.resolve_engine("amd")
+            with self.assertRaises(ValueError):
+                xval_config.resolve_engine("bogus")
+        finally:
+            sys.path.pop(0)
+        sys.path.insert(0, str(CROSSVAL.parents[1]))
+        try:
+            from src.engines import trtllm
+            cmd = trtllm.launch_command("/models/llama", "/engines/llama", port=8000, tp=2)
+            self.assertEqual(cmd[0], "trtllm-serve")
+            self.assertIn("--engine_dir", cmd)
+            self.assertIn("/engines/llama", cmd)
+            self.assertIn("2", cmd)
+            self.assertEqual(trtllm.health_url(8000), "http://127.0.0.1:8000/health")
+            self.assertEqual(trtllm.build_command("/ckpt", "/engines/llama")[0], "trtllm-build")
+        finally:
+            sys.path.pop(0)
+
     def test_agreement_inputs_present(self):
         for name in ("prompts.txt", "texts.txt"):
             lines = [l for l in (CROSSVAL / name).read_text().splitlines() if l.strip()]
