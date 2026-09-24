@@ -74,6 +74,30 @@ def ramp_arrivals(num_requests: int, start_rate: float, end_rate: float, seed: i
     return times
 
 
+def burst_arrivals(num_requests: int, n_bursts: int, burst_size: int, gap_s: float) -> list[float]:
+    """
+    Injected bursts: n_bursts groups of burst_size requests land at the same
+    instant, gap_s seconds apart. Deterministic (no randomness).
+
+    The spec must cover the trace: raises ValueError when num_requests exceeds
+    n_bursts * burst_size, because silently spilling extra requests into a tail
+    would blur the recovery window the burst exists to measure.
+
+    Returns list of cumulative arrival times.
+    """
+    if num_requests > n_bursts * burst_size:
+        raise ValueError(
+            f"burst spec covers {n_bursts * burst_size} requests but the trace has "
+            f"{num_requests}; raise the spec or use --limit")
+    times = []
+    for b in range(n_bursts):
+        take = min(burst_size, num_requests - len(times))
+        times.extend([b * gap_s] * take)
+        if len(times) >= num_requests:
+            break
+    return times
+
+
 def make_arrival_times(
     pattern: str,
     num_requests: int,
