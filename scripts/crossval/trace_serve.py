@@ -360,6 +360,14 @@ def main():
     ap.add_argument("--json", help="write the aggregate summary to this path")
     args = ap.parse_args()
     xval_config.parse_serving_style(args.serving_style)  # reject a malformed topology early
+    # AFD (attention/FFN on separate device pools) is an engine topology vLLM
+    # cannot do; refuse to fake a co-located run as AFD.
+    _afd = xval_config.afd()
+    if _afd and not xval_config.afd_supported():
+        print(f"AFDVOID attention-FFN disaggregation requested (attn={_afd['attn']} "
+              f"ffn={_afd['ffn']}) but no engine supports it (set XVAL_AFD_ENGINE); "
+              f"refusing to fake a co-located run", flush=True)
+        sys.exit(4)
     if args.goodput and not (args.sla_ttft_ms or args.sla_tpot_ms):
         ap.error("--goodput needs --sla-ttft-ms and/or --sla-tpot-ms")
     if args.energy and args.goodput:

@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from xval_config import collective as _xval_collective, workloads as _xval_workloads
 from xval_config import grids as _xval_grids, step_points as _xval_step_points
 from xval_config import link_profile as _xval_link_profile
+from xval_config import afd as _xval_afd, afd_supported as _xval_afd_supported
 CFG = {
     "workloads": _xval_workloads(),
     "grids": _xval_grids(),
@@ -112,6 +113,12 @@ def main():
     mode = "NOGRAPH" if args.nograph else "FULL"
     tp = int(wl.get("tp", 1))
     pp = int(os.environ.get("XVAL_PP", wl.get("pp", 1)))
+    # AFD (attention/FFN on separate device pools) is engine-gated; do not fake it.
+    _afd = _xval_afd(wl)
+    if _afd and not _xval_afd_supported():
+        print(f"AFDVOID attention-FFN disaggregation requested (attn={_afd['attn']} "
+              f"ffn={_afd['ffn']}) but no engine supports it (set XVAL_AFD_ENGINE)", flush=True)
+        sys.exit(4)
     dtype = wl["dtype"]
     kv_dtype = wl.get("kv_dtype")
     weights_gib = float(wl["weights_gib"])

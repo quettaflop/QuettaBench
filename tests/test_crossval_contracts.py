@@ -428,6 +428,31 @@ class CrossvalScripts(unittest.TestCase):
         finally:
             sys.path.pop(0)
 
+    def test_afd_config_and_void_guard(self):
+        # AFD (attention/FFN on separate device pools) is engine-gated; the harness
+        # must refuse to fake it (VOID + non-zero exit) when no AFD engine exists.
+        sys.path.insert(0, str(CROSSVAL))
+        try:
+            import xval_config
+            importlib.reload(xval_config)
+            os.environ["XVAL_AFD"] = "attn=2,ffn=6"
+            try:
+                self.assertEqual(xval_config.afd(), {"attn": 2, "ffn": 6})
+                self.assertFalse(xval_config.afd_supported())
+            finally:
+                del os.environ["XVAL_AFD"]
+        finally:
+            sys.path.pop(0)
+        d = subprocess.run([sys.executable, str(CROSSVAL / "xval_config.py"), "devices", "deepseek"],
+                           capture_output=True, text=True,
+                           env={**os.environ, "XVAL_AFD": "attn=2,ffn=6"}).stdout.strip()
+        self.assertEqual(d, "8")  # attn 2 + ffn 6, not tp*pp
+        v = subprocess.run([sys.executable, str(CROSSVAL / "trace_serve.py"), "/dev/null", "--model", "x"],
+                           capture_output=True, text=True,
+                           env={**os.environ, "XVAL_AFD": "attn=1,ffn=1"})
+        self.assertEqual(v.returncode, 4, v.stdout + v.stderr)
+        self.assertIn("AFDVOID", v.stdout)
+
     def test_agreement_inputs_present(self):
         for name in ("prompts.txt", "texts.txt"):
             lines = [l for l in (CROSSVAL / name).read_text().splitlines() if l.strip()]

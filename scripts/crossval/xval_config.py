@@ -263,6 +263,28 @@ def serving_style_compatible(a, b):
     return parse_serving_style(a)["mode"] == parse_serving_style(b)["mode"]
 
 
+def afd(wl=None):
+    """Attention-FFN Disaggregation plan: attention and FFN/MoE layers on
+    separate device pools. From XVAL_AFD='attn=N,ffn=M' or a workload 'afd'
+    block. Returns {'attn': N, 'ffn': M} or None. This is an engine execution
+    topology, not a vLLM knob, so it runs only on an engine that supports it."""
+    spec = os.environ.get("XVAL_AFD")
+    if spec:
+        kv = dict(p.split("=") for p in spec.split(","))
+        return {"attn": int(kv["attn"]), "ffn": int(kv["ffn"])}
+    if wl and wl.get("afd"):
+        a = wl["afd"]
+        return {"attn": int(a["attn"]), "ffn": int(a["ffn"])}
+    return None
+
+
+def afd_supported():
+    """True only when an engine that actually disaggregates attention and FFN is
+    configured (XVAL_AFD_ENGINE). vLLM cannot, so callers VOID rather than fake a
+    co-located run as AFD."""
+    return bool(os.environ.get("XVAL_AFD_ENGINE"))
+
+
 def link_profile():
     """Interconnect profile for the collective env: XVAL_LINK_PROFILE override,
     else nvlink when nvidia-smi topo shows an NV* link, else pcie. Non-cuda
@@ -321,8 +343,12 @@ def _cli(args):
     if cmd == "tp":
         print(wl.get("tp", 1))
     elif cmd == "devices":
-        pp = int(os.environ.get("XVAL_PP", wl.get("pp", 1)))
-        print(int(wl.get("tp", 1)) * pp)
+        a = afd(wl)
+        if a:
+            print(a["attn"] + a["ffn"])  # two disaggregated pools
+        else:
+            pp = int(os.environ.get("XVAL_PP", wl.get("pp", 1)))
+            print(int(wl.get("tp", 1)) * pp)
     elif cmd == "cells":
         for ctx, bs in grids()[wl["grid"]]:
             print(ctx, bs)
