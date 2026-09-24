@@ -399,6 +399,35 @@ class CrossvalScripts(unittest.TestCase):
         self.assertIn("jobs", wf)
         self.assertIn("bench_dispatch.py", json.dumps(wf))
 
+    def test_publish_results_deterministic_and_redacted(self):
+        # Item 5: the static site is byte-deterministic (golden), and nothing
+        # host-identifying (home paths, hostnames, IPs) survives into the output.
+        root = CROSSVAL.parents[1]
+        sys.path.insert(0, str(root))
+        try:
+            from tools import publish_results as pr
+            self.assertEqual(pr.redact("/home/kw/w on runpod at 10.0.0.5 and hwn-z1-gpu11"),
+                             "<path>/w on <host> at <ip> and <host>")
+            recs = [
+                {"workload": "llama", "hardware": "H200", "git_sha": "abc1234567",
+                 "summaries": {"SERVESUM": ["SERVESUM n=3"], "META": ["META trace=/home/kw/t.jsonl"]}},
+                {"workload": "qwen3", "hardware": "H200", "git_sha": "def",
+                 "summaries": {"COSTSUM": ["COSTSUM usd=0.1"]}},
+            ]
+            import tempfile
+            with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
+                files1 = pr.build_site(recs, a)
+                files2 = pr.build_site(recs, b)
+                self.assertEqual(files1, ["H200.html", "history.jsonl", "index.html"])
+                page_a = (Path(a) / "H200.html").read_text()
+                self.assertEqual(page_a, (Path(b) / "H200.html").read_text())  # deterministic
+                self.assertLess(page_a.index("llama"), page_a.index("qwen3"))  # sorted
+                blob = "".join((Path(a) / f).read_text() for f in files1)
+                for leak in ("/home/", "runpod", "hwn-z1", "gpu11"):
+                    self.assertNotIn(leak, blob, f"{leak} leaked into the published site")
+        finally:
+            sys.path.pop(0)
+
     def test_agreement_inputs_present(self):
         for name in ("prompts.txt", "texts.txt"):
             lines = [l for l in (CROSSVAL / name).read_text().splitlines() if l.strip()]
