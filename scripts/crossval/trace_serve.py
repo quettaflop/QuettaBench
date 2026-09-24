@@ -138,30 +138,41 @@ def gsm8k_answer(text):
     return nums[-1].replace(",", "").rstrip(".")
 
 
-async def _gsm8k(engine, args):
-    """Task-level accuracy sidecar on the same live engine: greedy answers for
-    N GSM8k items ({question, answer} JSONL, gold after ####). Token-level
-    FIDELITY and task-level ACCSUM together are the accuracy story; either
-    alone can hide a fast-but-wrong configuration."""
+def load_gsm8k(path, n, model):
+    """(tokenizer, [(prompt_ids, gold_answer)]) for the accuracy sidecar. The
+    tokenizer is loaded here, before the engine exists, because a blocking
+    from_pretrained inside the live async window stalls the engine loop and
+    vLLM tears the engine down (the sidecar first came back empty for exactly
+    this reason). Gold is the number after #### in each answer."""
     from transformers import AutoTokenizer
+
+    tok = AutoTokenizer.from_pretrained(model, trust_remote_code=True)
+    items = [json.loads(l) for l in open(path) if l.strip()][:n]
+    prompts = [(tok(it["question"])["input_ids"], gsm8k_answer(it["answer"])) for it in items]
+    return tok, prompts
+
+
+async def _gsm8k(engine, tok, prompts):
+    """Greedy answers for pre-tokenized GSM8k prompts on the live replay engine.
+    Task-level ACCSUM beside the token-level FIDELITY gate is the accuracy
+    story: either alone can hide a fast-but-wrong configuration. Only
+    engine.generate and a fast tok.decode run here, no blocking model load, so
+    the engine loop keeps ticking. Returns (n_correct, n)."""
     from vllm import SamplingParams
 
-    tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
-    items = [json.loads(l) for l in open(args.gsm8k_file) if l.strip()][: args.gsm8k_n]
     sp = SamplingParams(temperature=0.0, max_tokens=256)
 
-    async def one(i, item):
-        ids = tok(item["question"])["input_ids"]
+    async def one(i, ids, gold):
         gen = []
         async for out in engine.generate(
             {"prompt_token_ids": ids}, sp, request_id=f"gsm8k-{i}"
         ):
             gen = out.outputs[0].token_ids
         got = gsm8k_answer(tok.decode(gen, skip_special_tokens=True))
-        return got is not None and got == gsm8k_answer(item["answer"])
+        return got is not None and got == gold
 
-    results = await asyncio.gather(*(one(i, it) for i, it in enumerate(items)))
-    return sum(results), len(items)
+    res = await asyncio.gather(*(one(i, ids, gold) for i, (ids, gold) in enumerate(prompts)))
+    return sum(res), len(prompts)
 
 
 def _acceptance(reference_ids, generated_ids):
@@ -378,6 +389,8 @@ def main():
         _run_goodput(args, reqs, expected)
         return
 
+    # Load the gsm8k tokenizer before the engine exists; see load_gsm8k.
+    gsm8k = load_gsm8k(args.gsm8k_file, args.gsm8k_n, args.model) if args.gsm8k_file else None
     stop, samples = threading.Event(), []
     sampler = threading.Thread(target=_power_sampler, args=(samples, stop), daemon=True)
 
@@ -388,9 +401,7 @@ def main():
             sampler.start()  # after the model load so joules cover the replay only
         out = await _serve(engine, reqs, offsets, args)
         stop.set()  # energy stops here; the gsm8k sidecar is not replay energy
-        acc = None
-        if args.gsm8k_file:
-            acc = await _gsm8k(engine, args)
+        acc = await _gsm8k(engine, gsm8k[0], gsm8k[1]) if gsm8k else None
         return out, acc
 
     (records, wall, done), acc = asyncio.run(_single())
