@@ -358,6 +358,14 @@ class CrossvalScripts(unittest.TestCase):
             self.assertIn("2", cmd)
             self.assertEqual(trtllm.health_url(8000), "http://127.0.0.1:8000/health")
             self.assertEqual(trtllm.build_command("/ckpt", "/engines/llama")[0], "trtllm-build")
+            from src.engines import sglang
+            sg = xval_config.resolve_engine("sglang")
+            self.assertEqual(sg["serve"], "sglang.launch_server")
+            cmd = sglang.launch_command("/models/llama", port=30000, tp=2)
+            self.assertEqual(cmd[:3], ["python3", "-m", "sglang.launch_server"])
+            self.assertIn("--model-path", cmd)
+            self.assertIn("/models/llama", cmd)
+            self.assertEqual(sglang.health_url(30000), "http://127.0.0.1:30000/health")
         finally:
             sys.path.pop(0)
 
