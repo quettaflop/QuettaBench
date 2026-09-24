@@ -117,6 +117,14 @@ def _power_sampler(samples, stop, interval_s=1.0):
             pass
 
 
+def cost_per_m_tokens(gpu_cost_hr, devices, wall_s, out_tokens):
+    """(run USD, USD per million output tokens) at a flat per-GPU-hour rate.
+    Wall time is the replay window, so model-load time is excluded; including
+    it would price the benchmark harness, not the serving."""
+    usd = gpu_cost_hr * devices * wall_s / 3600.0
+    return usd, usd * 1e6 / max(out_tokens, 1)
+
+
 def _acceptance(reference_ids, generated_ids):
     """Matched leading-token length and rate between the trace's real assistant
     tokens and what the engine generated. Measured live, not from a golden file."""
@@ -292,6 +300,8 @@ def main():
                     help="sweep --speed to the SLA PASS/FAIL boundary (max 6 probes)")
     ap.add_argument("--energy", action="store_true",
                     help="1 Hz board-power sampling over the replay; ENERGYSUM")
+    ap.add_argument("--gpu-cost-hr", type=float,
+                    help="USD per GPU-hour; COSTSUM per million output tokens")
     ap.add_argument("--json", help="write the aggregate summary to this path")
     args = ap.parse_args()
     if args.goodput and not (args.sla_ttft_ms or args.sla_tpot_ms):
@@ -377,6 +387,13 @@ def main():
         print(f"ENERGYSUM joules={joules:.0f} "
               f"joules_per_token={joules / max(out_toks, 1):.3f} scope=gpu_board "
               f"devices={len(ids.split(',')) if ids else 'all'} samples={len(samples)}",
+              flush=True)
+    if args.gpu_cost_hr:
+        devices = args.tp * args.pp
+        usd, per_m = cost_per_m_tokens(args.gpu_cost_hr, devices, wall,
+                                       sum(r["out_tokens"] for r in records))
+        print(f"COSTSUM usd={usd:.4f} usd_per_m_out_tokens={per_m:.2f} "
+              f"gpu_cost_hr={args.gpu_cost_hr} devices={devices} wall_s={wall:.1f}",
               flush=True)
     if args.json:
         Path(args.json).write_text(json.dumps(s, indent=2, sort_keys=True))
