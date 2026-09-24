@@ -236,6 +236,26 @@ def check_ep_legal(ep, num_experts):
         raise ValueError(f"ep={ep} does not divide {num_experts} experts")
 
 
+# Serving engines the benchmark can launch. All expose an OpenAI-compatible API,
+# so the client metric path is shared; only the launch differs. trtllm needs a
+# prebuilt engine dir (the build is manual, see src/engines/trtllm.py).
+ENGINES = {
+    "vllm": {"serve": "vllm serve", "health": "/health", "engine_dir": False},
+    "trtllm": {"serve": "trtllm-serve", "health": "/health", "engine_dir": True},
+}
+
+
+def resolve_engine(name):
+    """Launch metadata for a serving engine. amd/rocm is a stub: no ROCm host is
+    provisioned, so it fails loudly here rather than emitting a launch that would
+    fail deep in an unavailable engine."""
+    if name in ("amd", "rocm"):
+        raise RuntimeError("no ROCm host provisioned; the amd engine backend is a stub")
+    if name not in ENGINES:
+        raise ValueError(f"unknown engine {name!r}; known: {', '.join(ENGINES)}")
+    return ENGINES[name]
+
+
 def serving_style_compatible(a, b):
     """Two rows compare only when their serving topology matches; a disagg
     number against an aggregated one is a category error the table must refuse,
@@ -288,6 +308,10 @@ def _cli(args):
     if cmd == "serving-style":
         st = parse_serving_style(args[1] if len(args) > 1 else "aggregated")
         print(" ".join(f"{k}={v}" for k, v in st.items()))
+        return
+    if cmd == "engine":
+        e = resolve_engine(args[1] if len(args) > 1 else "vllm")
+        print(" ".join(f"{k}={v}" for k, v in e.items()))
         return
     if cmd not in ("tp", "devices", "cells", "bench") or len(args) != 2:
         sys.exit("usage: xval_config.py collective|run-params|provision|backend|link-profile|serving-style|tp|devices|cells|bench [workload]")
