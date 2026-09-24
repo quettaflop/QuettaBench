@@ -20,6 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import synth_bench
+import xval_config
 
 sys.path.insert(0, str(Path(__file__).parents[2]))
 from src.workloads.arrival import burst_arrivals, poisson_arrivals, ramp_arrivals
@@ -342,6 +343,8 @@ def main():
     ap.add_argument("--speed", type=float, default=1.0, help="arrival time compression factor")
     ap.add_argument("--arrival", default="trace",
                     help="trace | poisson:<rate> | ramp:<start>:<end> | burst:<n>x<size>@<gap_s>")
+    ap.add_argument("--serving-style", default="aggregated",
+                    help="aggregated | disagg:<P>p<D>d | ep<N>dp<M>; recorded in META")
     ap.add_argument("--max-tokens", type=int, default=128, help="when the trace has no output_length")
     ap.add_argument("--limit", type=int, help="replay only the first N requests")
     ap.add_argument("--sla-ttft-ms", type=float, help="SLA target: max p99 TTFT ms")
@@ -356,6 +359,7 @@ def main():
     ap.add_argument("--gsm8k-n", type=int, help="number of GSM8k items to run")
     ap.add_argument("--json", help="write the aggregate summary to this path")
     args = ap.parse_args()
+    xval_config.parse_serving_style(args.serving_style)  # reject a malformed topology early
     if args.goodput and not (args.sla_ttft_ms or args.sla_tpot_ms):
         ap.error("--goodput needs --sla-ttft-ms and/or --sla-tpot-ms")
     if args.energy and args.goodput:
@@ -381,7 +385,7 @@ def main():
     text_mode = "real" if any(r.get("output_token_ids") for r in reqs) else "synthetic"
     print(f"META trace={args.trace} reqs={len(reqs)} engine={args.engine} "
           f"tp={args.tp} pp={args.pp} ep={int(args.ep)} "
-          f"speed={args.speed} arrival={args.arrival} "
+          f"speed={args.speed} arrival={args.arrival} serving_style={args.serving_style} "
           f"prefix_caching={int(args.prefix_caching)} "
           f"source={sources} text_mode={text_mode}", flush=True)
     expected = synth_bench.workload_hash(reqs)
