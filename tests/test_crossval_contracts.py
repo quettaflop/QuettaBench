@@ -269,6 +269,19 @@ class CrossvalScripts(unittest.TestCase):
         finally:
             sys.path.pop(0)
 
+    def test_cost_math(self):
+        sys.path.insert(0, str(CROSSVAL))
+        try:
+            import trace_serve
+            importlib.reload(trace_serve)
+            # 2 GPUs at $3.60/hr for 30 min producing 1M tokens: $3.60, $3.60/M.
+            usd, per_m = trace_serve.cost_per_m_tokens(3.6, 2, 1800.0, 1_000_000)
+            self.assertAlmostEqual(usd, 3.6)
+            self.assertAlmostEqual(per_m, 3.6)
+            self.assertIn("COSTSUM", (CROSSVAL / "trace_serve.py").read_text())
+        finally:
+            sys.path.pop(0)
+
     def test_agreement_inputs_present(self):
         for name in ("prompts.txt", "texts.txt"):
             lines = [l for l in (CROSSVAL / name).read_text().splitlines() if l.strip()]
