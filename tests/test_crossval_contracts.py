@@ -685,6 +685,33 @@ class TableParity(unittest.TestCase):
         self.assertFalse((CROSSVAL / "routing_corpus.txt").exists())
         self.assertIn("XVAL_CORPUS", (CROSSVAL / "vmin_fit.py").read_text())
 
+    def test_hash_canonicalization(self):
+        # The gate hashes the completed set, not the completion order: a true
+        # random shuffle of the done-list must not move the hash, while touching
+        # one prompt token or one arrival must. Without order-invariance the
+        # gate would void every run whose scheduler finished out of order.
+        import random
+        sys.path.insert(0, str(CROSSVAL))
+        try:
+            import synth_bench
+            importlib.reload(synth_bench)
+            reqs = synth_bench.agentic_requests("deep_research", 24, seed=5)
+            h = synth_bench.workload_hash(reqs)
+            shuffled = list(reqs)
+            random.Random(7).shuffle(shuffled)
+            self.assertNotEqual([r["order"] for r in shuffled], [r["order"] for r in reqs])
+            self.assertEqual(h, synth_bench.workload_hash(shuffled))
+            prompt_mut = [dict(r) for r in reqs]
+            ids = list(prompt_mut[3]["prompt_token_ids"])
+            ids[0] += 1
+            prompt_mut[3]["prompt_token_ids"] = ids
+            self.assertNotEqual(h, synth_bench.workload_hash(prompt_mut))
+            arrival_mut = [dict(r) for r in reqs]
+            arrival_mut[3]["arrival_ts"] = arrival_mut[3]["arrival_ts"] + 0.5
+            self.assertNotEqual(h, synth_bench.workload_hash(arrival_mut))
+        finally:
+            sys.path.pop(0)
+
     def test_workload_identity_hash(self):
         # The gate: same requests -> same hash regardless of order; a dropped or
         # altered request changes it. This is what proves systems saw equal work.
