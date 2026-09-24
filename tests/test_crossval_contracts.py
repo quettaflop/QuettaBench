@@ -258,6 +258,17 @@ class CrossvalScripts(unittest.TestCase):
         finally:
             sys.path.pop(0)
 
+    def test_energy_integration(self):
+        sys.path.insert(0, str(CROSSVAL))
+        try:
+            import trace_serve
+            importlib.reload(trace_serve)
+            self.assertEqual(trace_serve.integrate_power([100.0, 100.0, 100.0], 1.0), 300.0)
+            self.assertEqual(trace_serve.integrate_power([], 1.0), 0.0)
+            self.assertIn("ENERGYSUM", (CROSSVAL / "trace_serve.py").read_text())
+        finally:
+            sys.path.pop(0)
+
     def test_agreement_inputs_present(self):
         for name in ("prompts.txt", "texts.txt"):
             lines = [l for l in (CROSSVAL / name).read_text().splitlines() if l.strip()]

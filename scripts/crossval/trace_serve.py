@@ -9,7 +9,11 @@ the trace. Prints SERVE per request and SERVESUM at the end.
 import argparse
 import asyncio
 import json
+import os
+import shutil
+import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -87,6 +91,30 @@ def burst_recovery(records, sla_ttft_ms, window_s=5.0):
         if w > peak_w and p99[w] <= sla_ttft_ms:
             return (w - peak_w) * window_s, p99[peak_w]
     return None, p99[peak_w]
+
+
+def integrate_power(samples_w, interval_s):
+    """Rectangle-rule joules from per-sample total board watts. A missed sample
+    shrinks the integral rather than crashing the run, so joules is a floor."""
+    return sum(samples_w) * interval_s
+
+
+def _power_sampler(samples, stop, interval_s=1.0):
+    """Board power at 1 Hz over the devices in CUDA_VISIBLE_DEVICES (all GPUs
+    when unset). Board scope includes idle draw and everything colocated on
+    those devices, which is why ENERGYSUM is labeled gpu_board."""
+    ids = os.environ.get("CUDA_VISIBLE_DEVICES", "")
+    cmd = ["nvidia-smi", "--query-gpu=power.draw", "--format=csv,noheader,nounits"]
+    if ids:
+        cmd += ["-i", ids]
+    while not stop.wait(interval_s):
+        try:
+            out = subprocess.run(cmd, capture_output=True, text=True).stdout
+            vals = [float(x) for x in out.split()]
+            if vals:
+                samples.append(sum(vals))
+        except (OSError, ValueError):
+            pass
 
 
 def _acceptance(reference_ids, generated_ids):
@@ -262,10 +290,16 @@ def main():
     ap.add_argument("--sla-tpot-ms", type=float, help="SLA target: max p99 TPOT ms/token")
     ap.add_argument("--goodput", action="store_true",
                     help="sweep --speed to the SLA PASS/FAIL boundary (max 6 probes)")
+    ap.add_argument("--energy", action="store_true",
+                    help="1 Hz board-power sampling over the replay; ENERGYSUM")
     ap.add_argument("--json", help="write the aggregate summary to this path")
     args = ap.parse_args()
     if args.goodput and not (args.sla_ttft_ms or args.sla_tpot_ms):
         ap.error("--goodput needs --sla-ttft-ms and/or --sla-tpot-ms")
+    if args.energy and args.goodput:
+        ap.error("--energy covers a single replay window; drop --goodput")
+    if args.energy and not shutil.which("nvidia-smi"):
+        ap.error("--energy needs nvidia-smi on PATH")
 
     reqs = synth_bench.load_trace(args.trace)
     if args.limit:
@@ -289,10 +323,17 @@ def main():
         _run_goodput(args, reqs, expected)
         return
 
+    stop, samples = threading.Event(), []
+    sampler = threading.Thread(target=_power_sampler, args=(samples, stop), daemon=True)
+
     async def _single():
         from vllm.engine.async_llm_engine import AsyncLLMEngine
         engine = AsyncLLMEngine.from_engine_args(_engine_args(args))
-        return await _serve(engine, reqs, offsets, args)
+        if args.energy:
+            sampler.start()  # after the model load so joules cover the replay only
+        out = await _serve(engine, reqs, offsets, args)
+        stop.set()
+        return out
 
     records, wall, done = asyncio.run(_single())
     replayed = synth_bench.workload_hash(done)
@@ -328,6 +369,15 @@ def main():
               f"accept_rate={sum(r['accept_rate'] for r in acc)/len(acc):.3f} n={len(acc)}", flush=True)
     else:
         print("SPECSUM spec=off note=needs-real-text-trace", flush=True)
+    if args.energy:
+        sampler.join(timeout=2.0)
+        joules = integrate_power(samples, 1.0)
+        out_toks = sum(r["out_tokens"] for r in records)
+        ids = os.environ.get("CUDA_VISIBLE_DEVICES", "")
+        print(f"ENERGYSUM joules={joules:.0f} "
+              f"joules_per_token={joules / max(out_toks, 1):.3f} scope=gpu_board "
+              f"devices={len(ids.split(',')) if ids else 'all'} samples={len(samples)}",
+              flush=True)
     if args.json:
         Path(args.json).write_text(json.dumps(s, indent=2, sort_keys=True))
     if not match:
