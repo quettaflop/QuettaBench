@@ -172,6 +172,38 @@ class CrossvalScripts(unittest.TestCase):
             self.assertIn("MISSING table=dense tp=1 layer=act_fn tokens=2", gap.stdout)
             self.assertIn("MISSING", (out / "gaps.txt").read_text())
 
+    def test_lss_first_token_fit(self):
+        # A constant live-minus-sim offset must be recovered exactly and the
+        # corrected TTFT error must collapse; the join is by request id, not row
+        # order, and rides on matching input token counts.
+        with tempfile.TemporaryDirectory() as td:
+            live = Path(td) / "bench_dir"
+            live.mkdir()
+            sim_rows = ["instance id,request id,model,input,output,arrival,end_time,"
+                        "latency,queuing_delay,TTFT,TPOT,ITL"]
+            with open(live / "requests.jsonl", "w") as fh:
+                for i in range(10):
+                    sim_ttft_ms = 10.0 + i
+                    toks = 256 * (i + 1)
+                    fh.write(json.dumps({
+                        "request_id": f"bench-{i}", "input_toks": toks, "output_toks": 8,
+                        "queued_ts": 1000.0 + i,
+                        "first_token_ts": 1000.0 + i + (sim_ttft_ms + 6.3) / 1e3,
+                        "last_token_ts": 1000.0 + i + 1.0}) + "\n")
+                    sim_rows.append(f"0,{i},m,{toks},8,0,0,0,0,{sim_ttft_ms * 1e6:.0f},0,\"[]\"")
+            sim = Path(td) / "sim.csv"
+            sim.write_text("\n".join(sim_rows) + "\n")
+            meta = Path(td) / "meta.yaml"
+            meta.write_text("hardware: H200\n")
+            out = subprocess.run(
+                [sys.executable, str(CROSSVAL / "lss_first_token.py"), "--live", str(live),
+                 "--sim", str(sim), "--meta", str(meta)],
+                capture_output=True, text=True)
+            self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+            self.assertIn("overhead_ms=6.300", out.stdout)
+            self.assertIn("after_mape=0.0%", out.stdout)
+            self.assertIn("first_token_overhead_us: 6300", meta.read_text())
+
     def test_agreement_inputs_present(self):
         for name in ("prompts.txt", "texts.txt"):
             lines = [l for l in (CROSSVAL / name).read_text().splitlines() if l.strip()]
