@@ -10,6 +10,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -123,6 +124,44 @@ def cost_per_m_tokens(gpu_cost_hr, devices, wall_s, out_tokens):
     it would price the benchmark harness, not the serving."""
     usd = gpu_cost_hr * devices * wall_s / 3600.0
     return usd, usd * 1e6 / max(out_tokens, 1)
+
+
+def gsm8k_answer(text):
+    """Final numeric answer: the last number in the text, comma and dollar
+    stripped; gold answers sit after '####'. Returns None when no number
+    appears, which scores as wrong rather than crashing mid-benchmark."""
+    if "####" in text:
+        text = text.rsplit("####", 1)[-1]
+    nums = re.findall(r"-?\d[\d,]*\.?\d*", text.replace("$", ""))
+    if not nums:
+        return None
+    return nums[-1].replace(",", "").rstrip(".")
+
+
+async def _gsm8k(engine, args):
+    """Task-level accuracy sidecar on the same live engine: greedy answers for
+    N GSM8k items ({question, answer} JSONL, gold after ####). Token-level
+    FIDELITY and task-level ACCSUM together are the accuracy story; either
+    alone can hide a fast-but-wrong configuration."""
+    from transformers import AutoTokenizer
+    from vllm import SamplingParams
+
+    tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
+    items = [json.loads(l) for l in open(args.gsm8k_file) if l.strip()][: args.gsm8k_n]
+    sp = SamplingParams(temperature=0.0, max_tokens=256)
+
+    async def one(i, item):
+        ids = tok(item["question"])["input_ids"]
+        gen = []
+        async for out in engine.generate(
+            {"prompt_token_ids": ids}, sp, request_id=f"gsm8k-{i}"
+        ):
+            gen = out.outputs[0].token_ids
+        got = gsm8k_answer(tok.decode(gen, skip_special_tokens=True))
+        return got is not None and got == gsm8k_answer(item["answer"])
+
+    results = await asyncio.gather(*(one(i, it) for i, it in enumerate(items)))
+    return sum(results), len(items)
 
 
 def _acceptance(reference_ids, generated_ids):
@@ -302,6 +341,8 @@ def main():
                     help="1 Hz board-power sampling over the replay; ENERGYSUM")
     ap.add_argument("--gpu-cost-hr", type=float,
                     help="USD per GPU-hour; COSTSUM per million output tokens")
+    ap.add_argument("--gsm8k-file", help="GSM8k JSONL ({question, answer}); ACCSUM sidecar")
+    ap.add_argument("--gsm8k-n", type=int, help="number of GSM8k items to run")
     ap.add_argument("--json", help="write the aggregate summary to this path")
     args = ap.parse_args()
     if args.goodput and not (args.sla_ttft_ms or args.sla_tpot_ms):
@@ -310,6 +351,10 @@ def main():
         ap.error("--energy covers a single replay window; drop --goodput")
     if args.energy and not shutil.which("nvidia-smi"):
         ap.error("--energy needs nvidia-smi on PATH")
+    if bool(args.gsm8k_file) != bool(args.gsm8k_n):
+        ap.error("--gsm8k-file and --gsm8k-n go together")
+    if args.gsm8k_file and args.goodput:
+        ap.error("the gsm8k sidecar runs on a single replay; drop --goodput")
 
     reqs = synth_bench.load_trace(args.trace)
     if args.limit:
@@ -342,10 +387,13 @@ def main():
         if args.energy:
             sampler.start()  # after the model load so joules cover the replay only
         out = await _serve(engine, reqs, offsets, args)
-        stop.set()
-        return out
+        stop.set()  # energy stops here; the gsm8k sidecar is not replay energy
+        acc = None
+        if args.gsm8k_file:
+            acc = await _gsm8k(engine, args)
+        return out, acc
 
-    records, wall, done = asyncio.run(_single())
+    (records, wall, done), acc = asyncio.run(_single())
     replayed = synth_bench.workload_hash(done)
     match = expected == replayed
     print(f"WORKLOADSUM expected={expected} replayed={replayed} match={int(match)} "
@@ -387,6 +435,9 @@ def main():
         print(f"ENERGYSUM joules={joules:.0f} "
               f"joules_per_token={joules / max(out_toks, 1):.3f} scope=gpu_board "
               f"devices={len(ids.split(',')) if ids else 'all'} samples={len(samples)}",
+              flush=True)
+    if acc:
+        print(f"ACCSUM dataset=gsm8k exact_match={acc[0] / max(acc[1], 1):.3f} n={acc[1]}",
               flush=True)
     if args.gpu_cost_hr:
         devices = args.tp * args.pp

@@ -282,6 +282,20 @@ class CrossvalScripts(unittest.TestCase):
         finally:
             sys.path.pop(0)
 
+    def test_gsm8k_answer_parse(self):
+        sys.path.insert(0, str(CROSSVAL))
+        try:
+            import trace_serve
+            importlib.reload(trace_serve)
+            f = trace_serve.gsm8k_answer
+            self.assertEqual(f("Natalia sold 48 clips. #### 72"), "72")
+            self.assertEqual(f("so the total is $1,234."), "1234")
+            self.assertEqual(f("the answer is 3.5 apples"), "3.5")
+            self.assertIsNone(f("no numbers here"))
+            self.assertIn("ACCSUM", (CROSSVAL / "trace_serve.py").read_text())
+        finally:
+            sys.path.pop(0)
+
     def test_agreement_inputs_present(self):
         for name in ("prompts.txt", "texts.txt"):
             lines = [l for l in (CROSSVAL / name).read_text().splitlines() if l.strip()]
