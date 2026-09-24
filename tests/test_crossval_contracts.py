@@ -132,6 +132,46 @@ class CrossvalScripts(unittest.TestCase):
         self.assertRegex(out.stderr, r"would:|MISSING:")
         self.assertFalse(envfile.exists(), "dry run must not write .xval_env")
 
+    def test_lss_export_covers_or_fails_loudly(self):
+        # Full probe coverage reproduces the reference key set; one missing cell
+        # must exit 2 with a MISSING line, never an interpolated row.
+        with tempfile.TemporaryDirectory() as td:
+            ref = Path(td) / "H200" / "meta-llama" / "Llama-3.1-8B" / "bf16"
+            (ref / "tp1").mkdir(parents=True)
+            (ref / "tp1" / "dense.csv").write_text(
+                "layer,tokens,time_us\nact_fn,1,3.3\nact_fn,2,3.4\n")
+            (ref / "tp1" / "per_sequence.csv").write_text(
+                "layer,sequences,time_us\nlm_head,1,248.0\n")
+            (ref / "meta.yaml").write_text("hardware: H200\nmodel: m\n")
+            probes = Path(td) / "probes.jsonl"
+            recs = [
+                {"table": "dense", "tp": 1, "layer": "act_fn", "tokens": 1, "time_us": 3.31},
+                {"table": "dense", "tp": 1, "layer": "act_fn", "tokens": 1, "time_us": 3.39},
+                {"table": "dense", "tp": 1, "layer": "act_fn", "tokens": 2, "time_us": 3.44},
+                {"table": "per_sequence", "tp": 1, "layer": "lm_head", "sequences": 1,
+                 "time_us": 250.0},
+            ]
+            probes.write_text("".join(json.dumps(r) + "\n" for r in recs))
+            out = Path(td) / "out"
+            full = subprocess.run(
+                [sys.executable, str(CROSSVAL / "lss_export.py"), "--probes", str(probes),
+                 "--reference", str(ref), "--out", str(out)],
+                capture_output=True, text=True)
+            self.assertEqual(full.returncode, 0, full.stdout + full.stderr)
+            tree = out / "profiler" / "perf" / "H200" / "meta-llama" / "Llama-3.1-8B" / "bf16"
+            dense = (tree / "tp1" / "dense.csv").read_text().splitlines()
+            self.assertEqual(dense[0], "layer,tokens,time_us")
+            self.assertEqual(dense[1], "act_fn,1,3.35")  # median of the duplicates
+            self.assertTrue((tree / "meta.yaml").exists())
+            probes.write_text(json.dumps(recs[0]) + "\n")  # drop coverage
+            gap = subprocess.run(
+                [sys.executable, str(CROSSVAL / "lss_export.py"), "--probes", str(probes),
+                 "--reference", str(ref), "--out", str(out)],
+                capture_output=True, text=True)
+            self.assertEqual(gap.returncode, 2, gap.stdout + gap.stderr)
+            self.assertIn("MISSING table=dense tp=1 layer=act_fn tokens=2", gap.stdout)
+            self.assertIn("MISSING", (out / "gaps.txt").read_text())
+
     def test_agreement_inputs_present(self):
         for name in ("prompts.txt", "texts.txt"):
             lines = [l for l in (CROSSVAL / name).read_text().splitlines() if l.strip()]
