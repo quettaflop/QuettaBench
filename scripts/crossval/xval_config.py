@@ -242,6 +242,7 @@ def check_ep_legal(ep, num_experts):
 ENGINES = {
     "vllm": {"serve": "vllm serve", "health": "/health", "engine_dir": False},
     "trtllm": {"serve": "trtllm-serve", "health": "/health", "engine_dir": True},
+    "sglang": {"serve": "sglang.launch_server", "health": "/health", "engine_dir": False},
 }
 
 
