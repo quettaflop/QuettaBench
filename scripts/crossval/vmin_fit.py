@@ -151,6 +151,12 @@ def main():
         kw["compilation_config"] = {"cudagraph_mode": "NONE"}
     if kv_dtype:
         kw["kv_cache_dtype"] = kv_dtype
+    # Quantized weights (nvfp4 / fp8): pass through to vLLM and record it so the
+    # table never pairs an fp4 row against a bf16 baseline as if equal.
+    quant = wl.get("quant")
+    if quant:
+        kw["quantization"] = quant
+    print(f"META quant={quant or dtype}", flush=True)
     # MoE workloads shard their experts across the tp ranks.
     if wl.get("expert_parallel"):
         kw["enable_expert_parallel"] = True
