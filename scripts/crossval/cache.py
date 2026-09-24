@@ -37,6 +37,7 @@ def main():
         "mode": meta.get("mode", "FULL"),
         "pp": int(meta.get("pp", "1")),
         "serving_style": meta.get("serving_style", "aggregated"),
+        "quant": meta.get("quant", meta.get("dtype", "?")),
         "model": meta.get("model", "?"),
         "dtype": meta.get("dtype", "?"),
         "grid": meta.get("grid", "?"),

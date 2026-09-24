@@ -517,7 +517,8 @@ class TableParity(unittest.TestCase):
     criterion per-step log gets its cells printed with ratios withheld, and
     rows whose KV formats differ carry a KV flag."""
 
-    def _table(self, bench_text, kv="float16", env=None, expect_rc=0, serving_style="aggregated"):
+    def _table(self, bench_text, kv="float16", env=None, expect_rc=0,
+               serving_style="aggregated", quant="bf16"):
         import sys
         import time
 
@@ -526,7 +527,7 @@ class TableParity(unittest.TestCase):
             "gpu": "test", "vllm": "0", "mode": "FULL", "model": "m",
             "dtype": "float16", "grid": "g", "method": "slope", "kv_dtype": kv,
             "nccl_algo": "allreduce:tree;allgather:ring", "nccl_proto": "Simple",
-            "serving_style": serving_style,
+            "serving_style": serving_style, "quant": quant,
             "points": [{"ctx": 1024, "bs": 1, "tp": 1, "ms_per_step": 5.0,
                         "tok_s": 200.0, "r2": 1.0, "kv": kv}],
         }
@@ -546,6 +547,19 @@ class TableParity(unittest.TestCase):
         out = self._table("LOOP ctx=1024 bs=1 kv=fp16 ms_per_step=10.000 k=100\n")
         self.assertIn("0.50x", out)
         self.assertNotIn("withheld", out)
+
+    def test_quant_mismatch_flags_and_withholds(self):
+        # An nvfp4 engine row against a bf16 baseline is flagged QUANT and withheld;
+        # vmin_fit passes quantization through and records META quant.
+        out = self._table(
+            "LOOP ctx=1024 bs=1 kv=fp16 ms_per_step=10.000 k=100\n",
+            quant="bf16", env={"XVAL_QUANT": "nvfp4"})
+        self.assertIn("QUANT MISMATCH", out)
+        self.assertIn("QUANT bf16/nvfp4", out)
+        self.assertNotIn("0.50x", out)
+        src = (CROSSVAL / "vmin_fit.py").read_text()
+        self.assertIn("quantization", src)
+        self.assertIn("META quant=", src)
 
     def test_serving_style_mismatch_withholds(self):
         # A disagg baseline against an aggregated engine row is never a ratio.
