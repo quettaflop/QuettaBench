@@ -231,6 +231,33 @@ class CrossvalScripts(unittest.TestCase):
         finally:
             sys.path.pop(0)
 
+    def test_injected_arrivals(self):
+        # Injected schedules must be deterministic, must match their spec, and
+        # must change the workload hash (arrival_ts is a hash input), so a
+        # trace-paced and an injected run can never be conflated.
+        sys.path.insert(0, str(CROSSVAL))
+        try:
+            import trace_serve, synth_bench
+            importlib.reload(trace_serve)
+            importlib.reload(synth_bench)
+            self.assertIsNone(trace_serve.injected_arrivals("trace", 8))
+            p = trace_serve.injected_arrivals("poisson:2.0", 8)
+            self.assertEqual(p, trace_serve.injected_arrivals("poisson:2.0", 8))
+            self.assertEqual(sorted(p), p)
+            b = trace_serve.injected_arrivals("burst:2x4@5.0", 8)
+            self.assertEqual(b, [0.0] * 4 + [5.0] * 4)
+            with self.assertRaises(ValueError):
+                trace_serve.injected_arrivals("burst:1x4@5.0", 8)  # spec too small
+            r = trace_serve.injected_arrivals("ramp:0.5:4.0", 8)
+            self.assertEqual(len(r), 8)
+            reqs = synth_bench.synth_requests(4, 64, seed=1)
+            h0 = synth_bench.workload_hash(reqs)
+            for req, t in zip(reqs, b[4:]):  # the non-zero burst; t=0 equals the default
+                req["arrival_ts"] = round(t, 6)
+            self.assertNotEqual(h0, synth_bench.workload_hash(reqs))
+        finally:
+            sys.path.pop(0)
+
     def test_agreement_inputs_present(self):
         for name in ("prompts.txt", "texts.txt"):
             lines = [l for l in (CROSSVAL / name).read_text().splitlines() if l.strip()]

@@ -16,6 +16,27 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import synth_bench
 
+sys.path.insert(0, str(Path(__file__).parents[2]))
+from src.workloads.arrival import burst_arrivals, poisson_arrivals, ramp_arrivals
+
+
+def injected_arrivals(spec, n):
+    """Arrival schedule for --arrival; None means keep the trace's own times.
+    Specs: poisson:<rate>, ramp:<start>:<end>, burst:<n>x<size>@<gap_s>."""
+    if spec == "trace":
+        return None
+    kind, _, rest = spec.partition(":")
+    if kind == "poisson":
+        return poisson_arrivals(n, float(rest))
+    if kind == "ramp":
+        a, b = rest.split(":")
+        return ramp_arrivals(n, float(a), float(b))
+    if kind == "burst":
+        nb, rest2 = rest.split("x")
+        size, gap = rest2.split("@")
+        return burst_arrivals(n, int(nb), int(size), float(gap))
+    raise ValueError(f"unknown arrival spec {spec!r}")
+
 
 def plan_arrivals(reqs, speed):
     """Submission offsets in seconds: arrival_ts scaled by --speed (first at 0),
@@ -233,6 +254,8 @@ def main():
     ap.add_argument("--prefix-caching", action="store_true",
                     help="off by default so both engines pay full prefill; on to measure the cache")
     ap.add_argument("--speed", type=float, default=1.0, help="arrival time compression factor")
+    ap.add_argument("--arrival", default="trace",
+                    help="trace | poisson:<rate> | ramp:<start>:<end> | burst:<n>x<size>@<gap_s>")
     ap.add_argument("--max-tokens", type=int, default=128, help="when the trace has no output_length")
     ap.add_argument("--limit", type=int, help="replay only the first N requests")
     ap.add_argument("--sla-ttft-ms", type=float, help="SLA target: max p99 TTFT ms")
@@ -247,12 +270,19 @@ def main():
     reqs = synth_bench.load_trace(args.trace)
     if args.limit:
         reqs = reqs[: args.limit]
+    injected = injected_arrivals(args.arrival, len(reqs))
+    if injected is not None:
+        # Injected schedules join the workload identity: arrival_ts is a hash
+        # input, so trace-paced and injected runs can never share a hash.
+        for r, t in zip(reqs, injected):
+            r["arrival_ts"] = round(t, 6)
     offsets = plan_arrivals(reqs, args.speed)
     sources = ",".join(sorted({str(r.get("source", "?")) for r in reqs}))
     text_mode = "real" if any(r.get("output_token_ids") for r in reqs) else "synthetic"
     print(f"META trace={args.trace} reqs={len(reqs)} engine={args.engine} "
           f"tp={args.tp} pp={args.pp} ep={int(args.ep)} "
-          f"speed={args.speed} prefix_caching={int(args.prefix_caching)} "
+          f"speed={args.speed} arrival={args.arrival} "
+          f"prefix_caching={int(args.prefix_caching)} "
           f"source={sources} text_mode={text_mode}", flush=True)
     expected = synth_bench.workload_hash(reqs)
     if args.goodput:
