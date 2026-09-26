@@ -186,6 +186,26 @@ Precedence: caller env > xval.yaml > defaults in xval_config.py.
   (`engine_commit`, `checkpoint`)
 - `grids.<name>`: [ctx, bs] cell lists
 
+## GLM-5.3 bring-up notes
+
+zai-org/GLM-5.3: MLA + DSA-indexed MoE (78 layers plus one MTP layer, 256
+routed experts with 8 active, first 3 layers dense), pre-quantized fp8
+checkpoint of 704 GiB, so tp 8 on H200. kv_bytes is the MLA latent:
+78 x (kv_lora_rank 512 + qk_rope_head_dim 64) x 2 bytes = 89856; the dense
+per-head formula would overestimate KV several-fold. The DSA indexer keeps its
+own small per-token cache on top of this, so treat capacity estimates as
+slightly optimistic until measured. quant: fp8 flows into vLLM as quantization
+and into the table's QUANT pairing rule. A transformers reference exists
+(glm_moe_dsa), so the FIDELITY gate applies, unlike deepseek. The engine side
+lives on QuettaServe branch kev/glm (GLM-5.3 crate skeleton: dsa/mla/moe/mtp
+plus a two-node PP split); it has no decode bench test yet, so this workload
+carries no bench section until that lands and is vLLM-baseline plus serving
+replay only. Do not confuse kev/glm with kev/glm53flash: the latter is
+GLM-5.3-Flash (Glm5Next, hybrid KDA plus sparse MLA), a different model.
+comm_bound_bs lands after the first measured grid, never
+copied from another model. verified flips true only after a clean golden run
+(ALLOW_UNVERIFIED=1 until then).
+
 ## DeepSeek bring-up notes
 
 vLLM baseline: `ALLOW_UNVERIFIED=1 vllm.sh deepseek "" <weights> <py>`; `<py>`

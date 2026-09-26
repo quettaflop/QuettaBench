@@ -452,6 +452,34 @@ class CrossvalScripts(unittest.TestCase):
         finally:
             sys.path.pop(0)
 
+    def test_glm53_workload_contract(self):
+        # GLM-5.3 is MLA + DSA, so kv_bytes must be the latent formula; the dense
+        # per-head formula in vmin_fit would overestimate KV several-fold and skew
+        # the capacity gate. The checkpoint is pre-quantized fp8, recorded as quant
+        # so the table flags any pairing against a bf16 baseline. No bench section:
+        # QuettaServe has no GLM crate, this workload is vLLM-side only for now.
+        wl = _load_workloads()["workloads"]["glm53"]
+        layers, kv_lora_rank, rope, bf16 = 78, 512, 64, 2  # zai-org/GLM-5.3 config.json
+        self.assertEqual(wl["kv_bytes"], layers * (kv_lora_rank + rope) * bf16)
+        self.assertEqual(wl["quant"], "fp8")
+        self.assertEqual(wl["tp"], 8)
+        self.assertTrue(wl["expert_parallel"])
+        self.assertFalse(wl["verified"], "bring-up gate: runs need ALLOW_UNVERIFIED=1")
+        self.assertNotIn("bench", wl)
+        self.assertNotIn("comm_bound_bs", wl)  # measured per model, never inherited
+        sys.path.insert(0, str(CROSSVAL))
+        try:
+            import xval_config
+            importlib.reload(xval_config)
+            xval_config.check_ep_legal(wl["tp"], 256)  # 256 routed experts shard on tp8
+            self.assertIn(wl["grid"], xval_config.grids())
+        finally:
+            sys.path.pop(0)
+        d = subprocess.run(
+            [sys.executable, str(CROSSVAL / "xval_config.py"), "devices", "glm53"],
+            capture_output=True, text=True, check=True).stdout.strip()
+        self.assertEqual(d, "8")
+
     def test_agreement_inputs_present(self):
         for name in ("prompts.txt", "texts.txt"):
             lines = [l for l in (CROSSVAL / name).read_text().splitlines() if l.strip()]
