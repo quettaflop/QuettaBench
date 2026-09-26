@@ -452,6 +452,18 @@
       "expert_parallel": true,
       "kv_bytes": 89856,
       "verified": false
+    },
+    "glm53flash": {
+      "name": "GLM-5.3-Flash",
+      "dtype": "bfloat16",
+      "quant": "fp8",
+      "weights_gib": 306,
+      "maxlen": 33280,
+      "tp": 4,
+      "grid": "deepseek",
+      "expert_parallel": true,
+      "kv_bytes": 11264,
+      "verified": false
     }
   }
 }

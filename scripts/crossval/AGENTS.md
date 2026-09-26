@@ -206,6 +206,21 @@ comm_bound_bs lands after the first measured grid, never
 copied from another model. verified flips true only after a clean golden run
 (ALLOW_UNVERIFIED=1 until then).
 
+## GLM-5.3-Flash bring-up notes
+
+zai-org/GLM-5.3-Flash (Glm5Next) is a different model from GLM-5.3: a hybrid of
+34 KDA linear-attention layers and 11 sparse-MLA layers (3-KDA-then-1-MLA, MLA
+rope-free with latent 512), 288 routed experts (8 active, first 3 dense), one
+MTP layer, multimodal checkpoint, fp8, 306 GiB, so tp 4 on H200. kv_bytes is
+the MLA-only latent: 11 x 512 x 2 = 11264. The KDA layers keep fixed-size
+recurrent state, and the config's head_dim is 0, so the dense formula is
+doubly wrong here; kv_bytes is mandatory. vLLM >= 0.29 serves it
+(Glm5NextForConditionalGeneration). Engine side lives on QuettaServe
+kev/glm53flash: KDA decode/prefill and sparse-MLA numerics are verified against
+transformers 5.17.0, but MoE, the stack assembly, the loader, and all CUDA
+kernels are not implemented, so no bench section. Same gates as every
+bring-up: no comm_bound_bs until measured, verified false until a golden run.
+
 ## DeepSeek bring-up notes
 
 vLLM baseline: `ALLOW_UNVERIFIED=1 vllm.sh deepseek "" <weights> <py>`; `<py>`

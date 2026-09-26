@@ -480,6 +480,30 @@ class CrossvalScripts(unittest.TestCase):
             capture_output=True, text=True, check=True).stdout.strip()
         self.assertEqual(d, "8")
 
+    def test_glm53flash_workload_contract(self):
+        # GLM-5.3-Flash is a hybrid: 34 KDA linear-attention layers keep fixed-size
+        # recurrent state, only the 11 sparse-MLA layers hold per-token KV (rope-free
+        # latent 512). Its config even has head_dim 0, so vmin_fit's dense formula
+        # would be garbage; kv_bytes is mandatory. A different model from glm53,
+        # engine branch kev/glm53flash, and never comparable across the pair.
+        wl = _load_workloads()["workloads"]["glm53flash"]
+        mla_layers, kv_lora_rank, rope, bf16 = 11, 512, 0, 2  # zai-org/GLM-5.3-Flash text_config
+        self.assertEqual(wl["kv_bytes"], mla_layers * (kv_lora_rank + rope) * bf16)
+        self.assertEqual(wl["quant"], "fp8")
+        self.assertEqual(wl["tp"], 4)
+        self.assertTrue(wl["expert_parallel"])
+        self.assertFalse(wl["verified"], "bring-up gate: runs need ALLOW_UNVERIFIED=1")
+        self.assertNotIn("bench", wl)
+        self.assertNotIn("comm_bound_bs", wl)
+        sys.path.insert(0, str(CROSSVAL))
+        try:
+            import xval_config
+            importlib.reload(xval_config)
+            xval_config.check_ep_legal(wl["tp"], 288)  # 288 routed experts shard on tp4
+            self.assertIn(wl["grid"], xval_config.grids())
+        finally:
+            sys.path.pop(0)
+
     def test_agreement_inputs_present(self):
         for name in ("prompts.txt", "texts.txt"):
             lines = [l for l in (CROSSVAL / name).read_text().splitlines() if l.strip()]
