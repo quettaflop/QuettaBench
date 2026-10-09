@@ -1,0 +1,78 @@
+{
+ "disagg_oversubscribed": {
+  "message": "disagg:4p5d needs 9 GPUs, have 8",
+  "type": "ValueError"
+ },
+ "engine": {
+  "rocm": {
+   "message": "no ROCm host provisioned; the amd engine backend is a stub",
+   "type": "RuntimeError"
+  },
+  "tgi": {
+   "message": "unknown engine 'tgi'; known: vllm, trtllm, sglang",
+   "type": "ValueError"
+  }
+ },
+ "ep_degree": {
+  "ep16_experts288": null,
+  "ep3_experts256": {
+   "message": "ep=3 does not divide 256 experts",
+   "type": "ValueError"
+  },
+  "ep7_experts288": {
+   "message": "ep=7 does not divide 288 experts",
+   "type": "ValueError"
+  },
+  "ep8_experts256": null
+ },
+ "kv_role": {
+  "message": "kv_role must be kv_producer or kv_consumer, got 'producer'",
+  "type": "ValueError"
+ },
+ "link_profile": {
+  "message": "unknown link profile 'infiniband'; use pcie or nvlink",
+  "type": "ValueError"
+ },
+ "mla_without_kv_bytes": {
+  "capacity": [
+   "CAPACITY mode=FULL tp=1 dtype=bfloat16 kv_bytes_per_token=3747840 free_gib=28 kv_tokens=8079"
+  ],
+  "exit": null
+ },
+ "serving_style": {
+  "EP8DP2": {
+   "message": "unknown serving_style 'EP8DP2'; use aggregated, disagg:<P>p<D>d, or ep<N>dp<M>",
+   "type": "ValueError"
+  },
+  "aggregate": {
+   "message": "unknown serving_style 'aggregate'; use aggregated, disagg:<P>p<D>d, or ep<N>dp<M>",
+   "type": "ValueError"
+  },
+  "disagg:0p1d": {
+   "message": "disagg needs >=1 prefill and >=1 decode: 'disagg:0p1d'",
+   "type": "ValueError"
+  },
+  "disagg:1p1d:x": {
+   "message": "unknown serving_style 'disagg:1p1d:x'; use aggregated, disagg:<P>p<D>d, or ep<N>dp<M>",
+   "type": "ValueError"
+  },
+  "disagg:2p": {
+   "message": "unknown serving_style 'disagg:2p'; use aggregated, disagg:<P>p<D>d, or ep<N>dp<M>",
+   "type": "ValueError"
+  },
+  "ep4": {
+   "message": "unknown serving_style 'ep4'; use aggregated, disagg:<P>p<D>d, or ep<N>dp<M>",
+   "type": "ValueError"
+  }
+ },
+ "vmin_fit_unknown_crate": "unknown crate 'nope'; workloads: llama, llama-tp1, llama-tp2, llama-tp4, llama-h200, llama-h200-fp8kv, qwen, qwen3, deepseek, glm53, glm53flash",
+ "vmin_fit_unknown_grid": "unknown grid 'nope'; grids: llama, llama_single, table_h200, table_h200_big, prof, deepseek, qwen, qwen3, smoke",
+ "vmin_fit_unknown_prompt_mode": "unknown prompt_mode 'random'; use distinct, clone, corpus, synth or trace",
+ "vmin_fit_unverified": {
+  "deepseek": "deepseek is not validated yet; pass --allow-unverified to bring it up",
+  "glm53": "glm53 is not validated yet; pass --allow-unverified to bring it up",
+  "glm53flash": "glm53flash is not validated yet; pass --allow-unverified to bring it up",
+  "qwen": "qwen is not validated yet; pass --allow-unverified to bring it up",
+  "qwen3": "qwen3 is not validated yet; pass --allow-unverified to bring it up"
+ }
+}

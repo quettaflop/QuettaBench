@@ -1,0 +1,132 @@
+{
+ "arange_1000": {
+  "crossval_pct": {
+   "p50": 500.0,
+   "p90": 900.0,
+   "p95": 950.0,
+   "p99": 990.0
+  },
+  "crossval_pcts": {
+   "p50": 500.0,
+   "p90": 900.0,
+   "p95": 950.0,
+   "p99": 990.0
+  },
+  "metrics_percentile": {
+   "p50": 499.5,
+   "p90": 899.1,
+   "p95": 949.05,
+   "p99": 989.01
+  }
+ },
+ "empty": {
+  "crossval_pct": {
+   "p50": {
+    "error": "IndexError",
+    "message": "list index out of range"
+   },
+   "p90": {
+    "error": "IndexError",
+    "message": "list index out of range"
+   },
+   "p95": {
+    "error": "IndexError",
+    "message": "list index out of range"
+   },
+   "p99": {
+    "error": "IndexError",
+    "message": "list index out of range"
+   }
+  },
+  "crossval_pcts": {
+   "error": "IndexError",
+   "message": "list index out of range"
+  },
+  "metrics_percentile": {
+   "p50": 0.0,
+   "p90": 0.0,
+   "p95": 0.0,
+   "p99": 0.0
+  }
+ },
+ "seven": {
+  "crossval_pct": {
+   "p50": 7.0,
+   "p90": 13.0,
+   "p95": 13.0,
+   "p99": 13.0
+  },
+  "crossval_pcts": {
+   "p50": 7.0,
+   "p90": 13.0,
+   "p95": 13.0,
+   "p99": 13.0
+  },
+  "metrics_percentile": {
+   "p50": 7.0,
+   "p90": 11.8,
+   "p95": 12.399999999999999,
+   "p99": 12.879999999999999
+  }
+ },
+ "single": {
+  "crossval_pct": {
+   "p50": 42.0,
+   "p90": 42.0,
+   "p95": 42.0,
+   "p99": 42.0
+  },
+  "crossval_pcts": {
+   "p50": 42.0,
+   "p90": 42.0,
+   "p95": 42.0,
+   "p99": 42.0
+  },
+  "metrics_percentile": {
+   "p50": 42.0,
+   "p90": 42.0,
+   "p95": 42.0,
+   "p99": 42.0
+  }
+ },
+ "ties": {
+  "crossval_pct": {
+   "p50": 2.0,
+   "p90": 3.0,
+   "p95": 3.0,
+   "p99": 3.0
+  },
+  "crossval_pcts": {
+   "p50": 2.0,
+   "p90": 3.0,
+   "p95": 3.0,
+   "p99": 3.0
+  },
+  "metrics_percentile": {
+   "p50": 2.0,
+   "p90": 2.6,
+   "p95": 2.8,
+   "p99": 2.96
+  }
+ },
+ "two": {
+  "crossval_pct": {
+   "p50": 20.0,
+   "p90": 20.0,
+   "p95": 20.0,
+   "p99": 20.0
+  },
+  "crossval_pcts": {
+   "p50": 20.0,
+   "p90": 20.0,
+   "p95": 20.0,
+   "p99": 20.0
+  },
+  "metrics_percentile": {
+   "p50": 15.0,
+   "p90": 19.0,
+   "p95": 19.5,
+   "p99": 19.900000000000002
+  }
+ }
+}

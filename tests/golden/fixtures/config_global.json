@@ -1,0 +1,822 @@
+{
+ "cleared": {
+  "backend": "cpu",
+  "cli": {
+   "backend": {
+    "stdout": "cpu\n"
+   },
+   "collective": {
+    "stdout": "NCCL_ALGO=allreduce:tree;allgather:ring\nNCCL_PROTO=Simple\nNCCL_P2P_LEVEL=SYS\nNCCL_IB_DISABLE=1\nNCCL_SOCKET_IFNAME=\nLLMSRV_NO_NVLS=1\nLLMSRV_TWOSHOT_MIN_BYTES=0\n"
+   },
+   "engine": {
+    "stdout": "serve=vllm serve health=/health engine_dir=False\n"
+   },
+   "link-profile": {
+    "stdout": "nvlink\n"
+   },
+   "provision": {
+    "stdout": "cache_root=/workspace/.xval-cache\npy=\nvllm_spec=\nqs_repo=\nqs_commit=\nnccl_lib=\n"
+   },
+   "run-params": {
+    "stdout": "100 28\n"
+   },
+   "serving-style": {
+    "stdout": "mode=aggregated\n"
+   }
+  },
+  "collective": {
+   "LLMSRV_NO_NVLS": "1",
+   "LLMSRV_TWOSHOT_MIN_BYTES": "0",
+   "NCCL_ALGO": "allreduce:tree;allgather:ring",
+   "NCCL_IB_DISABLE": "1",
+   "NCCL_P2P_LEVEL": "SYS",
+   "NCCL_PROTO": "Simple",
+   "NCCL_SOCKET_IFNAME": ""
+  },
+  "collective_by_profile": {
+   "nvlink": {
+    "LLMSRV_NO_NVLS": "",
+    "LLMSRV_TWOSHOT_MIN_BYTES": "",
+    "NCCL_ALGO": "",
+    "NCCL_IB_DISABLE": "1",
+    "NCCL_P2P_LEVEL": "",
+    "NCCL_PROTO": "",
+    "NCCL_SOCKET_IFNAME": ""
+   },
+   "pcie": {
+    "LLMSRV_NO_NVLS": "1",
+    "LLMSRV_TWOSHOT_MIN_BYTES": "0",
+    "NCCL_ALGO": "allreduce:tree;allgather:ring",
+    "NCCL_IB_DISABLE": "1",
+    "NCCL_P2P_LEVEL": "SYS",
+    "NCCL_PROTO": "Simple",
+    "NCCL_SOCKET_IFNAME": ""
+   }
+  },
+  "grids": {
+   "deepseek": [
+    [
+     1024,
+     1
+    ],
+    [
+     1024,
+     4
+    ],
+    [
+     1024,
+     16
+    ],
+    [
+     1024,
+     64
+    ],
+    [
+     8192,
+     1
+    ],
+    [
+     8192,
+     4
+    ],
+    [
+     8192,
+     16
+    ],
+    [
+     8192,
+     64
+    ],
+    [
+     16384,
+     1
+    ],
+    [
+     16384,
+     4
+    ],
+    [
+     16384,
+     16
+    ],
+    [
+     16384,
+     64
+    ]
+   ],
+   "llama": [
+    [
+     4096,
+     1
+    ],
+    [
+     4096,
+     8
+    ],
+    [
+     4096,
+     16
+    ],
+    [
+     4096,
+     32
+    ],
+    [
+     4096,
+     64
+    ],
+    [
+     1024,
+     1
+    ],
+    [
+     1024,
+     8
+    ],
+    [
+     1024,
+     16
+    ],
+    [
+     1024,
+     32
+    ],
+    [
+     1024,
+     64
+    ],
+    [
+     100,
+     1
+    ],
+    [
+     100,
+     8
+    ],
+    [
+     100,
+     16
+    ],
+    [
+     100,
+     32
+    ],
+    [
+     100,
+     64
+    ]
+   ],
+   "llama_single": [
+    [
+     100,
+     1
+    ],
+    [
+     1024,
+     1
+    ],
+    [
+     4096,
+     1
+    ],
+    [
+     8192,
+     1
+    ]
+   ],
+   "prof": [
+    [
+     8192,
+     64
+    ]
+   ],
+   "qwen": [
+    [
+     100,
+     1
+    ],
+    [
+     1024,
+     1
+    ],
+    [
+     4096,
+     1
+    ],
+    [
+     8192,
+     1
+    ],
+    [
+     32768,
+     1
+    ],
+    [
+     100,
+     8
+    ],
+    [
+     100,
+     16
+    ],
+    [
+     100,
+     32
+    ],
+    [
+     100,
+     64
+    ],
+    [
+     1024,
+     8
+    ],
+    [
+     1024,
+     16
+    ],
+    [
+     1024,
+     32
+    ],
+    [
+     1024,
+     64
+    ],
+    [
+     4096,
+     8
+    ],
+    [
+     4096,
+     16
+    ],
+    [
+     4096,
+     32
+    ],
+    [
+     4096,
+     64
+    ]
+   ],
+   "qwen3": [
+    [
+     1024,
+     1
+    ],
+    [
+     1024,
+     4
+    ],
+    [
+     1024,
+     16
+    ],
+    [
+     1024,
+     64
+    ],
+    [
+     4096,
+     1
+    ],
+    [
+     4096,
+     4
+    ],
+    [
+     4096,
+     16
+    ],
+    [
+     4096,
+     64
+    ],
+    [
+     8192,
+     1
+    ],
+    [
+     8192,
+     4
+    ],
+    [
+     8192,
+     16
+    ],
+    [
+     8192,
+     64
+    ],
+    [
+     16384,
+     1
+    ],
+    [
+     16384,
+     4
+    ],
+    [
+     16384,
+     16
+    ],
+    [
+     16384,
+     64
+    ]
+   ],
+   "smoke": [
+    [
+     100,
+     1
+    ]
+   ],
+   "table_h200": [
+    [
+     1024,
+     1
+    ],
+    [
+     1024,
+     4
+    ],
+    [
+     1024,
+     16
+    ],
+    [
+     1024,
+     64
+    ],
+    [
+     8192,
+     1
+    ],
+    [
+     8192,
+     4
+    ],
+    [
+     8192,
+     16
+    ],
+    [
+     8192,
+     64
+    ],
+    [
+     16384,
+     1
+    ],
+    [
+     16384,
+     4
+    ],
+    [
+     16384,
+     16
+    ],
+    [
+     16384,
+     64
+    ]
+   ],
+   "table_h200_big": [
+    [
+     16384,
+     64
+    ]
+   ]
+  },
+  "link_profile": "nvlink",
+  "provision": {
+   "cache_root": "/workspace/.xval-cache",
+   "nccl_lib": "",
+   "py": "",
+   "qs_commit": "",
+   "qs_repo": "",
+   "vllm_spec": ""
+  },
+  "run_params": {
+   "max_seq_headroom": 28,
+   "timing_steps": 100,
+   "world": 8
+  },
+  "step_points": [
+   60,
+   230,
+   400
+  ]
+ },
+ "override": {
+  "backend": "cuda",
+  "cli": {
+   "backend": {
+    "stdout": "cuda\n"
+   },
+   "collective": {
+    "stdout": "NCCL_ALGO=allreduce:tree;allgather:ring\nNCCL_PROTO=Simple\nNCCL_P2P_LEVEL=SYS\nNCCL_IB_DISABLE=1\nNCCL_SOCKET_IFNAME=\nLLMSRV_NO_NVLS=1\nLLMSRV_TWOSHOT_MIN_BYTES=0\n"
+   },
+   "engine": {
+    "stdout": "serve=vllm serve health=/health engine_dir=False\n"
+   },
+   "link-profile": {
+    "stdout": "pcie\n"
+   },
+   "provision": {
+    "stdout": "cache_root=/workspace/.xval-cache\npy=\nvllm_spec=\nqs_repo=\nqs_commit=\nnccl_lib=\n"
+   },
+   "run-params": {
+    "stdout": "100 28\n"
+   },
+   "serving-style": {
+    "stdout": "mode=aggregated\n"
+   }
+  },
+  "collective": {
+   "LLMSRV_NO_NVLS": "1",
+   "LLMSRV_TWOSHOT_MIN_BYTES": "0",
+   "NCCL_ALGO": "allreduce:tree;allgather:ring",
+   "NCCL_IB_DISABLE": "1",
+   "NCCL_P2P_LEVEL": "SYS",
+   "NCCL_PROTO": "Simple",
+   "NCCL_SOCKET_IFNAME": ""
+  },
+  "collective_by_profile": {
+   "nvlink": {
+    "LLMSRV_NO_NVLS": "",
+    "LLMSRV_TWOSHOT_MIN_BYTES": "",
+    "NCCL_ALGO": "",
+    "NCCL_IB_DISABLE": "1",
+    "NCCL_P2P_LEVEL": "",
+    "NCCL_PROTO": "",
+    "NCCL_SOCKET_IFNAME": ""
+   },
+   "pcie": {
+    "LLMSRV_NO_NVLS": "1",
+    "LLMSRV_TWOSHOT_MIN_BYTES": "0",
+    "NCCL_ALGO": "allreduce:tree;allgather:ring",
+    "NCCL_IB_DISABLE": "1",
+    "NCCL_P2P_LEVEL": "SYS",
+    "NCCL_PROTO": "Simple",
+    "NCCL_SOCKET_IFNAME": ""
+   }
+  },
+  "grids": {
+   "deepseek": [
+    [
+     1024,
+     1
+    ],
+    [
+     1024,
+     4
+    ],
+    [
+     1024,
+     16
+    ],
+    [
+     1024,
+     64
+    ],
+    [
+     8192,
+     1
+    ],
+    [
+     8192,
+     4
+    ],
+    [
+     8192,
+     16
+    ],
+    [
+     8192,
+     64
+    ],
+    [
+     16384,
+     1
+    ],
+    [
+     16384,
+     4
+    ],
+    [
+     16384,
+     16
+    ],
+    [
+     16384,
+     64
+    ]
+   ],
+   "llama": [
+    [
+     4096,
+     1
+    ],
+    [
+     4096,
+     8
+    ],
+    [
+     4096,
+     16
+    ],
+    [
+     4096,
+     32
+    ],
+    [
+     4096,
+     64
+    ],
+    [
+     1024,
+     1
+    ],
+    [
+     1024,
+     8
+    ],
+    [
+     1024,
+     16
+    ],
+    [
+     1024,
+     32
+    ],
+    [
+     1024,
+     64
+    ],
+    [
+     100,
+     1
+    ],
+    [
+     100,
+     8
+    ],
+    [
+     100,
+     16
+    ],
+    [
+     100,
+     32
+    ],
+    [
+     100,
+     64
+    ]
+   ],
+   "llama_single": [
+    [
+     100,
+     1
+    ],
+    [
+     1024,
+     1
+    ],
+    [
+     4096,
+     1
+    ],
+    [
+     8192,
+     1
+    ]
+   ],
+   "prof": [
+    [
+     8192,
+     64
+    ]
+   ],
+   "qwen": [
+    [
+     100,
+     1
+    ],
+    [
+     1024,
+     1
+    ],
+    [
+     4096,
+     1
+    ],
+    [
+     8192,
+     1
+    ],
+    [
+     32768,
+     1
+    ],
+    [
+     100,
+     8
+    ],
+    [
+     100,
+     16
+    ],
+    [
+     100,
+     32
+    ],
+    [
+     100,
+     64
+    ],
+    [
+     1024,
+     8
+    ],
+    [
+     1024,
+     16
+    ],
+    [
+     1024,
+     32
+    ],
+    [
+     1024,
+     64
+    ],
+    [
+     4096,
+     8
+    ],
+    [
+     4096,
+     16
+    ],
+    [
+     4096,
+     32
+    ],
+    [
+     4096,
+     64
+    ]
+   ],
+   "qwen3": [
+    [
+     1024,
+     1
+    ],
+    [
+     1024,
+     4
+    ],
+    [
+     1024,
+     16
+    ],
+    [
+     1024,
+     64
+    ],
+    [
+     4096,
+     1
+    ],
+    [
+     4096,
+     4
+    ],
+    [
+     4096,
+     16
+    ],
+    [
+     4096,
+     64
+    ],
+    [
+     8192,
+     1
+    ],
+    [
+     8192,
+     4
+    ],
+    [
+     8192,
+     16
+    ],
+    [
+     8192,
+     64
+    ],
+    [
+     16384,
+     1
+    ],
+    [
+     16384,
+     4
+    ],
+    [
+     16384,
+     16
+    ],
+    [
+     16384,
+     64
+    ]
+   ],
+   "smoke": [
+    [
+     100,
+     1
+    ]
+   ],
+   "table_h200": [
+    [
+     1024,
+     1
+    ],
+    [
+     1024,
+     4
+    ],
+    [
+     1024,
+     16
+    ],
+    [
+     1024,
+     64
+    ],
+    [
+     8192,
+     1
+    ],
+    [
+     8192,
+     4
+    ],
+    [
+     8192,
+     16
+    ],
+    [
+     8192,
+     64
+    ],
+    [
+     16384,
+     1
+    ],
+    [
+     16384,
+     4
+    ],
+    [
+     16384,
+     16
+    ],
+    [
+     16384,
+     64
+    ]
+   ],
+   "table_h200_big": [
+    [
+     16384,
+     64
+    ]
+   ]
+  },
+  "link_profile": "pcie",
+  "provision": {
+   "cache_root": "/workspace/.xval-cache",
+   "nccl_lib": "",
+   "py": "",
+   "qs_commit": "",
+   "qs_repo": "",
+   "vllm_spec": ""
+  },
+  "run_params": {
+   "max_seq_headroom": 28,
+   "timing_steps": 100,
+   "world": 8
+  },
+  "step_points": [
+   60,
+   230,
+   400
+  ]
+ }
+}

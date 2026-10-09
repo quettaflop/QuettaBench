@@ -1,0 +1,32 @@
+META gpu=STUB-GPU-48GiB
+META vllm=0.0.0+stub
+META model=Llama-3.1-8B-Instruct
+META dtype=float16
+META grid=llama
+META mode=FULL
+META eval_pos=50
+META step_points=[60, 230, 400]
+META nccl_algo=auto
+META nccl_proto=auto
+META link_profile=nvlink
+META prompt_mode=distinct
+META tp=1
+META pp=1
+META quant=float16
+CAPACITY mode=FULL tp=1 dtype=float16 kv_bytes_per_token=131072 free_gib=23 kv_tokens=190054
+RESULT mode=FULL tp=1 kv=float16 ctx=4096 bs=1 ms_per_step=4.256 ms_at_eval=4.250 eval_pos=50 mean_steps=230 r2=1.00000 prefill_s=0.03 kv_gib=0.5 attn_share=0.032 raw=[0.28, 1.01, 1.73]
+RESULT mode=FULL tp=1 kv=float16 ctx=4096 bs=8 ms_per_step=6.048 ms_at_eval=5.995 eval_pos=50 mean_steps=230 r2=1.00000 prefill_s=0.09 kv_gib=4.0 attn_share=0.211 raw=[0.45, 1.48, 2.5]
+RESULT mode=FULL tp=1 kv=float16 ctx=4096 bs=16 ms_per_step=8.096 ms_at_eval=7.979 eval_pos=50 mean_steps=230 r2=1.00000 prefill_s=0.15 kv_gib=8.0 attn_share=0.348 raw=[0.64, 2.01, 3.39]
+RESULT mode=FULL tp=1 kv=float16 ctx=4096 bs=32 ms_per_step=12.192 ms_at_eval=11.930 eval_pos=50 mean_steps=230 r2=1.00000 prefill_s=0.28 kv_gib=16.0 attn_share=0.516 raw=[1.01, 3.09, 5.16]
+SKIP ctx=4096 bs=64 need_kv=287744 cap=190054
+RESULT mode=FULL tp=1 kv=float16 ctx=1024 bs=1 ms_per_step=4.064 ms_at_eval=4.059 eval_pos=50 mean_steps=230 r2=1.00000 prefill_s=0.02 kv_gib=0.1 attn_share=0.008 raw=[0.27, 0.96, 1.65]
+RESULT mode=FULL tp=1 kv=float16 ctx=1024 bs=8 ms_per_step=4.512 ms_at_eval=4.472 eval_pos=50 mean_steps=230 r2=1.00000 prefill_s=0.04 kv_gib=1.0 attn_share=0.062 raw=[0.31, 1.07, 1.84]
+RESULT mode=FULL tp=1 kv=float16 ctx=1024 bs=16 ms_per_step=5.024 ms_at_eval=4.939 eval_pos=50 mean_steps=230 r2=0.96050 prefill_s=0.15 kv_gib=2.0 attn_share=0.118 raw=[0.35, 1.51, 2.06]
+RESULT mode=FULL tp=1 kv=float16 ctx=1024 bs=32 ms_per_step=6.048 ms_at_eval=5.865 eval_pos=50 mean_steps=230 r2=1.00000 prefill_s=0.09 kv_gib=4.0 attn_share=0.211 raw=[0.45, 1.48, 2.5]
+RESULT mode=FULL tp=1 kv=float16 ctx=1024 bs=64 ms_per_step=8.096 ms_at_eval=7.692 eval_pos=50 mean_steps=230 r2=1.00000 prefill_s=0.15 kv_gib=8.0 attn_share=0.348 raw=[0.64, 2.01, 3.39]
+RESULT mode=FULL tp=1 kv=float16 ctx=100 bs=1 ms_per_step=4.006 ms_at_eval=4.004 eval_pos=50 mean_steps=230 r2=1.00000 prefill_s=0.02 kv_gib=0.0 attn_share=0.001 raw=[0.26, 0.94, 1.62]
+RESULT mode=FULL tp=1 kv=float16 ctx=100 bs=8 ms_per_step=4.050 ms_at_eval=4.036 eval_pos=50 mean_steps=230 r2=1.00000 prefill_s=0.02 kv_gib=0.1 attn_share=0.006 raw=[0.26, 0.95, 1.64]
+RESULT mode=FULL tp=1 kv=float16 ctx=100 bs=16 ms_per_step=4.100 ms_at_eval=4.071 eval_pos=50 mean_steps=230 r2=1.00000 prefill_s=0.02 kv_gib=0.2 attn_share=0.013 raw=[0.27, 0.97, 1.66]
+RESULT mode=FULL tp=1 kv=float16 ctx=100 bs=32 ms_per_step=4.200 ms_at_eval=4.142 eval_pos=50 mean_steps=230 r2=1.00000 prefill_s=0.03 kv_gib=0.4 attn_share=0.025 raw=[0.28, 0.99, 1.71]
+RESULT mode=FULL tp=1 kv=float16 ctx=100 bs=64 ms_per_step=4.400 ms_at_eval=4.281 eval_pos=50 mean_steps=230 r2=1.00000 prefill_s=0.03 kv_gib=0.8 attn_share=0.050 raw=[0.3, 1.04, 1.79]
+RESULT mode=FULL tp=1 kv=float16 ctx=4096 bs=64 ms_per_step=19.874 r2=0.99950 prefill_s=1.10 raw=[2.29, 5.67, 9.05]

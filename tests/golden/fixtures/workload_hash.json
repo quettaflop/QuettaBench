@@ -1,0 +1,62 @@
+{
+ "completion_order_reversed": "700bb6cc522aa01b",
+ "completion_order_rotated": "700bb6cc522aa01b",
+ "file_lines_reordered": "7ac0cee1a2b07d46",
+ "injected_poisson_2.0": {
+  "arrival_ts": [
+   0.51003,
+   0.522695,
+   0.683507
+  ],
+  "hash": "a75a2b92b5676529"
+ },
+ "loaded_requests": [
+  {
+   "arrival_ts": 0.0,
+   "order": 0,
+   "output_length": 8,
+   "prompt_len": 4,
+   "prompt_token_ids": [
+    101,
+    102,
+    103,
+    104
+   ],
+   "session_id": "s0"
+  },
+  {
+   "arrival_ts": 0.5,
+   "order": 1,
+   "output_length": 4,
+   "prompt_len": 3,
+   "prompt_token_ids": [
+    201,
+    202,
+    203
+   ],
+   "session_id": "s1"
+  },
+  {
+   "arrival_ts": 1.25,
+   "order": 2,
+   "output_length": 16,
+   "prompt_len": 5,
+   "prompt_token_ids": [
+    301,
+    302,
+    303,
+    304,
+    305
+   ],
+   "session_id": "s0",
+   "turn": 1
+  }
+ ],
+ "one_token_altered": "e369ebadfc330930",
+ "paced": "700bb6cc522aa01b",
+ "request_digests": [
+  "691db61d9233bc1d1344dc08a9a836364115f8fc66a1904f32c18fd19edf0ac2",
+  "cbc0d08dfaa5bd2083c0298de5787c8548e8fa41a25f2656638cd404f6cc9c8b",
+  "75ea734b373874ba05f0819b355ac3d8cc5eb6c952b9100d478091d2f7e344e4"
+ ]
+}

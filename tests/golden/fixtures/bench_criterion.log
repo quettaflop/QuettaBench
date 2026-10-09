@@ -1,0 +1,6 @@
+decode_batch/1024x1     time:   [3.9010 ms 3.9120 ms 3.9240 ms]
+decode_batch/1024x16
+                        time:   [4.7900 ms 4.8070 ms 4.8250 ms]
+decode/100              time:   [3.7000 ms 3.7100 ms 3.7200 ms]
+decode_graph/100        time:   [3.6000 ms 3.6100 ms 3.6200 ms]
+decode_tp2/1024x1       time:   [2.1000 ms 2.1100 ms 2.1200 ms]
