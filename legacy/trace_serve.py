@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).parents[1]))
 from quettabench.workloads import synth_bench
 from quettabench.config import xval_config
 from quettabench.workloads.arrival import burst_arrivals, poisson_arrivals, ramp_arrivals
-from quettabench.metrics.core import pcts, percentile
+from quettabench.metrics.core import burst_recovery, sla_verdict, summarize_serve
 
 
 def injected_arrivals(spec, n):
@@ -58,37 +58,8 @@ def plan_arrivals(reqs, speed):
 
 
 def summarize(records, wall_s):
-    """Aggregate per-request records; single-token records skip tpot."""
-    if not records:
-        raise ValueError("no completed requests")
-    ttft = sorted(r["ttft_ms"] for r in records)
-    tpot = sorted(r["tpot_ms"] for r in records if r["tpot_ms"] is not None)
-    toks = sum(r["out_tokens"] for r in records)
-    return {
-        "n": len(records),
-        "ttft_ms": pcts(ttft, "nearest"),
-        "tpot_ms": pcts(tpot, "nearest") if tpot else None,
-        "req_s": len(records) / wall_s if wall_s > 0 else 0.0,
-        "tok_s": toks / wall_s if wall_s > 0 else 0.0,
-    }
-
-
-def burst_recovery(records, sla_ttft_ms, window_s=5.0):
-    """(recovery_s, peak_p99): time from the worst-latency window until p99 TTFT is
-    back under the SLA target; recovery_s is None if it never returns."""
-    if not records or sla_ttft_ms is None:
-        return None, None
-    rs = sorted(records, key=lambda r: r["arrival_s"])
-    t0 = rs[0]["arrival_s"]
-    buckets = {}
-    for r in rs:
-        buckets.setdefault(int((r["arrival_s"] - t0) // window_s), []).append(r["ttft_ms"])
-    p99 = {w: percentile(v, 99, "nearest") for w, v in buckets.items()}
-    peak_w = max(p99, key=p99.get)
-    for w in sorted(p99):
-        if w > peak_w and p99[w] <= sla_ttft_ms:
-            return (w - peak_w) * window_s, p99[peak_w]
-    return None, p99[peak_w]
+    """SERVESUM aggregate: nearest-rank percentiles, as crossval always reported."""
+    return summarize_serve(records, wall_s, method="nearest")
 
 
 def integrate_power(samples_w, interval_s):
@@ -181,17 +152,6 @@ def _acceptance(reference_ids, generated_ids):
             break
         n += 1
     return n, (n / len(reference_ids) if reference_ids else 0.0)
-
-
-def sla_verdict(s, sla_ttft_ms, sla_tpot_ms):
-    """Which p99 bound breaks at this operating point; empty means PASS."""
-    bound = []
-    if sla_ttft_ms and s["ttft_ms"]["p99"] > sla_ttft_ms:
-        bound.append("ttft_p99")
-    tp = s["tpot_ms"]
-    if sla_tpot_ms and tp and tp["p99"] > sla_tpot_ms:
-        bound.append("tpot_p99")
-    return bound
 
 
 def goodput_search(start=1.0, max_iters=6, tol=0.1):

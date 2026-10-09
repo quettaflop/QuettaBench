@@ -15,7 +15,13 @@ import time
 
 @dataclass
 class RequestResult:
-    """Per-request benchmark result. Shared across all backends."""
+    """Per-request benchmark result. Shared across all backends.
+
+    The target schema adds three fields once serve.py produces them:
+    ttft_basis ("slot" | "arrival": what TTFT is measured from), cell
+    ({ctx, bs, tp, step_point} for grid runs, else None) and accepted_tokens
+    (leading tokens matching the trace's reference reply). Not here yet.
+    """
     success: bool
     ttft: Optional[float] = None          # seconds to first token
     itl: list = field(default_factory=list)  # inter-token latencies (seconds)
@@ -451,6 +457,64 @@ def pcts(values, method: str) -> dict:
 def _percentile(data: list[float], p: float) -> float:
     """Linear-interpolation percentile; the runner summaries' method."""
     return percentile(data, p, "linear")
+
+
+def summarize_serve(records, wall_s: float, method: str) -> dict:
+    """Serving summary of replay records ({ttft_ms, tpot_ms, out_tokens}).
+
+    n, ttft/tpot percentiles by method, req/s and output tok/s over wall_s.
+    Records with tpot_ms None (single-token outputs) are left out of tpot;
+    tpot_ms is None when no record has one. Raises on no records.
+    """
+    if not records:
+        raise ValueError("no completed requests")
+    ttft = [r["ttft_ms"] for r in records]
+    tpot = [r["tpot_ms"] for r in records if r["tpot_ms"] is not None]
+    toks = sum(r["out_tokens"] for r in records)
+    return {
+        "n": len(records),
+        "ttft_ms": pcts(ttft, method),
+        "tpot_ms": pcts(tpot, method) if tpot else None,
+        "req_s": len(records) / wall_s if wall_s > 0 else 0.0,
+        "tok_s": toks / wall_s if wall_s > 0 else 0.0,
+    }
+
+
+def sla_verdict(summary: dict, sla_ttft_ms, sla_tpot_ms) -> list[str]:
+    """Names of the p99 bounds summary breaks ("ttft_p99", "tpot_p99"); empty means PASS.
+
+    A bound of None or 0 is not checked; tpot is skipped when the summary has none.
+    """
+    bound = []
+    if sla_ttft_ms and summary["ttft_ms"]["p99"] > sla_ttft_ms:
+        bound.append("ttft_p99")
+    tp = summary["tpot_ms"]
+    if sla_tpot_ms and tp and tp["p99"] > sla_tpot_ms:
+        bound.append("tpot_p99")
+    return bound
+
+
+def burst_recovery(records, sla_ttft_ms, window_s: float = 5.0):
+    """(recovery_s, peak_p99) over arrival windows of window_s seconds.
+
+    Records ({arrival_s, ttft_ms}) are bucketed by arrival from the first one;
+    each bucket's p99 TTFT is nearest-rank, as SERVESUM reports. recovery_s is
+    the time from the worst bucket to the first later bucket back at or under
+    the SLA, None if none is. (None, None) with no records or no SLA.
+    """
+    if not records or sla_ttft_ms is None:
+        return None, None
+    rs = sorted(records, key=lambda r: r["arrival_s"])
+    t0 = rs[0]["arrival_s"]
+    buckets = {}
+    for r in rs:
+        buckets.setdefault(int((r["arrival_s"] - t0) // window_s), []).append(r["ttft_ms"])
+    p99 = {w: percentile(v, 99, "nearest") for w, v in buckets.items()}
+    peak_w = max(p99, key=p99.get)
+    for w in sorted(p99):
+        if w > peak_w and p99[w] <= sla_ttft_ms:
+            return (w - peak_w) * window_s, p99[peak_w]
+    return None, p99[peak_w]
 
 
 def aggregate(

@@ -1,12 +1,13 @@
-"""Unit tests for quettabench.metrics.core: percentile methods.
+"""Unit tests for quettabench.metrics.core: percentile methods, the serving
+summary, SLA verdict and burst window.
 
-Expected values are the table in tests/golden/REPORT.md (STOP finding,
-item 4), one column per method.
+Percentile expectations are the table in tests/golden/REPORT.md (STOP
+finding, item 4), one column per method.
 """
 
 import unittest
 
-from quettabench.metrics.core import pcts, percentile
+from quettabench.metrics.core import burst_recovery, pcts, percentile, sla_verdict, summarize_serve
 
 SEVEN = [3.0, 9.0, 1.0, 7.0, 5.0, 11.0, 13.0]  # unsorted on purpose
 TIES = [1.0, 2.0, 2.0, 2.0, 3.0]
@@ -53,6 +54,74 @@ class PercentileTest(unittest.TestCase):
     def test_unknown_method_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "unknown percentile method"):
             percentile([1.0], 50, "midpoint")
+
+
+class ServeSummaryTest(unittest.TestCase):
+    RECORDS = [
+        {"ttft_ms": 10.0, "tpot_ms": 5.0, "out_tokens": 3},
+        {"ttft_ms": 30.0, "tpot_ms": None, "out_tokens": 1},
+        {"ttft_ms": 20.0, "tpot_ms": 7.0, "out_tokens": 3},
+    ]
+
+    def test_nearest(self):
+        s = summarize_serve(self.RECORDS, 2.0, method="nearest")
+        self.assertEqual(s["n"], 3)
+        # n=3: int(0.5*3)=1 -> 20; int(0.9*3)=2 -> 30
+        self.assertEqual(s["ttft_ms"], {"p50": 20.0, "p90": 30.0, "p95": 30.0, "p99": 30.0})
+        # tpot over [5, 7]: int(0.5*2)=1 -> 7
+        self.assertEqual(s["tpot_ms"], {"p50": 7.0, "p90": 7.0, "p95": 7.0, "p99": 7.0})
+        self.assertEqual(s["req_s"], 1.5)
+        self.assertEqual(s["tok_s"], 3.5)
+
+    def test_linear_is_the_callers_choice(self):
+        s = summarize_serve(self.RECORDS, 2.0, method="linear")
+        self.assertEqual(s["ttft_ms"]["p50"], 20.0)
+        self.assertEqual(s["tpot_ms"]["p50"], 6.0)
+
+    def test_no_tpot_and_zero_wall(self):
+        s = summarize_serve([{"ttft_ms": 1.0, "tpot_ms": None, "out_tokens": 1}], 0.0, "nearest")
+        self.assertIsNone(s["tpot_ms"])
+        self.assertEqual((s["req_s"], s["tok_s"]), (0.0, 0.0))
+
+    def test_no_records_raises(self):
+        with self.assertRaisesRegex(ValueError, "no completed requests"):
+            summarize_serve([], 1.0, "nearest")
+
+
+class SlaVerdictTest(unittest.TestCase):
+    S = {"ttft_ms": {"p99": 900.0}, "tpot_ms": {"p99": 40.0}}
+
+    def test_bounds(self):
+        self.assertEqual(sla_verdict(self.S, 500.0, 50.0), ["ttft_p99"])
+        self.assertEqual(sla_verdict(self.S, 500.0, 30.0), ["ttft_p99", "tpot_p99"])
+        self.assertEqual(sla_verdict(self.S, 900.0, 40.0), [])  # at the bound passes
+        self.assertEqual(sla_verdict(self.S, None, None), [])
+        self.assertEqual(sla_verdict(self.S, 0, 0), [])
+
+    def test_missing_tpot_is_not_checked(self):
+        self.assertEqual(sla_verdict({"ttft_ms": {"p99": 1.0}, "tpot_ms": None}, 10.0, 1.0), [])
+
+
+class BurstRecoveryTest(unittest.TestCase):
+    def test_recovers_two_windows_after_peak(self):
+        recs = ([{"arrival_s": t, "ttft_ms": 100.0} for t in range(0, 5)]
+                + [{"arrival_s": t, "ttft_ms": 9000.0} for t in range(5, 10)]
+                + [{"arrival_s": t, "ttft_ms": 100.0} for t in range(15, 20)])
+        # buckets 0, 1 (peak), 3 (back under): recovery = (3 - 1) * 5 s
+        self.assertEqual(burst_recovery(recs, 1000.0, 5.0), (10.0, 9000.0))
+
+    def test_never_recovers(self):
+        recs = [{"arrival_s": t, "ttft_ms": 9000.0} for t in range(0, 10)]
+        self.assertEqual(burst_recovery(recs, 1000.0, 5.0), (None, 9000.0))
+
+    def test_bucket_p99_is_nearest_rank(self):
+        # one bucket of [1..10]: nearest p99 = sorted[int(0.99 * 10)] = 10, linear would be 9.91
+        recs = [{"arrival_s": 0.0, "ttft_ms": float(v)} for v in range(1, 11)]
+        self.assertEqual(burst_recovery(recs, 1.0, 5.0), (None, 10.0))
+
+    def test_no_records_or_no_sla(self):
+        self.assertEqual(burst_recovery([], 1000.0), (None, None))
+        self.assertEqual(burst_recovery([{"arrival_s": 0.0, "ttft_ms": 1.0}], None), (None, None))
 
 
 if __name__ == "__main__":
