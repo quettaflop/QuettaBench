@@ -6,7 +6,6 @@ import unittest
 from contextlib import asynccontextmanager
 from unittest import mock
 
-from quettabench.engines import get_backend
 from quettabench.engines.drivers import HttpDriver, PrefixCacheResetError
 from quettabench.workloads.base import Request
 
@@ -77,26 +76,19 @@ class TtftRules(unittest.TestCase):
                          (False, "client_error", "first_nonempty_text"))
 
 
-class Backends(unittest.TestCase):
-    def test_names_map_onto_endpoints(self):
-        self.assertEqual(
-            {n: get_backend(n).endpoint for n in ("openai", "vllm", "sglang", "vllm-completions")},
-            {"openai": "chat", "vllm": "chat", "sglang": "chat", "vllm-completions": "completions"})
-        with self.assertRaisesRegex(ValueError, "Unknown backend 'tgi'"):
-            get_backend("tgi")
-
+class Reset(unittest.TestCase):
     def test_reset_posts_to_the_dev_mode_endpoint(self):
         session = _Session([])
-        status = asyncio.run(get_backend("vllm").reset(session, "http://h:8000/v1/completions"))
+        status = asyncio.run(HttpDriver("chat", "vllm").reset(session, "http://h:8000/v1/completions"))
         self.assertEqual(status, "prefix cache reset via http://h:8000/reset_prefix_cache")
 
     def test_reset_has_no_sglang_endpoint(self):
         with self.assertRaisesRegex(PrefixCacheResetError, "backend 'sglang'"):
-            asyncio.run(get_backend("sglang").reset(_Session([]), "http://h:1/v1/x"))
+            asyncio.run(HttpDriver("chat", "sglang").reset(_Session([]), "http://h:1/v1/x"))
 
     def test_reset_404_names_dev_mode(self):
         with self.assertRaisesRegex(PrefixCacheResetError, "VLLM_SERVER_DEV_MODE=1"):
-            asyncio.run(get_backend("vllm").reset(_Session([], status=404), "http://h:1/v1/x"))
+            asyncio.run(HttpDriver("chat", "vllm").reset(_Session([], status=404), "http://h:1/v1/x"))
 
 
 class BoundDriver(unittest.TestCase):

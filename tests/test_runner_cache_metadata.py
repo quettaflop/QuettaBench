@@ -1,19 +1,22 @@
-import contextlib
-import io
 import json
 import tempfile
 import unittest
 from pathlib import Path
 
+from quettabench.config.schema import (
+    Config,
+    EngineCfg,
+    HardwareCfg,
+    ModeCfg,
+    WorkloadCfg,
+)
 from quettabench.metrics.core import (
-    BenchmarkSummary,
     RequestResult,
     aggregate_per_turn,
     annotate_multi_turn_cache_estimate,
     annotate_request_observability,
 )
-from quettabench.metrics.results import BENCHMARK_SCHEMA_VERSION
-from quettabench.metrics.results import write_legacy_results as save_results
+from quettabench.metrics.results import RunWriter
 from quettabench.workloads.dataset import BenchmarkRequest
 from quettabench.workloads.profiles import get_profile
 from quettabench.workloads.sessions import resolve_multi_turn_num_sessions
@@ -223,7 +226,7 @@ class RunnerCacheMetadataTests(unittest.TestCase):
 
         self.assertEqual(summary.median_client_queue_wait_ms, 20)
 
-    def test_save_results_serializes_prediction_observability_fields(self):
+    def test_run_dir_serializes_prediction_observability_fields(self):
         result = RequestResult(
             success=True,
             ttft=0.01234,
@@ -252,28 +255,17 @@ class RunnerCacheMetadataTests(unittest.TestCase):
             previous_context_tokens=175,
             cache_block_size=16,
         )
-        summary = BenchmarkSummary(
-            model="meta-llama/Llama-3.1-8B-Instruct",
-            profile="chat-multiturn",
-            concurrency=80,
-            num_requests=1,
-            successful_requests=1,
-        )
-        config = {
-            "benchmark_schema_version": BENCHMARK_SCHEMA_VERSION,
-            "profile": "chat-multiturn",
-            "prediction_metadata": {"prefix_cache_block_size": 16},
-        }
+        cfg = Config(engine=EngineCfg(), workload=WorkloadCfg(source="chat-multiturn"),
+                     mode=ModeCfg(prefix_cache_block_size=16), hardware=HardwareCfg())
 
         with tempfile.TemporaryDirectory() as tmp:
-            out = Path(tmp) / "result.json"
-            with contextlib.redirect_stdout(io.StringIO()):
-                save_results(summary, [result], str(out), config)
-            data = json.loads(out.read_text(encoding="utf-8"))
+            writer = RunWriter(tmp, cfg)
+            writer.append(result)
+            writer.finish({"successful_requests": 1})
+            run = json.loads((Path(tmp) / "run.json").read_text())
+            (row,) = [json.loads(line) for line in (Path(tmp) / "requests.jsonl").open()]
 
-        self.assertEqual(data["config"]["benchmark_schema_version"], BENCHMARK_SCHEMA_VERSION)
-        self.assertEqual(data["config"]["prediction_metadata"]["prefix_cache_block_size"], 16)
-        row = data["per_request"][0]
+        self.assertEqual(run["config"]["mode"]["prefix_cache_block_size"], 16)
         self.assertEqual(row["request_index"], 7)
         self.assertEqual(row["max_tokens_requested"], 64)
         self.assertEqual(row["message_count"], 1)

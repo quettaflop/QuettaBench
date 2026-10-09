@@ -58,9 +58,9 @@ class RoundTrip(unittest.TestCase):
         self.assertEqual(rows[0]["ttft_basis"], "slot")
         self.assertEqual(rows[0], results.jsonl_row(result(0, ttft_basis="slot")))
 
-    def test_new_fields_stay_out_of_the_old_layout(self):
+    def test_set_fields_and_extra_are_written(self):
         r = result(0, ttft_basis="arrival", accepted_tokens=3)
-        self.assertNotIn("ttft_basis", results.request_row(r))
+        self.assertNotIn("cell", results.jsonl_row(r))
         self.assertEqual(results.jsonl_row(r, probe=2)["accepted_tokens"], 3)
         self.assertEqual(results.jsonl_row(r, probe=2)["probe"], 2)
 
@@ -127,15 +127,6 @@ class BenchSha(unittest.TestCase):
     def test_no_git_is_empty(self):
         with mock.patch.object(results.subprocess, "run", side_effect=OSError("no git")):
             self.assertEqual(results.bench_sha(), "")
-
-
-class LegacyLayout(unittest.TestCase):
-    def test_per_turn_file_sits_beside_the_output(self):
-        ts = mock.Mock(to_dict=lambda: {"turn_index": 0})
-        with tempfile.TemporaryDirectory() as td, mock.patch("builtins.print"):
-            results.write_legacy_per_turn([ts], str(Path(td) / "r.json"), {"a": 1})
-            data = json.loads((Path(td) / "r_per_turn.json").read_text())
-        self.assertEqual(data, {"config": {"a": 1}, "per_turn": [{"turn_index": 0}]})
 
 
 if __name__ == "__main__":

@@ -1,12 +1,11 @@
 """qbench run refuses out-of-range values before anything starts, plus the
-path and bounds helpers the old runner tests covered."""
+bounds helper the old runner tests covered."""
 
 import subprocess
 import sys
 import unittest
 from pathlib import Path
 
-from quettabench.metrics.results import per_turn_output_path
 from quettabench.workloads.dataset import _uniform_len_bounds
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -47,20 +46,6 @@ class TestFlagValidation(unittest.TestCase):
     def test_min_success_rate_out_of_range_rejected(self):
         self.assert_rejected("mode.min_success_rate=1.5",
                              "mode.min_success_rate must be in [0.0, 1.0]")
-
-
-class TestPerTurnOutputPath(unittest.TestCase):
-    def test_json_suffix(self):
-        self.assertEqual(per_turn_output_path("results/run.json"),
-                         "results/run_per_turn.json")
-
-    def test_no_suffix_never_clobbers(self):
-        out = per_turn_output_path("results/run1")
-        self.assertEqual(out, "results/run1_per_turn.json")
-        self.assertNotEqual(out, "results/run1")
-
-    def test_compound_suffix(self):
-        self.assertEqual(per_turn_output_path("a.b.json"), "a.b_per_turn.json")
 
 
 class TestUniformLenBounds(unittest.TestCase):
