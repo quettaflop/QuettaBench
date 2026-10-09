@@ -1,6 +1,7 @@
 # Every env var the pre-refactor code reads, mapped to the Config field it
-# sets, so old habits keep working. read_env() is the only function in the
-# package that touches os.environ (tests/config/test_no_environ.py enforces it).
+# sets, so old habits keep working. read_env() and export() are the only
+# functions in the package that touch os.environ
+# (tests/config/test_no_environ.py enforces it).
 import os
 
 from quettabench.config.schema import ConfigError
@@ -69,3 +70,12 @@ def read_env(env=None, only=None):
             continue
         out[path] = value
     return out
+
+
+def export(values):
+    """Put each non-empty value into the process environment unless the
+    variable is already set, so the caller's env wins. An in-process engine
+    reads its NCCL settings there; vmin_fit did the same setdefault at import."""
+    for var, value in values.items():
+        if value:
+            os.environ.setdefault(var, str(value))

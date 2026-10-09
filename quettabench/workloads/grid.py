@@ -11,6 +11,7 @@ over step points is measured on fixed inputs. Five prompt modes:
 """
 
 from .base import Request, Trace
+from .live import RealTrace
 from .synth_bench import synth_requests, take
 
 PROMPT_MODES = ("distinct", "clone", "corpus", "synth", "trace")
@@ -61,6 +62,17 @@ class GridTrace(Trace):
         self.seed = seed
         self._trace_rows = [r.to_dict() for r in trace.requests()] if trace else None
         self._corpus_ids = None
+
+    @classmethod
+    def from_config(cls, cfg, tokenizer=None):
+        """The grid a Config names: cfg.grid's cells and step points at
+        engine.max_model_len. workload.source is the corpus text under
+        prompt_mode corpus and the replay JSONL under trace."""
+        w = cfg.workload
+        trace = RealTrace.from_jsonl(w.source) if w.prompt_mode == "trace" and w.source else None
+        corpus = w.source if w.prompt_mode == "corpus" and w.source else None
+        return cls(cfg.grid.cells, cfg.grid.step_points, w.prompt_mode, cfg.engine.max_model_len,
+                   corpus_path=corpus, tokenizer=tokenizer, trace=trace)
 
     @property
     def cells_over_maxlen(self):

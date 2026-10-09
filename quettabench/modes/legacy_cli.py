@@ -1,17 +1,24 @@
 """The old runner command line: argparse, flag checks, the --mode side
 effects and the results-file config dict. serve.main drives it; commit 7
 removes it with the old CLI.
+
+--grid is the old vmin_fit.py command line (workload name, grid name,
+--model, --nograph, --allow-unverified): grid_translate resolves the
+workload as vmin_fit did, its exit messages included.
 """
 
 import argparse
 import sys
 from pathlib import Path
 
-from ..config import env_map
-from ..config.schema import Config, EngineCfg, HardwareCfg, ModeCfg, WorkloadCfg
+from ..config import env_map, xval_config
+from ..config.schema import Config, EngineCfg, GridCfg, HardwareCfg, ModeCfg, WorkloadCfg
 from ..engines import SUPPORTED_BACKENDS, get_backend
+from ..engines import vllm as vllm_adapter
+from ..engines.drivers import InProcessDriver
 from ..metrics.results import RunWriter
 from ..workloads.arrival import ARRIVAL_PATTERNS, arrival_spec
+from ..workloads.grid import PROMPT_MODES, GridTrace
 from ..workloads.profile_trace import ProfileSessionTrace, ProfileTrace
 from ..workloads.profiles import get_profile
 from ..workloads.sessions import (
@@ -30,7 +37,8 @@ LOAD_MODES = ("closed-loop", "open-loop")
 OPEN_LOOP_ARRIVALS = ("poisson", "ramp")
 TURN_PACINGS = ("per-session", "interleaved")
 # Flags added after the old results layout froze; kept out of its config dict.
-NEW_FLAGS = ("results_dir", "sla_ttft_ms", "sla_tpot_ms", "goodput_sweep")
+NEW_FLAGS = ("results_dir", "sla_ttft_ms", "sla_tpot_ms", "goodput_sweep",
+             "grid", "workload", "nograph", "allow_unverified", "dump_tokens")
 
 
 def _resolve_cache_state(cli_value: str, profile) -> tuple[str, str]:
@@ -223,6 +231,17 @@ def get_args(argv=None):
     parser.add_argument("--turn-style", type=str, default=None, help="Filter profiles by turn style")
     parser.add_argument("--serving-style", type=str, default=None, help="Filter profiles by serving style")
     parser.add_argument("--data-source", type=str, default=None, help="Filter profiles by data source")
+    grid = parser.add_argument_group("grid runs (the old modes/vmin_fit.py)")
+    grid.add_argument("--grid", nargs="?", const="", default=None, metavar="NAME",
+                      help="Time the workload's (ctx, bs) grid in-process; NAME overrides "
+                           "the workload's own grid")
+    grid.add_argument("--workload", help="Grid runs: workload name from configs/workloads.json")
+    grid.add_argument("--nograph", action="store_true", help="Grid runs: disable CUDA graphs")
+    grid.add_argument("--allow-unverified", action="store_true",
+                      help="Grid runs: run a workload whose verified flag is false (bring-up only)")
+    grid.add_argument("--dump-tokens", action="store_true",
+                      help="Grid runs: also decode 64 greedy tokens per cell and write their "
+                           "token ids as rows (see --results-dir)")
     args = parser.parse_args(argv)
     if args.profile == "mooncake-trace" and args.backend != "vllm-completions":
         parser.error("--profile mooncake-trace sends token id prompts; "
@@ -563,3 +582,70 @@ def translate(args):
     driver = get_backend(args.backend, url=args.url, model=args.model, api_key=args.api_key,
                          timeout=args.timeout)
     return config, cfg, trace, driver, RunWriter(args.results_dir, cfg, driver=driver)
+
+
+def grid_config(args):
+    """The Config of a --grid run, resolved from the workload record the way
+    vmin_fit resolved it: env knobs (XVAL_PP, GPU_UTIL, PROMPT_MODE,
+    VMIN_ATTEMPTS, XVAL_EVAL_POS, XVAL_CORPUS/XVAL_TRACE, NCCL_*, QS_SHA)
+    through env_map, the collective block for the link profile from
+    xval_config. Exits with vmin_fit's messages on a bad name."""
+    workloads = xval_config.workloads()
+    name = args.workload
+    wl = workloads.get(name)
+    if wl is None:
+        sys.exit(f"unknown crate {name!r}; workloads: {', '.join(workloads)}")
+    if not wl.get("verified") and not args.allow_unverified:
+        sys.exit(f"{name} is not validated yet; pass --allow-unverified to bring it up")
+    grids = {k.lower(): v for k, v in xval_config.grids().items()}
+    grid = (args.grid or wl["grid"]).lower()
+    if grid not in grids:
+        sys.exit(f"unknown grid {grid!r}; grids: {', '.join(grids)}")
+    found = env_map.read_env()
+    prompt_mode = found.get("workload.prompt_mode", wl.get("prompt_mode", "distinct"))
+    if prompt_mode not in PROMPT_MODES:
+        sys.exit(f"unknown prompt_mode {prompt_mode!r}; use distinct, clone, corpus, synth or trace")
+
+    link = found.get("hardware.link_profile") or xval_config.link_profile()
+    # The caller's NCCL_ALGO/PROTO win over the yaml, as vmin_fit's setdefault let them.
+    collective = {**xval_config.collective(profile=link),
+                  **{k: found[f"hardware.collective.{k}"] for k in ("NCCL_ALGO", "NCCL_PROTO")
+                     if f"hardware.collective.{k}" in found}}
+    engine = {"model": args.model, "model_name": wl["name"], "tp": int(wl.get("tp", 1)),
+              "pp": found.get("engine.pp", int(wl.get("pp", 1))),
+              "ep": bool(wl.get("expert_parallel")), "dtype": wl["dtype"],
+              "kv_dtype": wl.get("kv_dtype") or "auto", "quant": wl.get("quant") or None,
+              "max_model_len": int(wl["maxlen"]),
+              "gpu_util": found.get("engine.gpu_util", float(wl.get("gpu_util", 0.90))),
+              "cudagraph": not args.nograph, "weights_gib": float(wl["weights_gib"]),
+              "kv_bytes": int(wl["kv_bytes"]) if wl.get("kv_bytes") else None,
+              "verified": bool(wl.get("verified"))}
+    mode = {"grid": grid, "returns": "text" if args.dump_tokens else "none",
+            **{k: found[f"mode.{k}"] for k in ("vmin_attempts", "eval_pos") if f"mode.{k}" in found}}
+    workload = {"kind": "grid", "prompt_mode": prompt_mode, "source": found.get("workload.source", "")}
+    hardware = {"link_profile": link, "collective": {k: v for k, v in collective.items() if v},
+                "timing_steps": xval_config.run_params()["timing_steps"]}
+    steps = tuple(xval_config.step_points())
+    cells = tuple(tuple(c) for c in grids[grid])
+    over = tuple(c for c in cells if c[0] + max(steps) + 2 > engine["max_model_len"])
+    origins = {f"{section}.{k}": "legacy_cli" for section, part in
+               (("engine", engine), ("mode", mode), ("workload", workload), ("hardware", hardware))
+               for k in part}
+    origins.update({path: "env" for path in found})
+    engine_sha = found.get("provenance.engine_sha")
+    return Config(engine=EngineCfg(**engine), workload=WorkloadCfg(**workload),
+                  mode=ModeCfg(**mode), hardware=HardwareCfg(**hardware),
+                  grid=GridCfg(cells=cells, step_points=steps, cells_over_maxlen=over),
+                  run_name=name if not args.grid else f"{name}-{args.grid}",
+                  provenance={"engine_sha": engine_sha} if engine_sha else {},
+                  origins=dict(sorted(origins.items())))
+
+
+def grid_translate(args):
+    """(Config, GridTrace, InProcessDriver, RunWriter) for a --grid run. The
+    collective env goes into this process first: the engine's NCCL reads it."""
+    cfg = grid_config(args)
+    env_map.export(cfg.hardware.collective)
+    driver = InProcessDriver(vllm_adapter.ADAPTER.translate(cfg))
+    trace = GridTrace.from_config(cfg, tokenizer=driver.tokenizer)
+    return cfg, trace, driver, RunWriter(args.results_dir, cfg, driver=driver)
