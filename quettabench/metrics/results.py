@@ -6,6 +6,10 @@ already written) and run.json is written once at the end:
 
   {schema_version, provenance, config, origins, summary, steps, run_status}
 
+A grid run writes no second file: its rows go to the same requests.jsonl,
+one per request of every batch, told apart by `cell` ({ctx, bs, tp,
+step_point, phase, attempt}) and `batch_wall_s`; steps is
+metrics.step_fit.fit_run over those rows (None for a run without cells).
 run_status is {"status": ok | partial | aborted | failed, "reason": ...}.
 Provenance carries the launch env with every key matching
 TOKEN|KEY|SECRET|HF_ written as REDACTED.

@@ -2,8 +2,10 @@
 
 A grid cell is timed at each step point (tokens generated); the slope of
 time vs steps is the marginal decode cost, the intercept the fixed cost
-(prefill and launch).
+(prefill and launch). fit_run derives a run's step section from its rows.
 """
+
+GIB = 1 << 30
 
 
 def fit(xs, ys):
@@ -31,3 +33,57 @@ def ms_at_eval(ms_slope, attn_share, eval_pos, mean_steps, ctx):
     a sub-2% correction that vanishes as ctx grows.
     """
     return ms_slope * (1 + attn_share * (eval_pos - mean_steps) / (ctx + mean_steps))
+
+
+def _get(row, name):
+    """A row field from a RequestResult or from a BenchDriver dict row."""
+    return row.get(name) if isinstance(row, dict) else getattr(row, name, None)
+
+
+def fit_run(rows, eval_pos, kv_bytes, weights_gib):
+    """The step section: one entry per grid cell, in the order cells first appear.
+
+    A row with measured_ms_per_step (a bench LOOP line) is already a per-step
+    number and passes through as {ctx, bs, tp, ms_per_step, measured: True}.
+    Other rows count only in phase "fit": per attempt, the batch wall at each
+    step point (first row of the batch, in run order) is fit against the step
+    points, and the attempt with the highest r2 is kept, the earliest on a tie.
+    ms_per_step is that slope in ms at the fit centroid; kv_gib is the cell's
+    prompt KV (ctx * bs * kv_bytes) and attn_share its fraction of
+    KV + weights, the share ms_at_eval moves to eval_pos.
+    """
+    cells = {}
+    for row in rows:
+        cell = _get(row, "cell")
+        if cell is None:
+            continue
+        key = (cell["ctx"], cell["bs"], cell["tp"])
+        measured = _get(row, "measured_ms_per_step")
+        if measured is not None:
+            cells[key] = {"ctx": key[0], "bs": key[1], "tp": key[2],
+                          "ms_per_step": measured, "measured": True}
+        elif cell.get("phase") == "fit":
+            walls = cells.setdefault(key, {}).setdefault(cell["attempt"], {})
+            walls.setdefault(cell["step_point"], _get(row, "batch_wall_s"))
+    return [cell if cell.get("measured") else
+            _fit_cell(key, cell, eval_pos, kv_bytes, weights_gib)
+            for key, cell in cells.items()]
+
+
+def _fit_cell(key, attempts, eval_pos, kv_bytes, weights_gib):
+    ctx, bs, tp = key
+    best = None  # (r2, slope, intercept, xs, ys)
+    for walls in attempts.values():
+        xs, ys = list(walls), list(walls.values())
+        slope, inter, r2 = fit(xs, ys)
+        if best is None or r2 > best[0]:
+            best = (r2, slope, inter, xs, ys)
+    r2, slope, inter, xs, ys = best
+    mean_steps = sum(xs) / len(xs)
+    kv_gib = ctx * bs * kv_bytes / GIB
+    attn = kv_gib / (kv_gib + weights_gib)
+    ms = slope * 1e3
+    return {"ctx": ctx, "bs": bs, "tp": tp, "ms_per_step": ms,
+            "ms_at_eval": ms_at_eval(ms, attn, eval_pos, mean_steps, ctx), "eval_pos": eval_pos,
+            "mean_steps": mean_steps, "r2": r2, "prefill_s": inter, "kv_gib": kv_gib,
+            "attn_share": attn, "step_points": xs, "raw": ys, "attempts": len(attempts)}
