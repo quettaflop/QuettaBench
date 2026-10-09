@@ -110,13 +110,15 @@ def fake_generate_seconds(prompt_len, batch, max_tokens, call_no):
     return prefill_s + max_tokens * step_ms / 1000.0 + bend
 
 
-def run_grid_cli(argv, env, model_config=None, extra_workloads=None):
+def run_grid_cli(argv, env, model_config=None, extra_workloads=None, baselines=None):
     """serve.main(argv) for a --grid argv on the stubs under exactly `env`
     (os.environ is replaced, not merged), with the drivers' clock swapped
     for the stub's fake one. nvidia-smi is hidden so backend and
     link-profile detection never depend on the host. extra_workloads join
-    xval_config's workloads. Returns stdout lines, the LLM kwargs, the
-    number of generate() calls and the SystemExit message if one fired."""
+    xval_config's workloads. The compat baseline goes to `baselines` (a
+    throwaway dir when None), never into the repo. Returns stdout lines,
+    the LLM kwargs, the number of generate() calls and the SystemExit
+    message if one fired."""
     with tempfile.TemporaryDirectory() as model_dir:
         Path(model_dir, "config.json").write_text(json.dumps(model_config or DENSE_CONFIG))
         argv = [a.replace("<MODEL>", model_dir) for a in argv]
@@ -130,11 +132,13 @@ def run_grid_cli(argv, env, model_config=None, extra_workloads=None):
             serve = fresh_import("quettabench.modes.serve")
             drivers = importlib.import_module("quettabench.engines.drivers")
             xval_config = importlib.import_module("quettabench.config.xval_config")
+            results = importlib.import_module("quettabench.metrics.results")
             workloads = {**xval_config.workloads(), **(extra_workloads or {})}
             clock = types.SimpleNamespace(perf_counter=vllm.CLOCK.perf_counter)
             exit_msg = None
             with mock.patch.object(xval_config, "workloads", return_value=workloads), \
                     mock.patch.object(drivers, "time", clock), \
+                    mock.patch.object(results, "BASELINES", Path(baselines or model_dir)), \
                     contextlib.redirect_stdout(out):
                 try:
                     serve.main(argv)

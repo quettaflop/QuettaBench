@@ -16,13 +16,19 @@ TOKEN|KEY|SECRET|HF_ written as REDACTED.
 
 write_legacy_results is the old --output layout (benchmark_schema_version 5,
 config, summary, per_request), kept until commit 7 removes the old CLI.
+RunWriter.write_baseline is the old grid layout, results/baselines/
+vllm-<run>.json as crossval/cache.py writes it, kept for table.py until
+Phase 3.
 """
 
 import json
 import re
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+from quettabench.crossval import cache
 
 # v5: greedy-by-default + seed; failed requests keep partial timings and error_kind.
 BENCHMARK_SCHEMA_VERSION = 5
@@ -30,6 +36,7 @@ RUN_SCHEMA_VERSION = 1
 RUN_STATUSES = ("ok", "partial", "aborted", "failed")
 SECRET_NAME = re.compile(r"TOKEN|KEY|SECRET|HF_")
 REPO = Path(__file__).resolve().parents[2]
+BASELINES = REPO / "results" / "baselines"
 
 
 def redact(env):
@@ -37,12 +44,14 @@ def redact(env):
     return {k: "REDACTED" if SECRET_NAME.search(k) else v for k, v in (env or {}).items()}
 
 
-def bench_sha(repo=REPO):
+def bench_sha(repo=REPO, short=False):
     """This checkout's commit; empty when there is no git or no repo (an rsync
-    copy), never a crash. Same rule as crossval/cache.py."""
+    copy), never a crash. Same rule as crossval/cache.py, whose baselines
+    record the short form."""
     try:
-        return subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo,
-                              capture_output=True, text=True, check=False).stdout.strip()
+        return subprocess.run(["git", "rev-parse", *(["--short"] if short else []), "HEAD"],
+                              cwd=repo, capture_output=True, text=True,
+                              check=False).stdout.strip()
     except OSError:
         return ""
 
@@ -156,6 +165,24 @@ class RunWriter:
         if self._fh is not None:
             self._fh.write(json.dumps(jsonl_row(result, **extra)) + "\n")
             self._fh.flush()
+
+    def write_baseline(self, lines):
+        """BASELINES/vllm-<run_name>.json from a grid run's stdout lines,
+        packed by cache.pack itself so the file is byte for byte what
+        cache.py writes from the run's log (META carries the header,
+        bench_sha is git's short form, engine_sha the Config's). Returns
+        the path, or None when no cell produced a RESULT (cache.py exits
+        there)."""
+        baseline = cache.pack("\n".join(lines) + "\n", bench_sha(short=True),
+                              self.cfg.provenance.get("engine_sha"))
+        if not baseline["points"]:
+            print("no RESULT lines; no compat baseline written", file=sys.stderr)
+            return None
+        path = BASELINES / f"vllm-{self.cfg.run_name}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        cache.write(baseline, path)
+        print(f"wrote {path}: {len(baseline['points'])} points", file=sys.stderr)
+        return path
 
     def finish(self, summary, steps=None, status="ok", reason=None):
         """Write run.json; returns its content. summary is a plain dict."""

@@ -46,6 +46,7 @@ from ..metrics.core import (
 )
 from ..metrics.results import (
     goodprobe_line,
+    legacy_grid_lines,
     print_legacy_lines,
     write_legacy_per_turn,
     write_legacy_results,
@@ -356,11 +357,13 @@ def identity(trace, served) -> dict:
 
 def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
     """One measured run of trace through driver; see the module docstring.
-    A grid run reads its engine facts from writer.cfg, the run's Config."""
+    A grid run reads its engine facts from writer.cfg, the run's Config, and
+    also leaves the compat baseline table.py reads until Phase 3."""
     if mode.grid:
         record, steps, rows = run_grid(trace, driver, writer.cfg, writer)
         summary = Summary(None, rows, sections={"grid": record})
         writer.finish(summary.to_dict(), steps=steps)
+        writer.write_baseline(legacy_grid_lines(record))
         return summary
     if mode.goodput_sweep and (mode.load != "open" or not (mode.sla_ttft_ms or mode.sla_tpot_ms)):
         raise ValueError("goodput sweep needs open load and mode.sla_ttft_ms and/or sla_tpot_ms")
