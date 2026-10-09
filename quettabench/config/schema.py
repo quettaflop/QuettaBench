@@ -12,7 +12,7 @@ class ConfigError(ValueError):
 
 # Allowed values per enumerated field, checked at load.
 CHOICES = {
-    "engine.name": ("vllm", "quettaserve", "sglang", "trtllm"),
+    "engine.name": ("vllm", "quettaserve", "sglang", "trtllm", "reference"),
     "engine.attention": ("dense", "mla", "hybrid"),
     "engine.instrumentation": ("none", "nsys", "torch"),
     "workload.kind": ("live", "grid", "sessions"),

@@ -17,6 +17,10 @@ then the driver gets the cell list and step points in one call and its rows,
 already ms per step, are appended as they come back. No warmup and no fit:
 the bench decodes its own hardware.timing_steps per cell.
 
+mode.returns=logits adds a scoring pass per cell before the warm run (rows
+carry logits, phase "logits"). A driver that only scores (ReferenceDriver)
+goes through score_grid: that pass alone, per cell within max_model_len.
+
 A sibling of serve.py the way _sessions_dispatch.py is, to keep serve.py
 one screenful per mechanism.
 """
@@ -88,6 +92,8 @@ def measure_cell(driver, writer, mode, steps, prompts, cell):
         # Routing-parity audit: greedy ids must match the engine's DS_TOKEN_TRACE.
         batch(TEXT_TOKENS, "text", token_ids=lambda r: r.generated_token_ids[:TEXT_TOKENS],
               text=lambda r: r.generated_text)
+    if mode.returns == "logits":
+        score(driver, writer, prompts, cell)
     batch(max(steps), "warm")
     out = []
     for attempt in range(mode.vmin_attempts):
@@ -99,6 +105,30 @@ def measure_cell(driver, writer, mode, steps, prompts, cell):
         if fit(steps, walls)[2] >= mode.fit_r2_stop:
             break
     return out
+
+
+def score(driver, writer, prompts, cell):
+    """One scoring pass over the cell's prompts; rows carry logits, no time."""
+    requests = [Request(ids, len(ids)) for ids in prompts]
+    for r in driver.run(requests, cell={**cell, "step_point": None, "phase": "logits",
+                                        "attempt": None}, returns="logits"):
+        r.excluded_from_summary = True
+        writer.append(r)
+
+
+def score_grid(trace, driver, cfg, writer):
+    """A scoring pass per cell for a driver that only scores; maxlen SKIPs
+    apply, nothing is timed, so there are no steps."""
+    record, over = {"events": []}, set(trace.cells_over_maxlen)
+    for ctx, bs in trace.cells:
+        if (ctx, bs) in over:
+            event = {"event": "skip_maxlen", "ctx": ctx, "bs": bs}
+            record["events"].append(event)
+            print(grid_event_line(record, event), flush=True)
+        else:
+            score(driver, writer, trace.cell_prompts(ctx, bs)[0],
+                  {"ctx": ctx, "bs": bs, "tp": cfg.engine.tp})
+    return record, None, []
 
 
 def run_bench(driver, cfg, writer):
@@ -136,6 +166,8 @@ def run_grid(trace, driver, cfg, writer):
     fit_run over every fit row."""
     if getattr(driver, "measures_steps", False):
         return run_bench(driver, cfg, writer)
+    if getattr(driver, "scores_only", False):
+        return score_grid(trace, driver, cfg, writer)
     mode, engine = cfg.mode, cfg.engine
     eval_pos = mode.eval_pos if mode.eval_pos is not None else cfg.hardware.timing_steps // 2
     steps = trace.step_points

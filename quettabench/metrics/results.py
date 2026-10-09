@@ -76,7 +76,7 @@ OPTIONAL_CACHE = ("session_id", "turn_index", "previous_context_tokens", "total_
                   "total_context_blocks", "cached_context_blocks", "new_prefill_blocks")
 RATES = ("cache_hit_rate", "block_aligned_cache_hit_rate")
 # Fields the target schema adds; requests.jsonl only, never the old layout.
-NEW_FIELDS = ("ttft_basis", "ttft_rule", "accepted_tokens", "cell", "batch_wall_s")
+NEW_FIELDS = ("ttft_basis", "ttft_rule", "accepted_tokens", "cell", "batch_wall_s", "logits")
 
 
 def request_row(r):

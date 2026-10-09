@@ -54,6 +54,8 @@ class RequestResult:
     # Grid runs: wall time of the one generate() the whole batch ran in; every
     # row of the batch carries the same value (InProcessDriver.run).
     batch_wall_s: Optional[float] = None
+    # mode.returns=logits: {argmax, top2_gap, logprob}, entry i scoring prompt token i + 1.
+    logits: Optional[dict] = None
 
     # Client-side request shape/timing. These do not replace TTFT/TPOT/E2EL;
     # they explain scheduler pressure and workload shape for later predictors.

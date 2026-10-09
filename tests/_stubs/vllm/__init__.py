@@ -51,9 +51,29 @@ class _Completion:
         self.token_ids = token_ids
 
 
+class Logprob:
+    def __init__(self, logprob, rank):
+        self.logprob, self.rank = logprob, rank
+
+
+def _prompt_logprobs(ids, k):
+    """vLLM's shape: None at position 0, then per position the top-k tokens
+    plus the prompt token, scored by torch.toy_logits of the prefix."""
+    import torch
+    out = [None]
+    for pos in range(1, len(ids)):
+        lps = torch.log_softmax_row(torch.toy_logits(ids)[pos - 1])
+        ranked = sorted(range(len(lps)), key=lambda v: -lps[v])
+        entry = {v: Logprob(lps[v], r + 1) for r, v in enumerate(ranked[:k])}
+        entry.setdefault(ids[pos], Logprob(lps[ids[pos]], ranked.index(ids[pos]) + 1))
+        out.append(entry)
+    return out
+
+
 class _RequestOutput:
-    def __init__(self, token_ids):
+    def __init__(self, token_ids, prompt_logprobs=None):
         self.outputs = [_Completion(token_ids)]
+        self.prompt_logprobs = prompt_logprobs
 
 
 class LLM:
@@ -65,7 +85,9 @@ class LLM:
         prompt_len = len(prompts[0]["prompt_token_ids"])
         n = sampling_params.max_tokens
         CLOCK.now += generate_seconds(prompt_len, len(prompts), n, CLOCK.generate_calls)
-        return [_RequestOutput(list(range(n))) for _ in prompts]
+        k = sampling_params.kwargs.get("prompt_logprobs")
+        return [_RequestOutput(list(range(n)), k and _prompt_logprobs(p["prompt_token_ids"], k))
+                for p in prompts]
 
     def get_tokenizer(self):
         raise StubHalt("corpus prompt mode needs a real tokenizer")

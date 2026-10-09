@@ -1,7 +1,8 @@
 """How work reaches an engine: one Driver per way of driving it.
 
 InProcessDriver builds vLLM inside this process from spec.engine_kwargs and
-times one grid batch per generate() call. BenchDriver runs a QuettaServe
+times one grid batch per generate() call, or scores it (returns="logits").
+ReferenceDriver scores with transformers, the FIDELITY reference. BenchDriver runs a QuettaServe
 bench per grid cell, as bench.sh does, and reads its rows with
 crossval/reader.py's bench log parser. HttpDriver streams
 OpenAI-compatible requests at a launched server. Its two
@@ -628,10 +629,26 @@ class InProcessDriver(Driver):
         """One 256-token prompt decoded 20 steps; the time is discarded."""
         self.generate([{"prompt_token_ids": distinct_ids(256)}], 20)
 
-    def run(self, requests, *, cell, concurrency=None, **kwargs):
+    def score(self, prompts):
+        """logit_agreement.py's vllm_scores call: one token generated per
+        prompt, with the top-2 logprobs at every prompt position."""
+        from vllm import SamplingParams
+        params = SamplingParams(temperature=0, max_tokens=1, prompt_logprobs=2)
+        return self.llm().generate([{"prompt_token_ids": ids} for ids in prompts], params,
+                                   use_tqdm=False)
+
+    def run(self, requests, *, cell, returns="none", concurrency=None, **kwargs):
         """The batch as one generate() at cell["step_point"] tokens. generate()
         times the batch, not its requests, so every row gets the batch wall as
-        e2el and batch_wall_s, and no TTFT (ttft_basis "batch")."""
+        e2el and batch_wall_s, and no TTFT (ttft_basis "batch"). returns="logits"
+        scores the batch instead and times nothing."""
+        if returns == "logits":
+            outs = self.score([r.prompt_token_ids for r in requests])
+            for r, out in zip(requests, outs):
+                yield RequestResult(success=True, input_tokens=r.prompt_len, cell=dict(cell),
+                                    logits=prompt_logprob_summary(r.prompt_token_ids,
+                                                                  out.prompt_logprobs))
+            return
         n = cell["step_point"]
         wall, outs = self.generate([{"prompt_token_ids": r.prompt_token_ids} for r in requests], n)
         for r, out in zip(requests, outs):
@@ -640,3 +657,70 @@ class InProcessDriver(Driver):
                                 input_tokens=r.prompt_len, output_tokens=n, ttft_basis="batch",
                                 cell=dict(cell), generated_token_ids=list(completion.token_ids),
                                 generated_text=getattr(completion, "text", None))
+
+
+def prompt_logprob_summary(ids, prompt_logprobs):
+    """{argmax, top2_gap, logprob} from vLLM's prompt_logprobs, entry i scoring
+    ids[i + 1] as the reference's does. argmax is the rank-1 token, as
+    logit_agreement.py took it; top2_gap is rank 1's logprob minus rank 2's,
+    which equals the logit gap; logprob is the true token's."""
+    out = {"argmax": [], "top2_gap": [], "logprob": []}
+    for pos in range(1, len(ids)):
+        entry = prompt_logprobs[pos]
+        by_rank = {lp.rank: (token, lp.logprob) for token, lp in entry.items()}
+        out["argmax"].append(by_rank[1][0])
+        out["top2_gap"].append(by_rank[1][1] - by_rank[2][1])
+        out["logprob"].append(entry[ids[pos]].logprob)
+    return out
+
+
+class ReferenceDriver(Driver):
+    """The FIDELITY reference: logit_agreement.py's transformers_reference,
+    one teacher-forced forward pass per prompt on cuda:0 in
+    spec.engine_kwargs["dtype"]. It scores and times nothing, so the grid
+    loop gives it one scoring pass per cell (scores_only)."""
+
+    scores_only = True
+
+    def __init__(self, spec):
+        self.spec = spec
+        self._model = None
+
+    @property
+    def version(self):
+        import transformers
+        return transformers.__version__
+
+    def tokenizer(self):
+        from transformers import AutoTokenizer
+        return AutoTokenizer.from_pretrained(self.spec.engine_kwargs["model"])
+
+    def model(self):
+        """AutoModelForCausalLM in the run's dtype on cuda:0, eval mode, built once."""
+        if self._model is None:
+            import torch
+            from transformers import AutoModelForCausalLM
+            kw = self.spec.engine_kwargs
+            self._model = AutoModelForCausalLM.from_pretrained(
+                kw["model"], torch_dtype=getattr(torch, kw["dtype"])).to("cuda:0")
+            self._model.eval()
+        return self._model
+
+    def score(self, ids):
+        """argmax and top-2 gap of the logits, and the true token's logprob,
+        at every position but the last (it has no true next token)."""
+        import torch
+        with torch.no_grad():
+            t = torch.tensor([ids], device="cuda:0")
+            logits = self.model()(t).logits[0].float()
+            logprobs = torch.log_softmax(logits, dim=-1)
+            top2 = logits.topk(2, dim=-1)
+            preds = top2.indices[:, 0].tolist()
+            gaps = (top2.values[:, 0] - top2.values[:, 1]).tolist()
+            true_lp = [float(logprobs[i, ids[i + 1]]) for i in range(len(ids) - 1)]
+        return {"argmax": preds[:-1], "top2_gap": gaps[:-1], "logprob": true_lp}
+
+    def run(self, requests, *, cell, **kwargs):
+        for r in requests:
+            yield RequestResult(success=True, input_tokens=r.prompt_len, cell=dict(cell),
+                                logits=self.score(r.prompt_token_ids))

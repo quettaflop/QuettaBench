@@ -54,6 +54,7 @@ class EngineAdapter(ABC):
     """One engine: which Config fields it can express, and how."""
     name = ""
     supports: frozenset = frozenset()
+    benchmarked = True   # False: a scoring side only (reference), not offered as an engine
 
     @abstractmethod
     def translate(self, cfg) -> LaunchSpec:
@@ -84,5 +85,6 @@ def register(adapter):
 def get(name):
     """The registered adapter for an engine name."""
     if name not in _ADAPTERS:
-        raise ValueError(f"unknown engine {name!r}; known: {', '.join(sorted(_ADAPTERS))}")
+        known = sorted(n for n, a in _ADAPTERS.items() if a.benchmarked)
+        raise ValueError(f"unknown engine {name!r}; known: {', '.join(known)}")
     return _ADAPTERS[name]

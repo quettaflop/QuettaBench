@@ -11,6 +11,13 @@ disagreement, and FIDELITY passes only with zero hard disagreements.
 
 Requests pair by (cell, n-th returned row of that cell) for grid runs and
 by request_index (else file order) for the rest.
+
+The FIDELITY gate, vLLM (eager, as logit_agreement.py built it) against the
+transformers reference on the same grid prompts:
+
+  qbench run configs/runs/llama.yaml --set mode.grid=smoke --set mode.returns=logits --set 'engine.extra.vllm={enforce_eager: true}' --set run_name=llama-logits
+  qbench run configs/runs/llama.yaml --set mode.grid=smoke --set engine.name=reference --set run_name=llama-reference
+  qbench crossval results/llama-logits results/llama-reference
 """
 
 import statistics

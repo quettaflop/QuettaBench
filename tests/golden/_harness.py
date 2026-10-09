@@ -26,7 +26,7 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures"
 REGEN = os.environ.get("QBENCH_GOLDEN_REGEN") == "1"
 
 CROSSVAL_MODULES = ("quettabench", "legacy")
-STUB_MODULE_ROOTS = ("vllm", "torch")
+STUB_MODULE_ROOTS = ("vllm", "torch", "transformers")
 
 # Llama-3.1-8B shaped config.json: the dense kv formula gives 131072 B/token.
 DENSE_CONFIG = {

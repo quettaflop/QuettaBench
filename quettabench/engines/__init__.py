@@ -6,6 +6,7 @@ which is what the old backend registry did too.
 
 from quettabench.engines import (  # noqa: F401  (registers the adapters)
     quettaserve,
+    reference,
     vllm,
 )
 from quettabench.engines.drivers import HttpDriver
