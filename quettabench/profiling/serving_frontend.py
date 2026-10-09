@@ -22,23 +22,28 @@ accounting (stream_options.include_usage), not from the word count.
 Start vLLM separately (the GT harness does the same), then point this at it:
 
   vllm serve <model> --tensor-parallel-size 1 --port 8000 &
-  python serving_frontend_probe.py --gpu-label H200 --model Qwen/Qwen3-30B-A3B \
+  python -m quettabench.profiling.serving_frontend --gpu-label H200 --model Qwen/Qwen3-30B-A3B \
       --model-yaml ../engine/device_spec/models/qwen3-30b-a3b.yaml \
       --base-url http://localhost:8000/v1
 
 Prints the blocks; does NOT edit the YAML. UNVALIDATED without a live server --
 run on the target GPU.
+
+A profiler source: `qbench profile --source frontend` calls probe() and keeps
+its dict in profile.json. main() stays runnable for the transition; --out
+writes the same dict as JSON. Imports QuettaSim's `engine` package, so
+QuettaSim must be on PYTHONPATH (the profiler imports this module only when
+the source is asked for).
 """
 from __future__ import annotations
 import argparse, json, statistics as st, time, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import sys
+
+from engine.loaders.config_loader import load_kernel_gpu, load_kernel_model
+from engine.backends.kernel_composed_cost import KernelComposedCost
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE / ".." / ".."))
-from engine.loaders.config_loader import load_kernel_gpu, load_kernel_model  # noqa: E402
-from engine.backends.kernel_composed_cost import KernelComposedCost  # noqa: E402
 
 _SWEEP_PROMPTS = [128, 256, 512, 1024, 2048]   # single-stream prompt lengths (tokens)
 _CONC_SWEEP = [1, 2, 5, 10, 20, 40]
@@ -146,7 +151,7 @@ def _prompt(tokens: int, *, reuse: str | None = None) -> str:
     return f"seed{_SEED[0]:06d} " + "hi " * max(1, tokens - 4)
 
 
-def main():
+def parser():
     ap = argparse.ArgumentParser()
     ap.add_argument("--gpu-label", required=True)
     ap.add_argument("--model", required=True, help="served model name (OpenAI 'model' field)")
@@ -158,8 +163,13 @@ def main():
                     help="skip the concurrent herd sweep (parts 1-2 only)")
     ap.add_argument("--only-conc", action="store_true",
                     help="run only the concurrent herd sweep (parts 1-2 already collected)")
-    a = ap.parse_args()
+    ap.add_argument("--out", default=None, help="write probe()'s dict here as JSON")
+    return ap
 
+
+def probe(a):
+    """Run the sweeps against a.base_url; prints the blocks and returns them as
+    {frontend, serving, conc} (conc: [c, median ttft ms, sim frontend-off ms])."""
     import dataclasses
     from kernel_composed.types import FrontendParams
     gpu = load_kernel_gpu(HERE / ".." / ".." / "device_spec" / f"{a.gpu_label.lower()}.yaml")
@@ -177,8 +187,9 @@ def main():
     _stream_once(a.base_url, a.model, _prompt(64))
 
     if a.only_conc:
-        _conc_sweep(a, cost, model)
-        return
+        mult_pts, conc_rows = _conc_sweep(a, cost, model)
+        return {"frontend": {"mult_curve": [[c, m] for c, m in mult_pts]},
+                "conc": [[c, m, p] for c, m, p, _ in conc_rows]}
 
     # 1. single-stream: TTFT residual vs prompt length -> floor + new rate;
     #    TPOT residual -> per-step host floor (whole-step and per-layer forms).
@@ -226,7 +237,7 @@ def main():
         mult_pts, conc_rows = _conc_sweep(a, cost, model)
 
     print(f"\n[{a.gpu_label} / {a.model} / tp{a.tp}] live-server frontend probe\n")
-    print(f"# paste into device_spec/{a.gpu_label.lower()}.yaml (serving_frontend_probe.py):")
+    print(f"# paste into device_spec/{a.gpu_label.lower()}.yaml (serving_frontend.py):")
     print("frontend:")
     print(f"  floor_ms: {round(floor, 2)}")
     print(f"  new_ms_per_token: {round(rate_n, 6)}")
@@ -242,6 +253,24 @@ def main():
     print(f"  kernel_ttft_overhead_ms: {round(floor, 2)}   # per-request first-token host floor")
     print(f"  kernel_step_overhead_ms: {round(step_over, 3)}   # per-step host floor (whole step)")
     print("  kernel_step_overlap_per_ms: 0.0   # measure with a high-conc TPOT sweep before setting")
+    return {
+        "frontend": {"floor_ms": round(floor, 2), "new_ms_per_token": round(rate_n, 6),
+                     "cached_ms_per_token": round(rate_c, 6),
+                     "mult_curve": [[c, m] for c, m in mult_pts], "lanes_curve": []},
+        "serving": {"decode_overhead_ms_per_layer": round(dov, 5),
+                    "ttft_overhead_ms": round(floor, 2), "max_concurrent_prefills": 2,
+                    "kernel_ttft_overhead_ms": round(floor, 2),
+                    "kernel_step_overhead_ms": round(step_over, 3),
+                    "kernel_step_overlap_per_ms": 0.0},
+        "conc": [[c, m, p] for c, m, p, _ in conc_rows],
+    }
+
+
+def main(argv=None):
+    a = parser().parse_args(argv)
+    out = probe(a)
+    if a.out:
+        Path(a.out).write_text(json.dumps(out, indent=2) + "\n")
 
 
 if __name__ == "__main__":

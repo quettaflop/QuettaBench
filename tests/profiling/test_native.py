@@ -1,10 +1,16 @@
 """profiling/native.py: Prometheus parsing, the token-weighted prefix-cache
-hit rate, and listing the traces instrumentation armed at launch. The
-/metrics endpoint is a localhost fake."""
+hit rate, listing the traces instrumentation armed at launch, and the glue
+to the moved live probes. The /metrics endpoint is a localhost fake; the
+probe modules (which need QuettaSim) are stood in by fakes in sys.modules."""
 
+import argparse
+import ast
+import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from quettabench.profiling import native
 from tests.profiling import fake_endpoint
@@ -64,6 +70,58 @@ class Traces(unittest.TestCase):
             (Path(tmp) / "torch_trace.json").write_text("{}")
             self.assertEqual(native.collect_armed_traces(tmp, "torch")["files"],
                              ["torch_trace.json"])
+
+
+def fake_probe(result):
+    """A module with the parser()/probe() surface the moved probes have."""
+    def parser():
+        ap = argparse.ArgumentParser()
+        for flag in ("--base-url", "--proxy-url", "--model", "--gpu-label"):
+            ap.add_argument(flag)
+        return ap
+    return types.SimpleNamespace(parser=parser, probe=lambda a: result(a))
+
+
+class LiveProbes(unittest.TestCase):
+    def test_defaults_fill_only_missing_flags(self):
+        self.assertEqual(native.with_defaults(["--model", "x"], {"--model": "m", "--tp": 2,
+                                                                 "--skip": None}),
+                         ["--model", "x", "--tp", "2"])
+
+    def test_frontend_points_at_the_endpoint(self):
+        fake = fake_probe(lambda a: {"base_url": a.base_url, "model": a.model, "gpu": a.gpu_label})
+        with mock.patch.dict(sys.modules, {native.PROBES["frontend"]: fake}):
+            got = native.serving_frontend("http://h:1", "m", ["--gpu-label", "H200"])
+        self.assertEqual(got, {"base_url": "http://h:1/v1", "model": "m", "gpu": "H200"})
+
+    def test_pd_host_rows_and_argv_wins(self):
+        fake = fake_probe(lambda a: [{"proxy": a.proxy_url, "model": a.model}])
+        with mock.patch.dict(sys.modules, {native.PROBES["pd_host"]: fake}):
+            got = native.pd_host("http://h:1", "m", ["--model", "served"])
+        self.assertEqual(got, {"rows": [{"proxy": "http://h:1", "model": "served"}]})
+
+    def test_kv_transfer_reads_the_csv(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "H200_nixl.csv"
+            path.write_text("gpu,layout,total_ms\nH200,contig,1.5\n")
+            self.assertEqual(native.kv_transfer(path),
+                             {"csv": str(path), "rows": [{"gpu": "H200", "layout": "contig",
+                                                          "total_ms": "1.5"}]})
+
+    def test_moved_probes_keep_a_runnable_main_with_out(self):
+        here = Path(native.__file__).parent
+        for name, flag in (("serving_frontend", "--out"), ("pd_host", "--out"),
+                           ("kv_transfer", "--out-dir")):
+            with self.subTest(name):
+                tree = ast.parse((here / f"{name}.py").read_text())
+                funcs = {n.name for n in tree.body if isinstance(n, ast.FunctionDef)}
+                self.assertIn("main", funcs)
+                flags = {a.value for n in ast.walk(tree) if isinstance(n, ast.Call)
+                         and getattr(n.func, "attr", "") == "add_argument"
+                         for a in n.args if isinstance(a, ast.Constant)}
+                self.assertIn(flag, flags)
+                if name != "kv_transfer":
+                    self.assertTrue({"parser", "probe"} <= funcs)
 
 
 if __name__ == "__main__":

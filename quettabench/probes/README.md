@@ -104,15 +104,15 @@ PYTHON_BIN=/home/<user>/miniconda3/envs/vllm/bin/python \
 | `gdn` | decode → `{ncu if --ncu else cuda_event}/gdn/{gpu}_{geom}_decode.csv`; prefill → `cuda_event/gdn/…_prefill.csv` (always) | Gated-DeltaNet; prefill (seq), decode (batch) |
 | `moe` | `cuda_event/moe/{gpu}.csv` + `cuda_event/moe/{gpu}_routing.json` (cuda_event **always**) | tokens × (n_experts, top_k, intermediate, hidden) |
 | `reparallel` | `cuda_event/reparallel/{gpu}_reshard[_dp\|_ep].csv` | torchrun; NVLink cost of switching parallelism in place (tp reshard, dp replica broadcast, ep expert restage; `--mode xnode/plan` for cross-node, see the probe header) |
-| `kv_transfer_probe.py` (still in `profiling/kernel_composed/probes/`) | `cuda_event/kv_transfer/{gpu}.csv` | PD KV hand-off through NIXL/UCX, laid out as vLLM's NixlConnector issues it (descriptor list per (layer, block)) |
-| `pd_host_probe.py` (same) | `cuda_event/pd_host/{gpu}.csv` | per-request HOST cost of a PD pair by prompt length (parse/template/tokenize/hash, paid on P and again on D) |
-| `decode_batch_probe.py` (same) | mixed-step profile CSV | controlled decode-step-vs-batch curve, pins batched-decode pricing at concurrency |
+| `kv_transfer` (now `quettabench/profiling/kv_transfer.py`; profiler source reads its CSV) | `cuda_event/kv_transfer/{gpu}.csv` | PD KV hand-off through NIXL/UCX, laid out as vLLM's NixlConnector issues it (descriptor list per (layer, block)) |
+| `pd_host` (now `quettabench/profiling/pd_host.py`, a profiler source) | `cuda_event/pd_host/{gpu}.csv` | per-request HOST cost of a PD pair by prompt length (parse/template/tokenize/hash, paid on P and again on D) |
+| `decode_batch_probe.py` (still in `profiling/kernel_composed/probes/`) | mixed-step profile CSV | controlled decode-step-vs-batch curve, pins batched-decode pricing at concurrency |
 | `fused_block_probe.py` (same) | mixed-step profile CSV | ONE real transformer-block forward, to check the additivity assumption in `fused_step_ms` without a checkpoint |
 
-`serving_frontend_probe.py` is the live-server exception in this folder: it fits
+`quettabench/profiling/serving_frontend.py` (a profiler source) is the live-server probe that fits
 the device-YAML `frontend:` + `serving:` blocks against a running `vllm serve`
 (recipe: `serving-profile`), for GPUs with no GT yet. With GT, prefer the cheaper
-`just -f $QUETTASIM/justfile serving-fit`. It and `pd_host_probe.py` are
+`just -f $QUETTASIM/justfile serving-fit`. It and `pd_host.py` are
 consumer-coupled like the two emitters: they import the sim's `engine` package,
 so run them from a QuettaSim checkout (or with QuettaSim on `PYTHONPATH`).
 

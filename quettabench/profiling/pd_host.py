@@ -34,31 +34,34 @@ A herd round (``--herd`` warm requests at ``--herd-tokens`` fired together) give
 contention multiplier at that concurrency.
 
   # servers + proxy up (see scratchpad/pd_probe/launch.sh for the E6-shaped pair)
-  /opt/vllm-local/bin/python profiling/probes/pd_host_probe.py --gpu-label H200 \\
+  /opt/vllm-local/bin/python -m quettabench.profiling.pd_host --gpu-label H200 \\
       --proxy-log <dir>/proxy_requests.jsonl --out data/kernel_data/cuda_event/frontend/H200_pd_host.csv
 
 Prints per-row residuals and the least-squares floor + per-token slopes for P (cold /
 warm) and D; does NOT edit the YAML.
+
+A profiler source: `qbench profile --source pd_host` calls probe() and keeps its
+rows in profile.json. main() stays runnable for the transition and still writes
+the --out CSV. Imports QuettaSim's `engine` package, so QuettaSim must be on
+PYTHONPATH (the profiler imports this module only when the source is asked for).
 """
 from __future__ import annotations
 
 import argparse
 import csv
 import json
-import os
 import random
 import statistics as st
-import sys
 import threading
 import time
 import urllib.request
 from pathlib import Path
 
+from engine.factory import build_kernel_composed_cost
+from engine.sim.queue_sim import _step_host_ms
+from engine.sim.disagg import Link
+
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE / ".." / ".."))
-from engine.factory import build_kernel_composed_cost  # noqa: E402
-from engine.sim.queue_sim import _step_host_ms  # noqa: E402
-from engine.sim.disagg import Link  # noqa: E402
 
 COLS = ("gpu", "phase", "conc", "tokens_total", "tokens_new_p", "tokens_cached_d",
         "prefill_ms", "sim_prefill_ms", "p_resid_ms",
@@ -168,7 +171,7 @@ def lstsq(xs, ys):
     return my - b * mx, b
 
 
-def main() -> None:
+def parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--gpu-label", required=True)
     ap.add_argument("--proxy-url", default="http://127.0.0.1:8000")
@@ -190,9 +193,13 @@ def main() -> None:
     ap.add_argument("--herd", type=int, default=16)
     ap.add_argument("--herd-tokens", type=int, default=32768)
     ap.add_argument("--link", default="2.2e11,0,25", help="bw_bytes_per_s,latency_us,per_desc_us of the pull")
-    ap.add_argument("--out", required=True)
-    a = ap.parse_args()
+    ap.add_argument("--out", help="CSV path; main() requires it, probe() ignores it")
+    return ap
 
+
+def probe(a) -> list[dict]:
+    """Run the cold / warm / turn / herd phases through a.proxy_url; one row per
+    scored request (COLS)."""
     bw, lat, pdu = (float(x) for x in a.link.split(","))
     sim = SimSide(a.device_yaml, a.model_yaml, a.tp, Link(bw, lat, pdu))
     pr = Prompter(a.tokenizer)
@@ -287,7 +294,15 @@ def main() -> None:
             if p:
                 p["_cached_d"] = totals[i] + 4
                 rows.append(score("herd", a.herd, results[i], p))
+    return rows
 
+
+def main(argv=None) -> None:
+    ap = parser()
+    a = ap.parse_args(argv)
+    if not a.out:
+        ap.error("--out is required")
+    rows = probe(a)
     out = Path(a.out); out.parent.mkdir(parents=True, exist_ok=True)
     with out.open("w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=list(COLS)); w.writeheader(); w.writerows(rows)

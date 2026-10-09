@@ -2,11 +2,18 @@
 
   /metrics   the Prometheus text a vLLM server serves, scraped once
   traces     nsys / torch files the launcher armed at start; listed, never run
+  frontend, pd_host
+             the live-server probes, run against the attached endpoint
+  kv_transfer
+             the NIXL hand-off probe's CSV; it needs its own torchrun ranks,
+             so it is read here, never started
 
 Counters on /metrics are cumulative since the server started, so a scrape
 after a run covers everything the server did, warmup included.
 """
 
+import csv
+import importlib
 import re
 import urllib.request
 from pathlib import Path
@@ -17,6 +24,12 @@ QUERIES = "vllm:gpu_prefix_cache_queries"
 # name{labels} value [timestamp]; label values may hold escaped quotes.
 SAMPLE = re.compile(r'^([a-zA-Z_:][a-zA-Z0-9_:]*)(?:\{(.*)\})?\s+(\S+)(?:\s+\S+)?$')
 LABEL = re.compile(r'([a-zA-Z_][a-zA-Z0-9_]*)="((?:[^"\\]|\\.)*)"')
+
+# The live probes import QuettaSim's `engine` package at the top, so they are
+# loaded by name only when their source is asked for; the GPU-free profiler
+# must import without QuettaSim.
+PROBES = {"frontend": "quettabench.profiling.serving_frontend",
+          "pd_host": "quettabench.profiling.pd_host"}
 
 # File names the instrumentation leaves in results/<run>/, by kind. nsys
 # writes <out>.nsys-rep (<out>.qdrep before 2021.4); the adapters pass out=nsys.
@@ -91,3 +104,36 @@ def collect_armed_traces(results_dir, instrumentation):
     found = [n for n in names if (Path(results_dir) / n).exists()]
     return {"instrumentation": instrumentation, "files": found,
             "missing": bool(names) and not found}
+
+
+def with_defaults(argv, defaults):
+    """argv plus `flag value` for each default flag argv does not already give."""
+    argv = list(argv or ())
+    for flag, value in defaults.items():
+        if value is not None and flag not in argv:
+            argv += [flag, str(value)]
+    return argv
+
+
+def serving_frontend(endpoint, model, argv=()):
+    """profile.json `frontend`: serving_frontend.probe() against endpoint/v1;
+    argv carries the probe's own flags (--gpu-label, --model-yaml, ...)."""
+    probe = importlib.import_module(PROBES["frontend"])
+    a = probe.parser().parse_args(with_defaults(argv, {"--base-url": f"{endpoint}/v1",
+                                                       "--model": model}))
+    return probe.probe(a)
+
+
+def pd_host(endpoint, model, argv=()):
+    """profile.json `pd_host`: pd_host.probe()'s rows, endpoint as the proxy."""
+    probe = importlib.import_module(PROBES["pd_host"])
+    a = probe.parser().parse_args(with_defaults(argv, {"--proxy-url": endpoint,
+                                                       "--model": model}))
+    return {"rows": probe.probe(a)}
+
+
+def kv_transfer(csv_path):
+    """profile.json `kv_transfer`: the rows kv_transfer's torchrun run wrote
+    (csv strings, as written). Read directly: the probe module needs torch."""
+    with Path(csv_path).open() as fh:
+        return {"csv": str(csv_path), "rows": list(csv.DictReader(fh))}

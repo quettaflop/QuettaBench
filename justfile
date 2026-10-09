@@ -123,7 +123,7 @@ _default_model_yaml := sim_root / "device_spec/models/qwen3.5-9b.yaml"
 # Live vLLM server -> frontend: + serving: YAML (no GT). GT-fit stays in QuettaSim:
 #   just -f $QUETTASIM/justfile serving-fit gpu=X model=...
 serving-profile gpu=gpu model="Qwen3.5-9B" model_yaml=_default_model_yaml base_url="http://localhost:8000/v1" tp="1":
-    {{py}} profiling/kernel_composed/probes/serving_frontend_probe.py --gpu-label {{gpu}} --model {{model}} \
+    {{py}} -m quettabench.profiling.serving_frontend --gpu-label {{gpu}} --model {{model}} \
         --model-yaml {{model_yaml}} --base-url {{base_url}} --tp {{tp}}
 
 profile-gpu gpu=gpu:

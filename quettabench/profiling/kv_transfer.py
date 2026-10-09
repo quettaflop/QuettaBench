@@ -30,13 +30,19 @@ This probe reproduces that transfer between two GPUs of this box and times it:
 
 Run (two GPUs, same node -> NVLink):
 
-    CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 profiling/probes/kv_transfer_probe.py \
+    CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 -m quettabench.profiling.kv_transfer \
         --gpu-label H200 --out-dir data/kernel_data
 
 Writes cuda_event/kv_transfer/<gpu>_nixl.csv (upsert on the key columns) and prints,
 per (kv_heads_per_rank, layout), the floor + per-byte fit to paste into a system YAML's
 ``links.intra_node`` (per GPU PAIR: the replay divides the unsharded bytes by the
 reader tp, see engine/sim/disagg.py::Link.transfer_ms).
+
+Not an attach source: it needs its own two torchrun ranks, which the
+profiler never starts. main() runs it as before and writes the CSV;
+`qbench profile --source kv_transfer` reads that CSV into profile.json.
+RANK / WORLD_SIZE / LOCAL_RANK are torchrun's launch protocol,
+read here as the kernel probes do.
 """
 from __future__ import annotations
 

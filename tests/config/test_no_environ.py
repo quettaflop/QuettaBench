@@ -31,6 +31,7 @@ ALLOWLIST = {
     "quettabench/probes/gemm.py",
     "quettabench/probes/reparallel.py",
     "quettabench/probes/vllm_allreduce.py",
+    "quettabench/profiling/kv_transfer.py",
     # removed in Phase 3 exit: legacy/ is deleted
     "legacy/trace_serve.py",
 }
