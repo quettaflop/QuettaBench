@@ -142,6 +142,12 @@ linearly at index `p / 100 * (n - 1)`. Arrays: `seven` is
 | arange_1000 | p95 | 950.0 | 949.05 | DIFFER |
 | arange_1000 | p99 | 990.0 | 989.01 | DIFFER |
 
+Resolved by the owner: one `metrics.core.percentile(values, p, method)`,
+method `"nearest"` or `"linear"` exactly as in the two columns above, named
+by every caller. The one change is the empty row for `"nearest"`: it now
+raises `ValueError("nearest-rank percentile of no values")` instead of
+`IndexError`, and the fixture records that; every number is unchanged.
+
 Also: `aggregate()` reports `median_*` with `statistics.median`, not
 `_percentile(.., 50)`; the two coincide on every input here. trace_serve's
 `summarize` raises on zero records before `_pct` can see an empty list, and

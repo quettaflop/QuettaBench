@@ -1,18 +1,17 @@
-"""Golden: the two percentile implementations on fixed arrays.
+"""Golden: the two percentile methods on fixed arrays.
 
-trace_serve._pct / _pcts (crossval SERVESUM) index the sorted list at
-int(q * n), clamped: a nearest-rank floor. metrics._percentile (src runner
-summaries) interpolates linearly between ranks over n - 1. They disagree
-on most inputs; both are pinned as they are and the disagreement table is in
+method="nearest" (crossval SERVESUM, formerly trace_serve._pct / _pcts)
+indexes the sorted list at int(q * n), clamped: a nearest-rank floor.
+method="linear" (src runner summaries, formerly metrics._percentile)
+interpolates linearly between ranks over n - 1. They disagree on most
+inputs; both are pinned as they are and the disagreement table is in
 REPORT.md. Neither is preferred here.
 """
 
-import os
 import unittest
-from unittest import mock
 
-from quettabench.metrics.core import _percentile
-from tests.golden._harness import check_json, crossval_path, fresh_import
+from quettabench.metrics.core import pcts, percentile
+from tests.golden._harness import check_json
 
 QUANTILES = (50, 90, 95, 99)
 ARRAYS = {
@@ -34,18 +33,15 @@ def _call(fn, *args):
 
 class PercentileGolden(unittest.TestCase):
     def test_both_implementations_on_fixed_arrays(self):
-        with crossval_path(), mock.patch.dict(os.environ, {}, clear=True):
-            trace_serve = fresh_import("legacy.trace_serve")
-            record = {}
-            for name, data in ARRAYS.items():
-                ordered = sorted(data)  # _pct's callers always pass sorted values
-                record[name] = {
-                    "crossval_pct": {f"p{q}": _call(trace_serve._pct, ordered, q / 100)
-                                     for q in QUANTILES},
-                    "crossval_pcts": _call(trace_serve._pcts, ordered),
-                    "metrics_percentile": {f"p{q}": _call(_percentile, data, q)
-                                           for q in QUANTILES},
-                }
+        record = {}
+        for name, data in ARRAYS.items():
+            record[name] = {
+                "crossval_pct": {f"p{q}": _call(percentile, data, q, "nearest")
+                                 for q in QUANTILES},
+                "crossval_pcts": _call(pcts, data, "nearest"),
+                "metrics_percentile": {f"p{q}": _call(percentile, data, q, "linear")
+                                       for q in QUANTILES},
+            }
         check_json(self, "percentiles", record)
 
 

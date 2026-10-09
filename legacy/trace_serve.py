@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).parents[1]))
 from quettabench.workloads import synth_bench
 from quettabench.config import xval_config
 from quettabench.workloads.arrival import burst_arrivals, poisson_arrivals, ramp_arrivals
+from quettabench.metrics.core import pcts, percentile
 
 
 def injected_arrivals(spec, n):
@@ -56,14 +57,6 @@ def plan_arrivals(reqs, speed):
     return [max(0.0, (r.get("arrival_ts", t0) - t0)) / max(speed, 1e-9) for r in reqs]
 
 
-def _pct(sorted_vals, q):
-    return sorted_vals[min(len(sorted_vals) - 1, int(q * len(sorted_vals)))]
-
-
-def _pcts(sorted_vals):
-    return {f"p{q}": _pct(sorted_vals, q / 100) for q in (50, 90, 95, 99)}
-
-
 def summarize(records, wall_s):
     """Aggregate per-request records; single-token records skip tpot."""
     if not records:
@@ -73,8 +66,8 @@ def summarize(records, wall_s):
     toks = sum(r["out_tokens"] for r in records)
     return {
         "n": len(records),
-        "ttft_ms": _pcts(ttft),
-        "tpot_ms": _pcts(tpot) if tpot else None,
+        "ttft_ms": pcts(ttft, "nearest"),
+        "tpot_ms": pcts(tpot, "nearest") if tpot else None,
         "req_s": len(records) / wall_s if wall_s > 0 else 0.0,
         "tok_s": toks / wall_s if wall_s > 0 else 0.0,
     }
@@ -90,7 +83,7 @@ def burst_recovery(records, sla_ttft_ms, window_s=5.0):
     buckets = {}
     for r in rs:
         buckets.setdefault(int((r["arrival_s"] - t0) // window_s), []).append(r["ttft_ms"])
-    p99 = {w: _pct(sorted(v), 0.99) for w, v in buckets.items()}
+    p99 = {w: percentile(v, 99, "nearest") for w, v in buckets.items()}
     peak_w = max(p99, key=p99.get)
     for w in sorted(p99):
         if w > peak_w and p99[w] <= sla_ttft_ms:

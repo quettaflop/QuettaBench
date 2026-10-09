@@ -22,25 +22,25 @@
  "empty": {
   "crossval_pct": {
    "p50": {
-    "error": "IndexError",
-    "message": "list index out of range"
+    "error": "ValueError",
+    "message": "nearest-rank percentile of no values"
    },
    "p90": {
-    "error": "IndexError",
-    "message": "list index out of range"
+    "error": "ValueError",
+    "message": "nearest-rank percentile of no values"
    },
    "p95": {
-    "error": "IndexError",
-    "message": "list index out of range"
+    "error": "ValueError",
+    "message": "nearest-rank percentile of no values"
    },
    "p99": {
-    "error": "IndexError",
-    "message": "list index out of range"
+    "error": "ValueError",
+    "message": "nearest-rank percentile of no values"
    }
   },
   "crossval_pcts": {
-   "error": "IndexError",
-   "message": "list index out of range"
+   "error": "ValueError",
+   "message": "nearest-rank percentile of no values"
   },
   "metrics_percentile": {
    "p50": 0.0,

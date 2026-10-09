@@ -411,18 +411,46 @@ def _inflight_halves(results) -> tuple[float, float]:
     return mean_over(t0, tm), mean_over(tm, t1)
 
 
-def _percentile(data: list[float], p: float) -> float:
-    """Compute p-th percentile (0-100) of a sorted or unsorted list."""
-    if not data:
+PERCENTILE_METHODS = ("nearest", "linear")
+
+
+def percentile(values, p: float, method: str) -> float:
+    """p-th percentile (0-100) of values, sorted here.
+
+    "nearest": sorted[min(n - 1, int(p / 100 * n))], a floor nearest rank;
+    the crossval SERVESUM numbers. Raises ValueError on no values.
+    "linear": interpolate between ranks at p / 100 * (n - 1); the runner
+    summaries. Returns 0.0 on no values.
+    The two disagree on most inputs (tests/golden/REPORT.md, STOP item 4), so
+    every caller names its method.
+    """
+    if method not in PERCENTILE_METHODS:
+        raise ValueError(f"unknown percentile method {method!r}; expected one of {PERCENTILE_METHODS}")
+    sorted_data = sorted(values)
+    n = len(sorted_data)
+    if method == "nearest":
+        if not n:
+            raise ValueError("nearest-rank percentile of no values")
+        return sorted_data[min(n - 1, int(p / 100 * n))]
+    if not n:
         return 0.0
-    sorted_data = sorted(data)
-    idx = (p / 100) * (len(sorted_data) - 1)
+    idx = (p / 100) * (n - 1)
     lo = int(idx)
     hi = lo + 1
-    if hi >= len(sorted_data):
+    if hi >= n:
         return sorted_data[-1]
     frac = idx - lo
     return sorted_data[lo] * (1 - frac) + sorted_data[hi] * frac
+
+
+def pcts(values, method: str) -> dict:
+    """{"p50", "p90", "p95", "p99"} percentiles of values by method."""
+    return {f"p{q}": percentile(values, q, method) for q in (50, 90, 95, 99)}
+
+
+def _percentile(data: list[float], p: float) -> float:
+    """Linear-interpolation percentile; the runner summaries' method."""
+    return percentile(data, p, "linear")
 
 
 def aggregate(
