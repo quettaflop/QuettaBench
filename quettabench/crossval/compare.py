@@ -15,7 +15,7 @@ render(report) is table.py's text, byte for byte, with the agreement rows
 
 from dataclasses import dataclass, field
 
-from quettabench.config import xval_config
+from quettabench.config.validate import serving_style_compatible
 from quettabench.crossval import agreement
 from quettabench.crossval.reader import Side, age_days
 
@@ -120,7 +120,7 @@ def pair(ours, theirs, allow_method_mismatch=False, now=0.0):
         nccl_mismatch=_nccl_mismatch(ours, theirs), serving=serving, quant=quant,
         # Serving topology must match on both sides; a disaggregated engine row
         # against an aggregated baseline is a category error, never a ratio.
-        serving_mismatch=not xval_config.serving_style_compatible(serving[1], serving[0]),
+        serving_mismatch=not serving_style_compatible(serving[1], serving[0]),
         # Quantization must match; an fp4 engine row against a bf16 baseline is
         # not a fair ratio, so it is flagged per row and withheld, like KV.
         quant_mismatch=quant[0] != quant[1],

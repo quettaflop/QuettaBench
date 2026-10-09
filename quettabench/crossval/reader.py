@@ -21,7 +21,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from quettabench.config import xval_config
+import yaml
+
+CONFIGS = Path(__file__).resolve().parents[2] / "configs"
 
 GROUP_PREF = ("decode_batch_paged", "decode_batch", "decode_graph", "decode")
 POINT_RE = re.compile(
@@ -175,12 +177,15 @@ def read_bench_log(path, engine_facts=None):
 # --- old baselines/*.json, as crossval/cache.py wrote them.
 
 def comm_bound_bs(model):
-    """comm_bound_bs of the workload whose crate key or record name is model,
-    from the merged workloads. Absent means never comm-bound (tp1 has no TP
-    allreduce); there is no default."""
-    for name, wl in xval_config.workloads().items():
-        if (name == model or wl.get("name") == model) and "comm_bound_bs" in wl:
-            return int(wl["comm_bound_bs"])
+    """comm_bound_bs of the run (configs/runs/<name>.yaml) whose name or model
+    display name is model, from its model yaml. Absent means never
+    comm-bound (tp1 has no TP allreduce); there is no default."""
+    for run in sorted((CONFIGS / "runs").glob("*.yaml")):
+        raw = yaml.safe_load(run.read_text())
+        spec = yaml.safe_load((CONFIGS / "models" / f"{raw['model']}.yaml").read_text())
+        bs = (spec.get("crossval") or {}).get("comm_bound_bs")
+        if (run.stem == model or spec["name"] == model) and bs is not None:
+            return int(bs)
     return None
 
 
