@@ -10,13 +10,15 @@ warmup requests, resets the prefix cache when asked, then replays:
                workload.arrival / workload.speed (ttft_basis "arrival")
 
 A SessionTrace goes through SessionDispatcher (modes/_sessions_dispatch.py),
-which feeds each reply into the session's later turns. Every row goes to the
+which feeds each reply into the session's later turns. With mode.grid set
+the trace is a GridTrace and run_grid (modes/_grid.py) times it cell by
+cell instead; its per-step numbers are the run's steps section. Every row goes to the
 writer as it finishes. Then the gates from metrics.core (exit 1 on abort)
 and the workload identity gate: the served requests must hash to
 trace.workload_hash(), else the run is "failed" and exits 3.
 
 main(argv) is the old runner CLI (python -m quettabench.modes.serve ...),
-translated by modes/legacy_cli.py; commit 7 removes it.
+translated by modes/legacy_cli.py, --grid included; commit 7 removes it.
 """
 
 import asyncio
@@ -51,8 +53,9 @@ from ..metrics.results import (
 from ..workloads.arrival import offered_rate, parse_arrival, rebase_arrivals
 from ..workloads.base import workload_hash
 from ..workloads.sessions import SessionTrace
+from ._grid import run_grid
 from ._sessions_dispatch import RunAborted, SessionDispatcher, no_limit
-from .legacy_cli import apply_mode, check_args, get_args, list_profiles, translate
+from .legacy_cli import apply_mode, check_args, get_args, grid_translate, list_profiles, translate
 
 WORKLOAD_SCHEMA_VERSION = "distributional-synthetic-v1"
 TRACE_REQUEST_ID_PREFIX = "agenticbench"
@@ -62,8 +65,9 @@ DEFAULT_WORKLOAD = WorkloadCfg()
 
 @dataclass
 class Summary:
-    """One run: the aggregate, the rows in summary order, the per-turn
-    breakdown (multi-turn only) and the extra run.json sections."""
+    """One run: the aggregate (None for a grid run), the rows in summary
+    order, the per-turn breakdown (multi-turn only) and the extra run.json
+    sections."""
     core: BenchmarkSummary
     rows: list
     turns: list = field(default_factory=list)
@@ -72,7 +76,7 @@ class Summary:
     reason: str | None = None
 
     def to_dict(self):
-        out = {**self.core.to_dict(), **self.sections}
+        out = {**(self.core.to_dict() if self.core else {}), **self.sections}
         if self.turns:
             out["per_turn"] = [t.to_dict() for t in self.turns]
         return out
@@ -351,7 +355,13 @@ def identity(trace, served) -> dict:
 
 
 def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
-    """One measured run of trace through driver; see the module docstring."""
+    """One measured run of trace through driver; see the module docstring.
+    A grid run reads its engine facts from writer.cfg, the run's Config."""
+    if mode.grid:
+        record, steps, rows = run_grid(trace, driver, writer.cfg, writer)
+        summary = Summary(None, rows, sections={"grid": record})
+        writer.finish(summary.to_dict(), steps=steps)
+        return summary
     if mode.goodput_sweep and (mode.load != "open" or not (mode.sla_ttft_ms or mode.sla_tpot_ms)):
         raise ValueError("goodput sweep needs open load and mode.sla_ttft_ms and/or sla_tpot_ms")
     name = trace_name(trace)
@@ -412,6 +422,10 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
 def main(argv=None) -> None:
     """The old runner CLI: parse, check, translate to Config/Trace/Driver, run, save."""
     args = get_args(argv)
+    if args.grid is not None:
+        cfg, trace, driver, writer = grid_translate(args)
+        run(trace, driver, cfg.mode, writer)
+        return
     if args.list_profiles:
         list_profiles(args)
         sys.exit(0)

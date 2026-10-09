@@ -3,9 +3,10 @@ that must stay at parse time.
 
 Each workload is resolved twice: with os.environ empty and with one
 representative override of every env knob the crossval path reads. The
-record joins what xval_config.py hands the shell (its cli) with what
-vmin_fit.py resolves from it (its META/CAPACITY/SKIP/RESULT lines on the
-stubs, plus how many generate() calls the fit made).
+record joins what xval_config.py hands the shell (its cli) with what a
+grid run resolves from it (its META/CAPACITY/SKIP/RESULT lines on the
+stubs, plus how many generate() calls the fit made). The "vmin_fit" keys
+name the script the fixture was captured from; serve --grid replaced it.
 """
 
 import contextlib
@@ -16,7 +17,7 @@ import unittest
 from unittest import mock
 
 from tests.golden._harness import (
-    ENV_OVERRIDE, REPO, check_json, crossval_path, fresh_import, run_vmin_fit,
+    ENV_OVERRIDE, REPO, check_json, crossval_path, fresh_import, run_grid_cli,
 )
 
 SCENARIOS = {"cleared": {}, "override": ENV_OVERRIDE}
@@ -93,7 +94,8 @@ def resolve_global(env):
 
 
 def resolve_vmin_fit(name, env):
-    run = run_vmin_fit([name, "--model", "<MODEL>", "--allow-unverified"], env)
+    run = run_grid_cli(["--grid", "--workload", name, "--model", "<MODEL>",
+                        "--allow-unverified"], env)
     return {"stdout": run["stdout"], "generate_calls": run["generate_calls"], "exit": run["exit"]}
 
 
@@ -130,15 +132,17 @@ class ParseTimeFailuresGolden(unittest.TestCase):
         unverified = [n for n in WORKLOAD_NAMES
                       if not resolve_xval(n, {})["workload"].get("verified")]
         failures["vmin_fit_unverified"] = {
-            n: run_vmin_fit([n, "--model", "<MODEL>"], {})["exit"] for n in unverified}
-        failures["vmin_fit_unknown_crate"] = run_vmin_fit(["nope", "--model", "<MODEL>"], {})["exit"]
-        failures["vmin_fit_unknown_grid"] = run_vmin_fit(
-            ["llama", "nope", "--model", "<MODEL>"], {})["exit"]
-        failures["vmin_fit_unknown_prompt_mode"] = run_vmin_fit(
-            ["llama", "--model", "<MODEL>"], {"PROMPT_MODE": "random"})["exit"]
+            n: run_grid_cli(["--grid", "--workload", n, "--model", "<MODEL>"], {})["exit"]
+            for n in unverified}
+        failures["vmin_fit_unknown_crate"] = run_grid_cli(
+            ["--grid", "--workload", "nope", "--model", "<MODEL>"], {})["exit"]
+        failures["vmin_fit_unknown_grid"] = run_grid_cli(
+            ["--grid", "nope", "--workload", "llama", "--model", "<MODEL>"], {})["exit"]
+        failures["vmin_fit_unknown_prompt_mode"] = run_grid_cli(
+            ["--grid", "--workload", "llama", "--model", "<MODEL>"], {"PROMPT_MODE": "random"})["exit"]
         # Not a failure today: an MLA stack without kv_bytes falls back to the
         # dense per-head formula silently (see REPORT.md).
-        mla = run_vmin_fit(["mla_no_kv_bytes", "--model", "<MODEL>"], {},
+        mla = run_grid_cli(["--grid", "--workload", "mla_no_kv_bytes", "--model", "<MODEL>"], {},
                            model_config=MLA_CONFIG, extra_workloads=MLA_WORKLOAD)
         failures["mla_without_kv_bytes"] = {
             "exit": mla["exit"],

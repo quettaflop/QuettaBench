@@ -101,7 +101,8 @@ class ModeCfg:
     goodput_sweep: bool = False
     returns: str = "none"             # vmin_fit --dump-tokens => text
     grid: str | None = None        # name in grids.yaml; set => step metrics
-    vmin_attempts: int = 4
+    vmin_attempts: int = 4         # grid: fit passes per cell, best r2 kept
+    fit_r2_stop: float = 0.999     # grid: a pass fitting at least this r2 ends the cell
     eval_pos: int | None = None    # None => hardware.timing_steps // 2
     cap_frac: float = 0.80
 

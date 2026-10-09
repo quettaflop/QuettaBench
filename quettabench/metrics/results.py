@@ -283,3 +283,54 @@ def print_legacy_lines(summary):
     """Print legacy_lines(summary), flushed, as trace_serve did."""
     for line in legacy_lines(summary):
         print(line, flush=True)
+
+
+# A grid run's stdout, formats exactly as modes/vmin_fit.py printed them
+# (split_map "Output line formats"); vllm.sh greps META/RESULT/SKIP/CAPACITY
+# and crossval/cache.py parses META one key per line.
+def grid_event_line(run, event):
+    """The SKIP, NOTE or RESULT line for one event of a grid run."""
+    ctx, bs = event["ctx"], event["bs"]
+    if event["event"] == "skip_maxlen":
+        return f"SKIP ctx={ctx} bs={bs} reason=maxlen"
+    if event["event"] == "skip_kv":
+        return f"SKIP ctx={ctx} bs={bs} need_kv={event['need']} cap={event['cap']}"
+    if event["event"] == "cycled":
+        return f"NOTE ctx={ctx} bs={bs} trace cycled (fewer reqs than bs)"
+    s = event["step"]
+    return (f"RESULT mode={run['meta']['mode']} tp={s['tp']} kv={run['kv']} ctx={ctx} bs={bs} "
+            f"ms_per_step={s['ms_per_step']:.3f} ms_at_eval={s['ms_at_eval']:.3f} "
+            f"eval_pos={s['eval_pos']} mean_steps={s['mean_steps']:.0f} r2={s['r2']:.5f} "
+            f"prefill_s={s['prefill_s']:.2f} kv_gib={s['kv_gib']:.1f} "
+            f"attn_share={s['attn_share']:.3f} raw={[round(y, 2) for y in s['raw']]}")
+
+
+def legacy_grid_lines(run):
+    """Every line a grid run record has reached so far: META trace, one META
+    per key, CAPACITY, WARM_OK, one line per event, DONE."""
+    lines = []
+    t = run.get("trace")
+    if t is not None:
+        lines.append(f"META trace={t['path']} reqs={t['reqs']} workload_hash={t['workload_hash']}")
+    lines += [f"META {k}={v}" for k, v in run["meta"].items()]
+    c = run.get("capacity")
+    if c is not None:
+        lines.append(f"CAPACITY mode={c['mode']} tp={c['tp']} dtype={c['dtype']} "
+                     f"kv_bytes_per_token={c['kv_bytes']} free_gib={c['free_gib']:.0f} "
+                     f"kv_tokens={c['kv_tokens']}")
+    if run.get("warm_ok"):
+        lines.append("WARM_OK")
+    lines += [grid_event_line(run, e) for e in run.get("events", ())]
+    if run.get("done"):
+        lines.append("DONE")
+    return lines
+
+
+def print_legacy_grid_lines(run, shown=0):
+    """Print, flushed, the lines of legacy_grid_lines(run) past the first
+    `shown`; returns the new count. Called as the run advances, so each line
+    appears when vmin_fit would have printed it."""
+    lines = legacy_grid_lines(run)
+    for line in lines[shown:]:
+        print(line, flush=True)
+    return len(lines)

@@ -1,7 +1,9 @@
-"""Golden: the vLLM engine kwargs vmin_fit.py and trace_serve.py build per
+"""Golden: the vLLM engine kwargs a grid run and trace_serve.py build per
 workload, captured through the tests/_stubs/vllm recorder.
 
-vmin_fit is run as vllm.sh runs it (workload name, weights dir); trace_serve
+The grid side is run as vllm.sh runs it (serve --grid with the workload
+name and weights dir; the fixture's "vmin_fit" keys name the script it was
+captured from, which serve --grid replaced); trace_serve
 as xval.sh runs it (trace, --model, --workload, --tp from the workload).
 Both now build through engines/vllm.py translate(); the per-key diff is
 pinned and should be empty. qwen's trace_serve side is the loader's
@@ -18,7 +20,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests.golden._harness import (
-    ENV_OVERRIDE, REPO, check_json, crossval_path, fresh_import, run_vmin_fit,
+    ENV_OVERRIDE, REPO, check_json, crossval_path, fresh_import, run_grid_cli,
 )
 
 WORKLOADS = json.loads((REPO / "configs" / "workloads.json").read_text())["workloads"]
@@ -26,7 +28,8 @@ ABSENT = "<absent>"
 
 
 def vmin_fit_kwargs(name, env, extra_argv=()):
-    run = run_vmin_fit([name, "--model", "<MODEL>", "--allow-unverified", *extra_argv], env)
+    run = run_grid_cli(["--grid", "--workload", name, "--model", "<MODEL>", "--allow-unverified",
+                        *extra_argv], env)
     (kwargs,) = run["llm_kwargs"]
     return kwargs
 

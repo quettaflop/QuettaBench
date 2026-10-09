@@ -1,5 +1,8 @@
 """Shared plumbing for the golden tests: fixture compare/regen, crossval
-imports, and a CPU run of vmin_fit.main() against the vllm/torch stubs.
+imports, and a CPU grid run (serve.main --grid: legacy_cli.grid_translate,
+then serve.run with a GridTrace and an InProcessDriver) on the vllm/torch
+stubs. The vmin_fit fixtures were captured from modes/vmin_fit.py, which
+this path replaced; they are compared unchanged.
 
 QBENCH_GOLDEN_REGEN=1 rewrites every fixture from the current code instead of
 comparing; run it only when a behaviour change is intended.
@@ -46,7 +49,7 @@ ENV_OVERRIDE = {
 }
 
 # The one (ctx, bs) cell the fake clock makes noisy, so a RESULT line with
-# r2 < 0.999 (table.py's LOW R2) comes out of the real vmin_fit code path.
+# r2 < 0.999 (table.py's LOW R2) comes out of the real grid code path.
 NOISY_CELL = (1024, 16)
 
 
@@ -107,11 +110,13 @@ def fake_generate_seconds(prompt_len, batch, max_tokens, call_no):
     return prefill_s + max_tokens * step_ms / 1000.0 + bend
 
 
-def run_vmin_fit(argv, env, model_config=None, extra_workloads=None):
-    """Run vmin_fit.main(argv) on the stubs under exactly `env` (os.environ is
-    replaced, not merged). nvidia-smi is hidden so backend and link-profile
-    detection never depend on the host. Returns stdout lines, the LLM kwargs,
-    the number of generate() calls and the SystemExit message if one fired."""
+def run_grid_cli(argv, env, model_config=None, extra_workloads=None):
+    """serve.main(argv) for a --grid argv on the stubs under exactly `env`
+    (os.environ is replaced, not merged), with the drivers' clock swapped
+    for the stub's fake one. nvidia-smi is hidden so backend and
+    link-profile detection never depend on the host. extra_workloads join
+    xval_config's workloads. Returns stdout lines, the LLM kwargs, the
+    number of generate() calls and the SystemExit message if one fired."""
     with tempfile.TemporaryDirectory() as model_dir:
         Path(model_dir, "config.json").write_text(json.dumps(model_config or DENSE_CONFIG))
         argv = [a.replace("<MODEL>", model_dir) for a in argv]
@@ -122,16 +127,17 @@ def run_vmin_fit(argv, env, model_config=None, extra_workloads=None):
             vllm = importlib.import_module("vllm")
             vllm.reset()
             vllm.generate_seconds = fake_generate_seconds
-            vmin_fit = fresh_import("quettabench.modes.vmin_fit")
-            if extra_workloads:
-                vmin_fit.CFG["workloads"].update(extra_workloads)
+            serve = fresh_import("quettabench.modes.serve")
+            drivers = importlib.import_module("quettabench.engines.drivers")
+            xval_config = importlib.import_module("quettabench.config.xval_config")
+            workloads = {**xval_config.workloads(), **(extra_workloads or {})}
+            clock = types.SimpleNamespace(perf_counter=vllm.CLOCK.perf_counter)
             exit_msg = None
-            with mock.patch.object(vmin_fit, "time", types.SimpleNamespace(
-                    perf_counter=vllm.CLOCK.perf_counter)), \
-                    mock.patch.object(sys, "argv", ["vmin_fit.py"] + argv), \
+            with mock.patch.object(xval_config, "workloads", return_value=workloads), \
+                    mock.patch.object(drivers, "time", clock), \
                     contextlib.redirect_stdout(out):
                 try:
-                    vmin_fit.main()
+                    serve.main(argv)
                 except SystemExit as e:
                     exit_msg = str(e.code)
             llm_kwargs = [kw for name, kw in vllm.CALLS if name == "LLM"]
