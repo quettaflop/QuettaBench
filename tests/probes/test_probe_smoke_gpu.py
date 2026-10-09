@@ -1,10 +1,10 @@
-# profiling/tests/test_probe_smoke_gpu.py
+# tests/probes/test_probe_smoke_gpu.py
 
 """Execute the kernel probes with tiny grids on a real GPU and check each one
 writes a non-empty table. Skips wholesale without CUDA, so hosted CI stays
 green; on a GPU host (or a self-hosted runner) the probes really run:
 
-    python -m pytest profiling/tests/test_probe_smoke_gpu.py -v
+    python -m pytest tests/probes/test_probe_smoke_gpu.py -v
 
 The python must have torch and vllm. The all-reduce case needs 2 free GPUs.
 """

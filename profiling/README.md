@@ -8,12 +8,20 @@ emitters that turn raw probe output into curated tables. Peer of the runner
 ## Layout
 
 ```
-profiling/probes/              live-server + serving-wall probes (need a GPU)
-profiling/kernel_composed/     QuettaSim kernel tables (ncu/ vs cuda_event/ schema)
+quettabench/probes/            kernel probes (need a GPU): gemm, moe, flash_attn, cross_attn, gdn,
+                               elementwise, collective, vllm_allreduce, reparallel
 quettabench/export/quettasim/  emitters: results files -> QuettaSim tables (no GPU)
-profiling/runbooks/            how-to-measure docs and preflight scripts
-profiling/tests/               emitter tests (run against fixtures, no GPU)
+profiling/probes/              live-server + serving-wall probes (need a GPU)
+profiling/kernel_composed/probes/  serving-shaped and live-server probes: fused_block, decode_batch,
+                               serving_frontend, pd_host, kv_transfer
+docs/runbooks/                 how-to-measure docs and preflight scripts
+tests/probes/                  probe contracts, GPU smoke, emitter tests
+justfile                       one recipe per probe, remote-probe, export
 ```
+
+The serving-shaped probes (`fused_block`, `decode_batch`) and the live-server probes
+(`serving_frontend`, `pd_host`, `kv_transfer`) fold into the grid trace and the profiling
+sources in a later commit; until then they stay under `profiling/kernel_composed/probes/`.
 
 ### probes/
 
@@ -33,51 +41,31 @@ Live-server probes (drive a running vLLM OpenAI server over SSE):
 - `pool_capacity_probe.py` — effective KV-pool capacity under prefix caching.
 - `serving_decode_grid.py` — steady-state mid-stream ITL over a (batch, context)
   grid. Also the single source of truth for the decode-grid post-processing that
-  `emit/build_serving_decode_grid.py` imports.
+  `quettabench/export/quettasim/serving_decode_grid.py` imports.
 - `serving_stage_split.py` — per-stage breakdown of c1 prefill TTFT vs
   (new, cached) tokens.
 - `live_split_probe.py`, `live_ttft_probe.py` — cached-host split and c1 TTFT on
   the real serving stack.
 
-### kernel_composed/
+### Kernel probes and emitters
 
-Probes that write QuettaSim's `engine/data/kernel_data/` layout (`ncu/` vs
-`cuda_event/`). Separate from the serving-wall probes above; schema is frozen to
-what `kernel_composed` interpolates. Runbook: `profiling/kernel_composed/README.md`.
+The kernel probes moved to `quettabench/probes/` (run `just --list`, or read
+`quettabench/probes/README.md`). They write the `ncu/` vs `cuda_event/` layout under
+`results/probes/<gpu>/`, never into the QuettaSim checkout. The emitters in
+`quettabench/export/quettasim/` read results dirs and write QuettaSim's tables plus a
+`manifest.json`; `just export --dest <dir>` runs them all.
 
-```bash
-cd profiling/kernel_composed
-QUETTASIM=/path/to/QuettaSim just gpu=A100 profile-gpu
-```
-
-### emit/
-
-Emitters read raw probe output and write curated tables. They need no GPU and run
-anywhere:
-
-- `build_tp_comm.py` — tensor-parallel prefill comm term from the tp1/tpN pair.
-- `build_prefill_floor.py` — measured per-config prefill floor (ms).
-- `build_saturated_ceiling.py` — measured saturated-ITL ceiling anchors.
-- `build_roofline_utils.py` — roofline-utils artifact from serving-wall step traces.
-- `build_stage_split_rates.py` — per-config prefill host rate + FA3 coefficient.
-- `build_serving_decode_grid.py` — decode-grid CSV from raw JSONL.gz runs.
-- `extract_benchmark_per_request.py` — per-request OSL/prefill/cache distributions
-  from benchmark JSONs.
-
-Two emitters are **consumer-coupled**: `build_prefill_floor.py` and
-`build_saturated_ceiling.py` import from the consumer repo's `configs` and
-`simulator` packages (and `build_saturated_ceiling` also imports the retired
-`build_simulator_rows`, which was not migrated). They are committed here as the
-canonical source, but they only run from a checkout where those consumer modules
-are importable (agentic-serve / QuettaSim on `PYTHONPATH`). The other five
-emitters are self-contained.
+Three emitters are **consumer-coupled**: `prefill_floor`, `saturated_ceiling` and
+`stage_split_rates` import QuettaSim's `configs`, `simulator` (and, for the ceiling, the
+retired `build_simulator_rows`), so they need QuettaSim on `PYTHONPATH`. Pick builders with
+`just export --only tp_comm roofline_utils ...`.
 
 ## Data flow
 
 ```
 probe (GPU host)  ->  raw CSV / JSONL.gz  ->  R2  agent-bench/profiling/raw/
                                               |
-emit/*            ->  curated table  ------->  committed into the CONSUMER repos
+export (just export)  ->  curated table  ->  committed into the CONSUMER repos
                                                (QuettaSim, agentic-serve)
 ```
 
@@ -110,13 +98,13 @@ production.
 Kernel probe, one GPU:
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 python3 profiling/probes/gemm_slice_probe.py \
-  --out /path/to/gemm_slices_H100.csv
+just gpu=H100 gemm-ncu
+just probe gemm "--gpu-label H100 --ncu"
 ```
 
 Live-server probe: launch a vLLM OpenAI server first, then point the probe at it
 (see each probe's `--help` and the runbooks). `serving_stage_split_plan.md` and
-`h100_setup.md` in `runbooks/` describe the full measurement setup.
+`h100_setup.md` in `docs/runbooks/` describe the full measurement setup.
 
 Scheduler that waits for free GPUs before firing:
 
@@ -124,22 +112,15 @@ Scheduler that waits for free GPUs before firing:
 nohup bash profiling/probes/slice_probe_watch.sh > slice_watch.log 2>&1 &
 ```
 
-## Emit a curated table
-
-The emitters live in `quettabench/export/quettasim/`. From the repo root:
-
-```bash
-python3 -m quettabench.export.quettasim --results <dir with raw runs> --dest <out dir>
-```
-
 ## Tests
 
-The emitter tests run against fixture data and need no GPU:
+Probe contracts and emitter tests run against fixtures and need no GPU:
 
 ```bash
-python3 -m pytest profiling/tests/
+python3 -m pytest tests/probes/
 ```
 
 Two tests skip when their optional inputs are absent: the stage-split artifact
 regeneration (needs the gitignored source CSVs) and the decode-grid
-`load_grid` compatibility check (needs the consumer's `simulator` package).
+`load_grid` compatibility check (needs the consumer's `simulator` package). The GPU smoke
+test skips without CUDA.

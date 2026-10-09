@@ -15,4 +15,4 @@ jobs:
     runs-on: [self-hosted, gpu]
     steps:
       - uses: actions/checkout@v4
-      - run: python -m pytest profiling/tests/test_probe_smoke_gpu.py tests/test_crossval_smoke_gpu.py -v
+      - run: python -m pytest tests/probes/test_probe_smoke_gpu.py tests/test_crossval_smoke_gpu.py -v

@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import csv
 import os
+import sys
 from pathlib import Path
 
 import torch
@@ -188,9 +189,8 @@ def main() -> None:
     global _VLLM_CTX
     _VLLM_CTX = set_current_vllm_config(VllmConfig())
     _VLLM_CTX.__enter__()
-    import sys
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from _graph import graph_time_us
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))  # repo root, for quettabench.probes
+    from quettabench.probes._graph import graph_time_us
 
     root = Path(__file__).resolve().parents[2]
     spec = yaml.safe_load((root / "device_spec" / "models" / f"{a.model}.yaml").read_text())

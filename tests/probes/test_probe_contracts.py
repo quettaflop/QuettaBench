@@ -1,12 +1,12 @@
-# profiling/tests/test_probe_contracts.py
+# tests/probes/test_probe_contracts.py
 
-"""Recipe-to-probe contract for kernel_composed: every probe a justfile recipe
-invokes must exist, parse, and define every flag the recipe passes.
+"""Recipe-to-probe contract: every probe a root justfile recipe invokes must exist,
+parse, and define every flag the recipe passes.
 
 The probes need a GPU and torch to RUN, so CI cannot execute them; what it can
 pin is the wiring that otherwise only fails at probe start on a GPU box: the
-recipe paths, the argparse surface behind each recipe, run_probe.sh's --out-dir
-injection, and the sibling _helper imports. Flags written --flag=value in a
+recipe paths, the argparse surface behind each recipe, the remote recipe shipping
+the probes package, and the sibling _helper imports. Flags written --flag=value in a
 recipe belong to the launcher (torch.distributed.run), not the probe, and are
 skipped.
 """
@@ -14,12 +14,12 @@ from __future__ import annotations
 
 import ast
 import re
-import subprocess
 from pathlib import Path
 
-KERNEL_COMPOSED = Path(__file__).resolve().parents[1] / "kernel_composed"
-PROBES_DIR = Path(__file__).resolve().parents[2] / "quettabench" / "probes"
-RUN_PROBE = KERNEL_COMPOSED / "run_probe.sh"
+ROOT = Path(__file__).resolve().parents[2]
+JUSTFILE = ROOT / "justfile"
+PROBES_DIR = ROOT / "quettabench" / "probes"
+UNMOVED_PROBES = ROOT / "profiling" / "kernel_composed" / "probes"
 
 
 def argparse_flags(probe: Path) -> set[str]:
@@ -68,23 +68,15 @@ def recipe_blocks(justfile: Path) -> list[str]:
     return ["\n".join(b) for b in blocks]
 
 
-def probe_invocations() -> list[tuple[str, set[str], bool]]:
-    """(probe filename, flags passed, invoked via run_probe.sh) per recipe."""
+def probe_invocations() -> list[tuple[Path, set[str]]]:
+    """(probe file, flags passed) per recipe."""
     out = []
-    for block in recipe_blocks(KERNEL_COMPOSED / "justfile"):
-        names = set(re.findall(r"(?:run_probe\.sh\s+|probes/)([a-z0-9_]+\.py)", block))
-        if not names:
-            continue
+    for block in recipe_blocks(JUSTFILE):
+        probes = [PROBES_DIR / f"{m}.py" for m in re.findall(r"-m quettabench\.probes\.([a-z0-9_]+)", block)]
+        probes += [UNMOVED_PROBES / m for m in re.findall(r"kernel_composed/probes/([a-z0-9_]+\.py)", block)]
         flags = {t for t in block.split() if t.startswith("--") and "=" not in t}
-        for name in names:
-            out.append((name, flags, "run_probe.sh" in block))
+        out.extend((probe, flags) for probe in probes)
     return out
-
-
-def probe_path(name: str) -> Path:
-    """A recipe's probe file: moved into the package, or still under kernel_composed/probes."""
-    moved = PROBES_DIR / name.replace("_probe.py", ".py")
-    return moved if moved.is_file() else KERNEL_COMPOSED / "probes" / name
 
 
 def test_every_probe_parses():
@@ -97,16 +89,11 @@ def test_every_probe_parses():
 def test_recipe_probes_exist_and_accept_their_flags():
     invocations = probe_invocations()
     assert invocations, "no probe invocations found in the justfile"
-    for name, flags, via_run_probe in invocations:
-        probe = probe_path(name)
-        assert probe.is_file(), f"justfile invokes {name} but {probe} is missing"
+    for probe, flags in invocations:
+        assert probe.is_file(), f"justfile invokes {probe.name} but {probe} is missing"
         defined = argparse_flags(probe)
         missing = sorted(flags - defined)
-        assert not missing, f"{name} does not define recipe flags: {missing}"
-        if via_run_probe:
-            assert "--out-dir" in defined, (
-                f"{name} runs through run_probe.sh, which injects --out-dir"
-            )
+        assert not missing, f"{probe.name} does not define recipe flags: {missing}"
 
 
 def test_every_probe_labels_its_gpu():
@@ -134,8 +121,15 @@ def test_sibling_helper_imports_resolve():
                     )
 
 
-def test_run_probe_sh_contract():
-    subprocess.run(["bash", "-n", str(RUN_PROBE)], check=True)
-    text = RUN_PROBE.read_text()
-    assert '--out-dir "$KDATA"' in text, "run_probe.sh must inject --out-dir"
-    assert 'probes/_*.py' in text, "run_probe.sh must ship the _helper modules to remote hosts"
+def test_every_moved_probe_takes_out():
+    """The remote recipe and `just probe` pass --out; every packaged probe must accept it."""
+    for probe in sorted(PROBES_DIR.glob("[!_]*.py")):
+        if probe.name != "base.py":
+            assert "--out" in argparse_flags(probe), f"{probe.name} has no --out"
+
+
+def test_remote_recipe_ships_the_probes_package():
+    text = JUSTFILE.read_text()
+    assert "quettabench/probes/" in text and "rsync" in text, "remote-probe must ship quettabench/probes"
+    assert "quettabench/__init__.py" in text, "remote-probe must ship the package root"
+    assert "--out $rdir/out" in text, "remote-probe must point --out at the pulled directory"
