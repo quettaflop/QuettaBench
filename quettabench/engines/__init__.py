@@ -21,9 +21,10 @@ BACKENDS = {
 SUPPORTED_BACKENDS = list(BACKENDS)
 
 
-def get_backend(name: str):
-    """HttpDriver for a --backend name; its send_request streams one request."""
+def get_backend(name: str, **server):
+    """HttpDriver for a --backend name; server (url, model, api_key, timeout)
+    binds it for send/run/reset."""
     name = name.lower()
     if name not in BACKENDS:
         raise ValueError(f"Unknown backend '{name}'. Choose from: {SUPPORTED_BACKENDS}")
-    return HttpDriver(BACKENDS[name][1], name)
+    return HttpDriver(BACKENDS[name][1], name, **server)

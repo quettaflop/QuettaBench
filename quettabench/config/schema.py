@@ -92,6 +92,10 @@ class ModeCfg:
     exact_output_length: bool = False
     timeout: int = 120
     min_success_rate: float = 0.75
+    reset_prefix_cache: bool = False  # POST the engine's prefix-cache reset after warmup
+    allow_missing_usage: bool = False
+    trace_request_ids: bool = False   # stable request ids for engine tracing
+    prefix_cache_block_size: int | None = 16  # block-aligned cache estimates (multi-turn)
     sla_ttft_ms: float | None = None
     sla_tpot_ms: float | None = None
     goodput_sweep: bool = False

@@ -30,7 +30,7 @@ ENV_MAP = {
     "VMIN_ATTEMPTS": ("mode.vmin_attempts", int, "vmin_fit.py:256"),
     "PROMPT_MODE": ("workload.prompt_mode", str, "vmin_fit.py:130"),
     "GPU_UTIL": ("engine.gpu_util", float, "vmin_fit.py:127"),
-    "ENABLE_EP": ("engine.ep", _truthy, "serve.py:1323"),
+    "ENABLE_EP": ("engine.ep", _truthy, "serve.py:1323, now modes/legacy_cli.py"),
     "NCCL_ALGO": ("hardware.collective.NCCL_ALGO", str, "vmin_fit.py:30,149 table.py:119"),
     "NCCL_PROTO": ("hardware.collective.NCCL_PROTO", str, "vmin_fit.py:30,150 table.py:120"),
     "QS_SHA": ("provenance.engine_sha", str, "cache.py:46"),
@@ -41,10 +41,11 @@ ENV_MAP = {
 }
 
 
-def read_env(env=None):
+def read_env(env=None, only=None):
     """{Config path: value} for every mapped var that is set and non-empty.
 
-    env=None reads the process environment. Where two vars feed one field the
+    env=None reads the process environment; only, when given, limits the
+    read to those var names. Where two vars feed one field the
     first in ENV_MAP order wins (QS_SHA over DS_ENGINE_SHA, as cache.py does),
     except XVAL_CORPUS and XVAL_TRACE: both set to different files is refused,
     since the source a grid run reads would depend on prompt_mode silently.
@@ -53,6 +54,8 @@ def read_env(env=None):
         env = os.environ
     out = {}
     for var, (path, convert, _) in ENV_MAP.items():
+        if only is not None and var not in only:
+            continue
         raw = env.get(var)
         if raw is None or raw == "":
             continue

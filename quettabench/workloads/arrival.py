@@ -99,6 +99,16 @@ def parse_arrival(spec: str, n: int, seed: int = 42) -> list[float] | None:
     raise ValueError(f"unknown arrival spec {spec!r}")
 
 
+def offered_rate(spec: str) -> float:
+    """The rate a spec offers, req/s: poisson's rate, ramp's end rate, else 0.0."""
+    kind, _, rest = spec.partition(":")
+    if kind == "poisson":
+        return float(rest)
+    if kind == "ramp":
+        return float(rest.split(":")[1])
+    return 0.0
+
+
 def arrival_spec(pattern: str, target_rate: float) -> str:
     """serve.py's --arrival/--target-rate pair as a parse_arrival spec; ramp
     climbs from a tenth of the rate to the rate."""

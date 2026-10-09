@@ -4,13 +4,21 @@ removes it with the old CLI.
 """
 
 import argparse
-import os
 import sys
+from pathlib import Path
 
-from ..engines import SUPPORTED_BACKENDS
-from ..workloads.arrival import ARRIVAL_PATTERNS
+from ..config import env_map
+from ..config.schema import Config, EngineCfg, HardwareCfg, ModeCfg, WorkloadCfg
+from ..engines import SUPPORTED_BACKENDS, get_backend
+from ..metrics.results import RunWriter
+from ..workloads.arrival import ARRIVAL_PATTERNS, arrival_spec
+from ..workloads.profile_trace import ProfileSessionTrace, ProfileTrace
 from ..workloads.profiles import get_profile
-from ..workloads.sessions import _load_source_session_ids, resolve_multi_turn_num_sessions
+from ..workloads.sessions import (
+    TurnPacing,
+    _load_source_session_ids,
+    resolve_multi_turn_num_sessions,
+)
 
 # Closed loop: a fixed population of `concurrency` in-flight requests, each
 # replaced only when the previous one finishes. Offered load is a consequence of
@@ -21,6 +29,8 @@ from ..workloads.sessions import _load_source_session_ids, resolve_multi_turn_nu
 LOAD_MODES = ("closed-loop", "open-loop")
 OPEN_LOOP_ARRIVALS = ("poisson", "ramp")
 TURN_PACINGS = ("per-session", "interleaved")
+# Flags added after the old results layout froze; kept out of its config dict.
+NEW_FLAGS = ("results_dir",)
 
 
 def _resolve_cache_state(cli_value: str, profile) -> tuple[str, str]:
@@ -140,6 +150,9 @@ def get_args(argv=None):
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--timeout", type=int, default=120)
     parser.add_argument("--output", default="results/latest.json")
+    parser.add_argument("--results-dir", default=None,
+                        help="Also write the new layout (run.json, requests.jsonl) to this "
+                             "directory, results/<run>/ by convention.")
     parser.add_argument("--max-context-tokens", type=int, default=None,
                         help="Optional cap for distributional multi-turn synthetic prompt context")
     parser.add_argument("--context-safety-margin-tokens", type=int, default=256,
@@ -389,14 +402,14 @@ def build_config(args):
     # Expert parallelism is enabled by the launcher via ENABLE_EP (moe_ep scope).
     # Record it explicitly so EP-on runs are labelled in the result data itself,
     # not just inferred from the scope. ep_size mirrors the launcher's --ep-size $TP.
-    enable_ep = str(os.environ.get("ENABLE_EP", "")).strip().lower() in {"1", "true", "on", "yes"}
+    enable_ep = env_map.read_env(only=("ENABLE_EP",)).get("engine.ep", False)
     ep_size = args.tensor_parallel_size if enable_ep else 1
     # Canonical parallelism-strategy label composed from the active axes:
     # "1gpu" (single GPU), "tp", "tp+ep". Mirrors compile_sweep.parallelism_label.
     _par_axes = (["tp"] if args.tensor_parallel_size > 1 else []) + (["ep"] if enable_ep else [])
     parallelism = "+".join(_par_axes) or "1gpu"
     config = {
-        **vars(args),
+        **{k: v for k, v in vars(args).items() if k not in NEW_FLAGS},
         "profile": profile_name,
         "mode": args.mode or profile.mode,
         "dashboard_scope": scope,
@@ -464,3 +477,74 @@ def build_config(args):
         },
     }
     return config, profile, effective_num_sessions, source_session_ids
+
+
+def arrival_of(args, multi_turn):
+    """The run's arrival spec. Open-loop multi-turn with recorded arrivals
+    ignores the schedule but has always reported --target-rate as offered,
+    so it keeps a poisson spec at that rate."""
+    if multi_turn and args.load_mode == "open-loop" and args.use_recorded_arrivals \
+            and args.arrival == "steady":
+        return f"poisson:{args.target_rate}"
+    return arrival_spec(args.arrival, args.target_rate)
+
+
+def run_config(args, profile, enable_ep):
+    """The Config the old flags describe; engine fields are metadata only,
+    since the old runner never launches the server."""
+    multi = profile.mode == "multi-turn"
+    engine = {k: v for k, v in {
+        "model": args.model, "tp": args.tensor_parallel_size, "ep": enable_ep,
+        "dtype": args.dtype, "kv_dtype": args.kv_cache_dtype,
+        "max_model_len": args.max_model_len, "gpu_util": args.gpu_memory_utilization,
+    }.items() if v is not None}
+    vllm_extra = {k: getattr(args, k) for k in ("max_num_seqs", "max_num_batched_tokens")
+                  if getattr(args, k) is not None}
+    mode = ModeCfg(
+        serve_profile=args.mode, load="open" if args.load_mode == "open-loop" else "closed",
+        concurrency=args.concurrency, warmup=args.warmup,
+        warmup_concurrency=args.warmup_concurrency, discard_first=args.discard_first,
+        ignore_eos=args.ignore_eos, temperature=args.temperature,
+        sampling_seed=args.sampling_seed, exact_output_length=args.exact_output_length,
+        timeout=args.timeout, min_success_rate=args.min_success_rate,
+        reset_prefix_cache=args.reset_prefix_cache,
+        allow_missing_usage=args.allow_missing_usage,
+        trace_request_ids=args.trace_request_ids,
+        prefix_cache_block_size=args.prefix_cache_block_size)
+    workload = WorkloadCfg(kind="sessions" if multi else "live", source=profile.name,
+                           arrival=arrival_of(args, multi), seed=args.seed,
+                           num_requests=args.num_requests)
+    cfg = Config(engine=EngineCfg(**engine, extra={"vllm": vllm_extra} if vllm_extra else {}),
+                 workload=workload, mode=mode, hardware=HardwareCfg(),
+                 run_name=Path(args.results_dir).name if args.results_dir else "")
+    origins = {f"engine.{k}": "legacy_cli" for k in engine}
+    for section in ("mode", "workload"):
+        origins.update({f"{section}.{k}": "legacy_cli" for k in vars(getattr(cfg, section))})
+    return Config(**{**vars(cfg), "origins": dict(sorted(origins.items()))})
+
+
+def translate(args):
+    """(old config dict, Config, Trace, Driver, RunWriter) for a checked run."""
+    config, profile, num_sessions, source_session_ids = build_config(args)
+    cfg = run_config(args, profile, config["enable_ep"])
+    dataset_kw = {"max_context_tokens": args.max_context_tokens, "random_seed": args.seed,
+                  "context_safety_margin_tokens": args.context_safety_margin_tokens,
+                  "tokenizer_name": args.model}
+    if profile.mode == "multi-turn":
+        pacing = TurnPacing(args.turn_pacing, args.tool_wait_ms, args.human_wait_ms,
+                            args.use_recorded_waits, args.use_recorded_arrivals)
+        trace = ProfileSessionTrace(profile, warmup=args.warmup,
+                                    max_turn_index=args.max_turn_index, pacing=pacing,
+                                    num_sessions=num_sessions,
+                                    source_session_ids=source_session_ids, **dataset_kw)
+    else:
+        if (args.use_recorded_arrivals or args.use_recorded_waits
+                or args.tool_wait_ms or args.human_wait_ms):
+            print("WARNING: --use-recorded-arrivals / --use-recorded-waits / "
+                  "--tool-wait-ms / --human-wait-ms apply to multi-turn "
+                  "profiles only; ignoring them.")
+        trace = ProfileTrace(profile, args.num_requests, warmup=args.warmup,
+                             workload_file=args.workload_file, **dataset_kw)
+    driver = get_backend(args.backend, url=args.url, model=args.model, api_key=args.api_key,
+                         timeout=args.timeout)
+    return config, cfg, trace, driver, RunWriter(args.results_dir, cfg, driver=driver)
