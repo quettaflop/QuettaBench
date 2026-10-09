@@ -1,8 +1,9 @@
 """How work reaches an engine: one Driver per way of driving it.
 
-InProcessDriver builds vLLM inside this process from spec.engine_kwargs.
-BenchDriver runs a QuettaServe bench per grid cell, as bench.sh does, and
-reads its rows with crossval/table.py's parsers. HttpDriver streams
+InProcessDriver builds vLLM inside this process from spec.engine_kwargs and
+times one grid batch per generate() call. BenchDriver runs a QuettaServe
+bench per grid cell, as bench.sh does, and reads its rows with
+crossval/table.py's parsers. HttpDriver streams
 OpenAI-compatible requests at a launched server. Its two
 endpoints keep their own first-token rules, recorded on every result as
 ttft_rule:
@@ -33,6 +34,7 @@ import aiohttp
 
 from quettabench.crossval import table
 from quettabench.metrics.core import RequestResult
+from quettabench.workloads.grid import distinct_ids
 
 
 class Driver(ABC):
@@ -520,11 +522,14 @@ class BenchDriver(Driver):
         yield from self.rows()
 
     def rows(self):
-        """One dict per (ctx, bs, tp) table.py found in the log."""
+        """One dict per (ctx, bs, tp) table.py found in the log. The engine
+        times its own decode loop, so a row is already a per-step number:
+        measured_ms_per_step, which step_fit passes through instead of fitting.
+        The bench takes no step points, so cell's step_point is None."""
         points, method = table.ours_points(self.log_path)
         for (ctx, bs, tp), (ms, group, kv) in points.items():
-            yield {"ctx": ctx, "bs": bs, "tp": tp, "ms_per_step": ms, "group": group,
-                   "kv": kv, "method": method}
+            yield {"cell": {"ctx": ctx, "bs": bs, "tp": tp, "step_point": None},
+                   "measured_ms_per_step": ms, "group": group, "kv": kv, "method": method}
 
     def _log(self, line):
         print(line, file=sys.stderr, flush=True)
@@ -559,16 +564,33 @@ class InProcessDriver(Driver):
 
     Grid runs only, and only until the HTTP-vs-in-process parity gate
     (QBENCH_STRUCTURE.md section 5) passes; a pass deletes this class.
-    vllm is imported inside the builders because it exists only on GPU boxes.
+    vllm and torch are imported inside the methods because they exist only
+    on GPU boxes.
     """
 
     def __init__(self, spec):
         self.spec = spec
+        self._llm = None
+
+    @property
+    def version(self):
+        import vllm
+        return vllm.__version__
+
+    def device(self):
+        """(name, total bytes) of GPU 0 as torch reports them."""
+        import torch
+        return torch.cuda.get_device_name(0), torch.cuda.get_device_properties(0).total_memory
 
     def llm(self):
-        """vmin_fit's engine: vllm.LLM(**engine_kwargs)."""
-        from vllm import LLM
-        return LLM(**self.spec.engine_kwargs)
+        """The grid engine: vllm.LLM(**engine_kwargs), built once."""
+        if self._llm is None:
+            from vllm import LLM
+            self._llm = LLM(**self.spec.engine_kwargs)
+        return self._llm
+
+    def tokenizer(self):
+        return self.llm().get_tokenizer()
 
     def async_engine(self):
         """trace_serve's engine: AsyncLLMEngine from AsyncEngineArgs(**engine_kwargs)."""
@@ -576,5 +598,28 @@ class InProcessDriver(Driver):
         from vllm.engine.async_llm_engine import AsyncLLMEngine
         return AsyncLLMEngine.from_engine_args(AsyncEngineArgs(**self.spec.engine_kwargs))
 
-    def run(self, requests, *, concurrency, **kwargs):
-        raise NotImplementedError("vmin_fit and trace_serve drive the engine themselves for now")
+    def generate(self, prompts, max_tokens):
+        """(seconds, outputs) of one greedy generate() that ignores EOS, so
+        every prompt decodes exactly max_tokens; the clock spans only the call."""
+        from vllm import SamplingParams
+        sp = SamplingParams(temperature=0.0, max_tokens=max_tokens, ignore_eos=True)
+        t0 = time.perf_counter()
+        outs = self.llm().generate(prompts, sp, use_tqdm=False)
+        return time.perf_counter() - t0, outs
+
+    def warmup(self):
+        """One 256-token prompt decoded 20 steps; the time is discarded."""
+        self.generate([{"prompt_token_ids": distinct_ids(256)}], 20)
+
+    def run(self, requests, *, cell, concurrency=None, **kwargs):
+        """The batch as one generate() at cell["step_point"] tokens. generate()
+        times the batch, not its requests, so every row gets the batch wall as
+        e2el and batch_wall_s, and no TTFT (ttft_basis "batch")."""
+        n = cell["step_point"]
+        wall, outs = self.generate([{"prompt_token_ids": r.prompt_token_ids} for r in requests], n)
+        for r, out in zip(requests, outs):
+            completion = out.outputs[0]
+            yield RequestResult(success=True, e2el=wall, batch_wall_s=wall,
+                                input_tokens=r.prompt_len, output_tokens=n, ttft_basis="batch",
+                                cell=dict(cell), generated_token_ids=list(completion.token_ids),
+                                generated_text=getattr(completion, "text", None))

@@ -49,8 +49,11 @@ class RequestResult:
     accepted_tokens: Optional[int] = None
     # Generated token ids, when the driver returns them. Not written.
     generated_token_ids: Optional[list] = None
-    # {ctx, bs, tp, step_point} for grid runs, else None.
+    # {ctx, bs, tp, step_point, phase, attempt} for grid runs, else None.
     cell: Optional[dict] = None
+    # Grid runs: wall time of the one generate() the whole batch ran in; every
+    # row of the batch carries the same value (InProcessDriver.run).
+    batch_wall_s: Optional[float] = None
 
     # Client-side request shape/timing. These do not replace TTFT/TPOT/E2EL;
     # they explain scheduler pressure and workload shape for later predictors.

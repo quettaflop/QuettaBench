@@ -22,7 +22,8 @@ def cell_spec(ctx, bs, **env):
 
 
 def as_points(rows):
-    return {(r["ctx"], r["bs"], r["tp"]): (r["ms_per_step"], r["group"], r["kv"]) for r in rows}
+    return {(r["cell"]["ctx"], r["cell"]["bs"], r["cell"]["tp"]):
+            (r["measured_ms_per_step"], r["group"], r["kv"]) for r in rows}
 
 
 class GoldenLogs(unittest.TestCase):
