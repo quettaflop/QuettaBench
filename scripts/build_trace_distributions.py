@@ -30,7 +30,7 @@ TRAJECTORY_SOURCES = {
     "swebench_multiturn": DATA_DIR / "swebench_trajectories.jsonl",
     "terminalbench_multiturn": DATA_DIR / "terminalbench_trajectories.jsonl",
     "osworld_multiturn": DATA_DIR / "osworld_trajectories.jsonl",
-    # Chat now has a captured source too (scripts/build_chat_trajectories.py, from
+    # Chat now has a captured source too (data/build_chat_trajectories.py, from
     # ShareGPT), so it can be trajectory-derived like the three above instead of
     # dashboard-derived. Deliberately a SEPARATE name from chat_multiturn: the key is
     # the output filename, so writing "chat_multiturn" here would overwrite the
@@ -38,7 +38,7 @@ TRAJECTORY_SOURCES = {
     # breaking comparability with all existing GT. Point the chat-multiturn* profiles
     # at this file when you want to adopt it (see --skip-chat for the legacy path).
     "chat_multiturn_sharegpt": DATA_DIR / "chat_trajectories.jsonl",
-    # Claw-Eval agent sessions (scripts/build_claweval_trajectories.py). Unlike
+    # Claw-Eval agent sessions (data/build_claweval_trajectories.py). Unlike
     # the three above, every turn carries server-reported usage, so context
     # tokens are measured rather than word-ratio estimated -- diagnostics should
     # show estimated_context_turns == 0. New key, so it cannot overwrite an

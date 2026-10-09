@@ -5,7 +5,7 @@ One session per line: session_id, source, num_turns, turns[{turn_idx, messages,
 input_tokens, output_tokens}]. `messages` is only the new turn, not cumulative
 history.
 
-    python3 scripts/build_chat_trajectories.py \
+    python3 data/build_chat_trajectories.py \
       --tokenizer /path/to/Llama-3.1-8B-Instruct \
       --max-sessions 4000 --out data/chat_trajectories.jsonl
 """

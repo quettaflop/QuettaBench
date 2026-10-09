@@ -28,7 +28,7 @@ Output format (one JSON per line):
 }
 
 Usage:
-    python scripts/download_agent_trajectories.py [--source swebench|terminalbench|all]
+    python data/download_agent_trajectories.py [--source swebench|terminalbench|all]
 """
 
 import argparse

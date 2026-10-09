@@ -9,7 +9,7 @@ Install
    pip install -r requirements.txt
 
 Datasets referenced by profiles live outside git; see
-``scripts/fetch_data.sh``.
+``data/fetch.py``.
 
 Standard profile run
 --------------------
@@ -105,7 +105,7 @@ HTTP 400 from /v1/chat/completions on a base model
 
 Missing data files
     Datasets referenced by profiles live outside git. Fetch them with
-    ``scripts/fetch_data.sh``.
+    ``data/fetch.py``.
 
 Profile requires prefix caching
     Profiles marked prefix caching required expect the server launched

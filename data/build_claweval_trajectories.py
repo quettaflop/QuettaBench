@@ -19,7 +19,7 @@ Output rows match what `build_trajectory_distribution()` reads:
      "turns": [{"turn_idx": i, "input_tokens": ctx, "output_tokens": out}, ...]}
 
 Usage:
-    python scripts/build_claweval_trajectories.py \
+    python data/build_claweval_trajectories.py \
         --traces ~/traces/DeepSeek-V4-Flash-0731_26-08-05-17-13 \
         --out data/claweval_trajectories.jsonl
 """

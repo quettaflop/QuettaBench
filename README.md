@@ -24,7 +24,7 @@ herd for prefix-by-turn plots — not production traffic. Inter-turn
 
 ```bash
 pip install -r requirements.txt
-bash scripts/fetch_data.sh        # trajectories + distributions from R2 (gitignored)
+python3 data/fetch.py           # trajectories + distributions from R2 (gitignored)
 
 # server (on the GPU box)
 CUDA_VISIBLE_DEVICES=0 ./scripts/launch_server.sh single-turn
@@ -94,7 +94,7 @@ Canonical data lives on the `agent-bench` R2 bucket:
 
 | prefix | contents |
 |---|---|
-| `data/` | raw trajectory datasets and `data/distributions/` histograms (fetched by `scripts/fetch_data.sh`) |
+| `data/` | raw trajectory datasets and `data/distributions/` histograms (fetched by `data/fetch.py`) |
 | `results/` | benchmark ground truth (synthetic_distributional, trace_replay, archived) |
 | `json/current/` | dashboard runtime JSONs |
 | `archive/` | pre-2026-05 result snapshots; `2026-08-26-realized-session-distributions/` holds the old per-GPU sim replay pools |

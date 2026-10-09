@@ -3,7 +3,7 @@ __pycache__/
 results/
 .venv/
 
-# Large datasets live on R2 (see scripts/fetch_data.sh), not in git.
+# Large datasets live on R2 (see data/fetch.py), not in git.
 data/*.jsonl
 data/distributions/*.json
 
