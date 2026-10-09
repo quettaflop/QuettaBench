@@ -799,6 +799,71 @@ def aggregate_per_turn(results_by_turn: dict[int, list]) -> list[TurnSummary]:
     return summaries
 
 
+# Run gates. Each returns (verdict, message): verdict is "pass", "warn" or
+# "abort"; message is the text to print, None on pass. The caller prints and
+# decides the exit, so the gates themselves never end the process.
+
+def success_rate_gate(summary, min_rate: float) -> tuple[str, Optional[str]]:
+    """Abort when no request completed or the success rate is below min_rate."""
+    if summary.num_requests == 0:
+        return "abort", f"ABORT: No requests completed. Minimum success rate: {min_rate:.0%}"
+    rate = summary.successful_requests / summary.num_requests
+    if rate < min_rate:
+        kinds = ", ".join(f"{k}={v}" for k, v in sorted(summary.error_kinds.items()))
+        return "abort", (f"ABORT: Success rate {rate:.1%} below minimum {min_rate:.0%} "
+                         f"({summary.successful_requests}/{summary.num_requests}); failures: {kinds}")
+    return "pass", None
+
+
+def usage_gate(summary, allow_missing: bool) -> tuple[str, Optional[str]]:
+    """Abort (warn with allow_missing) when no successful response carried usage.
+
+    Without usage, input_tokens/output_tokens stay 0 for every request, so the
+    summary records 0 tok/s and 0 total tokens while still looking like a valid
+    run. That silently poisons any downstream ISL/OSL or throughput comparison.
+    """
+    if summary.successful_requests == 0 or summary.usage_reported_requests > 0:
+        return "pass", None
+    if allow_missing:
+        return "warn", ("WARNING: no usage block in any response; token counts and throughputs "
+                        "are zero-filled. Continuing because --allow-missing-usage was passed.")
+    return "abort", ("ABORT: no response carried a usage block, so every token count and "
+                     "throughput in this run would be 0 rather than measured. The server must "
+                     "honour stream_options.include_usage. Pass --allow-missing-usage to record "
+                     "the run anyway (latency metrics stay valid; token metrics do not).")
+
+
+def transient_gate(num_requests: int, concurrency: int) -> tuple[str, Optional[str]]:
+    """Warn when a closed-loop run has under 4 requests per concurrency slot.
+
+    A closed-loop run is one synchronized wave of `concurrency` requests, then
+    backfill as each completes, then a drain to zero. Settling takes several
+    generations of turnover (one generation == `concurrency` completions).
+    Below ~4 the run is all startup convoy and drain, and -- importantly --
+    discarding cannot fix it, because there is no settled middle left to keep.
+    """
+    if concurrency <= 1 or num_requests <= 0:
+        return "pass", None
+    per_slot = num_requests / concurrency
+    if per_slot >= 4:
+        return "pass", None
+    return "warn", "\n".join([
+        f"WARNING: only {per_slot:.1f} requests per concurrency slot "
+        f"({num_requests} requests at concurrency {concurrency}).",
+        "         The run is dominated by the startup wave and the drain tail, with no",
+        "         steady-state middle. --discard-first cannot recover it; raise --num-requests",
+        f"         to at least {concurrency * 8} for a settled measurement.",
+    ])
+
+
+def first_error(results) -> str:
+    """First recorded error text, for abort messages that name a cause."""
+    for r in results:
+        if r is not None and not r.success and r.error:
+            return str(r.error)
+    return "no error text recorded"
+
+
 def print_multi_turn_summary(turn_summaries: list, overall: BenchmarkSummary) -> None:
     """Print per-turn metrics table for multi-turn benchmarks."""
     print_summary(overall)

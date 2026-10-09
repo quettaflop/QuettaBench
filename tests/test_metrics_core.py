@@ -1,13 +1,25 @@
 """Unit tests for quettabench.metrics.core: percentile methods, the serving
-summary, SLA verdict and burst window.
+summary, SLA verdict, burst window and run gates.
 
 Percentile expectations are the table in tests/golden/REPORT.md (STOP
 finding, item 4), one column per method.
 """
 
+import types
 import unittest
 
-from quettabench.metrics.core import burst_recovery, pcts, percentile, sla_verdict, summarize_serve
+from quettabench.metrics.core import (
+    RequestResult,
+    burst_recovery,
+    first_error,
+    pcts,
+    percentile,
+    sla_verdict,
+    success_rate_gate,
+    summarize_serve,
+    transient_gate,
+    usage_gate,
+)
 
 SEVEN = [3.0, 9.0, 1.0, 7.0, 5.0, 11.0, 13.0]  # unsorted on purpose
 TIES = [1.0, 2.0, 2.0, 2.0, 3.0]
@@ -122,6 +134,47 @@ class BurstRecoveryTest(unittest.TestCase):
     def test_no_records_or_no_sla(self):
         self.assertEqual(burst_recovery([], 1000.0), (None, None))
         self.assertEqual(burst_recovery([{"arrival_s": 0.0, "ttft_ms": 1.0}], None), (None, None))
+
+
+def _summary(n, ok, usage, kinds=None):
+    return types.SimpleNamespace(num_requests=n, successful_requests=ok,
+                                 usage_reported_requests=usage, error_kinds=kinds or {})
+
+
+class GateTest(unittest.TestCase):
+    def test_success_rate(self):
+        self.assertEqual(success_rate_gate(_summary(0, 0, 0), 0.9),
+                         ("abort", "ABORT: No requests completed. Minimum success rate: 90%"))
+        verdict, msg = success_rate_gate(_summary(10, 8, 8, {"timeout": 1, "http_error": 1}), 0.9)
+        self.assertEqual(verdict, "abort")
+        self.assertEqual(msg, "ABORT: Success rate 80.0% below minimum 90% (8/10); "
+                              "failures: http_error=1, timeout=1")
+        self.assertEqual(success_rate_gate(_summary(10, 9, 9), 0.9), ("pass", None))
+
+    def test_usage(self):
+        self.assertEqual(usage_gate(_summary(10, 10, 0), False)[0], "abort")
+        verdict, msg = usage_gate(_summary(10, 10, 0), True)
+        self.assertEqual(verdict, "warn")
+        self.assertIn("--allow-missing-usage was passed", msg)
+        self.assertEqual(usage_gate(_summary(10, 10, 3), False), ("pass", None))
+        self.assertEqual(usage_gate(_summary(10, 0, 0), False), ("pass", None))  # nothing succeeded
+
+    def test_transient(self):
+        verdict, msg = transient_gate(10, 4)
+        self.assertEqual(verdict, "warn")
+        lines = msg.split("\n")
+        self.assertEqual(len(lines), 4)
+        self.assertEqual(lines[0], "WARNING: only 2.5 requests per concurrency slot "
+                                   "(10 requests at concurrency 4).")
+        self.assertEqual(lines[3], "         to at least 32 for a settled measurement.")
+        for args in ((16, 4), (3, 1), (0, 8)):
+            self.assertEqual(transient_gate(*args), ("pass", None))
+
+    def test_first_error(self):
+        rs = [None, RequestResult(success=True), RequestResult(success=False),
+              RequestResult(success=False, error=ValueError("x"))]
+        self.assertEqual(first_error(rs), "x")
+        self.assertEqual(first_error(iter([RequestResult(success=True)])), "no error text recorded")
 
 
 if __name__ == "__main__":

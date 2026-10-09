@@ -31,8 +31,12 @@ from ..metrics.core import (
     aggregate_per_turn,
     annotate_multi_turn_cache_estimate,
     annotate_request_observability,
+    first_error,
     print_summary,
     print_multi_turn_summary,
+    success_rate_gate,
+    transient_gate,
+    usage_gate,
 )
 from ..engines.server_control import PrefixCacheResetError, reset_prefix_cache
 from ..workloads.profiles import get_profile
@@ -165,29 +169,6 @@ async def _warmup_with_profile(
         if not isinstance(r, BaseException) and r is not None and r.success
     )
     return ok, len(results)
-
-
-def _warn_if_transient_dominated(num_requests: int, concurrency: int) -> None:
-    """Warn when the run is too short to contain a steady-state regime.
-
-    A closed-loop run is one synchronized wave of `concurrency` requests, then
-    backfill as each completes, then a drain to zero. Settling takes several
-    generations of turnover (one generation == `concurrency` completions).
-    Below ~4 the run is all startup convoy and drain, and -- importantly --
-    discarding cannot fix it, because there is no settled middle left to keep.
-    """
-    if concurrency <= 1 or num_requests <= 0:
-        return
-    per_slot = num_requests / concurrency
-    if per_slot >= 4:
-        return
-    print(f"WARNING: only {per_slot:.1f} requests per concurrency slot "
-          f"({num_requests} requests at concurrency {concurrency}).")
-    print(f"         The run is dominated by the startup wave and the drain tail, "
-          f"with no")
-    print(f"         steady-state middle. --discard-first cannot recover it; raise "
-          f"--num-requests")
-    print(f"         to at least {concurrency * 8} for a settled measurement.")
 
 
 def make_trace_request_id(
@@ -369,14 +350,6 @@ async def run_benchmark(
 
     benchmark_duration = time.perf_counter() - benchmark_start
     return results, benchmark_duration
-
-
-def _first_error(results) -> str:
-    """First recorded error text, for abort messages that name a cause."""
-    for r in results:
-        if r is not None and not r.success and r.error:
-            return str(r.error)
-    return "no error text recorded"
 
 
 async def run_multi_turn_benchmark(
@@ -679,7 +652,7 @@ async def run_multi_turn_benchmark(
             done = [r for v in results_by_turn.values() for r in v if r is not None]
             if done and not any(r.success for r in done):
                 print(f"ABORT: all {len(done)} requests failed. First error: "
-                      f"{_first_error(done)}")
+                      f"{first_error(done)}")
                 sys.exit(1)
         elif turn_pacing == "per-session":
             index_of: dict[tuple[int, int], int] = {}
@@ -730,7 +703,7 @@ async def run_multi_turn_benchmark(
                      if r is not None and r.success)
             if done and ok == 0:
                 print(f"ABORT: All {done} requests failed. First error: "
-                      f"{_first_error(r for v in results_by_turn.values() for r in v)}")
+                      f"{first_error(r for v in results_by_turn.values() for r in v)}")
                 sys.exit(1)
         else:
             for turn_idx in range(max_turns):
@@ -770,7 +743,7 @@ async def run_multi_turn_benchmark(
                     print(
                         f"ABORT: All {len(completed)} requests in turn "
                         f"{turn_idx + 1} failed. First error: "
-                        f"{_first_error(r for _, _, r in completed)}"
+                        f"{first_error(r for _, _, r in completed)}"
                     )
                     sys.exit(1)
 
@@ -790,16 +763,12 @@ async def run_multi_turn_benchmark(
     return all_results, results_by_turn, benchmark_duration
 
 
-def _check_success_rate(summary, min_rate: float):
-    """Exit with error if success rate is below the minimum threshold."""
-    if summary.num_requests == 0:
-        print(f"ABORT: No requests completed. Minimum success rate: {min_rate:.0%}")
-        sys.exit(1)
-    rate = summary.successful_requests / summary.num_requests
-    if rate < min_rate:
-        kinds = ", ".join(f"{k}={v}" for k, v in sorted(summary.error_kinds.items()))
-        print(f"ABORT: Success rate {rate:.1%} below minimum {min_rate:.0%} "
-              f"({summary.successful_requests}/{summary.num_requests}); failures: {kinds}")
+def _enforce(gate) -> None:
+    """Print a metrics.core gate's message; exit 1 when its verdict is abort."""
+    verdict, message = gate
+    if message:
+        print(message)
+    if verdict == "abort":
         sys.exit(1)
 
 
@@ -815,26 +784,6 @@ def _run(coro):
         coro.close()
         print(f"ABORT: prefix cache reset failed: {e}")
         sys.exit(1)
-
-
-def _check_usage_reported(summary, allow_missing: bool):
-    """Exit if no response carried a usage block.
-
-    Without usage, input_tokens/output_tokens stay 0 for every request, so the
-    summary records 0 tok/s and 0 total tokens while still looking like a valid
-    run. That silently poisons any downstream ISL/OSL or throughput comparison.
-    """
-    if summary.successful_requests == 0 or summary.usage_reported_requests > 0:
-        return
-    if allow_missing:
-        print("WARNING: no usage block in any response; token counts and throughputs "
-              "are zero-filled. Continuing because --allow-missing-usage was passed.")
-        return
-    print("ABORT: no response carried a usage block, so every token count and "
-          "throughput in this run would be 0 rather than measured. The server must "
-          "honour stream_options.include_usage. Pass --allow-missing-usage to record "
-          "the run anyway (latency metrics stay valid; token metrics do not).")
-    sys.exit(1)
 
 
 def _load_source_session_ids(path: str | None) -> list[str] | None:
@@ -1442,8 +1391,8 @@ if __name__ == "__main__":
 
         turn_summaries = aggregate_per_turn(results_by_turn)
         print_multi_turn_summary(turn_summaries, summary)
-        _check_success_rate(summary, args.min_success_rate)
-        _check_usage_reported(summary, args.allow_missing_usage)
+        _enforce(success_rate_gate(summary, args.min_success_rate))
+        _enforce(usage_gate(summary, args.allow_missing_usage))
         save_results(summary, all_results, args.output, config)
 
         # Also save per-turn breakdown
@@ -1507,7 +1456,7 @@ if __name__ == "__main__":
         )
 
         print_summary(summary)
-        _warn_if_transient_dominated(args.num_requests, args.concurrency)
-        _check_success_rate(summary, args.min_success_rate)
-        _check_usage_reported(summary, args.allow_missing_usage)
+        _enforce(transient_gate(args.num_requests, args.concurrency))
+        _enforce(success_rate_gate(summary, args.min_success_rate))
+        _enforce(usage_gate(summary, args.allow_missing_usage))
         save_results(summary, results, args.output, config)
