@@ -28,7 +28,7 @@ per-byte rate and a launch floor, and those are what this probe fits.
 Run (all 8 GPUs of the node, over NVLink):
 
     python3 -m torch.distributed.run --nproc_per_node=8 \
-        profiling/probes/reparallel_probe.py --gpu-label H200 --out-dir data/kernel_data
+        -m quettabench.probes.reparallel --gpu-label H200 --out <dir>
 
 Writes cuda_event/reparallel/<gpu>_reshard.csv (upsert on the key columns) and prints,
 per (tp_from, tp_to), the floor + per-byte fit to paste into a device YAML's
@@ -44,6 +44,7 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.distributed as dist
+from quettabench.probes.base import add_output_args, out_root
 
 KEY = ("gpu", "world", "tp_from", "tp_to", "total_weight_gb")
 COLS = KEY + ("k", "bytes_moved_per_gpu", "comm_ms", "eff_gbps", "pattern",
@@ -106,8 +107,7 @@ def _groups_of(k: int, world: int) -> list[list[int]]:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--gpu-label", required=True)
-    ap.add_argument("--out-dir", required=True, help="kernel_data root")
+    add_output_args(ap)
     ap.add_argument("--switches", nargs="+",
                     default=["4:2", "2:1", "8:4", "4:1", "8:2", "2:4", "4:8"],
                     help="tp_from:tp_to pairs (down = reshard, up = discard floor)")
@@ -175,7 +175,7 @@ def main() -> None:
                         "pp": "reshard_pp", "kv": "reshard_kv",
                         "plan": "reshard_plan", "xnode": "reshard_xnode"}[a.mode]
         stem = a.out_name or f"{a.gpu_label}_{default_stem}"
-        path = Path(a.out_dir) / "cuda_event" / "reparallel" / f"{stem}.csv"
+        path = out_root(a) / "cuda_event" / "reparallel" / f"{stem}.csv"
         _upsert(path, out_rows)
         print(f"\nwrote {path}")
         print(f"\nfit comm_ms = floor + bytes/bw   (mode={a.mode}, per GPU)")

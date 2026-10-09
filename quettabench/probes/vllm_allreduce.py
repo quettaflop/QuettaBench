@@ -10,14 +10,15 @@ zero-latency analytic ring (Mooncake GT, 2026-08-25). This probe measures the pa
 vLLM actually takes and UPSERTS the all_reduce rows of ncu/collectives/{gpu}_tp{N}.csv
 (other ops keep their NCCL rows -- vLLM uses NCCL for those).
 
-  CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 vllm_allreduce_probe.py \
-      --gpu-label H200 --out-dir <kernel_data>
+  CUDA_VISIBLE_DEVICES=0,1 python3 -m torch.distributed.run --nproc_per_node=2 -m quettabench.probes.vllm_allreduce \
+      --gpu-label H200 --out <dir>
 """
 from __future__ import annotations
 import argparse, csv, os
 from pathlib import Path
 import torch
 import torch.distributed as dist
+from quettabench.probes.base import add_output_args, out_root
 
 _ITERS, _WARMUP = 50, 10
 # Full logical buffer sizes (bytes): decode payloads (batch x hidden x 2B, a few KB..MB)
@@ -40,8 +41,7 @@ def _time(call, iters=_ITERS, warmup=_WARMUP) -> float:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--gpu-label", required=True)
-    ap.add_argument("--out-dir", required=True)
+    add_output_args(ap)
     ap.add_argument("--disable-custom-allreduce", action="store_true",
                     help="mirror a server launched with --disable-custom-all-reduce "
                          "(vLLM then routes TP all-reduce through pynccl)")
@@ -76,7 +76,7 @@ def main():
         if rank == 0:
             print(f"  {nbytes:>9d} B: vllm path {us_vllm:8.2f} us   plain nccl {us_nccl:8.2f} us", flush=True)
     if rank == 0:
-        root = Path(a.out_dir); out = root / "ncu" / "collectives" / f"{a.gpu_label}_tp{world}.csv"
+        root = out_root(a); out = root / "ncu" / "collectives" / f"{a.gpu_label}_tp{world}.csv"
         out.parent.mkdir(parents=True, exist_ok=True)
         kept = []
         if out.exists():

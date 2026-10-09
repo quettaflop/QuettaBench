@@ -12,8 +12,8 @@ is real). The delta-rule core is the GDN analog of the flash-attention grid;
 projections are GEMMs (gemm table) and conv/gating are elementwise. Emits per-call
 median us and us x n_linear (all-GDN-layers convention).
 
-  python gdn_grid_probe.py --hv 32 --dk 128 --dv 128 --n-linear 24 --tag gdn-9b \
-      --mode smoke --out-dir <dir>
+  python3 -m quettabench.probes.gdn_grid --hv 32 --dk 128 --dv 128 --n-linear 24 --tag gdn-9b \
+      --mode smoke --out <dir>
 """
 from __future__ import annotations
 import argparse, csv, os, statistics as st, traceback
@@ -23,9 +23,8 @@ import triton
 from vllm.model_executor.layers.fla.ops import (
     chunk_gated_delta_rule, fused_recurrent_gated_delta_rule,
 )
-import sys
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _ncu import ncu_op_us
+from quettabench.probes.base import add_output_args, out_root
+from quettabench.probes._ncu import ncu_op_us
 
 # chunk_gated_delta_rule's solve_tril merge kernel autotunes on a fresh host (no
 # Triton disk cache) and needs a scratch allocator; vLLM sets one at model init, a
@@ -92,9 +91,8 @@ def main():
     ap.add_argument("--dv", type=int, default=128)    # linear_value_head_dim
     ap.add_argument("--n-linear", type=int, default=24)
     ap.add_argument("--mode", choices=["smoke", "full"], default="smoke")
-    ap.add_argument("--gpu-label", required=True, help="device label matching device_spec YAML name, e.g. A100/H100")
+    add_output_args(ap)
     ap.add_argument("--geometry-tag", default="9b", help="GDN head geometry tag, e.g. 9b (H_v=32) / 27b (H_v=48)")
-    ap.add_argument("--out-dir", default=".")
     ap.add_argument("--max-mem-gb", type=float, default=30.0)
     ap.add_argument("--ncu", action="store_true", help="NCU per-kernel timing (the standard); curated grid")
     ap.add_argument("--ncu-bin", default=os.environ.get("NCU_BIN", "ncu"))
@@ -102,7 +100,7 @@ def main():
     dev = torch.device("cuda"); dt = torch.bfloat16
     H, K, V = a.hv, a.dk, a.dv
     scale = 1.0 / (K ** 0.5)
-    out = Path(a.out_dir); out.mkdir(parents=True, exist_ok=True)
+    out = out_root(a); out.mkdir(parents=True, exist_ok=True)
     # Decode is CUDA-graphed in serving -> NCU (--ncu) is faithful; prefill is eager
     # -> always cuda_event (the multi-kernel dispatch floor is real), never NCU.
     batch_ax = BATCH_NCU if a.ncu else (BATCH_SMOKE if a.mode == "smoke" else BATCH_FULL)

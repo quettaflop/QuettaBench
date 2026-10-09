@@ -27,6 +27,12 @@ ALLOWLIST = {
     "quettabench/crossval/table.py",
     # removed in Phase 3: agreement becomes a report row (copies env for a subprocess)
     "quettabench/crossval/greedy_agreement.py",
+    # kernel probes: torchrun's RANK/WORLD_SIZE/LOCAL_RANK are the launcher protocol, NCU_BIN names the profiler binary
+    "quettabench/probes/flash_attn.py",
+    "quettabench/probes/gdn.py",
+    "quettabench/probes/gemm.py",
+    "quettabench/probes/reparallel.py",
+    "quettabench/probes/vllm_allreduce.py",
     # removed in Phase 3 exit: legacy/ is deleted
     "legacy/trace_serve.py",
 }

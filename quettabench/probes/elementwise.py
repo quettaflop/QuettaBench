@@ -5,13 +5,14 @@ bytes = elements * dtype_bytes * (reads + writes). For each kernel we CUDA-event
 time a torch equivalent across element counts and least-squares fit (floor_us,
 eff_bw_gb_s). eff_bw is *effective* (may exceed peak HBM: cache/fusion).
 
-  CUDA_VISIBLE_DEVICES=0 python elementwise_probe.py --gpu-label A100 --out-dir <dir>
+  CUDA_VISIBLE_DEVICES=0 python3 -m quettabench.probes.elementwise --gpu-label A100 --out <dir>
 """
 from __future__ import annotations
 import argparse, json, statistics as st
 from pathlib import Path
 import torch
 import torch.nn.functional as F
+from quettabench.probes.base import add_output_args, out_root
 
 # (reads, writes) per kernel — MUST match kernel_composed/elementwise.py::_IO
 IO = {"rmsnorm": (1, 1), "silu_mul": (2, 1), "rotary_emb": (1, 1), "residual_add": (2, 1)}
@@ -118,8 +119,7 @@ def fit(bytes_list, us_list) -> tuple[float, float]:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--gpu-label", required=True)
-    ap.add_argument("--out-dir", default=".")
+    add_output_args(ap)
     ap.add_argument("--max-mem-gb", type=float, default=20.0)
     ap.add_argument("--graph", action="store_true",
                     help="CUDA-graph-replay timing (graphed-decode-faithful, no NCU "
@@ -133,7 +133,7 @@ def main():
     a = ap.parse_args()
     dev = torch.device("cuda"); dt = torch.bfloat16
     if a.graph:
-        from _graph import graph_median_us  # noqa: PLC0415
+        from quettabench.probes._graph import graph_median_us  # noqa: PLC0415
     tag = ("/graph" if a.graph else "") + ("/vllm" if a.vllm else "")
     print(f"[elem{tag}] {torch.cuda.get_device_name(0)}", flush=True)
     io_map = VLLM_IO if a.vllm else IO
@@ -152,7 +152,7 @@ def main():
     # ncu/ = graphed-decode-faithful (NCU or --graph replay, both dispatch-free);
     # cuda_event/ = eager incl. dispatch. The loader prefers ncu/ and falls back.
     method = "ncu" if a.graph else "cuda_event"
-    out = Path(a.out_dir) / method / "elementwise"; out.mkdir(parents=True, exist_ok=True)
+    out = out_root(a) / method / "elementwise"; out.mkdir(parents=True, exist_ok=True)
     path = out / f"{a.gpu_label}.json"
     path.write_text(json.dumps(result, indent=2))
     print(f"[elem] wrote {path}", flush=True)

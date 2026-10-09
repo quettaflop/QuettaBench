@@ -12,15 +12,15 @@ attention FLOPs, so pricing it off the roofline left a ~20% under-estimate at
 Eager cuda_event timing (prefill runs eager in vLLM). Rows are PER LAYER, one
 call; the loader multiplies by the model's full-attention layer count.
 
-  CUDA_VISIBLE_DEVICES=7 python cross_attn_probe.py --gpu-label H200 \
-      --n-heads 16 --n-kv-heads 2 --head-dim 128 --out-dir <kernel_data>
+  CUDA_VISIBLE_DEVICES=7 python3 -m quettabench.probes.cross_attn --gpu-label H200 \
+      --n-heads 16 --n-kv-heads 2 --head-dim 128 --out <dir>
 """
 from __future__ import annotations
 import argparse, csv, statistics as st
-import os
 from pathlib import Path
 import torch
 from vllm.vllm_flash_attn.flash_attn_interface import flash_attn_varlen_func
+from quettabench.probes.base import add_output_args, out_root
 
 Q_AXIS = [512, 1024, 2048, 4096, 8192]
 CTX_AXIS = [0, 1024, 2048, 4096, 8192, 12288, 16384, 24576, 32768]
@@ -39,33 +39,15 @@ def time_call(fn) -> float:
     return st.median(ts)
 
 
-def _default_out_dir() -> str:
-    """Where measured grids are written: the NFS data root, else the in-repo tree.
-
-    Read straight from the environment rather than importing ``engine.paths`` so the
-    probe stays standalone -- it runs under the vLLM interpreter, invoked by path,
-    where the repo is not necessarily importable. Mirrors engine/paths.py: generated
-    data belongs on the shared disk, not in the git working tree.
-    """
-    for env in ("KERNEL_DATA", "QUETTASIM_DATA"):
-        raw = (os.environ.get(env) or "").strip()
-        if raw:
-            p = Path(raw).expanduser()
-            # QUETTASIM_DATA is the data ROOT; the probes write under kernel_data/.
-            return str(p if env == "KERNEL_DATA" else p / "kernel_data")
-    return str(Path(__file__).resolve().parents[2] / "data" / "kernel_data")
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--gpu-label", required=True)
+    add_output_args(ap)
     ap.add_argument("--n-heads", type=int, required=True)
     ap.add_argument("--n-kv-heads", type=int, required=True)
     ap.add_argument("--head-dim", type=int, default=128)
     ap.add_argument("--fa-version", type=int, default=0, help="0=auto (FA3 on sm90+, else FA2)")
-    ap.add_argument("--out-dir", default=_default_out_dir(),
-                    help="kernel_data root to write into; defaults to $KERNEL_DATA / "
-                         "$QUETTASIM_DATA/kernel_data (the NFS disk), else the in-repo data/")
     ap.add_argument("--paged", action="store_true",
                     help="paged KV + block_table + seqused_k (vLLM's real call; enables "
                          "the kernel's split-KV heuristics at q << kv)")
@@ -112,7 +94,7 @@ def main():
                          "fa_version": f"vllm-fa{a.fa_version}", "dtype": "bfloat16",
                          "latency_us": round(us, 3)})
             print(f"  q={ql:5d} resident={ctx:6d} kv={kv:6d}: {us:8.1f} us/layer", flush=True)
-    out = Path(a.out_dir) / "cuda_event" / "fa3_cross"; out.mkdir(parents=True, exist_ok=True)
+    out = out_root(a) / "cuda_event" / "fa3_cross"; out.mkdir(parents=True, exist_ok=True)
     path = out / f"{a.gpu_label}.csv"
     geom = (str(a.n_heads), str(a.n_kv_heads), str(a.head_dim))
     kept = []

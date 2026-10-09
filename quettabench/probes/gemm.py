@@ -26,14 +26,15 @@ where method is ncu/ or cuda_event/. M is the token count; (N, K) are
 (out_features, in_features) of each projection (qkv / o / gate_up / down /
 lm_head / router). The table interpolates off-grid.
 
-  CUDA_VISIBLE_DEVICES=0 python gemm_probe.py --gpu-label A100 --out-dir <dir>
-  NCU_BIN=/opt/nvidia/nsight-compute/2024.3.2/ncu python gemm_probe.py --gpu-label A100 --ncu ...
+  CUDA_VISIBLE_DEVICES=0 python3 -m quettabench.probes.gemm --gpu-label A100 --out <dir>
+  NCU_BIN=/opt/nvidia/nsight-compute/2024.3.2/ncu python3 -m quettabench.probes.gemm --gpu-label A100 --ncu ...
 """
 from __future__ import annotations
 import argparse
 import json, csv, io, os, statistics as st, subprocess, sys
 from pathlib import Path
 import torch
+from quettabench.probes.base import add_output_args, out_root
 
 M_AXIS = [1, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
 # out/in feature dims covering Llama-3.1-8B/70B, Qwen2.5-72B, Qwen3.5-9B/27B
@@ -139,7 +140,7 @@ class Fp8Op:
 
     def _time(self, run, graph: bool) -> float:
         if graph:
-            from _graph import graph_time_us  # noqa: PLC0415
+            from quettabench.probes._graph import graph_time_us  # noqa: PLC0415
             return graph_time_us(run)
         for _ in range(WARMUP):
             run()
@@ -199,7 +200,7 @@ def time_matmul(m, n, k, dev, dt, graph: bool = False) -> float:
     a = torch.randn(m, k, device=dev, dtype=dt)
     b = torch.randn(k, n, device=dev, dtype=dt)
     if graph:
-        from _graph import graph_time_us  # noqa: PLC0415
+        from quettabench.probes._graph import graph_time_us  # noqa: PLC0415
         us = graph_time_us(lambda: torch.matmul(a, b))
         del a, b; torch.cuda.empty_cache()
         return us
@@ -215,29 +216,11 @@ def time_matmul(m, n, k, dev, dt, graph: bool = False) -> float:
     return min(ts)  # min-reduce, matching the table
 
 
-def _default_out_dir() -> str:
-    """Where measured grids are written: the NFS data root, else the in-repo tree.
-
-    Read straight from the environment rather than importing ``engine.paths`` so the
-    probe stays standalone -- it runs under the vLLM interpreter, invoked by path,
-    where the repo is not necessarily importable. Mirrors engine/paths.py: generated
-    data belongs on the shared disk, not in the git working tree.
-    """
-    for env in ("KERNEL_DATA", "QUETTASIM_DATA"):
-        raw = (os.environ.get(env) or "").strip()
-        if raw:
-            p = Path(raw).expanduser()
-            # QUETTASIM_DATA is the data ROOT; the probes write under kernel_data/.
-            return str(p if env == "KERNEL_DATA" else p / "kernel_data")
-    return str(Path(__file__).resolve().parents[2] / "data" / "kernel_data")
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--gpu-label", required=True)
-    ap.add_argument("--out-dir", default=_default_out_dir(),
-                    help="kernel_data root to write into; defaults to $KERNEL_DATA / "
-                         "$QUETTASIM_DATA/kernel_data (the NFS disk), else the in-repo data/")
+    add_output_args(ap)
     ap.add_argument("--wide", action="store_true", help="emit {method}/gemm_wide/{gpu}.csv (wide MoE shapes) instead of {method}/gemm/{gpu}.csv")
     ap.add_argument("--dims", type=int, nargs="*", default=None, help="override the (N,K) dim set")
     ap.add_argument("--max-mem-gb", type=float, default=30.0)
@@ -265,7 +248,7 @@ def main():
                          "(duplicate (M,N,K) rows collapse by min on load)")
     a = ap.parse_args()
     dev = torch.device("cuda"); dt = torch.bfloat16
-    out = Path(a.out_dir); out.mkdir(parents=True, exist_ok=True)
+    out = out_root(a); out.mkdir(parents=True, exist_ok=True)
     if a.dtype == "fp8" and a.ncu:
         raise SystemExit("--dtype fp8 has no --ncu path (the op is a Python-level "
                          "dispatch, not one kernel); use --graph for dispatch-free timing.")

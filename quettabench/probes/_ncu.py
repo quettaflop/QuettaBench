@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Shared NCU timing for the kernel probes (the STANDARD; matches gemm_probe --ncu).
+"""Shared NCU timing for the kernel probes (the STANDARD; matches gemm --ncu).
 
 Runs a self-contained python snippet under NCU, reads per-kernel
 `gpu__time_duration.sum`, and returns the min-over-invocations SUM of the op's

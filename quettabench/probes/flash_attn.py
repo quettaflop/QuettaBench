@@ -4,7 +4,7 @@ vLLM's production kernel (`vllm_flash_attn.flash_attn_varlen_func`, fa_version=3
 on Hopper). Emits the kernel_floor loader schemas with the grids' ALL-LAYERS
 convention (per-call median x --layers).
 
-  python fa_grid_probe.py --n-heads 16 --n-kv-heads 4 --tag fa3-tp2 --out-dir <dir>
+  python3 -m quettabench.probes.fa_grid --n-heads 16 --n-kv-heads 4 --tag fa3-tp2 --out <dir>
 
 The unsharded config (32/8) doubles as cross-validation against the NCU grid.
 """
@@ -18,6 +18,7 @@ from pathlib import Path
 
 import torch
 from vllm.vllm_flash_attn.flash_attn_interface import flash_attn_varlen_func
+from quettabench.probes.base import add_output_args, out_root
 
 KV_AXIS = [128, 256, 512, 1024, 2048, 4096, 8192, 16384]
 BATCH_AXIS = [1, 2, 4, 8, 16, 32, 40, 64, 80, 120, 160, 200, 256, 320]
@@ -36,7 +37,7 @@ def _ncu_us(inner: str, ncu_bin: str) -> float | None:
     at module scope made the whole probe unrunnable (including the default cuda_event
     and --graph paths) once the helper stopped shipping alongside this file.
     """
-    from _ncu import ncu_op_us  # noqa: PLC0415
+    from quettabench.probes._ncu import ncu_op_us  # noqa: PLC0415
     return ncu_op_us(inner, ncu_bin, NCU_REPS)
 
 
@@ -69,21 +70,6 @@ def time_call(fn) -> float:
     return st.median(times)
 
 
-def _default_out_dir() -> str:
-    """Where measured grids are written: the NFS data root, else the in-repo tree.
-
-    Read straight from the environment rather than importing ``engine.paths`` so the
-    probe stays standalone -- it runs under the vLLM interpreter, invoked by path,
-    where the repo is not necessarily importable. Mirrors engine/paths.py: generated
-    data belongs on the shared disk, not in the git working tree.
-    """
-    for env in ("KERNEL_DATA", "QUETTASIM_DATA"):
-        raw = (os.environ.get(env) or "").strip()
-        if raw:
-            p = Path(raw).expanduser()
-            # QUETTASIM_DATA is the data ROOT; the probes write under kernel_data/.
-            return str(p if env == "KERNEL_DATA" else p / "kernel_data")
-    return str(Path(__file__).resolve().parents[2] / "data" / "kernel_data")
 
 
 def main():
@@ -93,11 +79,8 @@ def main():
     ap.add_argument("--head-dim", type=int, default=128)
     ap.add_argument("--layers", type=int, default=32)
     ap.add_argument("--fa-version", type=int, default=0, help="0=auto (FA3 on Hopper sm90+, else FA2)")
-    ap.add_argument("--gpu-label", required=True, help="device label matching device_spec YAML name, e.g. A100/H100/RTX3090")
+    add_output_args(ap)
     ap.add_argument("--tag", required=True, help="grid tag, e.g. tp1/tp2/tp4 (head config)")
-    ap.add_argument("--out-dir", default=_default_out_dir(),
-                    help="kernel_data root to write into; defaults to $KERNEL_DATA / "
-                         "$QUETTASIM_DATA/kernel_data (the NFS disk), else the in-repo data/")
     ap.add_argument("--max-mem-gb", type=float, default=40.0)
     ap.add_argument("--kv-axis", default=None,
                     help="comma-separated decode kv_len axis override (default tops out "
@@ -116,7 +99,7 @@ def main():
 
     dev = torch.device("cuda")
     dt = torch.bfloat16
-    out = Path(a.out_dir)
+    out = out_root(a)
     out.mkdir(parents=True, exist_ok=True)
 
     kv_axis = ([int(x) for x in a.kv_axis.split(",")] if a.kv_axis
@@ -143,7 +126,7 @@ def main():
                     q, k, v, 1, cu_q, kv, cu_seqlens_k=cu_k, causal=True,
                     fa_version=a.fa_version)
                 if a.graph:
-                    from _graph import graph_median_us  # noqa: PLC0415
+                    from quettabench.probes._graph import graph_median_us  # noqa: PLC0415
                     us = graph_median_us(fn)
                 else:
                     us = time_call(fn)

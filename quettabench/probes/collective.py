@@ -27,7 +27,7 @@ are tp-invariant by construction, which is the limitation the grid removes.
 
 Launch with torchrun across the tp ranks (run_probe.sh does this when NPROC>1):
 
-  torchrun --nproc_per_node=2 collective_probe.py --gpu-label A100 --hidden 4096 --layers 32
+  python3 -m torch.distributed.run --nproc_per_node=2 -m quettabench.probes.collective --gpu-label A100 --hidden 4096 --layers 32
 
 Run it once per world size you care about (2, 4, 8): each writes its own
 `_tp{world}.csv`, and the table interpolates across world only for sizes you did
@@ -35,14 +35,11 @@ not measure. Rank 0 writes the CSV and prints the YAML block; like
 derive_device_yaml.py it does NOT edit the YAML.
 """
 from __future__ import annotations
-import argparse, csv, os, statistics as st
-from pathlib import Path
+import argparse, csv, statistics as st
 
 import torch
 import torch.distributed as dist
-import sys
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _paths import kernel_data_root
+from quettabench.probes.base import add_output_args, out_root
 
 _DTYPE = torch.bfloat16
 _ITERS, _WARMUP = 50, 10
@@ -88,12 +85,9 @@ def _time_op(op: str, n_elems: int, world: int, iters: int, warmup: int) -> floa
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--gpu-label", required=True)
+    add_output_args(ap)
     ap.add_argument("--hidden", type=int, required=True, help="model hidden_size (for prefill rate)")
     ap.add_argument("--layers", type=int, required=True, help="model n_layers (for prefill rate)")
-    ap.add_argument("--out-dir", default=None,
-                    help="kernel_data root; the grid lands in <out-dir>/ncu/allreduce/ "
-                         "(default: $KDATA, else engine/data/kernel_data). '-' skips the write.")
     ap.add_argument("--prefill-tokens", type=int, default=2048, help="chunk width for the per-token rate")
     ap.add_argument("--ops", default="all_reduce,all_gather,reduce_scatter,all_to_all",
                     help="collectives to sweep (comma-separated). all_reduce is required "
@@ -137,8 +131,8 @@ def main():
 
     if rank == 0:
         # ── Method B: the whole curve, as a grid ──────────────────────────────
-        if a.out_dir != "-":
-            root = Path(a.out_dir or os.environ.get("KDATA") or kernel_data_root())
+        if a.out_dir != "-":  # --out - prints without writing
+            root = out_root(a)
             out = root / "ncu" / "collectives" / f"{a.gpu_label}_tp{world}.csv"
             out.parent.mkdir(parents=True, exist_ok=True)
             with out.open("w", newline="") as f:

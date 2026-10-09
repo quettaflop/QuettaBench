@@ -18,23 +18,25 @@ import subprocess
 from pathlib import Path
 
 KERNEL_COMPOSED = Path(__file__).resolve().parents[1] / "kernel_composed"
-PROBES_DIR = KERNEL_COMPOSED / "probes"
+PROBES_DIR = Path(__file__).resolve().parents[2] / "quettabench" / "probes"
 RUN_PROBE = KERNEL_COMPOSED / "run_probe.sh"
 
 
 def argparse_flags(probe: Path) -> set[str]:
-    """Literal --flags the probe's add_argument calls define."""
+    """Literal --flags the probe's add_argument calls define, shared base.py flags included."""
     flags = set()
+    if probe.name != "base.py" and "add_output_args" in probe.read_text():
+        flags |= argparse_flags(PROBES_DIR / "base.py")
     for node in ast.walk(ast.parse(probe.read_text())):
         if (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
             and node.func.attr == "add_argument"
-            and node.args
-            and isinstance(node.args[0], ast.Constant)
-            and str(node.args[0].value).startswith("--")
         ):
-            flags.add(node.args[0].value)
+            flags.update(
+                arg.value for arg in node.args
+                if isinstance(arg, ast.Constant) and str(arg.value).startswith("--")
+            )
     return flags
 
 
@@ -79,6 +81,12 @@ def probe_invocations() -> list[tuple[str, set[str], bool]]:
     return out
 
 
+def probe_path(name: str) -> Path:
+    """A recipe's probe file: moved into the package, or still under kernel_composed/probes."""
+    moved = PROBES_DIR / name.replace("_probe.py", ".py")
+    return moved if moved.is_file() else KERNEL_COMPOSED / "probes" / name
+
+
 def test_every_probe_parses():
     probes = sorted(PROBES_DIR.glob("*.py"))
     assert probes, f"no probes found under {PROBES_DIR}"
@@ -90,8 +98,8 @@ def test_recipe_probes_exist_and_accept_their_flags():
     invocations = probe_invocations()
     assert invocations, "no probe invocations found in the justfile"
     for name, flags, via_run_probe in invocations:
-        probe = PROBES_DIR / name
-        assert probe.is_file(), f"justfile invokes {name} but probes/{name} is missing"
+        probe = probe_path(name)
+        assert probe.is_file(), f"justfile invokes {name} but {probe} is missing"
         defined = argparse_flags(probe)
         missing = sorted(flags - defined)
         assert not missing, f"{name} does not define recipe flags: {missing}"
@@ -114,10 +122,10 @@ def test_sibling_helper_imports_resolve():
             if (
                 isinstance(node, ast.ImportFrom)
                 and node.module
-                and node.module.startswith("_")
-                and not node.module.startswith("__")
+                and node.module.startswith("quettabench.probes.")
             ):
-                helper = PROBES_DIR / f"{node.module}.py"
+                module = node.module.rsplit(".", 1)[-1]
+                helper = PROBES_DIR / f"{module}.py"
                 assert helper.is_file(), f"{probe.name} imports {node.module}, no {helper.name}"
                 exported = defined_names(helper)
                 for alias in node.names:

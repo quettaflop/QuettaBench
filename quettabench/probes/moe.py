@@ -36,7 +36,7 @@ Routing weights are drawn from a real router GEMM + top-k, not synthesised, so t
 expert-row distribution (and therefore ``moe_align_block_size`` padding) is
 realistic rather than perfectly balanced.
 
-  CUDA_VISIBLE_DEVICES=0 python moe_probe.py --gpu-label H100 --out-dir <dir>
+  CUDA_VISIBLE_DEVICES=0 python3 -m quettabench.probes.moe --gpu-label H100 --out <dir>
   ... --geometries qwen3-30b-a3b,mixtral-8x7b --tp 1,2,4
 """
 from __future__ import annotations
@@ -45,10 +45,10 @@ import argparse
 import csv
 import json
 import statistics as st
-import os
 from pathlib import Path
 
 import torch
+from quettabench.probes.base import add_output_args, out_root
 
 # Per-expert geometry of every MoE model in engine/device_spec/models/.
 # (n_experts, top_k, intermediate_per_expert, hidden). `intermediate` is sharded
@@ -126,7 +126,7 @@ def _time(fn) -> float:
     """min-of-REPS CUDA-event time (us). MIN, not mean: it matches GemmTable's
     min-on-load reduce and the warm, back-to-back kernels of a real decode step."""
     if _GRAPH:
-        from _graph import graph_time_us  # noqa: PLC0415
+        from quettabench.probes._graph import graph_time_us  # noqa: PLC0415
         return graph_time_us(fn)
     for _ in range(WARMUP):
         fn()
@@ -292,30 +292,12 @@ def sweep_routing(dev, e_default=128, k_default=8):
     return out
 
 
-def _default_out_dir() -> str:
-    """Where measured grids are written: the NFS data root, else the in-repo tree.
-
-    Read straight from the environment rather than importing ``engine.paths`` so the
-    probe stays standalone -- it runs under the vLLM interpreter, invoked by path,
-    where the repo is not necessarily importable. Mirrors engine/paths.py: generated
-    data belongs on the shared disk, not in the git working tree.
-    """
-    for env in ("KERNEL_DATA", "QUETTASIM_DATA"):
-        raw = (os.environ.get(env) or "").strip()
-        if raw:
-            p = Path(raw).expanduser()
-            # QUETTASIM_DATA is the data ROOT; the probes write under kernel_data/.
-            return str(p if env == "KERNEL_DATA" else p / "kernel_data")
-    return str(Path(__file__).resolve().parents[2] / "data" / "kernel_data")
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--gpu-label", required=True)
-    ap.add_argument("--out-dir", default=_default_out_dir(),
-                    help="kernel_data root to write into; defaults to $KERNEL_DATA / "
-                         "$QUETTASIM_DATA/kernel_data (the NFS disk), else the in-repo data/")
+    add_output_args(ap)
     ap.add_argument("--geometries", default=",".join(GEOMETRIES),
                     help="comma-separated model keys to sweep")
     ap.add_argument("--geometry-spec", default=None,
@@ -394,7 +376,7 @@ def main() -> None:
     # misses -- but that is only faithful for EAGER execution. vLLM CUDA-graphs MoE
     # decode, so --graph (dispatch-free, ncu/-equivalent) is the decode-faithful
     # method; H200 GT showed the eager grid overprices graphed decode 2.3x.
-    dst = Path(a.out_dir) / ("ncu" if _GRAPH else "cuda_event") / "moe"
+    dst = out_root(a) / ("ncu" if _GRAPH else "cuda_event") / "moe"
     dst.mkdir(parents=True, exist_ok=True)
     path = dst / f"{a.gpu_label}{'' if a.dtype == 'bf16' else '_' + a.dtype}.csv"
     n_new = len(rows)
