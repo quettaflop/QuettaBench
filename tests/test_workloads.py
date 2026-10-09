@@ -9,6 +9,7 @@ from quettabench.workloads.arrival import (
     make_arrival_times, parse_arrival, poisson_arrivals, ramp_arrivals, rebase_arrivals)
 from quettabench.workloads.grid import GridTrace, clone_ids
 from quettabench.workloads.live import RealTrace
+from quettabench.workloads.sessions import SessionTrace, TurnPacing
 
 
 def write_jsonl(td, rows):
@@ -98,6 +99,22 @@ class GridTraceTest(unittest.TestCase):
         self.assertEqual(grid.workload_hash(), GridTrace(self.CELLS, self.STEPS, "synth", 4096).workload_hash())
         self.assertNotEqual(grid.workload_hash(),
                             GridTrace(self.CELLS, [10, 20, 41], "synth", 4096).workload_hash())
+
+
+class SessionTraceTest(unittest.TestCase):
+    def test_sessions_group_by_id_and_order_by_turn(self):
+        with tempfile.TemporaryDirectory() as td:
+            trace = SessionTrace.from_jsonl(write_jsonl(td, [
+                {"prompt_token_ids": [1], "session_id": "b", "turn": 1},
+                {"prompt_token_ids": [2], "session_id": "a", "turn": 0},
+                {"prompt_token_ids": [3], "session_id": "b", "turn": 0}]))
+        self.assertIsInstance(trace, SessionTrace)
+        self.assertEqual([[r.prompt_token_ids[0] for r in s] for s in trace.sessions()],
+                         [[3, 1], [2]])
+        self.assertEqual(trace.pacing, TurnPacing())
+        trace.pacing = TurnPacing(pacing="interleaved", tool_wait_ms=50.0)
+        self.assertEqual(trace.source_meta()["pacing"], "interleaved")
+        self.assertEqual(trace.source_meta()["sessions"], 2)
 
 
 if __name__ == "__main__":

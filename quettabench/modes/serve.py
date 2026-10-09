@@ -41,6 +41,12 @@ from ..metrics.core import (
 from ..engines.server_control import PrefixCacheResetError, reset_prefix_cache
 from ..workloads.profiles import get_profile
 from ..workloads.dataset import make_dataset
+from ..workloads.sessions import (
+    _load_source_session_ids,
+    _sleep_until_elapsed,
+    inter_turn_wait_s,
+    resolve_multi_turn_num_sessions,
+)
 from ..workloads.arrival import make_arrival_times, ARRIVAL_PATTERNS
 
 
@@ -59,35 +65,6 @@ TRACE_REQUEST_ID_PREFIX = "agenticbench"
 LOAD_MODES = ("closed-loop", "open-loop")
 OPEN_LOOP_ARRIVALS = ("poisson", "ramp")
 TURN_PACINGS = ("per-session", "interleaved")
-
-
-def inter_turn_wait_s(
-    request,
-    *,
-    tool_wait_ms: float = 0.0,
-    human_wait_ms: float = 0.0,
-    use_recorded_waits: bool = False,
-) -> float:
-    """Seconds to sleep after a turn before the next turn in the same session.
-
-    Defaults are zero (auto-mode: no human approval pause, ignore recorded
-    tool gaps). ``--use-recorded-waits`` adds ``tool_wait_after_ms`` and
-    ``human_wait_after_ms`` from the turn metadata when present.
-    """
-    recorded_tool = 0.0
-    recorded_human = 0.0
-    if use_recorded_waits and request is not None:
-        metadata = getattr(request, "metadata", None) or {}
-        recorded_tool = float(metadata.get("tool_wait_after_ms") or 0.0)
-        recorded_human = float(metadata.get("human_wait_after_ms") or 0.0)
-    total_ms = tool_wait_ms + human_wait_ms + recorded_tool + recorded_human
-    return max(0.0, total_ms / 1000.0)
-
-
-async def _sleep_until_elapsed(benchmark_start: float, target_s: float) -> None:
-    delay = target_s - (time.perf_counter() - benchmark_start)
-    if delay > 0:
-        await asyncio.sleep(delay)
 
 
 def per_turn_output_path(output: str) -> str:
@@ -786,26 +763,6 @@ def _run(coro):
         sys.exit(1)
 
 
-def _load_source_session_ids(path: str | None) -> list[str] | None:
-    if not path:
-        return None
-    source_path = Path(path)
-    ids = []
-    seen = set()
-    for line in source_path.read_text(encoding="utf-8").splitlines():
-        source_session_id = line.strip()
-        if not source_session_id or source_session_id.startswith("#"):
-            continue
-        if source_session_id in seen:
-            continue
-        ids.append(source_session_id)
-        seen.add(source_session_id)
-    if not ids:
-        print(f"Error: --source-session-ids-file had no usable IDs: {path}")
-        sys.exit(1)
-    return ids
-
-
 def save_results(summary, results, output_path: str, config: dict):
     """Save summary + per-request data to JSON."""
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
@@ -906,27 +863,6 @@ def _resolve_tri_state(cli_value: str) -> tuple[str, str]:
     if cli_value != "auto":
         return cli_value, "cli"
     return "unknown", "not_reported"
-
-
-def resolve_multi_turn_num_sessions(
-    profile,
-    concurrency: int,
-    override: int | None = None,
-) -> tuple[int, str]:
-    """Multi-turn runs need enough sessions to saturate the requested concurrency."""
-    if profile.mode != "multi-turn":
-        return profile.num_sessions, "profile_default"
-
-    if override is not None:
-        effective_num_sessions = max(override, concurrency)
-        if effective_num_sessions == override:
-            return effective_num_sessions, "cli"
-        return effective_num_sessions, "cli_concurrency_floor"
-
-    effective_num_sessions = max(profile.num_sessions, concurrency)
-    if effective_num_sessions == profile.num_sessions:
-        return effective_num_sessions, "profile_default"
-    return effective_num_sessions, "concurrency_floor"
 
 
 def normalize_dashboard_scope(scope: str) -> str:

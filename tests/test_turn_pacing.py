@@ -9,7 +9,8 @@ from unittest.mock import patch
 
 from quettabench.workloads.dataset import TrajectoryMultiTurnDataset
 
-from quettabench.modes.serve import get_args, inter_turn_wait_s
+from quettabench.modes.serve import get_args
+from quettabench.workloads.sessions import inter_turn_wait_s
 from quettabench.workloads.dataset import session_arrival_ms, turn_wait_metadata
 
 

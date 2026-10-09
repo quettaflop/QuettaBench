@@ -1,6 +1,6 @@
 import unittest
 
-from quettabench.modes.serve import resolve_multi_turn_num_sessions
+from quettabench.workloads.sessions import resolve_multi_turn_num_sessions
 from quettabench.workloads.profiles import filter_profiles, get_profile, resolve_profile_name
 
 
