@@ -10,6 +10,9 @@ A grid run writes no second file: its rows go to the same requests.jsonl,
 one per request of every batch, told apart by `cell` ({ctx, bs, tp,
 step_point, phase, attempt}) and `batch_wall_s`; steps is
 metrics.step_fit.fit_run over those rows (None for a run without cells).
+A driver that times a whole cell itself (BenchDriver) yields dict rows,
+{cell, measured_ms_per_step, group, kv, method}; append writes them with
+the RequestResult keys that apply to them, success and error.
 run_status is {"status": ok | partial | aborted | failed, "reason": ...}.
 Provenance carries the launch env with every key matching
 TOKEN|KEY|SECRET|HF_ written as REDACTED.
@@ -118,6 +121,12 @@ def jsonl_row(r, **extra):
     return row
 
 
+def measured_row(row, **extra):
+    """A driver's dict row as a jsonl line: success and error first, as a
+    RequestResult row has them, then the row's own keys, then extra."""
+    return {"success": True, "error": None, **row, **extra}
+
+
 def provenance(cfg, handle=None, driver=None, launch_env=None):
     """Where a run's numbers came from: hardware, engine, code and launch env."""
     engine, hardware = cfg.engine, cfg.hardware
@@ -156,10 +165,12 @@ class RunWriter:
             self._fh = (self.dir / "requests.jsonl").open("a")
 
     def append(self, result, **extra):
-        """Write one request's row now and flush it to disk."""
+        """Write one row now and flush it to disk. result is a RequestResult,
+        or a dict row from a driver that measured the cell itself."""
         self.rows += 1
+        row = measured_row(result, **extra) if isinstance(result, dict) else jsonl_row(result, **extra)
         if self._fh is not None:
-            self._fh.write(json.dumps(jsonl_row(result, **extra)) + "\n")
+            self._fh.write(json.dumps(row) + "\n")
             self._fh.flush()
 
     def finish(self, summary, steps=None, status="ok", reason=None):

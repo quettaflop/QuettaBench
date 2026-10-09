@@ -23,7 +23,6 @@ import json
 import os
 import sys
 
-from ..metrics.core import RequestResult
 from ..metrics.results import print_legacy_grid_lines
 from ..metrics.step_fit import GIB, fit, fit_run
 from ..workloads.base import Request
@@ -105,8 +104,7 @@ def run_bench(driver, writer):
     with its measured ms per step, and steps passes them through."""
     rows = list(driver.run(driver.cells))
     for row in rows:
-        writer.append(RequestResult(success=True, cell=row["cell"]),
-                      **{k: v for k, v in row.items() if k != "cell"})
+        writer.append(row)
     return {"bench_log": str(driver.log_path)}, fit_run(rows, None, None, None), rows
 
 

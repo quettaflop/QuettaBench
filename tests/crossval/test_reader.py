@@ -1,12 +1,18 @@
 """crossval/reader.py: each input kind read into a Side, on the golden data."""
 
+import json
 import math
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from quettabench.crossval import reader
-from tests.crossval._rundirs import bench_run_dir
+from quettabench.engines.drivers import BenchDriver
+from quettabench.metrics.results import RunWriter
+from quettabench.metrics.step_fit import fit_run
+from tests.crossval._rundirs import bench_config, bench_run_dir
 from tests.golden._harness import FIXTURES
 
 
@@ -71,6 +77,26 @@ class RunDir(unittest.TestCase):
                 self.assertEqual(run.rows, side.rows)
                 self.assertEqual(run.notes, side.notes)
                 self.assertEqual(run.header["method"], side.header["method"])
+
+    def test_writer_rows_read_as_hand_written_rows(self):
+        def hand_written(out, log):
+            out.mkdir(parents=True)
+            shutil.copy(log, out / "bench.log")
+            rows = list(BenchDriver(out / "bench.log").rows())
+            with (out / "requests.jsonl").open("w") as fh:
+                for r in rows:
+                    fh.write(json.dumps(r) + "\n")
+            RunWriter(out, bench_config(out.name)).finish(None, steps=fit_run(rows, 0, 1, 1.0))
+            return out
+
+        for log in ("bench_loop.log", "bench_criterion.log"):
+            with self.subTest(log=log), tempfile.TemporaryDirectory() as td, \
+                    mock.patch("quettabench.metrics.results._now",
+                               return_value="2026-10-09T00:00:00+00:00"):
+                ours = reader.read_run(bench_run_dir(Path(td) / "qs", FIXTURES / log))
+                theirs = reader.read_run(hand_written(Path(td) / "hand" / "qs", FIXTURES / log))
+                self.assertEqual(ours, theirs)
+                self.assertTrue(ours.rows)
 
 
 if __name__ == "__main__":

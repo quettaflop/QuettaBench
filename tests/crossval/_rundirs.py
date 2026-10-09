@@ -5,8 +5,8 @@ git rev-parse frozen to the golden baseline's bench_sha, plus the two things
 no run produces: the pre-normalization RAW cell (no ms_at_eval)
 the golden baseline carries as its last point, and the finish time set to
 the baseline's recorded_utc. bench_run_dir is a QuettaServe run: the bench
-log where BenchDriver keeps it, its rows in requests.jsonl, and run.json
-with the step section fit_run derives from those rows.
+log where BenchDriver keeps it, its rows appended through RunWriter, and
+run.json with the step section fit_run derives from those rows.
 """
 
 import json
@@ -62,12 +62,13 @@ def bench_run_dir(out, bench_log):
     out.mkdir(parents=True)
     shutil.copy(bench_log, out / "bench.log")
     rows = list(BenchDriver(out / "bench.log").rows())
-    # RunWriter.append takes a RequestResult; a BenchDriver row is already a
-    # jsonl row, so it goes in as written and the writer appends after it.
-    with (out / "requests.jsonl").open("w") as fh:
-        for r in rows:
-            fh.write(json.dumps(r) + "\n")
-    cfg = Config(engine=EngineCfg(name="quettaserve"), workload=WorkloadCfg(), mode=ModeCfg(),
-                 hardware=HardwareCfg(), run_name=out.name)
-    RunWriter(out, cfg).finish(None, steps=fit_run(rows, 0, 1, 1.0))
+    writer = RunWriter(out, bench_config(out.name))
+    for r in rows:
+        writer.append(r)
+    writer.finish(None, steps=fit_run(rows, 0, 1, 1.0))
     return out
+
+
+def bench_config(run_name):
+    return Config(engine=EngineCfg(name="quettaserve"), workload=WorkloadCfg(), mode=ModeCfg(),
+                  hardware=HardwareCfg(), run_name=run_name)
