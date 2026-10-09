@@ -189,7 +189,7 @@ a kernel:
 
 - `serving_decode_grid`, `serving_stage_split` -- read by the exporters.
 - `live_split` -- cached-host shared vs per-request split (the 50/50 in
-  `docs/runbooks/serving_stage_split_plan.md`; `stage_split_rates` keeps that fraction).
+  `runbooks/serving_stage_split_plan.md`; `stage_split_rates` keeps that fraction).
 - `pool_capacity` -- usable KV-pool capacity under prefix caching (the
   `available_kv_blocks` the saturated-ceiling emitter reads).
 

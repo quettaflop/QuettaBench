@@ -15,7 +15,7 @@ just provision configs/runs/llama.yaml --dry-run \
 just dry configs/runs/llama.yaml --set engine.model=/w/llama   # Config + LaunchSpec, starts nothing
 just run configs/runs/llama.yaml --set engine.model=/w/llama   # -> results/llama/
 just profile --run results/llama --source metrics --source energy
-just crossval ...                      # compares results dirs
+just crossval results/<ours> results/<theirs>   # compares two results dirs
 just export --results results/llama --dest ../QuettaSim/engine/data
 ```
 
@@ -69,9 +69,9 @@ engines.
 | `profile.json` | `qbench profile` | metrics, energy, cost, accuracy; never changes run.json |
 | `nsys.*` | `engine.instrumentation=nsys` | the capture armed at launch |
 
-Grid runs also write `results/baselines/vllm-<run>.json`, the layout
-`crossval/table.py` reads, until crossval reads results dirs. Probe recipes
-write `results/probes/<gpu>/`; `just export` is the only route to QuettaSim.
+Grid runs no longer write `results/baselines/*.json`; `qbench crossval`
+reads the run dir, and still reads old baselines files. Probe recipes write
+`results/probes/<gpu>/`; `just export` is the only route to QuettaSim.
 
 ## Cross-validation
 
@@ -138,9 +138,21 @@ its peer all-reduce. Empty values are never exported. The caller's
 
 ### Correctness
 
-`python3 -m quettabench.crossval.greedy_agreement` (engine vs vLLM text) and
-`logit_agreement` (vLLM vs the transformers reference, the FIDELITY gate)
-read `data/prompts.txt` and `data/texts.txt`. deepseek has no transformers
+Agreement is two runs compared by `qbench crossval`. Runs with
+`mode.returns=text` give greedy-agreement rows (engine vs vLLM text); runs
+with `mode.returns=logits` give the FIDELITY gate, vLLM against the
+transformers reference on the same grid prompts:
+
+```bash
+qbench run configs/runs/llama.yaml --set mode.grid=smoke --set mode.returns=logits \
+    --set 'engine.extra.vllm={enforce_eager: true}' --set run_name=llama-logits
+qbench run configs/runs/llama.yaml --set mode.grid=smoke --set engine.name=reference \
+    --set run_name=llama-reference
+qbench crossval results/llama-logits results/llama-reference
+```
+
+FIDELITY passes only with zero hard disagreements (an argmax flip where the
+reference's top-2 gap is not a near tie). deepseek has no transformers
 reference; its correctness comes from the engine's own batch gates.
 
 ### Model notes
@@ -148,7 +160,10 @@ reference; its correctness comes from the engine's own batch gates.
 llama is verified. deepseek, qwen, qwen3, glm53 and glm53flash are bring-up
 (`verified: false`, run with `--allow-unverified`) until a clean golden run.
 MLA and hybrid stacks must set `kv_bytes`; the dense per-head formula
-overestimates their KV (the loader refuses them without it). deepseek needs
+overestimates their KV (the loader refuses them without it). So
+`configs/runs/qwen.yaml` does not load until `kv_bytes` is set in
+`configs/models/qwen35_9b.yaml`: qwen is hybrid attention, and the loader
+refuses rather than fall back to the dense formula. deepseek needs
 the DeepSeek vLLM fork, the tp-sliced fp4 checkpoint (ds-0731-tp8-fp4), and
 its KV differs by design (engine bf16 latent vs `fp8_ds_mla`), so its ratios
 are withheld. glm53 and glm53flash have no engine bench yet: vLLM side only.
@@ -170,8 +185,8 @@ are withheld. glm53 and glm53flash have no engine bench yet: vLLM side only.
 | `python -m quettabench.modes.serve ...` (and its `--output` file) | `just run ...`; results in `results/<run>/` |
 | `vmin_fit.py <wl>` / `serve --grid --workload <wl>` | `just run configs/runs/<wl>.yaml --set engine.model=<weights>` (`--nograph`: `--set engine.cudagraph=false`, `--dump-tokens`: `--set mode.returns=text`) |
 | `trace_serve.py <trace> --model <w>` | `just run <yaml> --set mode.grid=null --set workload.kind=live --set workload.source=<trace> --set mode.load=open --set workload.arrival=trace`; energy, cost, gsm8k: `just profile --source energy|cost|gsm8k` |
-| `cache.py <log> <out>` | written by every grid run: `results/baselines/vllm-<run>.json` |
-| `table.py <bench-log> <baseline>` | `just crossval` (until it lands: `python3 -m quettabench.crossval.table results/<run>/bench.log results/baselines/vllm-<run>.json`) |
+| `cache.py <log> <out>` | nothing: grid runs no longer write `results/baselines/*.json`; old files are still readable by `qbench crossval` |
+| `python3 table.py <bench-log> <baseline>` | `qbench crossval <ours> <theirs>` (`just crossval`); each side a results dir, an old baselines json or a bench log |
 | `xval_config.py tp|devices|cells|bench <wl>` | `just dry configs/runs/<wl>.yaml` (`engine.tp`, `engine.pp`, `grid.cells`, `engine.extra.quettaserve`) |
 | `xval_config.py collective|link-profile|backend|run-params` | `just dry ...` (`hardware.*` lines) |
 | `xval_config.py provision [key]` | `just provision ... --dry-run`, or the `hardware.provision.*` lines of `just dry` |
