@@ -1,6 +1,8 @@
 """How work reaches an engine: one Driver per way of driving it.
 
-HttpDriver streams OpenAI-compatible requests at a launched server. Its two
+BenchDriver runs a QuettaServe bench per grid cell, as bench.sh does, and
+reads its rows with crossval/table.py's parsers. HttpDriver streams
+OpenAI-compatible requests at a launched server. Its two
 endpoints keep their own first-token rules, recorded on every result as
 ttft_rule:
 
@@ -16,13 +18,18 @@ building they shared byte for byte is factored out.
 
 import asyncio
 import json
+import re
+import subprocess
+import sys
 import time
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Optional
 from urllib.parse import urlsplit, urlunsplit
 
 import aiohttp
 
+from quettabench.crossval import table
 from quettabench.metrics.core import RequestResult
 
 
@@ -430,3 +437,64 @@ class HttpDriver(Driver):
             raise PrefixCacheResetError(f"POST {reset_url} failed: {e}") from e
 
         return f"prefix cache reset via {reset_url}"
+
+
+class BenchFailed(RuntimeError):
+    """A bench cell exited non-zero or printed no result line."""
+
+
+class BenchDriver(Driver):
+    """bench.sh's cell loop: truncate the log, then per cell write the `>>>`
+    header, run bench_argv under the cell's env in its cwd, tee stdout and
+    stderr into the log, and check the exit code and the pass pattern.
+    Rows come from table.ours_points on the finished log, so they are what
+    the table reads."""
+
+    def __init__(self, log_path):
+        self.log_path = Path(log_path)
+
+    def run(self, cell_specs, *, concurrency=1, **kwargs):
+        """cell_specs: (ctx, bs, translate(cfg, (ctx, bs))) per cell; yields rows."""
+        self.log_path.write_text("")
+        missing = []
+        for ctx, bs, spec in cell_specs:
+            if not self._run_cell(ctx, bs, spec):
+                self._log(f"FAIL ctx={ctx} bs={bs} (no bench result line; see {self.log_path})")
+                missing.append((ctx, bs))
+        if missing:
+            raise BenchFailed(f"{len(missing)} cell(s) failed: {missing}")
+        yield from self.rows()
+
+    def rows(self):
+        """One dict per (ctx, bs, tp) table.py found in the log."""
+        points, method = table.ours_points(self.log_path)
+        for (ctx, bs, tp), (ms, group, kv) in points.items():
+            yield {"ctx": ctx, "bs": bs, "tp": tp, "ms_per_step": ms, "group": group,
+                   "kv": kv, "method": method}
+
+    def _log(self, line):
+        print(line, file=sys.stderr, flush=True)
+        with self.log_path.open("a") as fh:
+            fh.write(line + "\n")
+
+    def _run_cell(self, ctx, bs, spec):
+        """True when the cell's output has a line matching spec.ok_pattern."""
+        if spec.bench_argv[0] == "cargo" and not (Path(spec.cwd) / spec.bench_argv[3]
+                                                  / "Cargo.toml").exists():
+            raise BenchFailed(f"no {spec.bench_argv[3]} crate under {spec.cwd!r}; "
+                              "set engine.extra.qs_dir or engine.extra.bench_bin")
+        self._log(spec.log_header)
+        ok = re.compile(spec.ok_pattern)
+        passed = False
+        proc = subprocess.Popen(spec.child_argv(spec.bench_argv), cwd=spec.cwd, text=True,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        with self.log_path.open("a") as fh:
+            for line in proc.stdout:
+                sys.stdout.write(line)
+                fh.write(line)
+                passed = passed or bool(ok.search(line))
+        rc = proc.wait()
+        if rc != 0:
+            self._log(f"FAIL ctx={ctx} bs={bs} (bench exited {rc}; see {self.log_path})")
+            raise BenchFailed(f"bench exited {rc}")
+        return passed

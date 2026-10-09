@@ -22,6 +22,8 @@ bs) and translate already holds cfg, while a helper would need the prefix,
 steps and headroom carried again on the spec.
 """
 
+from pathlib import Path
+
 from quettabench.config.schema import ConfigError
 from quettabench.engines.base import (
     NSYS,
@@ -30,6 +32,7 @@ from quettabench.engines.base import (
     UnsupportedField,
     register,
 )
+from quettabench.engines.drivers import BenchDriver
 
 # bench.sh's pass pattern, per test (workloads.json "ok").
 OK_BY_TEST = {
@@ -120,7 +123,8 @@ class QuettaServeAdapter(EngineAdapter):
         )
 
     def driver(self, spec, handle):
-        raise NotImplementedError("the quettaserve BenchDriver lands with engines/drivers.py")
+        """Bench rows logged to <results_dir>/bench.log, as bench.sh's out-log."""
+        return BenchDriver(Path(handle.results_dir) / "bench.log")
 
 
 ADAPTER = register(QuettaServeAdapter())
