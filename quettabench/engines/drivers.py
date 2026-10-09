@@ -3,7 +3,7 @@
 InProcessDriver builds vLLM inside this process from spec.engine_kwargs and
 times one grid batch per generate() call. BenchDriver runs a QuettaServe
 bench per grid cell, as bench.sh does, and reads its rows with
-crossval/table.py's parsers. HttpDriver streams
+crossval/reader.py's bench log parser. HttpDriver streams
 OpenAI-compatible requests at a launched server. Its two
 endpoints keep their own first-token rules, recorded on every result as
 ttft_rule:
@@ -32,7 +32,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 import aiohttp
 
-from quettabench.crossval import table
+from quettabench.crossval import reader
 from quettabench.metrics.core import RequestResult
 from quettabench.workloads.grid import distinct_ids
 
@@ -503,8 +503,8 @@ class BenchDriver(Driver):
     """bench.sh's cell loop: truncate the log, then per cell write the `>>>`
     header, run bench_argv under the cell's env in its cwd, tee stdout and
     stderr into the log, and check the exit code and the pass pattern.
-    Rows come from table.ours_points on the finished log, so they are what
-    the table reads."""
+    Rows come from reader.bench_log_points on the finished log, so they are
+    what crossval reads."""
 
     def __init__(self, log_path, cells=()):
         self.log_path = Path(log_path)
@@ -523,11 +523,13 @@ class BenchDriver(Driver):
         yield from self.rows()
 
     def rows(self):
-        """One dict per (ctx, bs, tp) table.py found in the log. The engine
+        """One dict per (ctx, bs, tp) the reader found in the log. The engine
         times its own decode loop, so a row is already a per-step number:
         measured_ms_per_step, which step_fit passes through instead of fitting.
         The bench takes no step points, so cell's step_point is None."""
-        points, method = table.ours_points(self.log_path)
+        points, method, notes = reader.bench_log_points(self.log_path)
+        for note in notes:
+            print(note)
         for (ctx, bs, tp), (ms, group, kv) in points.items():
             yield {"cell": {"ctx": ctx, "bs": bs, "tp": tp, "step_point": None},
                    "measured_ms_per_step": ms, "group": group, "kv": kv, "method": method}

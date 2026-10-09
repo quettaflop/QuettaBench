@@ -1,4 +1,4 @@
-"""BenchDriver's rows are table.py's parse of the same log, and its cell loop
+"""BenchDriver's rows are crossval's parse of the same log, and its cell loop
 fails where bench.sh fails."""
 
 import sys
@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from quettabench.crossval import table
+from quettabench.crossval import reader
 from quettabench.engines.base import LaunchSpec
 from quettabench.engines.drivers import BenchDriver, BenchFailed
 from tests.golden._harness import FIXTURES
@@ -27,12 +27,12 @@ def as_points(rows):
 
 
 class GoldenLogs(unittest.TestCase):
-    def test_rows_equal_table_parsers(self):
+    def test_rows_equal_the_reader_parse(self):
         for name in ("bench_loop.log", "bench_criterion.log"):
             with self.subTest(log=name):
                 path = FIXTURES / name
                 rows = list(BenchDriver(path).rows())
-                points, method = table.ours_points(path)
+                points, method, _ = reader.bench_log_points(path)
                 self.assertTrue(points)
                 self.assertEqual(as_points(rows), points)
                 self.assertEqual({r["method"] for r in rows}, {method})
