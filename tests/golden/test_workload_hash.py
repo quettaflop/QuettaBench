@@ -46,12 +46,17 @@ class WorkloadHashGolden(unittest.TestCase):
                 reordered_lines = synth_bench.workload_hash(
                     synth_bench.load_trace(str(reordered_file)))
 
-            digests = [synth_bench._req_digest(r) for r in reqs]
+            base = fresh_import("quettabench.workloads.base")
+            digests = [base.request_digest(r) for r in reqs]
+            as_requests = base.workload_hash([base.Request(**r) for r in reqs])
+            round_trip = [base.Request(**r).to_dict() for r in reqs]
 
         self.assertEqual(paced, completion_reversed)
         self.assertEqual(paced, completion_rotated)
         self.assertNotEqual(paced, altered_hash)
         self.assertNotEqual(paced, injected_hash)
+        self.assertEqual(as_requests, paced)
+        self.assertEqual(round_trip, reqs)
         check_json(self, "workload_hash", {
             "loaded_requests": reqs,
             "request_digests": digests,

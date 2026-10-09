@@ -8,10 +8,13 @@ Token ids and lengths only, no model or GPU.
 """
 
 import argparse
-import hashlib
 import json
 import math
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parents[2]))
+from quettabench.workloads.base import workload_hash
 
 VOCAB = 100_000  # safe id ceiling for the checkpoints under test
 
@@ -201,37 +204,6 @@ def take(reqs, count, ctx):
         ids = ids[:ctx] if len(ids) >= ctx else ids + synth_ids(ctx - len(ids), j)
         out.append(list(ids))
     return out, cycled
-
-
-def _req_digest(r):
-    """Identity of one request over deterministic inputs only (seed, order, arrival,
-    prompt content, requested output), never generated tokens or timings, so two
-    engines doing identical work hash the same."""
-    ids = r.get("prompt_token_ids") or []
-    parts = [
-        str(r.get("seed", "")),
-        str(r.get("order", "")),
-        f"{float(r.get('arrival_ts', 0.0)):.6f}",
-        str(r.get("prompt_len", len(ids))),
-        ",".join(map(str, ids)),
-        str(r.get("output_length", "")),
-        str(r.get("session_id", "")),
-        str(r.get("turn", "")),
-    ]
-    return hashlib.sha256("|".join(parts).encode()).hexdigest()
-
-
-def workload_hash(reqs):
-    """Order-independent identity of the whole workload: same request set gives the
-    same hash regardless of completion order; a dropped or altered request changes
-    it. This is the check that every system saw identical work."""
-    digs = sorted(_req_digest(r) for r in reqs)
-    h = hashlib.sha256()
-    h.update(str(len(digs)).encode())
-    for d in digs:
-        h.update(b"\n")
-        h.update(d.encode())
-    return h.hexdigest()[:16]
 
 
 def main():
