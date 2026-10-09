@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# profiling/emit/build_serving_decode_grid.py
+# quettabench/export/quettasim/serving_decode_grid.py
 """Deterministic builder: raw serving-decode-grid JSONL.gz run(s) -> grid CSV.
 
 The measurement client (``profiling/probes/serving_decode_grid.py``) writes an
@@ -18,21 +18,21 @@ Output CSV columns (L11 pre-registration):
 ``simulator.kernel_step_cost.load_grid`` reads only the first four; extras are harmless
 (DictReader). The grid consumer is agnostic to how cells were measured.
 
-Deterministic (no RNG). Usage:
-    python3 -m profiling.emit.build_serving_decode_grid \
-        --inputs profile_data/results/serving_decode_grid_H100x4_<date>.jsonl.gz \
-        --out    profile_data/results/serving_decode_grid_H100x4_<date>.csv
+Deterministic (no RNG). ``run`` groups the results dirs' serving_decode_grid_<tag>_<date>
+.jsonl[.gz] runs by tag, oldest date first, and writes dest/results/serving_decode_grid_<tag>_<latest
+date>.csv.
 """
 from __future__ import annotations
 
-import argparse
 import csv
 import gzip
 import importlib.util
 import json
+import re
 from pathlib import Path
+from typing import Iterable
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 _CLIENT = REPO_ROOT / "profiling" / "probes" / "serving_decode_grid.py"
 
 _spec = importlib.util.spec_from_file_location("serving_decode_grid_client", _CLIENT)
@@ -164,22 +164,11 @@ def build(inputs: list[Path], snap_tolerance: float = 0.02,
     return rows
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--inputs", nargs="+", required=True,
-                    help="raw JSONL(.gz) runs, chronological order (latest wins per cell)")
-    ap.add_argument("--out", required=True)
-    ap.add_argument("--lag-upgrade", action="store_true",
-                    help="L13 amendment (default OFF, pre-L13 artifacts regenerate "
-                         "byte-identically): upgrade lag-only 'check' cells to 'ok' when the "
-                         "value reproduces <=0.5%% across >=2 hygiene-clean passes and the "
-                         "adopted pass's p99 lag is <=1.5x the limit (see build()).")
-    a = ap.parse_args()
+RUN_NAME = re.compile(r"serving_decode_grid_(?P<tag>.+)_(?P<date>[^_]+)\.jsonl(\.gz)?$")
 
-    rows = build([Path(p) for p in a.inputs], lag_upgrade=a.lag_upgrade)
-    out_fields = OUT_FIELDS + ([LAG_UPGRADE_FIELD] if a.lag_upgrade else [])
-    out = Path(a.out)
+
+def write_grid(rows: list[dict], out: Path, lag_upgrade: bool = False) -> None:
+    out_fields = OUT_FIELDS + ([LAG_UPGRADE_FIELD] if lag_upgrade else [])
     out.parent.mkdir(parents=True, exist_ok=True)
     with out.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=out_fields)
@@ -190,5 +179,19 @@ def main() -> None:
     print(f"wrote {out} ({len(rows)} cells, {n_ok} ok / {len(rows) - n_ok} check)")
 
 
-if __name__ == "__main__":
-    main()
+def run(results_dirs: Iterable[Path], dest: Path, lag_upgrade: bool = False) -> list[Path]:
+    """Write dest/results/serving_decode_grid_<tag>_<date>.csv, one per tag found."""
+    runs: dict[str, list[tuple[str, Path]]] = {}
+    for root in results_dirs:
+        for path in sorted(Path(root).rglob("serving_decode_grid_*.jsonl*")):
+            m = RUN_NAME.match(path.name)
+            if m:
+                runs.setdefault(m["tag"], []).append((m["date"], path))
+    written = []
+    for tag, dated in runs.items():
+        dated.sort()
+        rows = build([p for _, p in dated], lag_upgrade=lag_upgrade)
+        out = Path(dest) / "results" / f"serving_decode_grid_{tag}_{dated[-1][0]}.csv"
+        write_grid(rows, out, lag_upgrade)
+        written.append(out)
+    return written

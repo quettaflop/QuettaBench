@@ -10,7 +10,7 @@ emitters that turn raw probe output into curated tables. Peer of the runner
 ```
 profiling/probes/              live-server + serving-wall probes (need a GPU)
 profiling/kernel_composed/     QuettaSim kernel tables (ncu/ vs cuda_event/ schema)
-profiling/emit/                emitters: raw CSV/JSONL.gz -> curated tables (no GPU)
+quettabench/export/quettasim/  emitters: results files -> QuettaSim tables (no GPU)
 profiling/runbooks/            how-to-measure docs and preflight scripts
 profiling/tests/               emitter tests (run against fixtures, no GPU)
 ```
@@ -126,11 +126,10 @@ nohup bash profiling/probes/slice_probe_watch.sh > slice_watch.log 2>&1 &
 
 ## Emit a curated table
 
-Emitters run as modules from the repo root:
+The emitters live in `quettabench/export/quettasim/`. From the repo root:
 
 ```bash
-python3 -m profiling.emit.build_serving_decode_grid \
-  --inputs raw_run.jsonl.gz --out grid.csv
+python3 -m quettabench.export.quettasim --results <dir with raw runs> --dest <out dir>
 ```
 
 ## Tests

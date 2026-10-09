@@ -1,18 +1,20 @@
-# profiling/emit/build_prefill_floor.py
+# quettabench/export/quettasim/prefill_floor.py
 """Measured conc=1 prefill floor (ms) per deployment.
 
 y-intercept of TTFT vs new-prefill tokens when a request is admitted immediately.
-Needs QuettaSim/agentic-serve on PYTHONPATH (`configs.loader`, `simulator.ramp_tpot`).
-
-    python3 -m profiling.emit.build_prefill_floor
+Needs QuettaSim/agentic-serve on PYTHONPATH (`configs.loader`, `simulator.ramp_tpot`) for the
+deployment list; each deployment's bench dir is looked up in the results dirs. Writes
+dest/kernels/prefill_floor_llama31_8b.json (see ``run``).
 """
 from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Iterable
 
-BENCH_BASE = Path("/mnt/100g/agent-bench/results/synthetic_distributional")
-OUT = Path("profile_data/kernels/prefill_floor_llama31_8b.json")  # committed (curated), like the saturated ceiling
+from quettabench.export.quettasim._inputs import find_dir
+
+OUT_NAME = "prefill_floor_llama31_8b.json"
 PROFILES = [
     "swebench-multiturn-synth", "osworld-multiturn-synth",
     "terminalbench-multiturn-synth", "chat-multiturn-synth",
@@ -58,13 +60,13 @@ def _floor_from_points(pts: list[tuple[float, float]]) -> dict | None:
     }
 
 
-def main() -> None:
+def run(results_dirs: Iterable[Path], dest: Path) -> list[Path]:
     try:
         from configs.loader import all_deployments
         from simulator.ramp_tpot import _gpu_slug
     except ImportError as e:
         raise SystemExit(
-            "build_prefill_floor needs QuettaSim/agentic-serve on PYTHONPATH "
+            "prefill_floor needs QuettaSim/agentic-serve on PYTHONPATH "
             f"(could not import {e.name!r}). See profiling/README.md."
         ) from e
     out: dict[str, dict] = {}
@@ -73,8 +75,8 @@ def main() -> None:
             continue
         if not getattr(dep, "ground_truth", False):
             continue
-        root = BENCH_BASE / dep.bench_dir
-        if not root.exists():
+        root = find_dir(results_dirs, dep.bench_dir)
+        if root is None:
             continue
         pts = _clean_points(root)
         rec = _floor_from_points(pts)
@@ -86,10 +88,8 @@ def main() -> None:
         out[_gpu_slug(dep.gpu_key)] = rec
         print(f"{dep.gpu_key:18s} (tp{rec['tensor_parallel']}) floor={rec['floor_ms']:6.2f} ms "
               f"[{rec['method']}, n={rec['n_clean']}]")
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text(json.dumps(out, indent=2))
-    print(f"\nwrote {len(out)} config floors -> {OUT}")
-
-
-if __name__ == "__main__":
-    main()
+    out_path = Path(dest) / "kernels" / OUT_NAME
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(out, indent=2))
+    print(f"\nwrote {len(out)} config floors -> {out_path}")
+    return [out_path]

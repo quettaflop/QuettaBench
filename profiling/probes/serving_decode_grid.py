@@ -5,7 +5,7 @@
 Isolated kernel stepping overstates per-step cost vs continuous serving (NCCL
 launch overlaps). This probe self-launches vLLM, fires B concurrent completion
 streams per cell, and records SSE timestamps. The authoritative CSV is built by
-``python3 -m profiling.emit.build_serving_decode_grid`` (imports summarize_cell
+``just export --only serving_decode_grid`` (imports summarize_cell
 from this module).
 
     python3 profiling/probes/serving_decode_grid.py \
@@ -509,8 +509,8 @@ def main() -> None:
             for row in rows:
                 w.writerow({k: row.get(k, "") for k in SUMMARY_FIELDS})
         print(f"\nwrote {out_raw} + {out_sum}", flush=True)
-        print("authoritative grid CSV: python3 -m profiling.emit.build_serving_decode_grid "
-              f"--inputs {out_raw.name} ...", flush=True)
+        print("authoritative grid CSV: just export --only serving_decode_grid "
+              f"--results <dir holding {out_raw.name}> --dest <dir>", flush=True)
     finally:
         if proc is not None:
             proc.terminate()

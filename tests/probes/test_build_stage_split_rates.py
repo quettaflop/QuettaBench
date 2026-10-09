@@ -1,5 +1,5 @@
-# profiling/tests/test_build_stage_split_rates.py
-"""Tests for profiling/emit/build_stage_split_rates.py (L11 round 2).
+# tests/probes/test_build_stage_split_rates.py
+"""Tests for quettabench/export/quettasim/stage_split_rates.py (L11 round 2).
 
 The builder derives the per-config prefill HOST-cached SUM and FA3 coefficient from the
 like-for-like tp1/tpN serving_stage_split pair. The OLS core must be exact on synthetic
@@ -14,12 +14,14 @@ from pathlib import Path
 
 import pytest
 
-from profiling.emit.build_stage_split_rates import (
-    PROD_FA3, PROD_HOST_SUM, RESULTS, TP1_CSV, _ols,
+from quettabench.export.quettasim.stage_split_rates import (
+    PROD_FA3, PROD_HOST_SUM, _ols,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-ART = REPO_ROOT / "profile_data/kernels/prefill_stage_rates_H100x4.json"
+RESULTS = REPO_ROOT / "results"
+ART = RESULTS / "export" / "kernels" / "prefill_stage_rates_H100x4.json"
+TP1_CSV = RESULTS / "serving_stage_split_H100.csv"
 TP4_CSV = RESULTS / "serving_stage_split_H100_tp4.csv"
 
 
@@ -44,8 +46,8 @@ def test_ols_recovers_exact_synthetic_coefficients():
     assert abs(beta3["cached"] - 0.004) < 1e-12
 
 
-@pytest.mark.skipif(not (TP1_CSV.exists() and TP4_CSV.exists()),
-                    reason="gitignored stage-split CSVs not on this checkout")
+@pytest.mark.skipif(not (TP1_CSV.exists() and TP4_CSV.exists() and ART.exists()),
+                    reason="stage-split CSVs and the exported artifact are not on this checkout")
 def test_artifact_regenerates_from_the_csvs():
     rows1 = list(csv.DictReader(TP1_CSV.open()))
     rows4 = list(csv.DictReader(TP4_CSV.open()))

@@ -1,9 +1,7 @@
-# profiling/emit/extract_benchmark_per_request.py
+# quettabench/export/quettasim/extract_benchmark_per_request.py
 """Extract per-request OSL/prefill/cache distributions from bench JSONs.
 
-Each multi-turn benchmark JSON at
-``/mnt/100g/agent-bench/results/synthetic_distributional/h100_Llama-3.1-8B_tp1_vllm/*.json``
-has a ``per_request`` list with one entry per (session, turn).  We emit two
+Each multi-turn benchmark JSON under the results dirs has a ``per_request`` list with one entry per (session, turn).  We emit two
 top-level views into the same JSON sidecar:
 
 1. Per-(profile, concurrency, turn_index) distributions for the simple
@@ -59,7 +57,6 @@ files are pre-aggregated and skipped automatically.
 
 from __future__ import annotations
 
-import argparse
 import json
 from collections import defaultdict
 from pathlib import Path
@@ -255,95 +252,38 @@ def collect_per_request_distributions(
     return out
 
 
-def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument(
-        "--bench-root",
-        type=Path,
-        action="append",
-        default=None,
-        help=(
-            "Directory of raw bench JSONs to scan.  Repeat to merge "
-            "multiple sources; later --bench-root entries win on collision. "
-            "Default scans the May-11 distributional set then overlays the "
-            "May-21 same-run paired bench JSONs from profile_data/results."
-        ),
-    )
-    p.add_argument(
-        "--profile-alias",
-        action="append",
-        default=[],
-        help=(
-            "Map capture-time profile name to canonical name "
-            "(e.g. swebench-multiturn=swebench-multiturn-synth).  Repeat for "
-            "multiple aliases.  Useful because same-run traces use the bare "
-            "name while the predictor expects the -synth suffix."
-        ),
-    )
-    p.add_argument(
-        "--output",
-        type=Path,
-        default=Path(
-            "profile_data/results/benchmark_per_request_llama31_8b_h100_vllm.json"
-        ),
-        help="Destination JSON sidecar.",
-    )
-    return p.parse_args()
+# Capture-time profile names (no ``-synth`` suffix) -> the predictor's canonical names.
+DEFAULT_ALIASES = {
+    "swebench-multiturn": "swebench-multiturn-synth",
+    "terminalbench-multiturn": "terminalbench-multiturn-synth",
+    "chat-multiturn": "chat-multiturn-synth",
+    "osworld-multiturn": "osworld-multiturn-synth",
+}
+OUT_NAME = "benchmark_per_request_llama31_8b_h100_vllm.json"
 
 
-def _parse_alias_arg(alias_args: list[str]) -> dict[str, str]:
-    out: dict[str, str] = {}
-    for entry in alias_args:
-        if "=" not in entry:
-            raise SystemExit(f"--profile-alias expects from=to, got {entry!r}")
-        src, dst = entry.split("=", 1)
-        out[src.strip()] = dst.strip()
-    return out
-
-
-def main() -> None:
-    args = parse_args()
-    bench_roots = args.bench_root or [
-        # Broader distributional set (older runs — fallback for keys not in
-        # the paired same-run set).
-        Path(
-            "/mnt/100g/agent-bench/results/synthetic_distributional/"
-            "h100_Llama-3.1-8B_tp1_vllm"
-        ),
-        # Same-run paired bench JSONs captured alongside the engine traces —
-        # these win on key collision because they're the ground-truth match.
-        Path("profile_data/results"),
-    ]
-    # If no aliases supplied, default to mapping the capture-time profile names
-    # (without the ``-synth`` suffix) to the predictor's canonical names.
-    aliases = _parse_alias_arg(args.profile_alias) or {
-        "swebench-multiturn": "swebench-multiturn-synth",
-        "terminalbench-multiturn": "terminalbench-multiturn-synth",
-        "chat-multiturn": "chat-multiturn-synth",
-        "osworld-multiturn": "osworld-multiturn-synth",
-    }
+def run(results_dirs: Iterable[Path], dest: Path) -> list[Path]:
+    """Scan the results dirs (later dirs win on collision) and write dest/results/<OUT_NAME>."""
+    bench_roots = [Path(d) for d in results_dirs]
     distributions = collect_per_request_distributions(
-        bench_roots, profile_alias=aliases
+        bench_roots, profile_alias=DEFAULT_ALIASES
     )
     if not distributions:
-        raise SystemExit(
-            f"no per_request entries found under {bench_roots}"
-        )
+        print(f"SKIP per_request sidecar: no per_request entries under {bench_roots}")
+        return []
     session_timelines = collect_session_timelines(
-        bench_roots, profile_alias=aliases
+        bench_roots, profile_alias=DEFAULT_ALIASES
     )
     payload = {
         "per_turn": distributions,
         "session_timelines": session_timelines,
     }
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    with args.output.open("w") as handle:
+    out = Path(dest) / "results" / OUT_NAME
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with out.open("w") as handle:
         json.dump(payload, handle)
     print(
-        f"Wrote {args.output} with {len(distributions)} per-turn buckets "
+        f"Wrote {out} with {len(distributions)} per-turn buckets "
         f"and {len(session_timelines)} session-timeline (profile, c) groups"
     )
-
-
-if __name__ == "__main__":
-    main()
+    return [out]

@@ -1,20 +1,18 @@
 #!/usr/bin/env python3
-# profiling/emit/build_roofline_utils.py
+# quettabench/export/quettasim/roofline_utils.py
 """Build the roofline-utils artifact from pinned serving-wall step traces.
 
-    python3 -m profiling.emit.build_roofline_utils [--gpu H100] [--archive DIR]
+Reads roofline_params_<gpu>_llama31_8b.json and the TRACES jsonl files from the results
+dirs, writes dest/kernels/roofline_utils_<gpu>.json (see ``run``).
 """
 from __future__ import annotations
 
-import argparse
 import json
 import statistics
-import sys
 from pathlib import Path
+from typing import Iterable
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+from quettabench.export.quettasim._inputs import find
 
 TRACES = [
     "vllm_engine_step_trace_swe_c40_t12_benchmark_serving_wall.jsonl",
@@ -104,14 +102,7 @@ def quartile_medians(pairs: list[tuple[float, float]]) -> list[dict]:
     return out
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--gpu", default="H100")
-    ap.add_argument("--archive", default=str(REPO_ROOT / "profile_data" / "_archive"))
-    args = ap.parse_args()
-
-    params_path = (REPO_ROOT / "profile_data" / "kernels"
-                   / f"roofline_params_{args.gpu}_llama31_8b.json")
+def build(gpu: str, params_path: Path, trace_paths: dict[str, Path], out_path: Path) -> None:
     params = json.loads(params_path.read_text())
     n_params = float(params["n_params"])
     bpp = float(params["bytes_per_param"])
@@ -119,7 +110,6 @@ def main() -> None:
     peak_flops = float(params["peak_flops_per_s"])
     peak_bw = float(params["peak_bw_bytes_per_s"])
 
-    archive = Path(args.archive)
     per_trace: dict[str, dict] = {}
     bw_pool: list[tuple[float, float]] = []      # (bw_roofline_ms, ratio_wall)
     bw_pool_net: list[float] = []                # ratio vs (wall - SCHED_PRIOR)
@@ -128,9 +118,7 @@ def main() -> None:
     sched_pool: list[float] = []
 
     for name in TRACES:
-        path = archive / name
-        if not path.exists():
-            raise SystemExit(f"missing pinned trace: {path} (see L6-utils.md provenance)")
+        path = trace_paths[name]
         steps = load_trace(path)
         ctxs = reconstruct_contexts(steps)
         key = name.split("_benchmark")[0].replace("vllm_engine_step_trace_", "")
@@ -224,10 +212,10 @@ def main() -> None:
     sched = statistics.median(sched_pool) if sched_pool else None
 
     out = {
-        "gpu": args.gpu,
+        "gpu": gpu,
         "recipe": "profiling/docs/defit_log_entries/L6-utils.md (pre-registered 2026-06-10; "
-                  "implemented by profiling/emit/build_roofline_utils.py)",
-        "params_source": str(params_path.relative_to(REPO_ROOT)),
+                  "implemented by quettabench/export/quettasim/roofline_utils.py)",
+        "params_source": params_path.name,
         "util_bw": round(util_bw, 4) if util_bw is not None else None,
         "util_flops": round(util_flops, 4) if util_flops is not None else None,
         "scheduler_overhead_ms_per_step": round(sched, 4) if sched is not None else None,
@@ -251,7 +239,7 @@ def main() -> None:
         },
         "per_trace": per_trace,
     }
-    out_path = REPO_ROOT / "profile_data" / "kernels" / f"roofline_utils_{args.gpu}.json"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(out, indent=2) + "\n")
     print(f"wrote {out_path}")
     print(json.dumps({k: out[k] for k in
@@ -259,5 +247,17 @@ def main() -> None:
                      indent=2))
 
 
-if __name__ == "__main__":
-    main()
+
+def run(results_dirs: Iterable[Path], dest: Path) -> list[Path]:
+    """Write dest/kernels/roofline_utils_<gpu>.json for every gpu with its params and all traces."""
+    written = []
+    for gpu in ("H100", "A100"):
+        params_path = find(results_dirs, f"roofline_params_{gpu}_llama31_8b.json")
+        trace_paths = {name: find(results_dirs, name) for name in TRACES}
+        if params_path is None or None in trace_paths.values():
+            print(f"SKIP roofline_utils {gpu}: params or pinned traces not in the results dirs")
+            continue
+        out_path = Path(dest) / "kernels" / f"roofline_utils_{gpu}.json"
+        build(gpu, params_path, trace_paths, out_path)
+        written.append(out_path)
+    return written

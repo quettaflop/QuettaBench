@@ -1,4 +1,4 @@
-# profiling/tests/test_build_serving_decode_grid.py
+# tests/probes/test_build_serving_decode_grid.py
 """Deterministic-side tests for the serving-context decode grid tool (L11).
 
 Covers the PRE-REGISTERED arithmetic that must not drift: the 26-cell tp4 lattice and its
@@ -12,15 +12,14 @@ import csv
 import gzip
 import json
 import math
-import subprocess
 import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
-from profiling.emit.build_serving_decode_grid import (  # noqa: E402
-    OUT_FIELDS, _client, build,
+from quettabench.export.quettasim.serving_decode_grid import (  # noqa: E402
+    OUT_FIELDS, _client, build, run as run_exports,
 )
 
 solve_cell = _client.solve_cell
@@ -128,7 +127,7 @@ def test_builder_merge_latest_wins(tmp_path: Path) -> None:
 def test_builder_snap_flags_large_deviation(tmp_path: Path) -> None:
     # an effective context >2% off nominal (asymmetric steady window) keeps the measured
     # effective and is flagged check
-    run = tmp_path / "run.jsonl.gz"
+    run = tmp_path / "serving_decode_grid_H100x4_2026-10-01.jsonl.gz"
     with gzip.open(run, "wt") as f:
         for i in range(2):
             f.write(json.dumps({"cell": [2, 2048],
@@ -139,17 +138,14 @@ def test_builder_snap_flags_large_deviation(tmp_path: Path) -> None:
 
 
 def test_builder_csv_is_load_grid_compatible(tmp_path: Path) -> None:
-    run = tmp_path / "run.jsonl.gz"
+    run = tmp_path / "serving_decode_grid_H100x4_2026-10-01.jsonl.gz"
     with gzip.open(run, "wt") as f:
         for b, t, itl in ((1, 512, 3.0), (8, 512, 3.4)):
             prompt, osl = solve_cell(b, t)
             for i in range(b):
                 f.write(json.dumps({"cell": [b, t], **_mk_record(
                     i, 100.0 + 0.05 * i, osl, itl, prompt=prompt, osl=osl, nominal_t=t)}) + "\n")
-    out = tmp_path / "grid.csv"
-    subprocess.run([sys.executable, "-m", "profiling.emit.build_serving_decode_grid",
-                    "--inputs", str(run), "--out", str(out)],
-                   cwd=REPO_ROOT, check=True, capture_output=True)
+    [out] = run_exports([tmp_path], tmp_path / "exported")
     with out.open() as f:
         rows = list(csv.DictReader(f))
     assert [r["batch_size"] for r in rows] == ["1", "8"]

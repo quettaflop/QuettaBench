@@ -1,31 +1,28 @@
 #!/usr/bin/env python3
-# profiling/emit/build_saturated_ceiling.py
+# quettabench/export/quettasim/saturated_ceiling.py
 """Measured saturated-ITL ceiling anchors (median tpot_ms at KV pressure >= 2.5).
 
 Needs QuettaSim/agentic-serve on PYTHONPATH (`configs.loader` and
-`profiling.process.build_simulator_rows`).
-
-    python3 -m profiling.emit.build_saturated_ceiling
+`profiling.process.build_simulator_rows`) for the deployment list and turn parser; each
+deployment's bench dir is looked up in the results dirs. Writes dest/kernels/<ceiling file>
+(see ``run``).
 """
 from __future__ import annotations
 
 import json
 import math
 import statistics as st
-import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Iterable
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+from quettabench.export.quettasim._inputs import find_dir
 
 PRESSURE_THRESHOLD = 2.5
 CLUSTER_SPLIT_OUTPUT = 50.0
 CACHE_BLOCK_SIZE = 16
 
-# Filled in main() after consumer imports succeed.
-BENCH_BASE = None
+# Filled in run() after consumer imports succeed.
 CONCURRENCIES = None
 PROFILES = None
 build_turns = None
@@ -36,7 +33,7 @@ class CeilingConfig:
     gpu: str
     model: str
     tp: int
-    bench_dir: str
+    bench_root: Path
     available_kv_blocks: int
     out_json: Path
 
@@ -44,7 +41,6 @@ class CeilingConfig:
 def _load_consumer():
     try:
         from profiling.process.build_simulator_rows import (  # noqa: E402
-            BENCH_BASE as bench_base,
             CONCURRENCIES as concs,
             PROFILES as profiles,
             build_turns as turns_fn,
@@ -52,15 +48,15 @@ def _load_consumer():
         from configs.loader import all_deployments  # noqa: E402
     except ImportError as e:
         raise SystemExit(
-            "build_saturated_ceiling needs QuettaSim/agentic-serve on PYTHONPATH "
+            "saturated_ceiling needs QuettaSim/agentic-serve on PYTHONPATH "
             f"(could not import {e.name!r}). See profiling/README.md."
         ) from e
-    return bench_base, concs, profiles, turns_fn, all_deployments
+    return concs, profiles, turns_fn, all_deployments
 
 
 def _turns_with_pressure(cfg: CeilingConfig) -> list[tuple[float, float, float]]:
     """(output_tokens, tpot_meas, pressure) for every measured turn of the run."""
-    root = BENCH_BASE / cfg.bench_dir
+    root = cfg.bench_root
     out: list[tuple[float, float, float]] = []
     for prof in PROFILES:
         for c in CONCURRENCIES:
@@ -162,7 +158,7 @@ def build(cfg: CeilingConfig) -> dict | None:
                       f"{PRESSURE_THRESHOLD} (the saturated 'C=300+' asymptote)"),
         "pressure_threshold": PRESSURE_THRESHOLD,
         "cluster_split_output": CLUSTER_SPLIT_OUTPUT,
-        "source": str(BENCH_BASE / cfg.bench_dir),
+        "source": str(cfg.bench_root),
         "n_saturated_turns": len(sat),
         "max_measured_plateau_ms": round(all_ms[-1], 1),
         "p90_measured_plateau_ms": round(all_ms[min(len(all_ms) - 1, int(len(all_ms) * 0.9))], 1),
@@ -173,25 +169,26 @@ def build(cfg: CeilingConfig) -> dict | None:
         "_notes": ("Measured-anchor replacement for the retired least-squares ceiling "
                    "118.7 + 3263/output (no fit; measured plateau medians + interpolation, "
                    "same pattern as the decode kernel grid). Regenerate: "
-                   "python3 -m profiling.emit.build_saturated_ceiling."
+                   "just export."
                    + _sensitivity_note(turns, anchors)),
     }
 
 
-def main() -> None:
-    global BENCH_BASE, CONCURRENCIES, PROFILES, build_turns
-    BENCH_BASE, CONCURRENCIES, PROFILES, build_turns, all_deployments = _load_consumer()
-    configs = [
-        CeilingConfig(d.gpu_key, d.model, d.tp, d.bench_dir, d.available_kv_blocks,
-                      Path((d.data.get("saturated_ceiling") or {})["path"]))
-        for d in all_deployments()
-        if (d.data.get("saturated_ceiling") or {}).get("status") in ("measured", "derived")
-        and (d.data.get("saturated_ceiling") or {}).get("path")
-    ]
-    for cfg in configs:
-        if not (BENCH_BASE / cfg.bench_dir).exists():
-            print(f"SKIP {cfg.gpu}: bench root missing ({BENCH_BASE / cfg.bench_dir})")
+def run(results_dirs: Iterable[Path], dest: Path) -> list[Path]:
+    """Write dest/kernels/<ceiling file> for every measured/derived deployment whose bench dir is present."""
+    global CONCURRENCIES, PROFILES, build_turns
+    CONCURRENCIES, PROFILES, build_turns, all_deployments = _load_consumer()
+    written = []
+    for d in all_deployments():
+        spec = d.data.get("saturated_ceiling") or {}
+        if spec.get("status") not in ("measured", "derived") or not spec.get("path"):
             continue
+        bench_root = find_dir(results_dirs, d.bench_dir)
+        if bench_root is None:
+            print(f"SKIP {d.gpu_key}: bench dir {d.bench_dir} not in the results dirs")
+            continue
+        cfg = CeilingConfig(d.gpu_key, d.model, d.tp, bench_root, d.available_kv_blocks,
+                            Path(dest) / "kernels" / Path(spec["path"]).name)
         payload = build(cfg)
         if payload is None:
             continue
@@ -201,7 +198,5 @@ def main() -> None:
                             for a in payload["anchors"])
         print(f"{cfg.gpu}: {payload['n_saturated_turns']} saturated turns -> anchors [{anchors}] "
               f"-> {cfg.out_json}")
-
-
-if __name__ == "__main__":
-    main()
+        written.append(cfg.out_json)
+    return written

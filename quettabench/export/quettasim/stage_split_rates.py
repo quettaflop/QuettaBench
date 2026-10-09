@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# profiling/emit/build_stage_split_rates.py
+# quettabench/export/quettasim/stage_split_rates.py
 """Per-config prefill HOST-cached rate + FA3 coefficient from the LIKE-FOR-LIKE tp1/tpN
 stage-split pair (L11 round 2, 2026-06-11).
 
@@ -43,23 +43,20 @@ before this builder ran):
   kernel grid on BOTH legs, which is exactly why the ratio, not the raw coefficient, is
   transported) and 0 < ratio < 1 (sharding can only help).
 
-Deterministic (closed-form OLS, no RNG). Usage:
-    python3 -m profiling.emit.build_stage_split_rates --tp 4
+Deterministic (closed-form OLS, no RNG). Reads the serving_stage_split_<gpu>[_tpN].csv legs
+from the results dirs, writes dest/kernels/prefill_stage_rates_*.json (see ``run``). The
+simulator constants it checks against come from QuettaSim (`simulator.ttft_queue_sim`), which
+must be on PYTHONPATH.
 """
 from __future__ import annotations
 
 import argparse
 import csv
 import json
-import sys
 from pathlib import Path
+from typing import Iterable
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
-RESULTS = REPO_ROOT / "profile_data" / "results"
-TP1_CSV = RESULTS / "serving_stage_split_H100.csv"
+from quettabench.export.quettasim._inputs import find, stage_split_legs
 
 # Production constants the per-config values replace / transport (asserted against the live
 # module below so a retune cannot silently desynchronize this builder).
@@ -96,18 +93,14 @@ def _ols(rows: list[dict], ycol: str, terms: list[str]) -> dict[str, float]:
     return beta
 
 
-def build(tp: int) -> None:
+def build(tp: int, tp1_csv: Path, tpn_csv: Path, out_json: Path) -> None:
     import simulator.ttft_queue_sim as sim
     assert abs((sim.PREFILL_HOST_SHARED_MS_PER_TOKEN + sim.PREFILL_HOST_PERREQ_MS_PER_TOKEN)
                - PROD_HOST_SUM) < 1e-15, "production host SUM moved — update this builder's anchor"
     assert sim.PREFILL_FA3_MS_PER_TOKEN2 == PROD_FA3, "production FA3 moved — update this builder's anchor"
     shared_frac = sim.PREFILL_HOST_SHARED_MS_PER_TOKEN / PROD_HOST_SUM
 
-    tpn_csv = RESULTS / f"serving_stage_split_H100_tp{tp}.csv"
-    for p in (TP1_CSV, tpn_csv):
-        if not p.exists():
-            raise SystemExit(f"missing {p} — pull both stage-split legs first")
-    rows1 = list(csv.DictReader(TP1_CSV.open()))
+    rows1 = list(csv.DictReader(tp1_csv.open()))
     rowsn = list(csv.DictReader(tpn_csv.open()))
 
     host1 = _ols(rows1, "ttft_ms", ["1", "new", "cached"])
@@ -128,7 +121,6 @@ def build(tp: int) -> None:
         raise SystemExit(f"FA3 tp{tp}/tp1 ratio {ratio:.4f} outside (0,1) — not a sharding signal")
     fa3_tpn = PROD_FA3 * ratio
 
-    out_json = REPO_ROOT / "profile_data" / "kernels" / f"prefill_stage_rates_H100x{tp}.json"
     payload = {
         "schema": "prefill_stage_rates.v1",
         "gpu": f"H100x{tp}", "model": "Llama-3.1-8B", "tp": tp,
@@ -169,8 +161,8 @@ def build(tp: int) -> None:
         "_notes": (f"Pinned in the H100x{tp} deployment JSON top-level keys "
                    "prefill_host_cached_ms_per_token / prefill_fa3_ms_per_token2 -> "
                    "RooflineParams (loader). Every config without the pins keeps the module "
-                   "constants byte-identically. Regenerate: python3 -m "
-                   f"profiling.emit.build_stage_split_rates --tp {tp}. Sources: "
+                   "constants byte-identically. Regenerate: just export. "
+                   "Sources: "
                    f"serving_stage_split.py --tensor-parallel-size {{1,{tp}}} on h100 "
                    "(h100_setup.md; tp4 leg measured 2026-06-11, GPUs 4-7)."),
     }
@@ -183,7 +175,8 @@ def build(tp: int) -> None:
     print(f"wrote {out_json}")
 
 
-def build_consumer(gpu: str, tp: int) -> None:
+def build_consumer(gpu: str, tp: int, tp1_csv: Path, tpn_csv: Path, h100_tp1_csv: Path,
+                   out_json: Path) -> None:
     """L13 extension (--gpu RTX3090, 2026-06-11): per-config host-cached + FA3 pins from the
     consumer GPU's OWN stage-split legs (serving_stage_split_{gpu}.csv / _tp{tp}.csv).
 
@@ -212,15 +205,9 @@ def build_consumer(gpu: str, tp: int) -> None:
     prod_sum_live = sim.PREFILL_HOST_SHARED_MS_PER_TOKEN + sim.PREFILL_HOST_PERREQ_MS_PER_TOKEN
     assert abs(prod_sum_live - PROD_HOST_SUM) < 1e-15, "production host SUM moved — update anchor"
 
-    tp1_csv = RESULTS / f"serving_stage_split_{gpu}.csv"
-    tpn_csv = RESULTS / f"serving_stage_split_{gpu}_tp{tp}.csv"
-    for p in (tp1_csv, tpn_csv, TP1_CSV):
-        if not p.exists():
-            raise SystemExit(f"missing {p} — pull the stage-split legs first "
-                             "(the H100 tp1 leg is the estimator-validation bridge)")
     rows1 = list(csv.DictReader(tp1_csv.open()))
     rowsn = list(csv.DictReader(tpn_csv.open()))
-    rows_h100 = list(csv.DictReader(TP1_CSV.open()))
+    rows_h100 = list(csv.DictReader(h100_tp1_csv.open()))
 
     # Cross-instrument estimator validation on the H100 bridge leg (hard-fail).
     host_h100_4p = _ols(rows_h100, "ttft_ms", ["1", "new", "cached", "fa3"])
@@ -244,7 +231,6 @@ def build_consumer(gpu: str, tp: int) -> None:
         raise SystemExit(f"FA3 tp{tp}/tp1 ratio {ratio:.4f} outside (0,1] — not a sharding "
                          "signal; refusing")
 
-    out_json = REPO_ROOT / "profile_data" / "kernels" / f"prefill_stage_rates_{gpu}x{tp}.json"
     payload = {
         "schema": "prefill_stage_rates.v1",
         "gpu": f"{gpu}x{tp}", "model": "Llama-3.1-8B", "tp": tp,
@@ -288,8 +274,7 @@ def build_consumer(gpu: str, tp: int) -> None:
         "_notes": (f"Pinned in the {gpu}x{tp} deployment JSON top-level keys "
                    "prefill_host_cached_ms_per_token / prefill_fa3_ms_per_token2 -> "
                    "RooflineParams (loader). Every config without the pins keeps the module "
-                   "constants byte-identically. Regenerate: python3 -m "
-                   f"profiling.emit.build_stage_split_rates --gpu {gpu} --tp {tp}. "
+                   "constants byte-identically. Regenerate: just export. "
                    f"Sources: serving_stage_split.py --tensor-parallel-size {{1,{tp}}} on "
                    "the 3090 host (L13, 2026-06-11; GPUs 0 / 0-1 / 0-3, PIX-only PCIe)."),
     }
@@ -303,20 +288,19 @@ def build_consumer(gpu: str, tp: int) -> None:
     print(f"wrote {out_json}")
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--tp", type=int, default=4, help="tp degree of the second leg")
-    ap.add_argument("--gpu", default="H100", choices=["H100", "RTX3090"],
-                    help="GPU family of the stage-split legs (L13: RTX3090 uses its OWN legs "
-                         "+ the amended 4-param estimators; H100 default byte-untouched)")
-    a = ap.parse_args()
-    if a.tp < 2:
-        raise SystemExit("--tp must be >= 2 (tp1 is the bridge leg)")
-    if a.gpu != "H100":
-        build_consumer(a.gpu, a.tp)
-        return
-    build(a.tp)
-
-
-if __name__ == "__main__":
-    main()
+def run(results_dirs: Iterable[Path], dest: Path) -> list[Path]:
+    """Write dest/kernels/prefill_stage_rates_<gpu>x<tp>.json for every gpu/tp whose legs exist."""
+    written = []
+    h100_tp1 = find(results_dirs, "serving_stage_split_H100.csv")
+    for gpu in ("H100", "RTX3090"):
+        for tp, tp1_csv, tpn_csv in stage_split_legs(results_dirs, gpu):
+            out_json = Path(dest) / "kernels" / f"prefill_stage_rates_{gpu}x{tp}.json"
+            if gpu == "H100":
+                build(tp, tp1_csv, tpn_csv, out_json)
+            elif h100_tp1 is not None:
+                build_consumer(gpu, tp, tp1_csv, tpn_csv, h100_tp1, out_json)
+            else:
+                print(f"SKIP {gpu}x{tp}: no H100 tp1 leg to validate the estimator against")
+                continue
+            written.append(out_json)
+    return written

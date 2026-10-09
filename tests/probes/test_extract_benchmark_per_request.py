@@ -1,10 +1,10 @@
-# profiling/tests/test_extract_benchmark_per_request.py
+# tests/probes/test_extract_benchmark_per_request.py
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
-from profiling.emit.extract_benchmark_per_request import (
+from quettabench.export.quettasim.extract_benchmark_per_request import (
     collect_per_request_distributions,
 )
 
