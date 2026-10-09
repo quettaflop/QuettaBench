@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# profiling/probes/serving_decode_grid.py
 """Live-server (batch, context) grid of steady-state mid-stream ITL.
 
 Isolated kernel stepping overstates per-step cost vs continuous serving (NCCL
@@ -8,10 +7,10 @@ streams per cell, and records SSE timestamps. The authoritative CSV is built by
 ``just export --only serving_decode_grid`` (imports summarize_cell
 from this module).
 
-    python3 profiling/probes/serving_decode_grid.py \
+    python3 -m quettabench.probes.serving_decode_grid \
       --model /path/to/Llama-3.1-8B-Instruct --tensor-parallel-size 4 \
-      --port 8791 --out-raw serving_decode_grid.jsonl.gz \
-      --out-summary serving_decode_grid_summary.csv
+      --port 8791 --out-raw results/probes/H100x4/serving_decode_grid_H100x4_<date>.jsonl.gz \
+      --out-summary results/probes/H100x4/serving_decode_grid_summary.csv
 """
 from __future__ import annotations
 
@@ -27,6 +26,7 @@ import random
 import statistics as st
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 from pathlib import Path
@@ -478,7 +478,7 @@ def main() -> None:
                 "lattice_pool_tokens": pool, "date": time.strftime("%Y-%m-%d"),
                 "n_cells": len(cells)}
 
-        tmp_dir = Path(os.environ.get("TMPDIR", "/tmp")) / "serving_decode_grid_shards"
+        tmp_dir = Path(tempfile.gettempdir()) / "serving_decode_grid_shards"
         tmp_dir.mkdir(parents=True, exist_ok=True)
         out_raw = Path(a.out_raw)
         out_raw.parent.mkdir(parents=True, exist_ok=True)

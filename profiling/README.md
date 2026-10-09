@@ -9,9 +9,11 @@ emitters that turn raw probe output into curated tables. Peer of the runner
 
 ```
 quettabench/probes/            kernel probes (need a GPU): gemm, moe, flash_attn, cross_attn, gdn,
-                               elementwise, collective, vllm_allreduce, reparallel
+                               elementwise, collective, vllm_allreduce, reparallel; and the two
+                               live-server probes the exporters read: serving_decode_grid,
+                               serving_stage_split
 quettabench/export/quettasim/  emitters: results files -> QuettaSim tables (no GPU)
-profiling/probes/              live-server + serving-wall probes (need a GPU)
+profiling/probes/              live_split_probe, pool_capacity_probe (no consumer found yet)
 profiling/kernel_composed/probes/  serving-shaped and live-server probes: fused_block, decode_batch,
                                serving_frontend, pd_host, kv_transfer
 docs/runbooks/                 how-to-measure docs and preflight scripts
@@ -23,29 +25,16 @@ The serving-shaped probes (`fused_block`, `decode_batch`) and the live-server pr
 (`serving_frontend`, `pd_host`, `kv_transfer`) fold into the grid trace and the profiling
 sources in a later commit; until then they stay under `profiling/kernel_composed/probes/`.
 
-### probes/
+### Live-server probes left here
 
-Kernel probes (isolated, CUDA-event timed):
+Both drive a running vLLM OpenAI server and have no consumer in the exporters or in the
+QuettaSim kernel_data / device-yaml fields, but their results feed numbers the simulator
+carries as constants, so they stay until someone confirms:
 
-- `fa_grid_probe.py` — flash-attention grids at tp-sharded head configs, on
-  vLLM's own `flash_attn_varlen_func` (fa_version 3).
-- `gemm_slice_probe.py` — row-parallel GEMM slices for tp2/tp4 shapes.
-- `allreduce_probe.py` — NCCL all-reduce cost over decode-step payloads.
-- `custom_allreduce_probe.py` — vLLM's custom all-reduce, the real decode kernel.
-- `decode_steps.py`, `cached_prefill_steps_v3.py` — CUDA-event decode / cached
-  prefill step timing.
-
-Live-server probes (drive a running vLLM OpenAI server over SSE):
-
-- `serving_herd_scaling.py` — how c1 prefill TTFT grows under a synchronized herd.
-- `pool_capacity_probe.py` — effective KV-pool capacity under prefix caching.
-- `serving_decode_grid.py` — steady-state mid-stream ITL over a (batch, context)
-  grid. Also the single source of truth for the decode-grid post-processing that
-  `quettabench/export/quettasim/serving_decode_grid.py` imports.
-- `serving_stage_split.py` — per-stage breakdown of c1 prefill TTFT vs
-  (new, cached) tokens.
-- `live_split_probe.py`, `live_ttft_probe.py` — cached-host split and c1 TTFT on
-  the real serving stack.
+- `live_split_probe.py` -- cached-host shared vs per-request split (the 50/50 in
+  `docs/runbooks/serving_stage_split_plan.md`; `stage_split_rates` keeps that fraction).
+- `pool_capacity_probe.py` -- usable KV-pool capacity under prefix caching (the
+  `available_kv_blocks` the saturated-ceiling emitter reads).
 
 ### Kernel probes and emitters
 
@@ -105,12 +94,6 @@ just probe gemm "--gpu-label H100 --ncu"
 Live-server probe: launch a vLLM OpenAI server first, then point the probe at it
 (see each probe's `--help` and the runbooks). `serving_stage_split_plan.md` and
 `h100_setup.md` in `docs/runbooks/` describe the full measurement setup.
-
-Scheduler that waits for free GPUs before firing:
-
-```bash
-nohup bash profiling/probes/slice_probe_watch.sh > slice_watch.log 2>&1 &
-```
 
 ## Tests
 

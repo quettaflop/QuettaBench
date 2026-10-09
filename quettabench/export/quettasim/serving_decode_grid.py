@@ -2,7 +2,7 @@
 # quettabench/export/quettasim/serving_decode_grid.py
 """Deterministic builder: raw serving-decode-grid JSONL.gz run(s) -> grid CSV.
 
-The measurement client (``profiling/probes/serving_decode_grid.py``) writes an
+The measurement client (``quettabench/probes/serving_decode_grid.py``) writes an
 APPEND-ONLY raw per-request JSONL.gz per session (wall-anchored SSE event timestamps). This
 builder re-derives every cell row from the raw events with the SAME pre-registered
 post-processing (``summarize_cell``, imported from the client module — single source of truth):
@@ -26,18 +26,12 @@ from __future__ import annotations
 
 import csv
 import gzip
-import importlib.util
 import json
 import re
 from pathlib import Path
 from typing import Iterable
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-_CLIENT = REPO_ROOT / "profiling" / "probes" / "serving_decode_grid.py"
-
-_spec = importlib.util.spec_from_file_location("serving_decode_grid_client", _CLIENT)
-_client = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_client)  # aiohttp is lazily imported by the client; safe locally
+from quettabench.probes import serving_decode_grid as _client  # aiohttp is imported lazily there
 
 summarize_cell = _client.summarize_cell
 SUMMARY_FIELDS = _client.SUMMARY_FIELDS

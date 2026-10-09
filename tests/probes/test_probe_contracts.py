@@ -96,10 +96,16 @@ def test_recipe_probes_exist_and_accept_their_flags():
         assert not missing, f"{probe.name} does not define recipe flags: {missing}"
 
 
+# Live-server probes name their output through --out/--out-raw, not a GPU label.
+LIVE_SERVER_PROBES = {"serving_decode_grid.py", "serving_stage_split.py"}
+
+
 def test_every_probe_labels_its_gpu():
-    """Tables are keyed by GPU name, so every probe must take --gpu-label,
+    """Tables are keyed by GPU name, so every kernel probe must take --gpu-label,
     recipe-invoked or not."""
     for probe in sorted(PROBES_DIR.glob("[!_]*.py")):
+        if probe.name in LIVE_SERVER_PROBES:
+            continue
         assert "--gpu-label" in argparse_flags(probe), f"{probe.name} has no --gpu-label"
 
 
@@ -124,7 +130,7 @@ def test_sibling_helper_imports_resolve():
 def test_every_moved_probe_takes_out():
     """The remote recipe and `just probe` pass --out; every packaged probe must accept it."""
     for probe in sorted(PROBES_DIR.glob("[!_]*.py")):
-        if probe.name != "base.py":
+        if probe.name != "base.py" and probe.name not in LIVE_SERVER_PROBES:
             assert "--out" in argparse_flags(probe), f"{probe.name} has no --out"
 
 
