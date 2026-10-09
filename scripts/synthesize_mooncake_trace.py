@@ -15,7 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from quettabench.workloads.mooncake import parse_mooncake_trace
+from quettabench.workloads.live import parse_mooncake_trace
 
 
 def build_record_pools(records):

@@ -1,11 +1,11 @@
-"""Golden: the two Mooncake readers on the same 5-line trace.
+"""Golden: the one Mooncake reader (workloads/live.py) on a 5-line trace.
 
-src/workloads/mooncake.py (the src runner's mooncake-trace profile) and
-synth_bench.load_trace (the crossval Mooncake path) read the same file into
-different requests: different token ids, different fields, and only one of
-them turns timestamp into an arrival. Both outputs are pinned as they are;
-REPORT.md lists the differences. Token id lists are pinned by sha256 plus
-length and first ids, and by which blocks are shared with request 0.
+RealTrace.from_jsonl, RealTrace.from_mooncake and the runner's
+MooncakeTraceDataset all expand hash_ids through live.mooncake_prompt_ids, so
+they must produce the same token ids. Pinned with hash_ids, without them
+(synth_ids fallback), and with a zero output_length (kept, not dropped).
+Token id lists are pinned by sha256 plus length and first ids, and by how
+many leading 512-token blocks each request shares with request 0.
 """
 
 import hashlib
@@ -16,7 +16,6 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from quettabench.workloads.mooncake import MooncakeTraceDataset
 from tests.golden._harness import FIXTURES, check_json, crossval_path, fresh_import
 
 TRACE = FIXTURES / "mooncake_5.jsonl"
@@ -39,53 +38,51 @@ def describe_ids(ids, first_ids):
     }
 
 
-def read_src(path):
-    """Six get_next_request() calls: the five lines, then the wrap-around."""
-    ds = MooncakeTraceDataset(str(path))
-    reqs = [ds.get_next_request() for _ in range(6)]
-    first = reqs[0].metadata["prompt_token_ids"]
-    return [{
-        "messages": r.messages,
-        "max_tokens": r.max_tokens,
-        "metadata": {k: v for k, v in r.metadata.items() if k != "prompt_token_ids"},
-        "prompt_token_ids": describe_ids(r.metadata["prompt_token_ids"], first),
-    } for r in reqs]
-
-
-def read_crossval(path):
+def read_all(case, path):
+    """The trace through every entry point; ids must agree across all three."""
     with crossval_path(), mock.patch.dict(os.environ, {}, clear=True):
-        synth_bench = fresh_import("quettabench.workloads.synth_bench")
-        reqs = synth_bench.load_trace(str(path))
-        workload_hash = synth_bench.workload_hash(reqs)
+        live = fresh_import("quettabench.workloads.live")
+        mooncake = fresh_import("quettabench.workloads.mooncake")
+        trace = live.RealTrace.from_jsonl(str(path))
+        strict = live.RealTrace.from_mooncake(str(path))
+        limited = live.RealTrace.from_mooncake(str(path), limit=2)
+        ds = mooncake.MooncakeTraceDataset(str(path))
+        served = [ds.get_next_request() for _ in range(6)]  # five lines, then the wrap
+    reqs = [r.to_dict() for r in trace.requests()]
+    case.assertEqual(reqs, [r.to_dict() for r in strict.requests()])
+    case.assertEqual(reqs[:2], [r.to_dict() for r in limited.requests()])
+    case.assertEqual([r["prompt_token_ids"] for r in reqs] + [reqs[0]["prompt_token_ids"]],
+                     [s.metadata["prompt_token_ids"] for s in served])
     first = reqs[0]["prompt_token_ids"]
     return {
         "requests": [{**{k: v for k, v in r.items() if k != "prompt_token_ids"},
                       "prompt_token_ids": describe_ids(r["prompt_token_ids"], first)}
                      for r in reqs],
-        "workload_hash": workload_hash,
+        "workload_hash": trace.workload_hash(),
+        "source_meta": {k: v for k, v in trace.source_meta().items() if k != "path"},
+        "dataset": [{"max_tokens": s.max_tokens,
+                     "metadata": {k: v for k, v in s.metadata.items() if k != "prompt_token_ids"}}
+                    for s in served],
     }
 
 
-def outcome(fn, path):
-    try:
-        return fn(path)
-    except Exception as e:  # a reader refusing the file is part of the pin
-        return {"error": type(e).__name__, "message": str(e)}
-
-
-class MooncakeReadersGolden(unittest.TestCase):
-    def test_both_readers_on_one_trace(self):
+class MooncakeReaderGolden(unittest.TestCase):
+    def test_one_reader_on_one_trace(self):
+        rows = [json.loads(line) for line in TRACE.read_text().splitlines()]
         with tempfile.TemporaryDirectory() as td:
             no_hash_ids = Path(td) / "mooncake_no_hash_ids.jsonl"
             no_hash_ids.write_text("".join(
-                json.dumps({k: v for k, v in json.loads(line).items() if k != "hash_ids"}) + "\n"
-                for line in TRACE.read_text().splitlines()))
+                json.dumps({k: v for k, v in r.items() if k != "hash_ids"}) + "\n" for r in rows))
+            zero_out = Path(td) / "mooncake_zero_output.jsonl"
+            zero_out.write_text("".join(
+                json.dumps({**r, "output_length": 0} if i == 4 else r) + "\n"
+                for i, r in enumerate(rows)))
             record = {
-                "with_hash_ids": {"src_mooncake": outcome(read_src, TRACE),
-                                  "crossval_synth_bench": outcome(read_crossval, TRACE)},
-                "without_hash_ids": {"src_mooncake": outcome(read_src, no_hash_ids),
-                                     "crossval_synth_bench": outcome(read_crossval, no_hash_ids)},
+                "with_hash_ids": read_all(self, TRACE),
+                "without_hash_ids": read_all(self, no_hash_ids),
+                "zero_output_length": read_all(self, zero_out),
             }
+        self.assertEqual(record["zero_output_length"]["requests"][4]["output_length"], 0)
         check_json(self, "mooncake_readers", record)
 
 

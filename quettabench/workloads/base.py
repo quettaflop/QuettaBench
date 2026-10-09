@@ -9,6 +9,15 @@ import hashlib
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass
 
+VOCAB = 100_000  # safe id ceiling for the checkpoints under test
+
+
+def synth_ids(n, seed):
+    """Distinct pseudo-random token stream; different seed gives different routing."""
+    a = 1103515245 * (seed + 1) + 12345
+    return [((a + i * (2 * seed + 7)) % (VOCAB - 1)) + 1 for i in range(n)]
+
+
 @dataclass
 class Request:
     """One request as the replay schema writes it. None means the field is

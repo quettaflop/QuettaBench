@@ -56,7 +56,7 @@ vllm installed, no pin to check against).
 | 6 | `test_cache_packing.py` | `vmin_fit_llama.log`, `baseline_llama.json` | the log is byte-equal to what vmin_fit prints (vllm.sh filter); the baseline json cache.py writes, byte for byte (clock and git sha frozen) |
 | 7 | `test_table_text.py` | `bench_loop.log`, `bench_criterion.log`, `table_loop.txt`, `table_criterion.txt` | exact table.py stdout for both logs against item 6's baseline |
 | 8 | `test_bootstrap_plan.py` | `bootstrap_plan.json` | `XVAL_DRYRUN=1` plan text, exit code, and that no file is left behind, for a run with gaps and a complete run |
-| 9 | `test_mooncake_readers.py` | `mooncake_5.jsonl`, `mooncake_readers.json` | both readers' output on one trace, with and without `hash_ids` |
+| 9 | `test_mooncake_readers.py` | `mooncake_5.jsonl`, `mooncake_readers.json` | the one reader (`workloads/live.py`) through `RealTrace.from_jsonl`, `RealTrace.from_mooncake` and `MooncakeTraceDataset`, with and without `hash_ids` and with a zero `output_length` (resolved, see item 9 below) |
 | 10 | this file | | SPECSUM/SERVESUM/WORKLOADSUM formats, below |
 
 ## Where the logs came from
@@ -171,6 +171,27 @@ Same file, `mooncake_5.jsonl` (5 lines: `timestamp` in ms, `input_length`,
 | workload hash | none | `6336408d62c729aa` |
 
 Lengths and `max_tokens` / `output_length` agree on every line.
+
+Resolved by the owner: one reader, `quettabench/workloads/live.py`.
+`RealTrace.from_jsonl`, `RealTrace.from_mooncake` and the runner's
+`MooncakeTraceDataset` all go through it. Token ids: `hash_ids` expand into
+shared 512-id blocks exactly as `src/workloads/mooncake.py` did (seed 42,
+tail fill, truncation; the ids are byte-identical to that column above), so
+prefix sharing is preserved; a line without `hash_ids` falls back to
+`synth_ids(input_length, line index)`, the crossval column above.
+`arrival_ts = timestamp / 1e3` always. A zero `output_length` is kept.
+`from_mooncake` takes `limit`. `request_index` and the tail-fill index are
+the file line index (the old src reader counted non-blank lines; the two
+differ only on a file with blank lines).
+
+Consequences, all intended: the workload hash of a crossval Mooncake replay
+that carries `hash_ids` changes (`mooncake_5.jsonl`: `6336408d62c729aa` ->
+`c009ec57c5c23d36`), and so does one with a zero `output_length`
+(`5215d22affa91623` for the zero-output variant). Without `hash_ids` the
+hash is unchanged (`6336408d62c729aa`). The runner's dataset no longer
+raises `KeyError` on a line without `hash_ids`. Only
+`mooncake_readers.json` was regenerated; `workload_hash.json` has no
+Mooncake entry and is unchanged.
 
 ## Item 10: trace_serve summary line formats (reference for the port)
 

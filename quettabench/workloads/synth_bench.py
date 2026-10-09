@@ -14,15 +14,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parents[2]))
-from quettabench.workloads.base import workload_hash
-
-VOCAB = 100_000  # safe id ceiling for the checkpoints under test
-
-
-def synth_ids(n, seed):
-    """Distinct pseudo-random token stream; different seed gives different routing."""
-    a = 1103515245 * (seed + 1) + 12345
-    return [((a + i * (2 * seed + 7)) % (VOCAB - 1)) + 1 for i in range(n)]
+from quettabench.workloads.base import synth_ids, workload_hash
+from quettabench.workloads.live import RealTrace
 
 
 def synth_requests(count, ctx, seed=0, length_jitter=0.0):
@@ -146,49 +139,9 @@ def agentic_requests(profile, count, seed=0, groups=8, rate=None):
     return _stamp(reqs[:count], seed)
 
 
-def _carry_meta(req, d):
-    """Carry scheduling and provenance metadata; Mooncake timestamp is ms."""
-    if d.get("arrival_ts") is not None:
-        req["arrival_ts"] = float(d["arrival_ts"])
-    elif d.get("timestamp") is not None:
-        req["arrival_ts"] = float(d["timestamp"]) / 1e3
-    for k in ("session_id", "turn", "image_tokens", "seed", "source"):
-        if d.get(k) is not None:
-            req[k] = d[k]
-    return req
-
-
 def load_trace(path):
-    """Read a JSONL trace into the common request shape; missing ids are synthesized."""
-    reqs = []
-    for i, line in enumerate(open(path)):
-        line = line.strip()
-        if not line:
-            continue
-        d = json.loads(line)
-        if d.get("prompt_token_ids"):
-            ids = list(d["prompt_token_ids"])
-            req = {"prompt_token_ids": ids, "prompt_len": len(ids)}
-            if d.get("output_length"):
-                req["output_length"] = int(d["output_length"])
-            # Reference tokens for acceptance scoring (SPECSUM); must survive load
-            # or trace_serve has nothing to compare the engine's output against.
-            if d.get("output_token_ids"):
-                req["output_token_ids"] = list(d["output_token_ids"])
-            req["order"] = i  # submission order is the file line index, authoritative
-            reqs.append(_carry_meta(req, d))
-            continue
-        length = d.get("prompt_len") or d.get("input_length")
-        if not length:
-            raise ValueError(f"{path}:{i+1}: need prompt_token_ids, prompt_len, or input_length")
-        req = {"prompt_token_ids": synth_ids(int(length), i), "prompt_len": int(length)}
-        if d.get("output_length"):
-            req["output_length"] = int(d["output_length"])
-        req["order"] = i
-        reqs.append(_carry_meta(req, d))
-    if not reqs:
-        raise ValueError(f"{path}: no requests")
-    return reqs
+    """Read a JSONL trace into the common request dicts (live.RealTrace.from_jsonl)."""
+    return [r.to_dict() for r in RealTrace.from_jsonl(path).requests()]
 
 
 def take(reqs, count, ctx):
