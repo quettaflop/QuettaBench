@@ -45,9 +45,9 @@ import argparse
 import csv
 import json
 import statistics as st
-from pathlib import Path
 
 import torch
+
 from quettabench.probes.base import add_output_args, out_root
 
 # Per-expert geometry of every MoE model in engine/device_spec/models/.

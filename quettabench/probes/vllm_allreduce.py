@@ -14,10 +14,14 @@ vLLM actually takes and UPSERTS the all_reduce rows of ncu/collectives/{gpu}_tp{
       --gpu-label H200 --out <dir>
 """
 from __future__ import annotations
-import argparse, csv, os
-from pathlib import Path
+
+import argparse
+import csv
+import os
+
 import torch
 import torch.distributed as dist
+
 from quettabench.probes.base import add_output_args, out_root
 
 _ITERS, _WARMUP = 50, 10
@@ -49,8 +53,7 @@ def main(argv=None):
     rank, world, local = int(os.environ["RANK"]), int(os.environ["WORLD_SIZE"]), int(os.environ["LOCAL_RANK"])
     torch.cuda.set_device(local)
     from vllm.config import ParallelConfig, VllmConfig, set_current_vllm_config
-    from vllm.distributed import (get_tp_group, init_distributed_environment,
-                                  initialize_model_parallel)
+    from vllm.distributed import get_tp_group, init_distributed_environment, initialize_model_parallel
     # The device communicator reads parallel_config (custom-all-reduce enablement)
     # from the current vLLM config, exactly as an engine worker would.
     vcfg = VllmConfig(parallel_config=ParallelConfig(

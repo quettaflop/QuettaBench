@@ -19,7 +19,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
 from quettabench.export.quettasim.serving_decode_grid import (  # noqa: E402
-    OUT_FIELDS, _client, build, run as run_exports,
+    OUT_FIELDS,
+    _client,
+    build,
+    run as run_exports,
 )
 
 solve_cell = _client.solve_cell

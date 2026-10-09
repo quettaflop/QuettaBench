@@ -1,11 +1,9 @@
 """Dataset classes for benchmark workloads."""
 
-import asyncio
-import threading
 import random
+import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Optional
 
 import numpy as np
 
@@ -55,8 +53,8 @@ class JsonlDataset(BaseDataset):
     def __init__(self, filepath: str, random_seed: int = 42):
         self.filepath = filepath
         self.random_seed = random_seed
-        self._samples: Optional[list[tuple]] = None   # list of (messages, osl_tokens)
-        self._available: Optional[list[tuple]] = None
+        self._samples: list[tuple] | None = None   # list of (messages, osl_tokens)
+        self._available: list[tuple] | None = None
         self._lock = threading.Lock()
         self._rng = random.Random(random_seed)
 
@@ -68,7 +66,7 @@ class JsonlDataset(BaseDataset):
                 return
             import json
             samples = []
-            with open(self.filepath, "r") as f:
+            with open(self.filepath) as f:
                 for line in f:
                     line = line.strip()
                     if not line:
@@ -119,7 +117,7 @@ class ShareGPTDataset(BaseDataset):
         max_isl_tokens: int = 8192,   # filter: skip conversations where user msg > this
         max_osl_tokens: int = 2048,   # filter: skip conversations where assistant reply > this
         min_osl_tokens: int = 50,     # filter: skip very short replies
-        max_total_tokens: Optional[int] = None,
+        max_total_tokens: int | None = None,
         context_safety_margin_tokens: int = 0,
         tokenizer_name: str = "",
     ):
@@ -132,8 +130,8 @@ class ShareGPTDataset(BaseDataset):
         self.max_total_tokens = max_total_tokens
         self.context_safety_margin_tokens = context_safety_margin_tokens
         self.tokenizer_name = tokenizer_name
-        self._samples: Optional[list[tuple]] = None   # list of (messages, osl)
-        self._available: Optional[list[tuple]] = None
+        self._samples: list[tuple] | None = None   # list of (messages, osl)
+        self._available: list[tuple] | None = None
         self._lock = threading.Lock()
         self._rng = random.Random(random_seed)
 
@@ -256,7 +254,7 @@ class RandomTokenDataset(BaseDataset):
         seed: int = 0,
     ):
         self.output_len = output_len
-        self._prompts: Optional[list[str]] = None
+        self._prompts: list[str] | None = None
         self._idx = 0
         self._lock = threading.Lock()
         self._tokenizer_name = tokenizer_name
@@ -338,7 +336,7 @@ class RandomTokenDatasetLegacy(BaseDataset):
         self._range_ratio = range_ratio
         self._prefix_len = prefix_len
         self._seed = seed
-        self._prompts: Optional[list[str]] = None
+        self._prompts: list[str] | None = None
         self._idx = 0
         self._lock = threading.Lock()
 
@@ -521,11 +519,11 @@ class ShareGPTMultiTurnDataset(BaseDataset):
         self.max_isl_tokens = max_isl_tokens
         self.max_osl_tokens = max_osl_tokens
         self.min_osl_tokens = min_osl_tokens
-        self._sessions: Optional[list[MultiTurnSession]] = None
+        self._sessions: list[MultiTurnSession] | None = None
         self._lock = threading.Lock()
         # For get_next_request() fallback — flattened round-robin iterator
-        self._flat_requests: Optional[list[BenchmarkRequest]] = None
-        self._flat_available: Optional[list[BenchmarkRequest]] = None
+        self._flat_requests: list[BenchmarkRequest] | None = None
+        self._flat_available: list[BenchmarkRequest] | None = None
         self._rng = random.Random(random_seed)
 
     def _load(self):
@@ -668,9 +666,9 @@ class TrajectoryMultiTurnDataset(BaseDataset):
         self.max_isl_tokens = max_isl_tokens
         self.max_osl_tokens = max_osl_tokens
         self.context_safety_margin_tokens = context_safety_margin_tokens
-        self._sessions: Optional[list[MultiTurnSession]] = None
-        self._flat_requests: Optional[list[BenchmarkRequest]] = None
-        self._flat_available: Optional[list[BenchmarkRequest]] = None
+        self._sessions: list[MultiTurnSession] | None = None
+        self._flat_requests: list[BenchmarkRequest] | None = None
+        self._flat_available: list[BenchmarkRequest] | None = None
         self._lock = threading.Lock()
         self._rng = random.Random(random_seed)
 
@@ -683,7 +681,7 @@ class TrajectoryMultiTurnDataset(BaseDataset):
             import json
 
             sessions = []
-            with open(self.filepath, "r") as f:
+            with open(self.filepath) as f:
                 for line in f:
                     line = line.strip()
                     if not line:
@@ -790,14 +788,14 @@ class DistributionalMultiTurnDataset(BaseDataset):
         self,
         filepath: str,
         min_turns: int = 1,
-        max_turns: Optional[int] = None,
+        max_turns: int | None = None,
         num_sessions: int = 10,
         random_seed: int = 42,
-        max_context_tokens: Optional[int] = None,
+        max_context_tokens: int | None = None,
         context_safety_margin_tokens: int = 256,
         system_prompt: str = "",
         tokenizer_name: str = "",
-        source_session_ids: Optional[list[str]] = None,
+        source_session_ids: list[str] | None = None,
     ):
         self.filepath = filepath
         self.min_turns = min_turns
@@ -809,10 +807,10 @@ class DistributionalMultiTurnDataset(BaseDataset):
         self.system_prompt = system_prompt
         self.tokenizer_name = tokenizer_name
         self.source_session_ids = source_session_ids
-        self._sessions: Optional[list[MultiTurnSession]] = None
-        self._session_specs: Optional[dict[int, list]] = None
-        self._flat_requests: Optional[list[BenchmarkRequest]] = None
-        self._flat_available: Optional[list[BenchmarkRequest]] = None
+        self._sessions: list[MultiTurnSession] | None = None
+        self._session_specs: dict[int, list] | None = None
+        self._flat_requests: list[BenchmarkRequest] | None = None
+        self._flat_available: list[BenchmarkRequest] | None = None
         self._lock = threading.Lock()
 
     def _load(self):
@@ -890,15 +888,14 @@ class DistributionalMultiTurnDataset(BaseDataset):
 
 def make_dataset(
     profile,
-    max_context_tokens: Optional[int] = None,
+    max_context_tokens: int | None = None,
     random_seed: int = 42,
     context_safety_margin_tokens: int = 256,
-    num_sessions: Optional[int] = None,
+    num_sessions: int | None = None,
     tokenizer_name: str = "",
-    source_session_ids: Optional[list[str]] = None,
+    source_session_ids: list[str] | None = None,
 ) -> BaseDataset:
     """Factory: create the right dataset for a workload profile."""
-    from .profiles import WorkloadProfile
     effective_num_sessions = profile.num_sessions if num_sessions is None else num_sessions
 
     if profile.dataset == "test":

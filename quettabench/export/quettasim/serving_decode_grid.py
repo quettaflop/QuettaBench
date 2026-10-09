@@ -28,8 +28,8 @@ import csv
 import gzip
 import json
 import re
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 from quettabench.probes import serving_decode_grid as _client  # aiohttp is imported lazily there
 

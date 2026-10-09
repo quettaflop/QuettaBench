@@ -1,7 +1,7 @@
 import unittest
 
-from quettabench.workloads.sessions import resolve_multi_turn_num_sessions
 from quettabench.workloads.profiles import filter_profiles, get_profile, resolve_profile_name
+from quettabench.workloads.sessions import resolve_multi_turn_num_sessions
 
 
 class ProfileRegistryTests(unittest.TestCase):

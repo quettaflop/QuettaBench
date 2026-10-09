@@ -58,8 +58,8 @@ import urllib.request
 from pathlib import Path
 
 from engine.factory import build_kernel_composed_cost
-from engine.sim.queue_sim import _step_host_ms
 from engine.sim.disagg import Link
+from engine.sim.queue_sim import _step_host_ms
 
 HERE = Path(__file__).resolve().parent
 
@@ -207,7 +207,7 @@ def probe(a) -> list[dict]:
     rows: list[dict] = []
 
     def score(phase: str, conc: int, client: dict, prox: dict) -> dict:
-        pu, du = prox["prefill_usage"], prox.get("decode_usage") or {}
+        pu = prox["prefill_usage"]
         total = int(pu["prompt_tokens"]); cached_p = int(pu.get("cached_tokens") or 0)
         new_p = total - cached_p
         prefill_ms = prox["prefill_s"] * 1e3

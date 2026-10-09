@@ -23,10 +23,11 @@ from __future__ import annotations
 
 import csv
 import json
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 from quettabench.export.quettasim._inputs import stage_split_legs
+
 NCCL_PHYSICS_BAND_MS_PER_1K = (1.0, 3.0)  # external-lit all-reduce band, hidden=4096 bf16
 
 

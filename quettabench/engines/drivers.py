@@ -28,7 +28,6 @@ import time
 from abc import ABC, abstractmethod
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Optional
 from urllib.parse import urlsplit, urlunsplit
 
 import aiohttp
@@ -85,10 +84,10 @@ async def _stream_chat(
     max_tokens: int,
     temperature: float = 0.0,
     api_key: str = "test",
-    extra_headers: Optional[dict] = None,
+    extra_headers: dict | None = None,
     ignore_eos: bool = False,
-    request_id: Optional[str] = None,
-    seed: Optional[int] = None,
+    request_id: str | None = None,
+    seed: int | None = None,
     min_tokens: int = 0,
     capture_text: bool = False,
 ) -> RequestResult:
@@ -242,12 +241,12 @@ async def _stream_completions(
     max_tokens: int,
     temperature: float = 0.0,
     api_key: str = "test",
-    extra_headers: Optional[dict] = None,
+    extra_headers: dict | None = None,
     ignore_eos: bool = False,
-    request_id: Optional[str] = None,
-    seed: Optional[int] = None,
+    request_id: str | None = None,
+    seed: int | None = None,
     min_tokens: int = 0,
-    prompt_token_ids: Optional[list[int]] = None,
+    prompt_token_ids: list[int] | None = None,
 ) -> RequestResult:
     """Send one streaming completion from token ids or raw text."""
     prompt = resolve_prompt(prompt_token_ids, messages)

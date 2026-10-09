@@ -10,8 +10,7 @@ import json
 import unittest
 
 from quettabench.config import loader
-from quettabench.engines import base
-from quettabench.engines import vllm as vllm_adapter
+from quettabench.engines import base, vllm as vllm_adapter
 from tests.golden._harness import ENV_OVERRIDE, FIXTURES, REPO
 
 GOLDEN = json.loads((FIXTURES / "engine_args.json").read_text())

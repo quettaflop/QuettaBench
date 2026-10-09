@@ -9,12 +9,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 from analysis.synthetic.distributional import DistributionalSampler
-from quettabench.workloads.dataset import DistributionalMultiTurnDataset, make_dataset
-from quettabench.workloads.profiles import WorkloadProfile
 from analysis.synthetic.trace_distributions import (
     TraceDistributionError,
     parse_trace_distribution,
 )
+from quettabench.workloads.dataset import DistributionalMultiTurnDataset, make_dataset
+from quettabench.workloads.profiles import WorkloadProfile
 
 
 class WhitespaceTokenizer:

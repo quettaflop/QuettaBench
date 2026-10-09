@@ -62,6 +62,7 @@ crossval *args:
 test:
     python3 -m pytest tests -q
 
+# ruff only: mypy is not installed in this environment, so it is not part of the gate yet.
 lint:
     ruff check quettabench tests
 

@@ -223,7 +223,7 @@ async def _stream_once(session, url: str, headers: dict, payload: dict) -> list[
     return ts
 
 
-async def _loop_lag_sampler(stop: "asyncio.Event", out: list[float]) -> None:
+async def _loop_lag_sampler(stop: asyncio.Event, out: list[float]) -> None:
     loop = asyncio.get_running_loop()
     while not stop.is_set():
         t0 = loop.time()

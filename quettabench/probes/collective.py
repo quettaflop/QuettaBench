@@ -35,10 +35,13 @@ not measure. Rank 0 writes the CSV and prints the YAML block; like
 derive_device_yaml.py it does NOT edit the YAML.
 """
 from __future__ import annotations
-import argparse, csv, statistics as st
+
+import argparse
+import csv
 
 import torch
 import torch.distributed as dist
+
 from quettabench.probes.base import add_output_args, out_root
 
 _DTYPE = torch.bfloat16

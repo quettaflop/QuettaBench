@@ -19,8 +19,7 @@ from unittest import mock
 
 from quettabench import cli
 from quettabench.config import loader
-from quettabench.engines import launcher, quettaserve
-from quettabench.engines import vllm as vllm_adapter
+from quettabench.engines import launcher, quettaserve, vllm as vllm_adapter
 from quettabench.engines.base import LaunchSpec
 from quettabench.engines.drivers import BenchDriver, HttpDriver, InProcessDriver
 from quettabench.metrics.results import RunWriter

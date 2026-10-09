@@ -16,10 +16,14 @@ call; the loader multiplies by the model's full-attention layer count.
       --n-heads 16 --n-kv-heads 2 --head-dim 128 --out <dir>
 """
 from __future__ import annotations
-import argparse, csv, statistics as st
-from pathlib import Path
+
+import argparse
+import csv
+import statistics as st
+
 import torch
 from vllm.vllm_flash_attn.flash_attn_interface import flash_attn_varlen_func
+
 from quettabench.probes.base import add_output_args, out_root
 
 Q_AXIS = [512, 1024, 2048, 4096, 8192]

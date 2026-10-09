@@ -6,28 +6,26 @@ Tracks successful vs failed requests separately.
 Reports input tok/s and output tok/s separately (not just total).
 """
 
-from dataclasses import dataclass, field
-from typing import Optional
-import statistics
 import json
-import time
+import statistics
+from dataclasses import dataclass, field
 
 
 @dataclass
 class RequestResult:
     """Per-request benchmark result. Shared across all backends."""
     success: bool
-    ttft: Optional[float] = None          # seconds to first token
+    ttft: float | None = None          # seconds to first token
     itl: list = field(default_factory=list)  # inter-token latencies (seconds)
-    e2el: Optional[float] = None          # end-to-end latency (seconds)
+    e2el: float | None = None          # end-to-end latency (seconds)
     input_tokens: int = 0
     output_tokens: int = 0
-    error: Optional[str] = None
+    error: str | None = None
     # Failure taxonomy. "timeout" specifically means the client cut the stream
     # off, which truncates the SLOWEST requests -- the ones that carry the tail
     # of the latency distribution. Aggregates stay success-only, but a run whose
     # failures are timeouts has a censored tail and must not be read as clean.
-    error_kind: Optional[str] = None      # "timeout" | "http_error" | "client_error"
+    error_kind: str | None = None      # "timeout" | "http_error" | "client_error"
     # True once the server sent a usage block. Without it input/output token
     # counts are 0 and every throughput number is meaningless.
     usage_reported: bool = False
@@ -37,65 +35,65 @@ class RequestResult:
 
     # Captured only when asked; used to splice the engine reply into later turns.
     # Not written to the result JSON.
-    generated_text: Optional[str] = None
+    generated_text: str | None = None
     # Which first-token rule timed this request: HttpDriver's chat endpoint
     # ("first_payload_chunk") or completions ("first_nonempty_text").
-    ttft_rule: Optional[str] = None
+    ttft_rule: str | None = None
     # What TTFT is measured from: "slot" (closed loop, the concurrency slot
     # grant) or "arrival" (open loop, the scheduled arrival).
-    ttft_basis: Optional[str] = None
+    ttft_basis: str | None = None
     # Leading generated tokens equal to the trace's reference reply (SPECSUM);
     # None unless the trace has output_token_ids and the driver returned tokens.
-    accepted_tokens: Optional[int] = None
+    accepted_tokens: int | None = None
     # Generated token ids, when the driver returns them. Not written.
-    generated_token_ids: Optional[list] = None
+    generated_token_ids: list | None = None
     # {ctx, bs, tp, step_point, phase, attempt} for grid runs, else None.
-    cell: Optional[dict] = None
+    cell: dict | None = None
     # Grid runs: wall time of the one generate() the whole batch ran in; every
     # row of the batch carries the same value (InProcessDriver.run).
-    batch_wall_s: Optional[float] = None
+    batch_wall_s: float | None = None
     # mode.returns=logits: {argmax, top2_gap, logprob}, entry i scoring prompt token i + 1.
-    logits: Optional[dict] = None
+    logits: dict | None = None
 
     # Client-side request shape/timing. These do not replace TTFT/TPOT/E2EL;
     # they explain scheduler pressure and workload shape for later predictors.
-    request_index: Optional[int] = None
-    max_tokens_requested: Optional[int] = None
-    message_count: Optional[int] = None
-    prompt_chars: Optional[int] = None
-    scheduled_at_s: Optional[float] = None
-    dispatch_started_at_s: Optional[float] = None
-    semaphore_acquired_at_s: Optional[float] = None
-    completed_at_s: Optional[float] = None
-    client_schedule_delay_s: Optional[float] = None
-    client_queue_wait_s: Optional[float] = None
-    client_request_wall_s: Optional[float] = None
+    request_index: int | None = None
+    max_tokens_requested: int | None = None
+    message_count: int | None = None
+    prompt_chars: int | None = None
+    scheduled_at_s: float | None = None
+    dispatch_started_at_s: float | None = None
+    semaphore_acquired_at_s: float | None = None
+    completed_at_s: float | None = None
+    client_schedule_delay_s: float | None = None
+    client_queue_wait_s: float | None = None
+    client_request_wall_s: float | None = None
 
-    turn_index: Optional[int] = None      # multi-turn: which turn (0-indexed)
-    session_id: Optional[int] = None      # multi-turn: conversation/session id
+    turn_index: int | None = None      # multi-turn: which turn (0-indexed)
+    session_id: int | None = None      # multi-turn: conversation/session id
 
     # Multi-turn cache estimate fields. These are inferred from exact
     # per-session prompt-token deltas observed by the benchmark runner. They are
     # not engine-reported prefix-cache hits, but they are much better than
     # reconstructing cache state from per-turn averages after the fact.
-    previous_context_tokens: Optional[int] = None
-    total_context_tokens: Optional[int] = None
-    new_prefill_tokens: Optional[int] = None
-    cached_context_tokens: Optional[int] = None
-    cache_hit_rate: Optional[float] = None
-    cache_estimate_source: Optional[str] = None
-    cache_block_size: Optional[int] = None
-    block_aligned_cached_context_tokens: Optional[int] = None
-    block_aligned_new_prefill_tokens: Optional[int] = None
-    block_aligned_cache_hit_rate: Optional[float] = None
-    uncached_prefix_tail_tokens: Optional[int] = None
-    total_context_blocks: Optional[int] = None
-    cached_context_blocks: Optional[int] = None
-    new_prefill_blocks: Optional[int] = None
+    previous_context_tokens: int | None = None
+    total_context_tokens: int | None = None
+    new_prefill_tokens: int | None = None
+    cached_context_tokens: int | None = None
+    cache_hit_rate: float | None = None
+    cache_estimate_source: str | None = None
+    cache_block_size: int | None = None
+    block_aligned_cached_context_tokens: int | None = None
+    block_aligned_new_prefill_tokens: int | None = None
+    block_aligned_cache_hit_rate: float | None = None
+    uncached_prefix_tail_tokens: int | None = None
+    total_context_blocks: int | None = None
+    cached_context_blocks: int | None = None
+    new_prefill_blocks: int | None = None
     request_metadata: dict = field(default_factory=dict)
 
     @property
-    def tpot(self) -> Optional[float]:
+    def tpot(self) -> float | None:
         """Time per output token (mean ITL), excluding first token.
 
         mean(ITL) is only inter-TOKEN when the stream delivered ~one counted
@@ -129,9 +127,9 @@ class RequestResult:
 def annotate_request_observability(
     result: RequestResult,
     *,
-    request_index: Optional[int],
+    request_index: int | None,
     request,
-    scheduled_at_s: Optional[float],
+    scheduled_at_s: float | None,
     dispatch_started_at_s: float,
     semaphore_acquired_at_s: float,
     completed_at_s: float,
@@ -166,7 +164,7 @@ def annotate_multi_turn_cache_estimate(
     session_id: int,
     turn_index: int,
     previous_context_tokens: int,
-    cache_block_size: Optional[int] = None,
+    cache_block_size: int | None = None,
     previous_output_tokens: int = 0,
     reply_in_cache: bool = False,
 ) -> RequestResult:
@@ -826,7 +824,7 @@ def aggregate_per_turn(results_by_turn: dict[int, list]) -> list[TurnSummary]:
 # "abort"; message is the text to print, None on pass. The caller prints and
 # decides the exit, so the gates themselves never end the process.
 
-def success_rate_gate(summary, min_rate: float) -> tuple[str, Optional[str]]:
+def success_rate_gate(summary, min_rate: float) -> tuple[str, str | None]:
     """Abort when no request completed or the success rate is below min_rate."""
     if summary.num_requests == 0:
         return "abort", f"ABORT: No requests completed. Minimum success rate: {min_rate:.0%}"
@@ -838,7 +836,7 @@ def success_rate_gate(summary, min_rate: float) -> tuple[str, Optional[str]]:
     return "pass", None
 
 
-def usage_gate(summary, allow_missing: bool) -> tuple[str, Optional[str]]:
+def usage_gate(summary, allow_missing: bool) -> tuple[str, str | None]:
     """Abort (warn with allow_missing) when no successful response carried usage.
 
     Without usage, input_tokens/output_tokens stay 0 for every request, so the
@@ -856,7 +854,7 @@ def usage_gate(summary, allow_missing: bool) -> tuple[str, Optional[str]]:
                      "the run anyway (latency metrics stay valid; token metrics do not).")
 
 
-def transient_gate(num_requests: int, concurrency: int) -> tuple[str, Optional[str]]:
+def transient_gate(num_requests: int, concurrency: int) -> tuple[str, str | None]:
     """Warn when a closed-loop run has under 4 requests per concurrency slot.
 
     A closed-loop run is one synchronized wave of `concurrency` requests, then
@@ -891,7 +889,7 @@ def print_multi_turn_summary(turn_summaries: list, overall: BenchmarkSummary) ->
     """Print per-turn metrics table for multi-turn benchmarks."""
     print_summary(overall)
     print(f"{'=' * 98}")
-    print(f" Per-Turn Breakdown (prefix cache effect visible in TTFT trend)")
+    print(" Per-Turn Breakdown (prefix cache effect visible in TTFT trend)")
     print(f"{'=' * 98}")
     print(f" {'Turn':>4}  {'Reqs':>5}  {'Avg ISL':>8}  {'New p50':>8}  {'Cache p50':>9}  "
           f"{'Hit p50':>7}  {'TTFT p50':>9}  {'TTFT p90':>9}  {'TPOT p50':>9}  {'E2EL p50':>9}")
@@ -973,17 +971,17 @@ def print_summary(s: BenchmarkSummary) -> None:
             if growing:
                 why.append("in-flight grew through the run")
             print(f"       The server did NOT keep up ({'; '.join(why)}).")
-            print(f"       Arrivals queued and the latency figures include that backlog.")
-            print(f"       This is a saturation point, not a steady-state latency figure.")
+            print("       Arrivals queued and the latency figures include that backlog.")
+            print("       This is a saturation point, not a steady-state latency figure.")
         else:
-            print(f"       In-flight stayed bounded, so the run is arrival-limited: this")
-            print(f"       measures latency at that rate, NOT capacity. Raise")
-            print(f"       --target-rate to find saturation.")
+            print("       In-flight stayed bounded, so the run is arrival-limited: this")
+            print("       measures latency at that rate, NOT capacity. Raise")
+            print("       --target-rate to find saturation.")
     elif s.concurrency and s.mean_inflight_requests < 0.7 * s.concurrency:
         print(f" NOTE: mean in-flight ({s.mean_inflight_requests:.1f}) is well below "
               f"concurrency ({s.concurrency}).")
-        print(f"       The server was idle or draining for much of the run, so the")
-        print(f"       throughput above reflects the schedule, not its capacity.")
+        print("       The server was idle or draining for much of the run, so the")
+        print("       throughput above reflects the schedule, not its capacity.")
 
     # Stationarity. A growing in-flight population means arrivals outran
     # departures for the whole run, so every average above is a function of when
@@ -992,9 +990,9 @@ def print_summary(s: BenchmarkSummary) -> None:
     if _f > 0.5 and _s2 > 1.5 * _f:
         print(f" WARNING: in-flight grew {_f:.1f} -> {_s2:.1f} across the run "
               f"({_s2 / _f:.1f}x).")
-        print(f"          The queue never stabilised, so these averages depend on run")
-        print(f"          length and are not a steady-state measurement. Lower the")
-        print(f"          offered load, or run long enough to reach equilibrium.")
+        print("          The queue never stabilised, so these averages depend on run")
+        print("          length and are not a steady-state measurement. Lower the")
+        print("          offered load, or run long enough to reach equilibrium.")
 
     # Stall detector. Steady decode gives TPOT mean ~= median. A mean well above
     # the median means most tokens were fast but something intermittently froze
@@ -1004,9 +1002,9 @@ def print_summary(s: BenchmarkSummary) -> None:
         print(f" WARNING: TPOT mean ({s.mean_tpot_ms:.1f} ms) is "
               f"{s.mean_tpot_ms / s.median_tpot_ms:.1f}x its median "
               f"({s.median_tpot_ms:.1f} ms).")
-        print(f"          Decode was intermittently stalled rather than uniformly slow.")
-        print(f"          Usual causes: kernel JIT at an unwarmed batch shape, scheduler")
-        print(f"          preemption, or host stalls. The median is the reliable figure.")
+        print("          Decode was intermittently stalled rather than uniformly slow.")
+        print("          Usual causes: kernel JIT at an unwarmed batch shape, scheduler")
+        print("          preemption, or host stalls. The median is the reliable figure.")
 
     # Kernel JIT (e.g. DeepSeek V4's TileLang MHC kernels) compiles per batch
     # shape. Any width beyond what warmup exercised compiles DURING measurement,
@@ -1014,7 +1012,7 @@ def print_summary(s: BenchmarkSummary) -> None:
     if s.warmup_concurrency and s.max_inflight_requests > s.warmup_concurrency:
         print(f" WARNING: peak in-flight ({s.max_inflight_requests}) exceeded the warmup "
               f"width ({s.warmup_concurrency}).")
-        print(f"          Batch shapes past the warmup width may have compiled during")
+        print("          Batch shapes past the warmup width may have compiled during")
         print(f"          measurement. Re-run with --warmup-concurrency "
               f">= {s.max_inflight_requests}.")
     print(f"{'─' * 52}")
@@ -1027,12 +1025,12 @@ def print_summary(s: BenchmarkSummary) -> None:
         pct = 100.0 * s.timeout_requests / s.num_requests if s.num_requests else 0.0
         print(f" WARNING: {s.timeout_requests} request(s) ({pct:.1f}%) hit the client "
               f"timeout and were cut off.")
-        print(f"          The percentiles above EXCLUDE them, so the latency tail is")
-        print(f"          censored and biased low. Raise --timeout or lower the load")
-        print(f"          before treating this cell as ground truth.\n")
+        print("          The percentiles above EXCLUDE them, so the latency tail is")
+        print("          censored and biased low. Raise --timeout or lower the load")
+        print("          before treating this cell as ground truth.\n")
     if s.successful_requests and not s.usage_reported_requests:
-        print(f" WARNING: no successful request carried a usage block. Token counts")
-        print(f"          and all throughput figures above are zero-filled, not measured.\n")
+        print(" WARNING: no successful request carried a usage block. Token counts")
+        print("          and all throughput figures above are zero-filled, not measured.\n")
     if s.error_kinds:
         kinds = ", ".join(f"{k}={v}" for k, v in sorted(s.error_kinds.items()))
         print(f" Failure kinds: {kinds}")

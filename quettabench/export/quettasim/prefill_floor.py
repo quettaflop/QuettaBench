@@ -9,8 +9,8 @@ dest/kernels/prefill_floor_llama31_8b.json (see ``run``).
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 from quettabench.export.quettasim._inputs import find_dir
 

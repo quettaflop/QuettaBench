@@ -16,15 +16,22 @@ median us and us x n_linear (all-GDN-layers convention).
       --mode smoke --out <dir>
 """
 from __future__ import annotations
-import argparse, csv, os, statistics as st, traceback
-from pathlib import Path
+
+import argparse
+import csv
+import os
+import statistics as st
+import traceback
+
 import torch
 import triton
 from vllm.model_executor.layers.fla.ops import (
-    chunk_gated_delta_rule, fused_recurrent_gated_delta_rule,
+    chunk_gated_delta_rule,
+    fused_recurrent_gated_delta_rule,
 )
-from quettabench.probes.base import add_output_args, out_root
+
 from quettabench.probes._ncu import ncu_op_us
+from quettabench.probes.base import add_output_args, out_root
 
 # chunk_gated_delta_rule's solve_tril merge kernel autotunes on a fresh host (no
 # Triton disk cache) and needs a scratch allocator; vLLM sets one at model init, a

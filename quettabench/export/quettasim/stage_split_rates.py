@@ -50,11 +50,10 @@ must be on PYTHONPATH.
 """
 from __future__ import annotations
 
-import argparse
 import csv
 import json
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 from quettabench.export.quettasim._inputs import find, stage_split_legs
 

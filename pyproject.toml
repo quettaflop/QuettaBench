@@ -24,9 +24,23 @@ qbench = "quettabench.cli:main"
 [tool.setuptools.packages.find]
 include = ["quettabench*"]
 
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
 [tool.ruff.lint]
-# What the lint commits enforced: pyflakes and import order.
-select = ["F", "I"]
+# pyflakes, import order, pyupgrade. Not B: its loop-closure and
+# zip(strict=) findings are deliberate in the timing loops, and strict=
+# would change behaviour.
+select = ["F", "I", "UP"]
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+
+[tool.ruff.lint.per-file-ignores]
+# Timing lambdas close over tensors the probe then `del`s to free GPU
+# memory; pyflakes reads the del as making the name undefined.
+"quettabench/probes/{cross_attn,flash_attn,fused_block,gemm,moe,reparallel}.py" = ["F821"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

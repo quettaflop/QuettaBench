@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import json
 import statistics
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 from quettabench.export.quettasim._inputs import find
 

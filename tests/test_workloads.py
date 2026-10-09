@@ -6,7 +6,12 @@ import unittest
 from pathlib import Path
 
 from quettabench.workloads.arrival import (
-    make_arrival_times, parse_arrival, poisson_arrivals, ramp_arrivals, rebase_arrivals)
+    make_arrival_times,
+    parse_arrival,
+    poisson_arrivals,
+    ramp_arrivals,
+    rebase_arrivals,
+)
 from quettabench.workloads.grid import GridTrace, clone_ids
 from quettabench.workloads.live import RealTrace
 from quettabench.workloads.sessions import SessionTrace, TurnPacing

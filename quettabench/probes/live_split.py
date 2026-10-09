@@ -9,7 +9,14 @@ decomposition the headline applies (shared once/step + perreq per request). Repo
   python3 -m quettabench.probes.live_split --gpu-label H100 --url http://localhost:8771/v1/chat/completions
 writes results/probes/<gpu>/live_split_<gpu>.csv (--out changes the directory).
 """
-import asyncio, json, time, random, csv, argparse, statistics as st
+import argparse
+import asyncio
+import csv
+import json
+import random
+import statistics as st
+import time
+
 import aiohttp
 import numpy as np
 
@@ -83,7 +90,7 @@ async def main():
         w = csv.DictWriter(f, fieldnames=["B", "P", "ttft_ms"]); w.writeheader(); w.writerows(rows)
     fl, sh, pr = fit(rows)
     tot = sh + pr
-    print(f"\n=== TTFT(B,P) = floor + shared*P + perreq*B*P  (live serving stack) ===")
+    print("\n=== TTFT(B,P) = floor + shared*P + perreq*B*P  (live serving stack) ===")
     print(f"  floor={fl:7.2f} ms | shared={sh*1000:7.3f} ms/1k | perreq={pr*1000:7.3f} ms/1k")
     if tot > 0:
         print(f"  B=1 cached rate = {tot*1000:.3f} ms/1k (cf fit 6.1) | SPLIT shared {sh/tot*100:.1f}% / perreq {pr/tot*100:.1f}%  (code: 57/43)")

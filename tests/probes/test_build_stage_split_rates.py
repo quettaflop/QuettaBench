@@ -15,7 +15,9 @@ from pathlib import Path
 import pytest
 
 from quettabench.export.quettasim.stage_split_rates import (
-    PROD_FA3, PROD_HOST_SUM, _ols,
+    PROD_FA3,
+    PROD_HOST_SUM,
+    _ols,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]

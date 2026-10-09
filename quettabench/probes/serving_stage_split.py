@@ -19,7 +19,6 @@ import argparse
 import asyncio
 import csv
 import json
-import os
 import random
 import statistics as st
 import subprocess
@@ -34,7 +33,6 @@ for _p in [e for e in sys.path if e == _SCRIPT_DIR]:
     sys.path.remove(_p)
 
 import aiohttp  # noqa: E402  (after the sys.path scrub)
-
 
 # ------------------------------------------------------------------------------------------------
 # Prompt construction -- reused verbatim from live_ttft_probe.py so the wall TTFT reproduces the

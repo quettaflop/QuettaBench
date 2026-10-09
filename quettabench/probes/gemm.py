@@ -30,10 +30,17 @@ lm_head / router). The table interpolates off-grid.
   NCU_BIN=/opt/nvidia/nsight-compute/2024.3.2/ncu python3 -m quettabench.probes.gemm --gpu-label A100 --ncu ...
 """
 from __future__ import annotations
+
 import argparse
-import json, csv, io, os, statistics as st, subprocess, sys
-from pathlib import Path
+import csv
+import io
+import json
+import os
+import subprocess
+import sys
+
 import torch
+
 from quettabench.probes.base import add_output_args, out_root
 
 M_AXIS = [1, 64, 128, 256, 512, 1024, 2048, 4096, 8192]

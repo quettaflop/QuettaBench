@@ -12,9 +12,9 @@ from __future__ import annotations
 import json
 import math
 import statistics as st
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 
 from quettabench.export.quettasim._inputs import find_dir
 
@@ -40,12 +40,12 @@ class CeilingConfig:
 
 def _load_consumer():
     try:
+        from configs.loader import all_deployments  # noqa: E402
         from profiling.process.build_simulator_rows import (  # noqa: E402
             CONCURRENCIES as concs,
             PROFILES as profiles,
             build_turns as turns_fn,
         )
-        from configs.loader import all_deployments  # noqa: E402
     except ImportError as e:
         raise SystemExit(
             "saturated_ceiling needs QuettaSim/agentic-serve on PYTHONPATH "

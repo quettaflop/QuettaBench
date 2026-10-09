@@ -44,6 +44,7 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.distributed as dist
+
 from quettabench.probes.base import add_output_args, out_root
 
 KEY = ("gpu", "world", "tp_from", "tp_to", "total_weight_gb")
@@ -84,7 +85,6 @@ def _upsert(path: Path, rows: list[dict]) -> None:
 
 def _time_ms(fn, iters: int) -> float:
     """Median ms of ``fn`` over ``iters`` timed runs (one warm-up), cuda-event timed."""
-    dev = torch.cuda.current_device()
     samples = []
     for it in range(iters + 1):
         start = torch.cuda.Event(enable_timing=True)

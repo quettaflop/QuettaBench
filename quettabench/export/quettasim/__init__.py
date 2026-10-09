@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import json
 import subprocess
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable
 
 from quettabench.export.quettasim import (
     extract_benchmark_per_request,

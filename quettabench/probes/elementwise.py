@@ -8,10 +8,14 @@ eff_bw_gb_s). eff_bw is *effective* (may exceed peak HBM: cache/fusion).
   CUDA_VISIBLE_DEVICES=0 python3 -m quettabench.probes.elementwise --gpu-label A100 --out <dir>
 """
 from __future__ import annotations
-import argparse, json, statistics as st
-from pathlib import Path
+
+import argparse
+import json
+import statistics as st
+
 import torch
 import torch.nn.functional as F
+
 from quettabench.probes.base import add_output_args, out_root
 
 # (reads, writes) per kernel — MUST match kernel_composed/elementwise.py::_IO

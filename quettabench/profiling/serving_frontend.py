@@ -36,12 +36,17 @@ QuettaSim must be on PYTHONPATH (the profiler imports this module only when
 the source is asked for).
 """
 from __future__ import annotations
-import argparse, json, statistics as st, time, urllib.request
+
+import argparse
+import json
+import statistics as st
+import time
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from engine.loaders.config_loader import load_kernel_gpu, load_kernel_model
 from engine.backends.kernel_composed_cost import KernelComposedCost
+from engine.loaders.config_loader import load_kernel_gpu, load_kernel_model
 
 HERE = Path(__file__).resolve().parent
 
@@ -107,8 +112,8 @@ def _conc_sweep(a, cost, model):
     measured herd: the first concurrent burst at a new batch shape triggers
     one-time work (triton/moe autotune, graph shapes) that contaminated the
     first version of this sweep by up to 50x at c=2-10."""
-    from engine.sim.queue_sim import predict_cell  # noqa: PLC0415
     from engine.loaders.workload import Turn  # noqa: PLC0415
+    from engine.sim.queue_sim import predict_cell  # noqa: PLC0415
 
     def herd(c: int) -> list[tuple[float, float, int]]:
         prompts = [_prompt(512) for _ in range(c)]
@@ -171,6 +176,7 @@ def probe(a):
     """Run the sweeps against a.base_url; prints the blocks and returns them as
     {frontend, serving, conc} (conc: [c, median ttft ms, sim frontend-off ms])."""
     import dataclasses
+
     from kernel_composed.types import FrontendParams
     gpu = load_kernel_gpu(HERE / ".." / ".." / "device_spec" / f"{a.gpu_label.lower()}.yaml")
     # The residual decomposition needs the COMPUTE-ONLY prediction: strip any

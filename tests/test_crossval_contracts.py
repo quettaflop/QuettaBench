@@ -941,7 +941,9 @@ class TableParity(unittest.TestCase):
             ids = [tuple(r["prompt_token_ids"]) for r in reqs]
             self.assertEqual(len(set(ids)), 4, "synth requests must be distinct")
             self.assertTrue(all(r["prompt_len"] == 32 for r in reqs))
-            import json as _j, tempfile, os as _os
+            import json as _j
+            import os as _os
+            import tempfile
             tf = tempfile.mktemp()
             open(tf, "w").write(
                 _j.dumps({"prompt_token_ids": [1, 2, 3, 4, 5]}) + "\n"

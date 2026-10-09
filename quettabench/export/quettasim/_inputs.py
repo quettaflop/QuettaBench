@@ -1,8 +1,8 @@
 """Find the result files the QuettaSim builders read."""
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 TP_DEGREES = (2, 4)
 

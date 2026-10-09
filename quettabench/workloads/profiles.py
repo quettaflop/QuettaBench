@@ -10,8 +10,6 @@ Each profile defines the data source, ISL/OSL bounds, and metadata tags.
 """
 
 from dataclasses import dataclass
-from typing import Optional
-
 
 # Valid tag values
 AGENT_TYPES = ["chat", "coding", "terminal", "computer-use", "stress"]
@@ -810,11 +808,11 @@ PROFILE_ALIASES: dict[str, str] = {
 # ---------------------------------------------------------------------------
 
 def filter_profiles(
-    agent_type: Optional[str] = None,
-    turn_style: Optional[str] = None,
-    serving_style: Optional[str] = None,
-    data_source: Optional[str] = None,
-    mode: Optional[str] = None,
+    agent_type: str | None = None,
+    turn_style: str | None = None,
+    serving_style: str | None = None,
+    data_source: str | None = None,
+    mode: str | None = None,
     include_inactive: bool = False,
 ) -> dict:
     """Filter profiles by tag values. None means 'any'."""

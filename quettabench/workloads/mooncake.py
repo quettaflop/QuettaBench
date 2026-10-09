@@ -5,7 +5,6 @@ serves the records in file order through the BaseDataset interface.
 """
 
 import threading
-from typing import Optional
 
 from .dataset import BaseDataset, BenchmarkRequest
 from .live import MooncakeRecord, mooncake_prompt_ids, parse_mooncake_trace
@@ -22,7 +21,7 @@ class MooncakeTraceDataset(BaseDataset):
         self.filepath = filepath
         self.seed = seed
         self.limit = limit
-        self._records: Optional[list[MooncakeRecord]] = None
+        self._records: list[MooncakeRecord] | None = None
         self._cursor = 0
         self._block_cache: dict = {}
         self._lock = threading.Lock()
