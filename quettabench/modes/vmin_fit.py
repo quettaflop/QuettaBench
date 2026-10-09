@@ -18,6 +18,8 @@ from quettabench.config.xval_config import grids as _xval_grids, step_points as 
 from quettabench.config.xval_config import link_profile as _xval_link_profile
 from quettabench.config.xval_config import run_params as _xval_run_params
 from quettabench.metrics.step_fit import fit, ms_at_eval
+from quettabench.workloads.grid import GridTrace, distinct_ids
+from quettabench.workloads.live import RealTrace
 CFG = {
     "workloads": _xval_workloads(),
     "grids": _xval_grids(),
@@ -33,37 +35,6 @@ for _k, _v in _xval_collective().items():
 # Fraction of the KV budget a cell may claim before it is skipped; the rest
 # covers fragmentation and scheduler headroom.
 CAP_FRAC = 0.80
-
-
-def toks(n, seed=10):
-    return {"prompt_token_ids": [seed + (i % 1000) for i in range(n)]}
-
-
-def engine_prompt_ids(n):
-    """Same synthetic prompt the engine benches feed. clone mode gives every
-    slot these ids so both sides route identically under greedy."""
-    return [(i * 137 + 11) % 100_000 for i in range(n)]
-
-
-_CORPUS_IDS = None
-
-
-def corpus_prompt_ids(tokenizer, n, slot):
-    """Sliding windows over the XVAL_CORPUS text; slots start at distinct
-    offsets and the text repeats when a window outruns it."""
-    global _CORPUS_IDS
-    if _CORPUS_IDS is None:
-        path = os.environ.get("XVAL_CORPUS")
-        if not path:
-            sys.exit("prompt_mode=corpus needs XVAL_CORPUS pointing at a text file")
-        _CORPUS_IDS = tokenizer(open(path).read())["input_ids"]
-    ids = _CORPUS_IDS
-    start = (slot * 997) % max(1, len(ids))
-    out = []
-    while len(out) < n:
-        out.extend(ids[start:start + (n - len(out))])
-        start = 0
-    return out
 
 
 def main():
@@ -119,12 +90,11 @@ def main():
     if prompt_mode not in ("distinct", "clone", "corpus", "synth", "trace"):
         sys.exit(f"unknown prompt_mode {prompt_mode!r}; use distinct, clone, corpus, synth or trace")
     # synth = distinct streams (synth_bench); trace = replay XVAL_TRACE (e.g. Mooncake).
-    trace_reqs = None
+    trace = None
     if prompt_mode == "trace":
-        from quettabench.workloads import synth_bench
-        trace_reqs = synth_bench.load_trace(os.environ["XVAL_TRACE"])
-        print(f"META trace={os.environ['XVAL_TRACE']} reqs={len(trace_reqs)} "
-              f"workload_hash={synth_bench.workload_hash(trace_reqs)}", flush=True)
+        trace = RealTrace.from_jsonl(os.environ["XVAL_TRACE"])
+        print(f"META trace={os.environ['XVAL_TRACE']} reqs={len(trace.requests())} "
+              f"workload_hash={trace.workload_hash()}", flush=True)
 
     print(f"META gpu={torch.cuda.get_device_name(0)}", flush=True)
     print(f"META vllm={vllm.__version__}", flush=True)
@@ -199,38 +169,31 @@ def main():
         dt = time.perf_counter() - t0
         return (dt, outs) if capture else dt
 
-    gen([toks(256)], 20)
+    grid = GridTrace(points, steps, prompt_mode, maxlen,
+                     corpus_path=os.environ.get("XVAL_CORPUS"),
+                     tokenizer=llm.get_tokenizer, trace=trace)
+    over_maxlen = grid.cells_over_maxlen
+
+    gen([{"prompt_token_ids": distinct_ids(256)}], 20)
     print("WARM_OK", flush=True)
 
     for ctx, bs in points:
         top = max(steps)
-        if ctx + top + 2 > maxlen:
+        if (ctx, bs) in over_maxlen:
             print(f"SKIP ctx={ctx} bs={bs} reason=maxlen", flush=True)
             continue
         need = (ctx + top) * bs
         if cap and need > CAP_FRAC * cap:
             print(f"SKIP ctx={ctx} bs={bs} need_kv={need} cap={cap}", flush=True)
             continue
-        if prompt_mode == "clone":
-            base = engine_prompt_ids(ctx)
-            prompts = [{"prompt_token_ids": list(base)} for _ in range(bs)]
-        elif prompt_mode == "corpus":
-            prompts = [
-                {"prompt_token_ids": corpus_prompt_ids(llm.get_tokenizer(), ctx, j)}
-                for j in range(bs)
-            ]
-        elif prompt_mode == "synth":
-            from quettabench.workloads import synth_bench
-            prompts = [{"prompt_token_ids": ids}
-                       for ids in synth_bench.take(
-                           synth_bench.synth_requests(bs, ctx, seed=ctx), bs, ctx)[0]]
-        elif prompt_mode == "trace":
-            ids_list, cycled = synth_bench.take(trace_reqs, bs, ctx)
-            if cycled:
-                print(f"NOTE ctx={ctx} bs={bs} trace cycled (fewer reqs than bs)", flush=True)
-            prompts = [{"prompt_token_ids": ids} for ids in ids_list]
-        else:
-            prompts = [toks(ctx, seed=10 + j) for j in range(bs)]
+        # Checked at the first cell that needs the corpus, so a run whose
+        # cells are all skipped never asks for one.
+        if prompt_mode == "corpus" and not grid.corpus_path:
+            sys.exit("prompt_mode=corpus needs XVAL_CORPUS pointing at a text file")
+        ids_list, cycled = grid.cell_prompts(ctx, bs)
+        if cycled:
+            print(f"NOTE ctx={ctx} bs={bs} trace cycled (fewer reqs than bs)", flush=True)
+        prompts = [{"prompt_token_ids": ids} for ids in ids_list]
         if args.dump_tokens:
             # Routing-parity audit: greedy ids must match the engine's DS_TOKEN_TRACE
             # if both sides routed alike; divergence rate is the residual.

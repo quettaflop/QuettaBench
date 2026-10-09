@@ -908,8 +908,8 @@ class TableParity(unittest.TestCase):
     def test_vmin_fit_prompt_modes(self):
         # clone must reproduce the engine's synthetic prompt so both sides
         # route alike; all three regimes must be selectable.
+        self.assertIn("(i * 137 + 11) % 100_000", (QB / "workloads" / "grid.py").read_text())
         src = (QB / "modes" / "vmin_fit.py").read_text()
-        self.assertIn("(i * 137 + 11) % 100_000", src)
         self.assertIn("prompt_mode", src)
         for mode in ('"clone"', '"corpus"', '"distinct"'):
             self.assertIn(mode, src)
