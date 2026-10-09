@@ -38,10 +38,6 @@ Execution
     the server, dispatches requests closed loop or open loop, and
     writes the results JSON.
 
-:mod:`src.modes`
-    The three execution modes (stress test, single turn, multi turn)
-    and the flags each requires.
-
 :mod:`quettabench.engines`
     Backend registry. openai, vllm and sglang post chat completions;
     vllm-completions posts to /v1/completions and accepts token id

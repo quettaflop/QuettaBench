@@ -56,7 +56,6 @@ sphinx-build -b html docs docs/_build/html    # then open docs/_build/html/index
 quettabench/modes/    async runner (serve.py)
 quettabench/metrics/  metrics (p50/p90/p99 TTFT/TPOT/E2EL)
 quettabench/engines/  vLLM/SGLang OpenAI-compatible endpoints, SSE client
-src/modes/        stress_test / single_turn / multi_turn
 quettabench/workloads/  profiles, datasets, arrival patterns, distributional replay
 data/distributions/  measured per-profile workload distributions (fetched from R2)
 tests/            runner/workload unit tests
