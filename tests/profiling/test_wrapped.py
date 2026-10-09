@@ -2,19 +2,18 @@
 
 Every case is hand-computed and also checked against the legacy function,
 so a drift in either shows up here. nvidia-smi is the fake script next to
-this file, passed by path; no GPU, no network beyond a local test server.
+this file, passed by path; no GPU, no network beyond a localhost fake.
 """
 
-import http.server
 import json
 import tempfile
-import threading
 import time
 import unittest
 from pathlib import Path
 
 from legacy import trace_serve
 from quettabench.profiling import wrapped
+from tests.profiling import fake_endpoint
 
 FAKE_SMI = str(Path(__file__).with_name("fake_nvidia_smi.py"))
 
@@ -127,35 +126,12 @@ class Gsm8k(unittest.TestCase):
         self.assertEqual(wrapped.gsm8k_accuracy(generate, [])["exact_match"], 0.0)
 
 
-SEEN = []
-
-
-class Completions(http.server.BaseHTTPRequestHandler):
-    def do_POST(self):
-        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-        SEEN.append((self.path, body))
-        out = json.dumps({"choices": [{"text": f"#### {len(body['prompt'])}"}]}).encode()
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.end_headers()
-        self.wfile.write(out)
-
-    def log_message(self, *args):
-        pass
-
-
 class HttpGenerate(unittest.TestCase):
     def test_posts_greedy_token_ids(self):
-        server = http.server.HTTPServer(("127.0.0.1", 0), Completions)
-        threading.Thread(target=server.serve_forever, daemon=True).start()
-        try:
-            gen = wrapped.http_generate(f"http://127.0.0.1:{server.server_port}", "m")
-            self.assertEqual(gen([1, 2, 3], 256), "#### 3")
-        finally:
-            server.shutdown()
-            server.server_close()
-        self.assertEqual(SEEN[-1], ("/v1/completions", {
-            "model": "m", "prompt": [1, 2, 3], "max_tokens": 256, "temperature": 0.0}))
+        with fake_endpoint.serve() as (endpoint, posts):
+            self.assertEqual(wrapped.http_generate(endpoint, "m")([1, 2, 3], 256), "#### 3")
+        self.assertEqual(posts, [("/v1/completions", {
+            "model": "m", "prompt": [1, 2, 3], "max_tokens": 256, "temperature": 0.0})])
 
 
 if __name__ == "__main__":
