@@ -4,6 +4,11 @@
 vLLM only: QuettaServe has no continuous batching, so its comparable number is
 the static grid. Requests submit at arrival_ts/--speed, greedy, max_tokens from
 the trace. Prints SERVE per request and SERVESUM at the end.
+
+ttft basis: open loop measures from the request's arrival, so engine queue wait
+is included (the user-perceived number). --closed-loop N submits under a
+concurrency cap and measures from the slot grant, matching a closed-loop HTTP
+client. META prints ttft_basis; numbers from different bases do not compare.
 """
 
 import argparse
@@ -246,36 +251,55 @@ async def _serve(engine, reqs, offsets, args):
     t_start = time.perf_counter()
     records = []
     done = []  # requests the engine actually completed, for the workload-identity gate
+    # Closed loop replaces arrival pacing with a concurrency cap: a request
+    # submits when one of N slots frees, which is what a closed-loop HTTP
+    # client does. t_submit is then the slot grant, so ttft excludes the
+    # client-side queue and is comparable to that client's number. Open loop
+    # keeps t_submit at the arrival, so ttft includes engine queue wait: the
+    # user-perceived figure. The two bases are not comparable to each other;
+    # META prints which one a run used.
+    sem = asyncio.Semaphore(args.closed_loop) if args.closed_loop else None
 
     async def one(i, req, offset):
-        delay = offset - (time.perf_counter() - t_start)
-        if delay > 0:
-            await asyncio.sleep(delay)
-        out_len = int(req.get("output_length") or args.max_tokens)
-        sp = SamplingParams(temperature=0.0, max_tokens=out_len, ignore_eos=True)
-        t_submit = time.perf_counter()
-        t_first, n_tok, gen_ids = None, 0, []
-        async for out in engine.generate(
-            {"prompt_token_ids": req["prompt_token_ids"]}, sp, request_id=str(i)
-        ):
-            gen_ids = out.outputs[0].token_ids
-            n_tok = len(gen_ids)
-            if t_first is None and n_tok >= 1:
-                t_first = time.perf_counter()
-        t_done = time.perf_counter()
-        ttft_ms = (t_first - t_submit) * 1e3 if t_first else (t_done - t_submit) * 1e3
-        tpot_ms = ((t_done - t_first) * 1e3 / (n_tok - 1)) if t_first and n_tok > 1 else None
-        rec = {"ttft_ms": ttft_ms, "tpot_ms": tpot_ms, "out_tokens": n_tok, "arrival_s": offset}
-        ref = req.get("output_token_ids")  # real assistant text, when the trace carries it
-        if ref:
-            rec["accept_len"], rec["accept_rate"] = _acceptance(ref, list(gen_ids))
-        records.append(rec)
-        done.append(req)
-        tp = f"{tpot_ms:.3f}" if tpot_ms is not None else "-"
-        print(f"SERVE id={i} session={req.get('session_id', '-')} "
-              f"in={req['prompt_len']} out={n_tok} ttft_ms={ttft_ms:.1f} tpot_ms={tp}",
-              flush=True)
-        return rec
+        if sem is None:
+            delay = offset - (time.perf_counter() - t_start)
+            if delay > 0:
+                await asyncio.sleep(delay)
+        else:
+            await sem.acquire()
+        try:
+            out_len = int(req.get("output_length") or args.max_tokens)
+            sp = SamplingParams(temperature=0.0, max_tokens=out_len, ignore_eos=True)
+            t_submit = time.perf_counter()
+            t_first, n_tok, gen_ids = None, 0, []
+            async for out in engine.generate(
+                {"prompt_token_ids": req["prompt_token_ids"]}, sp, request_id=str(i)
+            ):
+                gen_ids = out.outputs[0].token_ids
+                n_tok = len(gen_ids)
+                if t_first is None and n_tok >= 1:
+                    t_first = time.perf_counter()
+            t_done = time.perf_counter()
+            ttft_ms = (t_first - t_submit) * 1e3 if t_first else (t_done - t_submit) * 1e3
+            tpot_ms = ((t_done - t_first) * 1e3 / (n_tok - 1)) if t_first and n_tok > 1 else None
+            # arrival_s feeds burst_recovery's time buckets; under a slot cap the
+            # schedule is the grant time, not the (meaningless) trace offset.
+            arrival_s = (t_submit - t_start) if sem is not None else offset
+            rec = {"ttft_ms": ttft_ms, "tpot_ms": tpot_ms, "out_tokens": n_tok,
+                   "arrival_s": arrival_s}
+            ref = req.get("output_token_ids")  # real assistant text, when the trace carries it
+            if ref:
+                rec["accept_len"], rec["accept_rate"] = _acceptance(ref, list(gen_ids))
+            records.append(rec)
+            done.append(req)
+            tp = f"{tpot_ms:.3f}" if tpot_ms is not None else "-"
+            print(f"SERVE id={i} session={req.get('session_id', '-')} "
+                  f"in={req['prompt_len']} out={n_tok} ttft_ms={ttft_ms:.1f} tpot_ms={tp}",
+                  flush=True)
+            return rec
+        finally:
+            if sem is not None:
+                sem.release()
 
     await asyncio.gather(*(one(i, r, o) for i, (r, o) in enumerate(zip(reqs, offsets))))
     wall = time.perf_counter() - t_start
@@ -343,6 +367,10 @@ def main():
     ap.add_argument("--speed", type=float, default=1.0, help="arrival time compression factor")
     ap.add_argument("--arrival", default="trace",
                     help="trace | poisson:<rate> | ramp:<start>:<end> | burst:<n>x<size>@<gap_s>")
+    ap.add_argument("--closed-loop", type=int, metavar="N",
+                    help="submit under a concurrency cap of N instead of arrival times; "
+                         "ttft is measured from the slot grant (comparable to a "
+                         "closed-loop client), not from a shared t=0")
     ap.add_argument("--serving-style", default="aggregated",
                     help="aggregated | disagg:<P>p<D>d | ep<N>dp<M>; recorded in META")
     ap.add_argument("--max-tokens", type=int, default=128, help="when the trace has no output_length")
@@ -360,6 +388,13 @@ def main():
     ap.add_argument("--json", help="write the aggregate summary to this path")
     args = ap.parse_args()
     xval_config.parse_serving_style(args.serving_style)  # reject a malformed topology early
+    if args.closed_loop:
+        if args.closed_loop < 1:
+            ap.error("--closed-loop needs N >= 1")
+        if args.goodput:
+            ap.error("--goodput sweeps arrival speed; a closed loop has no arrivals")
+        if args.arrival != "trace":
+            ap.error("--closed-loop replaces arrivals; drop --arrival")
     if args.goodput and not (args.sla_ttft_ms or args.sla_tpot_ms):
         ap.error("--goodput needs --sla-ttft-ms and/or --sla-tpot-ms")
     if args.energy and args.goodput:
@@ -381,11 +416,20 @@ def main():
         for r, t in zip(reqs, injected):
             r["arrival_ts"] = round(t, 6)
     offsets = plan_arrivals(reqs, args.speed)
+    # A trace with no arrival_ts submits everything at t=0 in open loop, so every
+    # ttft is engine queue wait plus prefill, not a first-token figure any client
+    # would see. Say so rather than let the number be read as one.
+    if not args.closed_loop and not any(offsets):
+        print("NOTE all requests submit at t=0 (no arrival_ts in trace): ttft is "
+              "queue-dominated; use --closed-loop N or --arrival poisson:<rate> "
+              "for a comparable first-token number", flush=True)
     sources = ",".join(sorted({str(r.get("source", "?")) for r in reqs}))
     text_mode = "real" if any(r.get("output_token_ids") for r in reqs) else "synthetic"
     print(f"META trace={args.trace} reqs={len(reqs)} engine={args.engine} "
           f"tp={args.tp} pp={args.pp} ep={int(args.ep)} "
           f"speed={args.speed} arrival={args.arrival} serving_style={args.serving_style} "
+          f"closed_loop={args.closed_loop or 0} "
+          f"ttft_basis={'slot' if args.closed_loop else 'arrival'} "
           f"prefix_caching={int(args.prefix_caching)} "
           f"source={sources} text_mode={text_mode}", flush=True)
     expected = synth_bench.workload_hash(reqs)
