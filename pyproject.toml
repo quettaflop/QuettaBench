@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quettabench"
+version = "0.1.0"
+description = "LLM serving benchmark and QuettaServe-vs-vLLM cross-validator"
+requires-python = ">=3.10"
+# requirements.txt, kept in step by hand; probes add requirements-probe.txt.
+dependencies = [
+    "aiohttp>=3.9",
+    "numpy>=1.24",
+    "datasets>=2.18",
+    "transformers>=4.40",
+    "pyyaml>=6",
+]
+
+[project.scripts]
+qbench = "quettabench.cli:main"
+
+# Only the package installs: analysis/, data/, legacy/ and tests/ are not
+# importable names to put on site-packages next to the stdlib.
+[tool.setuptools.packages.find]
+include = ["quettabench*"]
+
+[tool.ruff.lint]
+# What the lint commits enforced: pyflakes and import order.
+select = ["F", "I"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
