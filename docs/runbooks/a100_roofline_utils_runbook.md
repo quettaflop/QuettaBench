@@ -13,7 +13,7 @@ the de-fit log and stop.
 The A100 host has 7/8 GPUs running someone else's benchmark campaign. The serving-wall
 capture is latency-sensitive (engine step walls in the 6-20 ms range; host/HBM/PCIe
 contention from sibling GPUs moves them), so running now would contaminate BOTH the
-campaign's numbers and ours. Run this when `preflight_a100_roofline_utils.sh` passes.
+campaign's numbers and ours. Run this when the preflight in step 1 passes.
 
 ## Host facts (recorded at launch — verify with preflight, do not assume)
 
@@ -53,9 +53,15 @@ engine step, not a replay).
 
 ## Procedure
 
-1. `bash docs/runbooks/preflight_a100_roofline_utils.sh` (from this repo, local —
-   it ssh-es to `a100`). All checks must pass; the GPU-quiet check has no override flag
-   on purpose.
+1. Preflight, from a local shell over `ssh a100`. Every check must pass, and the
+   GPU-quiet check has no override on purpose: sibling-GPU HBM, PCIe and host
+   contention moves 6-20 ms step walls, so one free GPU is not enough.
+   - the host answers `hostname`
+   - `nvidia-smi --query-compute-apps=gpu_uuid,pid,process_name,used_memory --format=csv,noheader`
+     prints nothing (no compute app on any GPU)
+   - `/home/kevinlau/miniconda3/envs/vllm/bin/python -c 'import vllm'` works
+   - Llama-3.1-8B-Instruct weights are under `/data/models` (never download; report instead)
+   - `df -BG /data` shows at least 20 GiB free for the run dir and traces
 2. Launch the instrumented vLLM OpenAI server on the ONE free GPU
    (`CUDA_VISIBLE_DEVICES=<idx>`), Llama-3.1-8B-Instruct from `/data/models`, with
    engine flags matching the deployment config (`configs/deployments/` A100 tp1 entry —
