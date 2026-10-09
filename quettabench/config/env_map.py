@@ -34,6 +34,15 @@ ENV_MAP = {
     "ENABLE_EP": ("engine.ep", _truthy, "serve.py:1323"),
     "NCCL_ALGO": ("hardware.collective.NCCL_ALGO", str, "vmin_fit.py:30,149 table.py:119"),
     "NCCL_PROTO": ("hardware.collective.NCCL_PROTO", str, "vmin_fit.py:30,150 table.py:120"),
+    # The other five collective pins: the caller's value beat the hardware
+    # yaml in bench.sh:41-45 and vmin_fit.py:28-30 (as of 01adc03).
+    "NCCL_P2P_LEVEL": ("hardware.collective.NCCL_P2P_LEVEL", str, "bench.sh:42 vmin_fit.py:30"),
+    "NCCL_IB_DISABLE": ("hardware.collective.NCCL_IB_DISABLE", str, "bench.sh:42 vmin_fit.py:30"),
+    "NCCL_SOCKET_IFNAME": ("hardware.collective.NCCL_SOCKET_IFNAME", str,
+                           "bench.sh:42 vmin_fit.py:30"),
+    "LLMSRV_NO_NVLS": ("hardware.collective.LLMSRV_NO_NVLS", str, "bench.sh:42 vmin_fit.py:30"),
+    "LLMSRV_TWOSHOT_MIN_BYTES": ("hardware.collective.LLMSRV_TWOSHOT_MIN_BYTES", str,
+                                 "bench.sh:42 vmin_fit.py:30"),
     "QS_SHA": ("provenance.engine_sha", str, "cache.py:46"),
     "DS_ENGINE_SHA": ("provenance.engine_sha", str, "cache.py:46, used when QS_SHA is unset"),
     "CUDA_VISIBLE_DEVICES": ("hardware.visible_devices", str, "trace_serve.py:111,491"),

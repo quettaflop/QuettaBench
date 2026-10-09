@@ -68,6 +68,19 @@ class LoaderRules(unittest.TestCase):
         self.assertEqual(cfg.hardware.collective["NCCL_PROTO"], "LL")
         self.assertEqual(self.one(run, env={"XVAL_PP": "3"}).engine.pp, 3)
 
+    def test_caller_env_wins_for_each_collective_pin(self):
+        pins = {"NCCL_P2P_LEVEL": ("SYS", "NVL"), "NCCL_IB_DISABLE": ("1", "0"),
+                "NCCL_SOCKET_IFNAME": ("", "eth0"), "LLMSRV_NO_NVLS": ("1", "0"),
+                "LLMSRV_TWOSHOT_MIN_BYTES": ("0", "65536")}
+        self.write("hardware/pcie.yaml", {**HARDWARE, "collective": {
+            **HARDWARE["collective"], **{k: yaml_v for k, (yaml_v, _) in pins.items()}}})
+        for key, (yaml_value, caller) in pins.items():
+            with self.subTest(key):
+                self.assertEqual(self.one().hardware.collective[key], yaml_value)
+                cfg = self.one(env={key: caller})
+                self.assertEqual(cfg.hardware.collective[key], caller)
+                self.assertEqual(cfg.origins[f"hardware.collective.{key}"], "env")
+
     def test_link_profile_picks_the_hardware_yaml(self):
         cfg = self.one(env={"XVAL_LINK_PROFILE": "nvlink"})
         self.assertEqual(cfg.hardware.collective, {"NCCL_ALGO": ""})
