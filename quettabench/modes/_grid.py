@@ -11,9 +11,11 @@ driver, every row through the writer; RESULT is metrics.step_fit.fit_run
 over the cell's rows. Lines print through results.print_legacy_grid_lines
 as the run advances, byte for byte what modes/vmin_fit.py printed.
 
-A driver that times whole cells in its own process (BenchDriver, the
-QuettaServe cargo bench) goes through run_bench instead: its rows are
-already ms per step, so there is no capacity gate, warmup or fit.
+A driver that measures steps itself (BenchDriver, the QuettaServe cargo
+bench) goes through run_bench instead: the same SKIP rules pick the cells,
+then the driver gets the cell list and step points in one call and its rows,
+already ms per step, are appended as they come back. No warmup and no fit:
+the bench decodes its own hardware.timing_steps per cell.
 
 A sibling of serve.py the way _sessions_dispatch.py is, to keep serve.py
 one screenful per mechanism.
@@ -23,7 +25,7 @@ import json
 import os
 import sys
 
-from ..metrics.results import print_legacy_grid_lines
+from ..metrics.results import grid_event_line, print_legacy_grid_lines
 from ..metrics.step_fit import GIB, fit, fit_run
 from ..workloads.base import Request
 
@@ -99,21 +101,41 @@ def measure_cell(driver, writer, mode, steps, prompts, cell):
     return out
 
 
-def run_bench(driver, writer):
-    """Every cell of driver.cells through the bench; each row is written
-    with its measured ms per step, and steps passes them through."""
-    rows = list(driver.run(driver.cells))
+def run_bench(driver, cfg, writer):
+    """driver.cells past the SKIP rules, measured in one driver.run call.
+
+    maxlen SKIPs as for any grid. A KV SKIP needs the budget: engine.kv_bytes,
+    engine.weights_gib and the GPU memory driver.device() reports; a cell
+    needs its bench max_seq (ctx + timing_steps + headroom) per sequence.
+    steps passes the measured rows through."""
+    engine, hw, grid = cfg.engine, cfg.hardware, cfg.grid
+    device = driver.device() if engine.kv_bytes and engine.weights_gib is not None else None
+    cap = capacity(engine, device[1], engine.kv_bytes)[1] if device else 0
+    over = set(grid.cells_over_maxlen)
+    record, kept = {"bench_log": str(driver.log_path), "events": []}, []
+    for ctx, bs, spec in driver.cells:
+        need = (ctx + hw.timing_steps + hw.max_seq_headroom) * bs
+        if (ctx, bs) in over:
+            event = {"event": "skip_maxlen", "ctx": ctx, "bs": bs}
+        elif cap and need > cfg.mode.cap_frac * cap:
+            event = {"event": "skip_kv", "ctx": ctx, "bs": bs, "need": need, "cap": cap}
+        else:
+            kept.append((ctx, bs, spec))
+            continue
+        record["events"].append(event)
+        print(grid_event_line(record, event), flush=True)
+    rows = list(driver.run(kept, step_points=grid.step_points))
     for row in rows:
         writer.append(row)
-    return {"bench_log": str(driver.log_path)}, fit_run(rows, None, None, None), rows
+    return record, fit_run(rows, None, None, None), rows
 
 
 def run_grid(trace, driver, cfg, writer):
     """One grid run; returns (record, steps, rows). record is what the
     legacy lines print from and the run.json grid section; steps is
     fit_run over every fit row."""
-    if getattr(driver, "cells", None):
-        return run_bench(driver, writer)
+    if getattr(driver, "measures_steps", False):
+        return run_bench(driver, cfg, writer)
     mode, engine = cfg.mode, cfg.engine
     eval_pos = mode.eval_pos if mode.eval_pos is not None else cfg.hardware.timing_steps // 2
     steps = trace.step_points

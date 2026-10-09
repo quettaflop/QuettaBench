@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Stand-in for a QuettaServe decode_loop bench: one LOOP line from the QW_* env.
 
 FAKE_BENCH_EXIT sets the exit code; FAKE_BENCH_SILENT=1 prints no LOOP line.

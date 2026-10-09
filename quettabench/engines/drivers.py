@@ -506,12 +506,26 @@ class BenchDriver(Driver):
     Rows come from reader.bench_log_points on the finished log, so they are
     what crossval reads."""
 
+    measures_steps = True   # rows are ms per step already; the grid loop fits nothing
+
     def __init__(self, log_path, cells=()):
         self.log_path = Path(log_path)
         self.cells = cells
 
-    def run(self, cell_specs, *, concurrency=1, **kwargs):
-        """cell_specs: (ctx, bs, translate(cfg, (ctx, bs))) per cell; yields rows."""
+    def device(self):
+        """(name, total bytes) of GPU 0 from nvidia-smi; None without one."""
+        try:
+            out = subprocess.run(["nvidia-smi", "--query-gpu=name,memory.total",
+                                  "--format=csv,noheader,nounits"],
+                                 capture_output=True, text=True, check=True).stdout
+        except (OSError, subprocess.CalledProcessError):
+            return None
+        name, mib = out.splitlines()[0].rsplit(", ", 1)
+        return name, int(mib) * 2**20
+
+    def run(self, cell_specs, *, concurrency=1, step_points=(), **kwargs):
+        """cell_specs: (ctx, bs, translate(cfg, (ctx, bs))) per cell; yields rows.
+        step_points go unused: the bench decodes its own timing_steps."""
         self.log_path.write_text("")
         missing = []
         for ctx, bs, spec in cell_specs:

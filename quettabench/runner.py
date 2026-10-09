@@ -9,7 +9,8 @@ driver, build the Trace, and let modes/serve.py run trace
 through driver into a RunWriter; the server is stopped whatever happens.
 mode: probe runs quettabench.probes.<name> with --out results/<run>/
 instead and records it in the same run.json. --dry-run prints each Config
-with its origins and its LaunchSpec, and starts nothing.
+with its origins and its LaunchSpec (a bench run: each cell's env and
+bench_argv as one shell line), and starts nothing.
 """
 
 import dataclasses
@@ -25,8 +26,12 @@ from quettabench.modes import serve
 
 
 def spec_lines(spec):
-    """One `spec.<field> = value` line per LaunchSpec field."""
-    return [f"spec.{k} = {v!r}" for k, v in dataclasses.asdict(spec).items()]
+    """One `spec.<field> = value` line per LaunchSpec field, then one
+    `cell ctx= bs= = <shell line>` per bench cell: its env and bench_argv
+    as the child runs them."""
+    lines = [f"spec.{k} = {v!r}" for k, v in dataclasses.asdict(spec).items() if k != "cells"]
+    return lines + [f"cell ctx={ctx} bs={bs} = {shlex.join(cell.child_argv(cell.bench_argv))}"
+                    for ctx, bs, cell in spec.cells]
 
 
 def dry_run(cfg):
