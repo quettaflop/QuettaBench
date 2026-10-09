@@ -1,4 +1,4 @@
-"""CPU stand-in for the two torch.cuda calls vmin_fit.py makes."""
+"""CPU stand-in for the two torch.cuda calls InProcessDriver.device makes."""
 
 GPU_NAME = "STUB-GPU-48GiB"
 GPU_BYTES = 48 * (1 << 30)

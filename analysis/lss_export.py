@@ -18,7 +18,7 @@ Probe interchange, one JSON object per line, merged across --probes files:
   {"table":"moe","tp":1,"tokens":64,"activated_experts":8,"time_us":88.0}
   {"table":"skew_fit","tp":1,"pc":0,"n_label":"n<=128","skew_rate_label":"sr<=15%",
    "kv_big_label":"kvB<=1k","kp_label":"kp=0","alpha":0.1252,"n_samples":4}
-Duplicate keys take the median. vmin_fit slope grids are aggregates and can
+Duplicate keys take the median. Grid-run slope baselines are aggregates and can
 not be decomposed into per-op cells, so they are deliberately not read.
 """
 

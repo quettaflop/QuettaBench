@@ -3,10 +3,13 @@
 # Usage: scripts/crossval/vllm.sh <crate> [grid] <model-dir> [python]
 # The workload's own grid writes vllm-<crate>.json; a named grid writes
 # vllm-<crate>-<grid>.json so scratch grids never clobber the real baseline.
+# The grid run (serve --grid) writes that file under results/baselines/
+# itself, in cache.py's layout; this script copies it here.
 # Respects a caller-set CUDA_VISIBLE_DEVICES, else picks idle GPUs itself.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="$(cd "$HERE/../.." && pwd)"
 CRATE="${1:?crate}"
 GRID="${2:-}"
 MDIR="${3:?model dir}"
@@ -17,13 +20,11 @@ N_DEV="$(python3 "$HERE/../../quettabench/config/xval_config.py" devices "$CRATE
 G="${CUDA_VISIBLE_DEVICES:-$("$HERE/free_gpu.sh" "$N_DEV")}"
 echo "GPU=$G"
 
-OUT="$BASELINE_DIR/vllm-$CRATE.json"
-[ -n "$GRID" ] && OUT="$BASELINE_DIR/vllm-$CRATE-$GRID.json"
-
+NAME="$CRATE"
+GRID_ARG=(--grid)
+if [ -n "$GRID" ]; then NAME="$CRATE-$GRID"; GRID_ARG+=("$GRID"); fi
+OUT="$BASELINE_DIR/vllm-$NAME.json"
 mkdir -p "$BASELINE_DIR"
-RAW="$(mktemp /tmp/vllm-raw-XXXXXX.txt)"
-cleanup() { rm -f "$RAW"; }
-trap cleanup EXIT
 
 # ALLOW_UNVERIFIED=1 runs an uncertified workload (deepseek bring-up).
 EXTRA=()
@@ -37,8 +38,10 @@ while IFS='=' read -r _k _v; do
   if [ -n "$_v" ]; then export "$_k=$_v"; fi
 done < <(python3 "$HERE/../../quettabench/config/xval_config.py" collective)
 
-CUDA_VISIBLE_DEVICES="$G" "$PY" "$HERE/../../quettabench/modes/vmin_fit.py" "$CRATE" "$GRID" --model "$MDIR" \
+CUDA_VISIBLE_DEVICES="$G" PYTHONPATH="$REPO${PYTHONPATH:+:$PYTHONPATH}" \
+  "$PY" -m quettabench.modes.serve "${GRID_ARG[@]}" --workload "$CRATE" --model "$MDIR" \
   ${EXTRA[@]+"${EXTRA[@]}"} \
-  | grep -E "^META|^RESULT|^SKIP|^CAPACITY" | tee "$RAW"
+  | grep -E "^META|^RESULT|^SKIP|^CAPACITY"
 
-python3 "$HERE/../../quettabench/crossval/cache.py" "$RAW" "$OUT"
+cp "$REPO/results/baselines/vllm-$NAME.json" "$OUT"
+echo "wrote $OUT"

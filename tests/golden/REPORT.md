@@ -14,11 +14,13 @@ the fixtures pin the current divergent behaviour on both sides.
   kwargs dict. `LLM.generate` advances a fake clock instead of running;
   `AsyncLLMEngine.from_engine_args` raises `StubHalt` so `trace_serve.main()`
   stops right after building its engine args.
-- `tests/_stubs/torch/` exists because `vmin_fit.py` imports torch at module
-  top and torch is not installed. It reports one 48 GiB GPU named
-  `STUB-GPU-48GiB`.
-- `vmin_fit.main()` runs end to end on the stubs with `vmin_fit.time` swapped
-  for the fake clock. The cost model (`tests/golden/_harness.py`) is an exact
+- `tests/_stubs/torch/` exists because the grid run reads the GPU name and
+  memory from torch (`InProcessDriver.device`) and torch is not installed. It
+  reports one 48 GiB GPU named `STUB-GPU-48GiB`.
+- A grid run (`serve.main --grid`, which replaced `vmin_fit.py`; the vmin_fit
+  fixtures below were captured from that script and are compared unchanged)
+  runs end to end on the stubs with `drivers.time` swapped for the fake
+  clock. The cost model (`tests/golden/_harness.py`) is an exact
   line in max_tokens, so r2 = 1 and the fit stops after one attempt, except
   cell (1024, 16), whose middle step point is bent so every attempt fits
   r2 = 0.9605 and `VMIN_ATTEMPTS` is used up. The generate() call count is

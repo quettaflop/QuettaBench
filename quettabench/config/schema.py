@@ -39,8 +39,8 @@ DICT_KEYS = {
 @dataclass(frozen=True)
 class EngineCfg:
     name: str = "vllm"
-    model: str | None = None       # weights dir or HF id: vmin_fit --model
-    model_name: str = ""              # display name: vmin_fit META model=, table.py crate match
+    model: str | None = None       # weights dir or HF id: serve --grid --model
+    model_name: str = ""              # display name: grid META model=, table.py crate match
     tp: int = 1
     pp: int = 1
     ep: bool = False                  # workloads.json expert_parallel, serve.py ENABLE_EP
@@ -51,11 +51,11 @@ class EngineCfg:
     gpu_util: float = 0.9
     prefix_caching: bool = False
     serving_style: str = "aggregated"
-    cudagraph: bool = True            # inverse of vmin_fit --nograph
+    cudagraph: bool = True            # inverse of serve --grid --nograph
     port: int = 8000                  # launch_server.sh default
     instrumentation: str = "none"     # armed at launch: none | nsys | torch
     extra: Mapping[str, Any] = field(default_factory=dict)  # quettaserve bench block lives here
-    # Facts the capacity gate needs (vmin_fit CAPACITY line).
+    # Facts the capacity gate needs (grid CAPACITY line).
     kv_bytes: int | None = None    # per token; None allowed only for dense
     weights_gib: float | None = None
     attention: str = "dense"
@@ -99,7 +99,7 @@ class ModeCfg:
     sla_ttft_ms: float | None = None
     sla_tpot_ms: float | None = None
     goodput_sweep: bool = False
-    returns: str = "none"             # vmin_fit --dump-tokens => text
+    returns: str = "none"             # serve --grid --dump-tokens => text
     grid: str | None = None        # name in grids.yaml; set => step metrics
     vmin_attempts: int = 4         # grid: fit passes per cell, best r2 kept
     fit_r2_stop: float = 0.999     # grid: a pass fitting at least this r2 ends the cell

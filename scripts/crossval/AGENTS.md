@@ -26,8 +26,10 @@ qs_commit, nccl_lib (xval.yaml or `xval_config.py provision`).
 ## Pipeline
 
 1. `vllm.sh <workload> [grid] <weights-dir> [python]` captures the vLLM
-   baseline: `vmin_fit.py` slope-fits ms per decode step for every (ctx, batch)
-   cell with r2 recorded, `cache.py` writes `baselines/vllm-<workload>.json`.
+   baseline: `python -m quettabench.modes.serve --grid [grid] --workload <wl>`
+   slope-fits ms per decode step for every (ctx, batch) cell with r2 recorded
+   and writes `results/baselines/vllm-<workload>.json` in `cache.py`'s layout;
+   vllm.sh copies it to `baselines/vllm-<workload>.json`.
    A named grid writes `vllm-<workload>-<grid>.json` so scratch grids never
    clobber the real baseline.
 2. `bench.sh <workload> [out.log]` sweeps the engine side. The per-model pieces
@@ -52,7 +54,7 @@ Serving replay is an optional last stage: set `XVAL_SERVE_TRACE=<jsonl>` (and
 `XVAL_SERVE_ARGS` for extra trace_serve flags) and xval.sh replays it on the same
 GPUs, printing the workload_hash, `WORKLOADSUM` (identity gate over completed
 requests) and `SERVESUM`. The hash also stamps the static grid path
-(`vmin_fit` META workload_hash), so every run records which exact workload it saw.
+(the grid run's `META trace=... workload_hash=`), so every run records which exact workload it saw.
 
 Correctness runs alongside: `greedy_agreement.py` (engine vs vLLM text, llama
 only) and `logit_agreement.py` (vLLM vs the transformers reference; skipped for
@@ -76,7 +78,7 @@ the cost is node- and NCCL-specific, so cross-node anchoring is not meaningful.
 number (declared KV capacity is scored every step); the vLLM side uses the
 workload's `maxlen`. Fix and state the basis for every table.
 
-## prompt modes (vmin_fit)
+## prompt modes (serve --grid)
 
 `PROMPT_MODE` env or per-workload `prompt_mode`; matters for MoE routing:
 
@@ -152,7 +154,7 @@ deliverable is the vLLM-baseline column plus the full workload/identity machiner
 
 `XVAL_LINK_PROFILE` selects the collective env; one detection
 (`xval_config.py link-profile`: any NV* link in `nvidia-smi topo -m` = nvlink,
-else pcie, non-cuda = nvlink) feeds bench.sh, vllm.sh and vmin_fit identically.
+else pcie, non-cuda = nvlink) feeds bench.sh, vllm.sh and serve --grid identically.
 
 - pcie: `NCCL_ALGO=allreduce:tree;allgather:ring NCCL_PROTO=Simple`
   (per-collective form required; NCCL has no Tree all-gather),
@@ -179,7 +181,7 @@ Precedence: caller env > xval.yaml > defaults in xval_config.py.
 - `collective.*`: the pcie-profile pins listed above; `collective_nvlink`
   optionally pins values on the nvlink profile
 - `step_points`: three increasing token counts for the slope fit; every cell
-  needs ctx + max(step_points) + 2 <= maxlen or vmin_fit SKIPs it
+  needs ctx + max(step_points) + 2 <= maxlen or the grid run SKIPs it
 - `workloads.<name>`: `tp`, `grid`, `dtype`, `maxlen`, `kv_dtype`, `kv_bytes`,
   `expert_parallel`, `comm_bound_bs`, `prompt_mode`, `verified`, `bench`
   (crate/test/env/family/ok as above), plus bookkeeping fields
@@ -245,8 +247,8 @@ ctx+230 vs the engine median near ctx+50 (~17% more KV at the 1024 row, ~1% at
 | `xval.sh` | orchestrator: baseline if missing, logit/greedy checks, table, PROF=1 |
 | `bench.sh` | engine sweep for any workload with a `bench` section |
 | `vllm.sh` | baseline capture into baselines/ |
-| `vmin_fit.py` | vLLM decode slope fit per cell |
-| `cache.py` | packs a raw run into the baseline json |
+| `serve.py --grid` (`modes/_grid.py`) | vLLM decode slope fit per cell, writes the compat baseline |
+| `cache.py` | packs a grid run's META/RESULT lines into the baseline json |
 | `table.py` | the comparison at matched (ctx, bs, tp) |
 | `synth_bench.py` | synthetic streams (uniform, swebench), trace hash CLI |
 | `live.py` | the one trace reader (replay JSONL, Mooncake) |

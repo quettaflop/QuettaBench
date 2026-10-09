@@ -26,7 +26,11 @@ from pathlib import Path
 from unittest import mock
 
 from tests.golden._harness import (
-    FIXTURES, check_text, crossval_path, fresh_import, run_grid_cli,
+    FIXTURES,
+    check_text,
+    crossval_path,
+    fresh_import,
+    run_grid_cli,
 )
 from tests.golden.test_table_text import run_table
 

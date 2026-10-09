@@ -87,12 +87,14 @@ class CrossvalScripts(unittest.TestCase):
         self.assertEqual(fg.stdout.strip(), "0,1")
 
     def test_pp_wired_in_grid_and_device_count(self):
-        # vmin_fit passes pipeline_parallel_size (from XVAL_PP or the workload's pp),
+        # A grid run passes pipeline_parallel_size (from XVAL_PP or the workload's pp),
         # and the device count the orchestrator provisions is tp * pp.
-        src = (QB / "modes" / "vmin_fit.py").read_text() + (QB / "engines" / "vllm.py").read_text()  # kwargs built there
+        src = (QB / "modes" / "legacy_cli.py").read_text() + (QB / "engines" / "vllm.py").read_text()  # kwargs built there
         self.assertIn("pipeline_parallel_size", src)
         self.assertIn("XVAL_PP", src)
-        self.assertIn("META pp=", src)  # cache.py parses META one key per line
+        # cache.py parses META one key per line
+        self.assertIn('"pp": e.pp', (QB / "modes" / "_grid.py").read_text())
+        self.assertIn('f"META {k}={v}"', (QB / "metrics" / "results.py").read_text())
         d1 = subprocess.run([sys.executable, str(QB / "config" / "xval_config.py"), "devices", "deepseek"],
                             capture_output=True, text=True, check=True).stdout.strip()
         self.assertEqual(d1, "8")  # deepseek tp8, pp1
@@ -102,7 +104,7 @@ class CrossvalScripts(unittest.TestCase):
         self.assertEqual(d2, "16")  # tp8 * pp2
 
     def test_link_profile_cli(self):
-        # One detection for bench.sh, vllm.sh and vmin_fit: caller override wins,
+        # One detection for bench.sh, vllm.sh and serve --grid: caller override wins,
         # non-cuda backends take the no-pins nvlink profile.
         out = subprocess.run(
             [sys.executable, str(QB / "config" / "xval_config.py"), "link-profile"],
@@ -372,7 +374,7 @@ class CrossvalScripts(unittest.TestCase):
 
     def test_glm53_workload_contract(self):
         # GLM-5.3 is MLA + DSA, so kv_bytes must be the latent formula; the dense
-        # per-head formula in vmin_fit would overestimate KV several-fold and skew
+        # per-head formula in the grid run would overestimate KV several-fold and skew
         # the capacity gate. The checkpoint is pre-quantized fp8, recorded as quant
         # so the table flags any pairing against a bf16 baseline. No bench section:
         # QuettaServe has no GLM crate, this workload is vLLM-side only for now.
@@ -401,7 +403,7 @@ class CrossvalScripts(unittest.TestCase):
     def test_glm53flash_workload_contract(self):
         # GLM-5.3-Flash is a hybrid: 34 KDA linear-attention layers keep fixed-size
         # recurrent state, only the 11 sparse-MLA layers hold per-token KV (rope-free
-        # latent 512). Its config even has head_dim 0, so vmin_fit's dense formula
+        # latent 512). Its config even has head_dim 0, so the grid run's dense formula
         # would be garbage; kv_bytes is mandatory. A different model from glm53,
         # engine branch kev/glm53flash, and never comparable across the pair.
         wl = _load_workloads()["workloads"]["glm53flash"]
@@ -427,9 +429,9 @@ class CrossvalScripts(unittest.TestCase):
             lines = [l for l in (CROSSVAL / name).read_text().splitlines() if l.strip()]
             self.assertTrue(lines, f"{name} is empty")
 
-    def test_vmin_fit_supports_moe_bringup(self):
+    def test_grid_run_supports_moe_bringup(self):
         # expert parallel on vLLM, plus an opt-in to run before certified.
-        src = (QB / "modes" / "vmin_fit.py").read_text() + (QB / "engines" / "vllm.py").read_text()  # kwargs built there
+        src = (QB / "modes" / "legacy_cli.py").read_text() + (QB / "engines" / "vllm.py").read_text()  # kwargs built there
         self.assertIn("enable_expert_parallel", src)
         self.assertIn("allow-unverified", src)
 
@@ -575,7 +577,7 @@ class WorkloadsConfig(unittest.TestCase):
                 self.assertLessEqual(
                     ctx + top + 2, workload["maxlen"],
                     f"workload {name} cell ({ctx}, {bs}) exceeds maxlen "
-                    f"{workload['maxlen']}; vmin_fit would SKIP it",
+                    f"{workload['maxlen']}; the grid run would SKIP it",
                 )
 
 
@@ -641,16 +643,15 @@ class TableParity(unittest.TestCase):
 
     def test_quant_mismatch_flags_and_withholds(self):
         # An nvfp4 engine row against a bf16 baseline is flagged QUANT and withheld;
-        # vmin_fit passes quantization through and records META quant.
+        # The grid run passes quantization through and records META quant.
         out = self._table(
             "LOOP ctx=1024 bs=1 kv=fp16 ms_per_step=10.000 k=100\n",
             quant="bf16", env={"XVAL_QUANT": "nvfp4"})
         self.assertIn("QUANT MISMATCH", out)
         self.assertIn("QUANT bf16/nvfp4", out)
         self.assertNotIn("0.50x", out)
-        src = (QB / "modes" / "vmin_fit.py").read_text() + (QB / "engines" / "vllm.py").read_text()  # kwargs built there
-        self.assertIn("quantization", src)
-        self.assertIn("META quant=", src)
+        self.assertIn("quantization", (QB / "engines" / "vllm.py").read_text())  # kwargs built there
+        self.assertIn('"quant": e.quant or e.dtype', (QB / "modes" / "_grid.py").read_text())
 
     def test_serving_style_mismatch_withholds(self):
         # A disagg baseline against an aggregated engine row is never a ratio.
@@ -819,11 +820,11 @@ class TableParity(unittest.TestCase):
         self.assertNotIn("COMM", out.stdout)
         self.assertIn("0.50x", out.stdout)
 
-    def test_vmin_fit_prompt_modes(self):
+    def test_grid_prompt_modes(self):
         # clone must reproduce the engine's synthetic prompt so both sides
         # route alike; all three regimes must be selectable.
         self.assertIn("(i * 137 + 11) % 100_000", (QB / "workloads" / "grid.py").read_text())
-        src = (QB / "modes" / "vmin_fit.py").read_text()
+        src = (QB / "workloads" / "grid.py").read_text() + (QB / "modes" / "legacy_cli.py").read_text()
         self.assertIn("prompt_mode", src)
         for mode in ('"clone"', '"corpus"', '"distinct"'):
             self.assertIn(mode, src)
@@ -837,7 +838,7 @@ class TableParity(unittest.TestCase):
     def test_corpus_mode_requires_an_explicit_corpus(self):
         # No experimental text ships in the repo; corpus mode takes XVAL_CORPUS.
         self.assertFalse((CROSSVAL / "routing_corpus.txt").exists())
-        self.assertIn("XVAL_CORPUS", (QB / "modes" / "vmin_fit.py").read_text())
+        self.assertIn("XVAL_CORPUS", (QB / "modes" / "_grid.py").read_text())
 
     def test_hash_canonicalization(self):
         # The gate hashes the completed set, not the completion order: a true
@@ -1054,8 +1055,8 @@ class TableParity(unittest.TestCase):
         finally:
             sys.path.pop(0)
 
-    def test_vmin_fit_knows_synth_and_trace_modes(self):
-        src = (QB / "modes" / "vmin_fit.py").read_text()
+    def test_grid_knows_synth_and_trace_modes(self):
+        src = (QB / "workloads" / "grid.py").read_text() + (QB / "config" / "env_map.py").read_text()
         for m in ('"synth"', '"trace"'):
             self.assertIn(m, src)
         self.assertIn("XVAL_TRACE", src)
@@ -1110,12 +1111,12 @@ class XvalConfigWorkloads(unittest.TestCase):
             if grid in json_grids:
                 self.assertIn(grid, gs, f"JSON-only grid {grid!r} missing from merged grids()")
 
-    def test_deepseek_merged_record_has_vmin_fit_keys(self):
-        # vmin_fit.py reads dtype, weights_gib, maxlen, kv_bytes from the workload.
+    def test_deepseek_merged_record_has_grid_keys(self):
+        # legacy_cli.grid_config reads dtype, weights_gib, maxlen, kv_bytes from the workload.
         xc = self._load_xval_config()
         ds = xc.workloads()["deepseek"]
         for key in ("dtype", "weights_gib", "maxlen", "kv_bytes"):
-            self.assertIn(key, ds, f"deepseek merged record missing {key!r} (needed by vmin_fit)")
+            self.assertIn(key, ds, f"deepseek merged record missing {key!r} (needed by serve --grid)")
 
     def test_workloads_matches_workloads_json(self):
         # xval.yaml workloads superset-matches workloads.json for deepseek and llama.
@@ -1146,7 +1147,7 @@ class XvalConfigWorkloads(unittest.TestCase):
         self.assertEqual(len(gs["llama"]), 15)
 
     def test_llama_tp_defaults_to_1(self):
-        # llama has no tp key in xval.yaml; vmin_fit uses wl.get("tp", 1).
+        # llama has no tp key in xval.yaml; grid_config uses wl.get("tp", 1).
         xc = self._load_xval_config()
         wls = xc.workloads()
         self.assertEqual(wls["llama"].get("tp", 1), 1)
@@ -1186,8 +1187,8 @@ class XvalConfigWorkloads(unittest.TestCase):
         self.assertIn("qwen3", gs)
         self.assertEqual(len(gs["qwen3"]), 16)
 
-    def test_vmin_fit_cfg_shape(self):
-        # Assembled CFG must expose step_points, workloads, grids.
+    def test_grid_inputs_shape(self):
+        # What grid_config reads: step_points, workloads, grids.
         xc = self._load_xval_config()
         cfg = {
             "workloads": xc.workloads(),

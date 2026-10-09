@@ -50,7 +50,7 @@ class GridRunFiles(unittest.TestCase):
                              phase != "fit")
 
     def test_dump_tokens_writes_text_rows(self):
-        run, _, rows = grid_run("smoke", "--dump-tokens")
+        _, _, rows = grid_run("smoke", "--dump-tokens")
         text = [r for r in rows if r["cell"]["phase"] == "text"]
         self.assertTrue(text)
         self.assertEqual({r["cell"]["step_point"] for r in text}, {64})

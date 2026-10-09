@@ -1,9 +1,9 @@
 """CPU stand-in for the slice of vLLM the crossval scripts touch.
 
 Records every constructor's kwargs in CALLS and runs generate() on a fake
-clock, so a test can drive vmin_fit.main() end to end without a GPU. The
-real code targets an unpinned vLLM (see tests/golden/REPORT.md); only the
-names imported by vmin_fit.py and trace_serve.py exist here.
+clock, so a test can drive a grid run (serve --grid) end to end without a
+GPU. The real code targets an unpinned vLLM (see tests/golden/REPORT.md);
+only the names the InProcessDriver and trace_serve.py import exist here.
 """
 
 __version__ = "0.0.0+stub"

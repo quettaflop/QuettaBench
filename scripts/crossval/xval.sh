@@ -60,7 +60,8 @@ fi
 if [ "${PROF:-0}" = 1 ]; then
     # Use the workload's tp for device selection; prof grid comes from merged grids().
     CUDA_VISIBLE_DEVICES="$GPUS" "$HERE/prof.sh" "vllm-$CRATE" \
-        "$PY" "$HERE/../../quettabench/modes/vmin_fit.py" "$CRATE" prof --model "$MDIR"
+        env PYTHONPATH="$HERE/../.." "$PY" -m quettabench.modes.serve --grid prof \
+            --workload "$CRATE" --model "$MDIR"
     if [ -n "${QS_BENCH_BIN:-}" ]; then
         MODEL="$MDIR" CUDA_VISIBLE_DEVICES="$GPUS" "$HERE/prof.sh" "qserve-$CRATE" \
             "$QS_BENCH_BIN" decode_loop --bench

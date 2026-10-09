@@ -56,7 +56,14 @@ from ..workloads.base import workload_hash
 from ..workloads.sessions import SessionTrace
 from ._grid import run_grid
 from ._sessions_dispatch import RunAborted, SessionDispatcher, no_limit
-from .legacy_cli import apply_mode, check_args, get_args, grid_translate, list_profiles, translate
+from .legacy_cli import (
+    apply_mode,
+    check_args,
+    get_args,
+    grid_translate,
+    list_profiles,
+    translate,
+)
 
 WORKLOAD_SCHEMA_VERSION = "distributional-synthetic-v1"
 TRACE_REQUEST_ID_PREFIX = "agenticbench"

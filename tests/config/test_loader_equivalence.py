@@ -1,4 +1,4 @@
-"""The new yaml tree resolves to what xval_config and vmin_fit resolve today.
+"""The new yaml tree resolves to what xval_config and vmin_fit resolved.
 
 For every workload in configs/workloads.json, configs/runs/<name>.yaml is
 loaded through config/loader.py with env cleared and with the golden override
