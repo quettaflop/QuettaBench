@@ -77,7 +77,10 @@ def time_call(fn) -> float:
     ts = []
     for _ in range(REPS):
         s, e = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
-        s.record(); fn(); e.record(); torch.cuda.synchronize()
+        s.record()
+        fn()
+        e.record()
+        torch.cuda.synchronize()
         ts.append(s.elapsed_time(e) * 1000.0)  # ms -> us
     return st.median(ts)
 
@@ -104,10 +107,12 @@ def main(argv=None):
     ap.add_argument("--ncu", action="store_true", help="NCU per-kernel timing (the standard); curated grid")
     ap.add_argument("--ncu-bin", default=os.environ.get("NCU_BIN", "ncu"))
     a = ap.parse_args(argv)
-    dev = torch.device("cuda"); dt = torch.bfloat16
+    dev = torch.device("cuda")
+    dt = torch.bfloat16
     H, K, V = a.hv, a.dk, a.dv
     scale = 1.0 / (K ** 0.5)
-    out = out_root(a); out.mkdir(parents=True, exist_ok=True)
+    out = out_root(a)
+    out.mkdir(parents=True, exist_ok=True)
     # Decode is CUDA-graphed in serving -> NCU (--ncu) is faithful; prefill is eager
     # -> always cuda_event (the multi-kernel dispatch floor is real), never NCU.
     batch_ax = BATCH_NCU if a.ncu else (BATCH_SMOKE if a.mode == "smoke" else BATCH_FULL)
@@ -165,12 +170,18 @@ def main(argv=None):
     # decode -> {ncu,cuda_event}/gdn/ (follows --ncu); prefill -> cuda_event/gdn/.
     base = f"{a.gpu_label}_{a.geometry_tag}"
     dec_method = "ncu" if a.ncu else "cuda_event"
-    ddir = out / dec_method / "gdn"; ddir.mkdir(parents=True, exist_ok=True)
-    pdir = out / "cuda_event" / "gdn"; pdir.mkdir(parents=True, exist_ok=True)
+    ddir = out / dec_method / "gdn"
+    ddir.mkdir(parents=True, exist_ok=True)
+    pdir = out / "cuda_event" / "gdn"
+    pdir.mkdir(parents=True, exist_ok=True)
     with open(ddir / f"{base}_decode.csv", "w", newline="") as f:
-        w = csv.writer(f); w.writerow(["batch", "us_per_call", "us_x_nlinear"]); w.writerows(dec_rows)
+        w = csv.writer(f)
+        w.writerow(["batch", "us_per_call", "us_x_nlinear"])
+        w.writerows(dec_rows)
     with open(pdir / f"{base}_prefill.csv", "w", newline="") as f:
-        w = csv.writer(f); w.writerow(["seq_len", "us_per_call", "us_x_nlinear"]); w.writerows(pre_rows)
+        w = csv.writer(f)
+        w.writerow(["seq_len", "us_per_call", "us_x_nlinear"])
+        w.writerows(pre_rows)
     print(f"[gdn] wrote {ddir}/{base}_decode.csv + {pdir}/{base}_prefill.csv ({len(dec_rows)}/{len(pre_rows)} rows)", flush=True)
 
 

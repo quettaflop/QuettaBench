@@ -26,7 +26,7 @@ def ncu_kernel_durations(inner: str, ncu_bin: str) -> list[tuple[str, float]]:
            "--target-processes", "all", sys.executable, "-c", inner]
     out = subprocess.run(cmd, capture_output=True, text=True).stdout
     lines = out.splitlines()
-    hdr = next((i for i, l in enumerate(lines) if l.startswith('"ID"')), None)
+    hdr = next((i for i, line in enumerate(lines) if line.startswith('"ID"')), None)
     if hdr is None:
         return []
     res: list[tuple[str, float]] = []

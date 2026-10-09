@@ -39,7 +39,8 @@ def _time(call, iters=_ITERS, warmup=_WARMUP) -> float:
     s.record()
     for _ in range(iters):
         call()
-    e.record(); torch.cuda.synchronize()
+    e.record()
+    torch.cuda.synchronize()
     return s.elapsed_time(e) / iters * 1000.0   # us per call
 
 
@@ -79,7 +80,8 @@ def main(argv=None):
         if rank == 0:
             print(f"  {nbytes:>9d} B: vllm path {us_vllm:8.2f} us   plain nccl {us_nccl:8.2f} us", flush=True)
     if rank == 0:
-        root = out_root(a); out = root / "ncu" / "collectives" / f"{a.gpu_label}_tp{world}.csv"
+        root = out_root(a)
+        out = root / "ncu" / "collectives" / f"{a.gpu_label}_tp{world}.csv"
         out.parent.mkdir(parents=True, exist_ok=True)
         kept = []
         if out.exists():
@@ -98,9 +100,12 @@ def main(argv=None):
         print(f"[vllm-ar] wrote {out}: {len(rows)} all_reduce rows (vllm path) + {len(kept)} other-op rows kept", flush=True)
         ref = root / "ncu" / "collectives" / f"{a.gpu_label}_tp{world}_nccl_vs_vllm.csv"
         with ref.open("w", newline="") as f:
-            w = csv.writer(f); w.writerow(["bytes", "vllm_us", "nccl_us"])
-            for r in rows: w.writerow([r[0], round(r[1], 4), round(r[2], 4)])
-    dist.barrier(); dist.destroy_process_group()
+            w = csv.writer(f)
+            w.writerow(["bytes", "vllm_us", "nccl_us"])
+            for r in rows:
+                w.writerow([r[0], round(r[1], 4), round(r[2], 4)])
+    dist.barrier()
+    dist.destroy_process_group()
 
 
 if __name__ == "__main__":

@@ -223,7 +223,8 @@ def main() -> None:
     path = dst / f"fused_block_profile_{tag}.csv"
     with path.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=["prefill_tokens", "decode_batch", "step_ms"])
-        w.writeheader(); w.writerows(rows)
+        w.writeheader()
+        w.writerows(rows)
     print(f"[fused_block] wrote {path} ({len(rows)} rows)", flush=True)
 
 

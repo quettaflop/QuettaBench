@@ -48,7 +48,7 @@ def main():
 
     def encode(s):
         return tok(s, add_special_tokens=False)["input_ids"]
-    records = [json.loads(l) for l in open(args.trace) if l.strip()]
+    records = [json.loads(line) for line in open(args.trace) if line.strip()]
     reqs = r2_to_requests(records, encode)
     if not reqs:
         sys.exit(f"{args.trace}: no turns with prompt_text")

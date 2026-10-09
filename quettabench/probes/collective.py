@@ -62,14 +62,14 @@ def _time_op(op: str, n_elems: int, world: int, iters: int, warmup: int) -> floa
     full = torch.ones(n_elems, dtype=_DTYPE, device="cuda")
     shard = torch.ones(max(1, n_elems // world), dtype=_DTYPE, device="cuda")
     if op == "all_reduce":
-        call = lambda: dist.all_reduce(full)
+        call = lambda: dist.all_reduce(full)  # noqa: E731
     elif op == "all_gather":
-        call = lambda: dist.all_gather_into_tensor(full, shard)
+        call = lambda: dist.all_gather_into_tensor(full, shard)  # noqa: E731
     elif op == "reduce_scatter":
-        call = lambda: dist.reduce_scatter_tensor(shard, full)
+        call = lambda: dist.reduce_scatter_tensor(shard, full)  # noqa: E731
     elif op == "all_to_all":
         out = torch.empty_like(full)
-        call = lambda: dist.all_to_all_single(out, full)
+        call = lambda: dist.all_to_all_single(out, full)  # noqa: E731
     else:
         raise ValueError(f"unknown op {op!r}")
 

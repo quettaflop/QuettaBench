@@ -150,7 +150,7 @@ def build(inputs: list[Path], snap_tolerance: float = 0.02,
                     row["validation_status"] = "ok"
                     row[LAG_UPGRADE_FIELD] = (
                         f"passes={len(per_pass)} spread={spread * 100:.3f}% "
-                        f"lags={'/'.join(f'{l:.3f}' for _, l, _ in per_pass)}")
+                        f"lags={'/'.join(f'{lag:.3f}' for _, lag, _ in per_pass)}")
                     print(f"cell {key}: lag-only flag upgraded to ok "
                           f"({row[LAG_UPGRADE_FIELD]})")
         row["source_file"] = src

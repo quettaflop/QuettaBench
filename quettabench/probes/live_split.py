@@ -43,7 +43,8 @@ async def ttft_once(session, url, model, content):
             ds = line[len("data:"):].strip()
             if ds == "[DONE]":
                 break
-            ch = json.loads(ds); cc = ch.get("choices", [])
+            ch = json.loads(ds)
+            cc = ch.get("choices", [])
             if cc and cc[0].get("delta", {}).get("content") is not None:
                 return (time.perf_counter() - t0) * 1000.0
     return None
@@ -61,7 +62,8 @@ async def measure(session, url, model, B, P, rounds):
 
 
 def fit(rows):
-    X = np.array([[1.0, r["P"], r["B"] * r["P"]] for r in rows]); y = np.array([r["ttft_ms"] for r in rows])
+    X = np.array([[1.0, r["P"], r["B"] * r["P"]] for r in rows])
+    y = np.array([r["ttft_ms"] for r in rows])
     b, *_ = np.linalg.lstsq(X, y, rcond=None)
     return b  # floor, shared(/tok), perreq(/tok)
 
@@ -77,7 +79,8 @@ async def main():
     a = ap.parse_args()
     out = out_root(a) / f"live_split_{a.gpu_label}.csv"
     out.parent.mkdir(parents=True, exist_ok=True)
-    Bs = [int(x) for x in a.Bs.split(",")]; Ps = [int(x) for x in a.Ps.split(",")]
+    Bs = [int(x) for x in a.Bs.split(",")]
+    Ps = [int(x) for x in a.Ps.split(",")]
     rows = []
     async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=600),
                                      connector=aiohttp.TCPConnector(limit=64)) as s:
@@ -87,7 +90,9 @@ async def main():
                 rows.append({"B": B, "P": P, "ttft_ms": round(t, 3)})
                 print(f"  B={B:>3} P={P:>6}  ttft={t:8.2f} ms", flush=True)
     with open(out, "w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=["B", "P", "ttft_ms"]); w.writeheader(); w.writerows(rows)
+        w = csv.DictWriter(f, fieldnames=["B", "P", "ttft_ms"])
+        w.writeheader()
+        w.writerows(rows)
     fl, sh, pr = fit(rows)
     tot = sh + pr
     print("\n=== TTFT(B,P) = floor + shared*P + perreq*B*P  (live serving stack) ===")

@@ -34,7 +34,7 @@ class VminFitLogGolden(unittest.TestCase):
     def test_log_is_what_a_grid_run_prints(self):
         run = run_grid_cli(grid_argv("llama"), {})
         self.assertIsNone(run["exit"])
-        log = "\n".join(l for l in run["stdout"] if VLLM_SH_FILTER.match(l)) + "\n"
+        log = "\n".join(line for line in run["stdout"] if VLLM_SH_FILTER.match(line)) + "\n"
         check_text(self, VMIN_FIT_LOG, log + LEGACY_RESULT + "\n")
 
 

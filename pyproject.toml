@@ -29,10 +29,12 @@ line-length = 120
 target-version = "py310"
 
 [tool.ruff.lint]
-# pyflakes, import order, pyupgrade. Not B: its loop-closure and
-# zip(strict=) findings are deliberate in the timing loops, and strict=
-# would change behaviour.
-select = ["F", "I", "UP"]
+# pycodestyle, pyflakes, import order, pyupgrade. Not B: its loop-closure
+# and zip(strict=) findings are deliberate in the timing loops, and
+# strict= would change behaviour.
+select = ["E", "F", "I", "UP"]
+# Line length is not enforced; the moved code has lines up to 160.
+ignore = ["E501"]
 
 [tool.ruff.lint.isort]
 combine-as-imports = true

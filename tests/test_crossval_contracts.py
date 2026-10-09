@@ -330,7 +330,7 @@ class CrossvalScripts(unittest.TestCase):
 
     def test_agreement_inputs_present(self):
         for name in ("prompts.txt", "texts.txt"):
-            lines = [l for l in (REPO / "data" / name).read_text().splitlines() if l.strip()]
+            lines = [line for line in (REPO / "data" / name).read_text().splitlines() if line.strip()]
             self.assertTrue(lines, f"{name} is empty")
 
     def test_grid_run_supports_moe_bringup(self):
@@ -803,7 +803,8 @@ class TableParity(unittest.TestCase):
         # Same seed + profile is byte-identical, labeled SYNTHETIC, carries the
         # seed; a different seed or arrival time changes the workload hash.
         def gen(seed):
-            fd, p = tempfile.mkstemp(suffix=".jsonl"); os.close(fd)
+            fd, p = tempfile.mkstemp(suffix=".jsonl")
+            os.close(fd)
             subprocess.run([sys.executable, str(REPO / "analysis" / "synthetic" / "agentic.py"), "gen",
                             "--profile", "terminal_bench", "--n", "8", "--seed", str(seed),
                             "--out", p], check=True, capture_output=True)
@@ -811,7 +812,7 @@ class TableParity(unittest.TestCase):
         a, b, c = gen(1), gen(1), gen(2)
         self.assertEqual(Path(a).read_bytes(), Path(b).read_bytes(),
                          "same seed must produce a byte-identical trace")
-        rows = [json.loads(l) for l in open(a)]
+        rows = [json.loads(line) for line in open(a)]
         self.assertTrue(all(r["source"] == "SYNTHETIC" for r in rows))
         self.assertTrue(all(r["seed"] == 1 for r in rows))
         sys.path.insert(0, str(REPO))

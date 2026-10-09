@@ -40,7 +40,10 @@ def graph_time_us(fn, *, warmup: int = 10, reps: int = 50, reduce=min) -> float:
     # estimate so big ops (where 6us is noise anyway) don't blow pool memory.
     torch.cuda.synchronize()
     s0, e0 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
-    s0.record(); fn(); e0.record(); torch.cuda.synchronize()
+    s0.record()
+    fn()
+    e0.record()
+    torch.cuda.synchronize()
     est_us = s0.elapsed_time(e0) * 1000.0
     iters = 32 if est_us < 30.0 else (8 if est_us < 200.0 else 1)
 

@@ -89,7 +89,7 @@ def ncu_gemm_us(m, n, k, ncu_bin, reps=NCU_REPS) -> float | None:
            "--target-processes", "all", sys.executable, "-c", inner]
     out = subprocess.run(cmd, capture_output=True, text=True).stdout
     lines = out.splitlines()
-    hdr = next((i for i, l in enumerate(lines) if l.startswith('"ID"')), None)
+    hdr = next((i for i, line in enumerate(lines) if line.startswith('"ID"')), None)
     if hdr is None:
         return None
     durs = []
@@ -155,7 +155,10 @@ class Fp8Op:
         ts = []
         for _ in range(REPS):
             s, e = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
-            s.record(); run(); e.record(); torch.cuda.synchronize()
+            s.record()
+            run()
+            e.record()
+            torch.cuda.synchronize()
             ts.append(s.elapsed_time(e) * 1000.0)
         return min(ts)
 
@@ -178,7 +181,8 @@ class Fp8Op:
             return self._time(lambda: ops.cutlass_scaled_mm(
                 xq, w.T, out_dtype=torch.bfloat16, scale_a=xs, scale_b=ws.T), graph)
         finally:
-            del x, w, ws; torch.cuda.empty_cache()
+            del x, w, ws
+            torch.cuda.empty_cache()
 
     def quant_fit(self) -> tuple[float, float] | None:
         """(floor_us, eff_bw_gb_s) of the quant kernel: us = floor + bytes / bw with
@@ -186,8 +190,11 @@ class Fp8Op:
         pts = [(m * k * 3, us) for m, k, us in self.quant_pts]
         if len(pts) < 3:
             return None
-        xs = [b for b, _ in pts]; ys = [u for _, u in pts]
-        n = len(xs); mx = sum(xs) / n; my = sum(ys) / n
+        xs = [b for b, _ in pts]
+        ys = [u for _, u in pts]
+        n = len(xs)
+        mx = sum(xs) / n
+        my = sum(ys) / n
         sxx = sum((x - mx) ** 2 for x in xs)
         slope = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sxx if sxx else 0.0
         floor = my - slope * mx
@@ -209,7 +216,8 @@ def time_matmul(m, n, k, dev, dt, graph: bool = False) -> float:
     if graph:
         from quettabench.probes._graph import graph_time_us  # noqa: PLC0415
         us = graph_time_us(lambda: torch.matmul(a, b))
-        del a, b; torch.cuda.empty_cache()
+        del a, b
+        torch.cuda.empty_cache()
         return us
     for _ in range(WARMUP):
         torch.matmul(a, b)
@@ -217,9 +225,13 @@ def time_matmul(m, n, k, dev, dt, graph: bool = False) -> float:
     ts = []
     for _ in range(REPS):
         s, e = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
-        s.record(); torch.matmul(a, b); e.record(); torch.cuda.synchronize()
+        s.record()
+        torch.matmul(a, b)
+        e.record()
+        torch.cuda.synchronize()
         ts.append(s.elapsed_time(e) * 1000.0)  # ms -> us
-    del a, b; torch.cuda.empty_cache()
+    del a, b
+    torch.cuda.empty_cache()
     return min(ts)  # min-reduce, matching the table
 
 
@@ -254,8 +266,10 @@ def main(argv=None):
                     help="merge into the target CSV instead of truncating it "
                          "(duplicate (M,N,K) rows collapse by min on load)")
     a = ap.parse_args(argv)
-    dev = torch.device("cuda"); dt = torch.bfloat16
-    out = out_root(a); out.mkdir(parents=True, exist_ok=True)
+    dev = torch.device("cuda")
+    dt = torch.bfloat16
+    out = out_root(a)
+    out.mkdir(parents=True, exist_ok=True)
     if a.dtype == "fp8" and a.ncu:
         raise SystemExit("--dtype fp8 has no --ncu path (the op is a Python-level "
                          "dispatch, not one kernel); use --graph for dispatch-free timing.")
@@ -271,7 +285,8 @@ def main(argv=None):
                     continue
                 us = ncu_gemm_us(m, n, k, a.ncu_bin)
                 if us is None:
-                    print(f"  ncu MISS M={m} N={n} K={k} (no gemm kernel parsed)", flush=True); continue
+                    print(f"  ncu MISS M={m} N={n} K={k} (no gemm kernel parsed)", flush=True)
+                    continue
                 rows.append({"M": m, "N": n, "K": k, "dtype_bytes": 2, "latency_us": round(us, 3)})
                 print(f"  ncu M={m:5d} N={n:6d} K={k:6d}: {us:9.2f} us", flush=True)
     else:
@@ -306,7 +321,8 @@ def main(argv=None):
                           if fp8_op is not None else
                           time_matmul(m, n, k, dev, dt, graph=a.graph))
                 except Exception as ex:
-                    print(f"  skip M={m} N={n} K={k}: {type(ex).__name__}: {ex}", flush=True); continue
+                    print(f"  skip M={m} N={n} K={k}: {type(ex).__name__}: {ex}", flush=True)
+                    continue
                 rows.append({"M": m, "N": n, "K": k, "dtype_bytes": dtype_bytes,
                              "latency_us": round(us, 3)})
                 print(f"  M={m:5d} N={n:6d} K={k:6d}: {us:9.2f} us", flush=True)
@@ -342,7 +358,8 @@ def main(argv=None):
         print(f"[gemm] append: {len(prior)} prior rows kept, {n_new} re-measured", flush=True)
     with path.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=["M", "N", "K", "dtype_bytes", "latency_us"])
-        w.writeheader(); w.writerows(rows)
+        w.writeheader()
+        w.writerows(rows)
     print(f"[gemm] wrote {path} ({len(rows)} rows, {n_new} new)", flush=True)
 
 

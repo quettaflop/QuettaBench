@@ -141,7 +141,8 @@ def main(argv=None) -> None:
                          "for a held-out validation sweep that must not touch calibration")
     a = ap.parse_args(argv)
 
-    rank = int(os.environ["RANK"]); world = int(os.environ["WORLD_SIZE"])
+    rank = int(os.environ["RANK"])
+    world = int(os.environ["WORLD_SIZE"])
     local = int(os.environ["LOCAL_RANK"])
     torch.cuda.set_device(local)
     dist.init_process_group("nccl", rank=rank, world_size=world)

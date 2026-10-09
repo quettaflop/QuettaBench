@@ -37,23 +37,30 @@ def time_op(fn) -> float:
     ts = []
     for _ in range(REPS):
         s, e = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
-        s.record(); fn(); e.record(); torch.cuda.synchronize()
+        s.record()
+        fn()
+        e.record()
+        torch.cuda.synchronize()
         ts.append(s.elapsed_time(e) * 1000.0)  # us
     return st.median(ts)
 
 
 def op_for(kernel, n, dev, dt):
     if kernel == "rmsnorm":
-        x = torch.randn(n, device=dev, dtype=dt); w = torch.ones(n, device=dev, dtype=dt)
+        x = torch.randn(n, device=dev, dtype=dt)
+        w = torch.ones(n, device=dev, dtype=dt)
         return lambda: (x * torch.rsqrt(x.float().pow(2).mean() + 1e-6).to(dt) * w)
     if kernel == "silu_mul":
-        g = torch.randn(n, device=dev, dtype=dt); u = torch.randn(n, device=dev, dtype=dt)
+        g = torch.randn(n, device=dev, dtype=dt)
+        u = torch.randn(n, device=dev, dtype=dt)
         return lambda: F.silu(g) * u
     if kernel == "rotary_emb":
-        x = torch.randn(n, device=dev, dtype=dt); c = torch.randn(n, device=dev, dtype=dt)
+        x = torch.randn(n, device=dev, dtype=dt)
+        c = torch.randn(n, device=dev, dtype=dt)
         return lambda: x * c + x  # rope is ~2 fused mul-add reads/writes of the q/k rows
     if kernel == "residual_add":
-        x = torch.randn(n, device=dev, dtype=dt); r = torch.randn(n, device=dev, dtype=dt)
+        x = torch.randn(n, device=dev, dtype=dt)
+        r = torch.randn(n, device=dev, dtype=dt)
         return lambda: x + r
     raise ValueError(kernel)
 
@@ -92,7 +99,8 @@ def op_for_vllm(kernel, n, dev, dt):
         cache = torch.randn(4096, hd, device=dev, dtype=dt)
         return lambda: ops.rotary_embedding(pos, q, k, hd, cache, True)
     if kernel == "residual_add":
-        x = torch.randn(n, device=dev, dtype=dt); r = torch.randn(n, device=dev, dtype=dt)
+        x = torch.randn(n, device=dev, dtype=dt)
+        r = torch.randn(n, device=dev, dtype=dt)
         return lambda: x + r
     if kernel == "kv_cache_write":
         # n = k+v elements (composition passes tokens*n_kv*hd*2).
@@ -112,8 +120,11 @@ def op_for_vllm(kernel, n, dev, dt):
 
 def fit(bytes_list, us_list) -> tuple[float, float]:
     """Least-squares latency_us = floor + slope*bytes -> (floor_us, eff_bw_gb_s)."""
-    nP = len(bytes_list); sx = sum(bytes_list); sy = sum(us_list)
-    sxx = sum(b * b for b in bytes_list); sxy = sum(b * u for b, u in zip(bytes_list, us_list))
+    nP = len(bytes_list)
+    sx = sum(bytes_list)
+    sy = sum(us_list)
+    sxx = sum(b * b for b in bytes_list)
+    sxy = sum(b * u for b, u in zip(bytes_list, us_list))
     denom = nP * sxx - sx * sx
     slope = (nP * sxy - sx * sy) / denom if denom else 0.0     # us/byte
     floor = (sy - slope * sx) / nP
@@ -135,7 +146,8 @@ def main(argv=None):
                          "adds the fused_add_rmsnorm + kv_cache_write entries the "
                          "composition prefers when present")
     a = ap.parse_args(argv)
-    dev = torch.device("cuda"); dt = torch.bfloat16
+    dev = torch.device("cuda")
+    dt = torch.bfloat16
     if a.graph:
         from quettabench.probes._graph import graph_median_us  # noqa: PLC0415
     tag = ("/graph" if a.graph else "") + ("/vllm" if a.vllm else "")
@@ -149,14 +161,16 @@ def main(argv=None):
                 continue
             fn = op_for_vllm(kernel, n, dev, dt) if a.vllm else op_for(kernel, n, dev, dt)
             us = graph_median_us(fn) if a.graph else time_op(fn)
-            bl.append(n * DT_BYTES * (r + w)); ul.append(us)
+            bl.append(n * DT_BYTES * (r + w))
+            ul.append(us)
         floor, bw = fit(bl, ul)
         result[kernel] = {"floor_us": floor, "eff_bw_gb_s": bw}
         print(f"  {kernel:14} floor={floor} us  eff_bw={bw} GB/s", flush=True)
     # ncu/ = graphed-decode-faithful (NCU or --graph replay, both dispatch-free);
     # cuda_event/ = eager incl. dispatch. The loader prefers ncu/ and falls back.
     method = "ncu" if a.graph else "cuda_event"
-    out = out_root(a) / method / "elementwise"; out.mkdir(parents=True, exist_ok=True)
+    out = out_root(a) / method / "elementwise"
+    out.mkdir(parents=True, exist_ok=True)
     path = out / f"{a.gpu_label}.json"
     path.write_text(json.dumps(result, indent=2))
     print(f"[elem] wrote {path}", flush=True)

@@ -151,7 +151,9 @@ class SimSide:
             ch = min(rem, budget)
             gpu = self.p.fused_step_ms(int(ch), 0, 0) + self.p.cross_attn_ms(int(ch), res)
             total += gpu + _step_host_ms(self.p, gpu, ch, after_idle=first)
-            res += ch; rem -= ch; first = False
+            res += ch
+            rem -= ch
+            first = False
         return total
 
     def d_step_ms(self, ctx: int) -> float:
@@ -165,7 +167,9 @@ class SimSide:
 
 def lstsq(xs, ys):
     """y = a + b x by least squares (pure python; tiny n)."""
-    n = len(xs); mx = sum(xs) / n; my = sum(ys) / n
+    n = len(xs)
+    mx = sum(xs) / n
+    my = sum(ys) / n
     sxx = sum((x - mx) ** 2 for x in xs)
     b = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sxx if sxx else 0.0
     return my - b * mx, b
@@ -208,7 +212,8 @@ def probe(a) -> list[dict]:
 
     def score(phase: str, conc: int, client: dict, prox: dict) -> dict:
         pu = prox["prefill_usage"]
-        total = int(pu["prompt_tokens"]); cached_p = int(pu.get("cached_tokens") or 0)
+        total = int(pu["prompt_tokens"])
+        cached_p = int(pu.get("cached_tokens") or 0)
         new_p = total - cached_p
         prefill_ms = prox["prefill_s"] * 1e3
         d_first = (prox["first_token_at"] - prox["decode_start"]) * 1e3
@@ -285,8 +290,10 @@ def probe(a) -> list[dict]:
             results[i] = chat_stream(a.proxy_url, a.model, texts[i] + " Now reply with the single word OK.",
                                      f"probe-herd-{i}")
         th = [threading.Thread(target=fire, args=(i,)) for i in range(a.herd)]
-        for t in th: t.start()
-        for t in th: t.join()
+        for t in th:
+            t.start()
+        for t in th:
+            t.join()
         time.sleep(0.5)
         px = {r["request_id"]: r for r in proxy_rows(log, since)}
         for i in range(a.herd):
@@ -303,9 +310,12 @@ def main(argv=None) -> None:
     if not a.out:
         ap.error("--out is required")
     rows = probe(a)
-    out = Path(a.out); out.parent.mkdir(parents=True, exist_ok=True)
+    out = Path(a.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
     with out.open("w", newline="") as fh:
-        w = csv.DictWriter(fh, fieldnames=list(COLS)); w.writeheader(); w.writerows(rows)
+        w = csv.DictWriter(fh, fieldnames=list(COLS))
+        w.writeheader()
+        w.writerows(rows)
     print(f"\nwrote {out} ({len(rows)} rows)")
 
     print("\nresidual fits (ms = floor + slope * tokens), c1:")

@@ -38,7 +38,10 @@ def time_call(fn) -> float:
     ts = []
     for _ in range(REPS):
         s, e = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
-        s.record(); fn(); e.record(); torch.cuda.synchronize()
+        s.record()
+        fn()
+        e.record()
+        torch.cuda.synchronize()
         ts.append(s.elapsed_time(e) * 1000.0)
     return st.median(ts)
 
@@ -98,7 +101,8 @@ def main(argv=None):
                          "fa_version": f"vllm-fa{a.fa_version}", "dtype": "bfloat16",
                          "latency_us": round(us, 3)})
             print(f"  q={ql:5d} resident={ctx:6d} kv={kv:6d}: {us:8.1f} us/layer", flush=True)
-    out = out_root(a) / "cuda_event" / "fa3_cross"; out.mkdir(parents=True, exist_ok=True)
+    out = out_root(a) / "cuda_event" / "fa3_cross"
+    out.mkdir(parents=True, exist_ok=True)
     path = out / f"{a.gpu_label}.csv"
     geom = (str(a.n_heads), str(a.n_kv_heads), str(a.head_dim))
     kept = []
@@ -107,7 +111,9 @@ def main(argv=None):
             kept = [r for r in csv.DictReader(fh)
                     if (r["n_heads"], r["n_kv_heads"], r["head_dim"]) != geom]
     with path.open("w", newline="") as fh:
-        w = csv.DictWriter(fh, fieldnames=list(rows[0].keys())); w.writeheader(); w.writerows(kept + rows)
+        w = csv.DictWriter(fh, fieldnames=list(rows[0].keys()))
+        w.writeheader()
+        w.writerows(kept + rows)
     print(f"[cross] wrote {path} ({len(rows)} new rows, {len(kept)} kept)", flush=True)
 
 

@@ -104,7 +104,8 @@ def main() -> None:
     ap.add_argument("--layouts", nargs="+", default=["contig", "runs64", "runs8", "scattered"])
     a = ap.parse_args()
 
-    rank = int(os.environ["RANK"]); world = int(os.environ["WORLD_SIZE"])
+    rank = int(os.environ["RANK"])
+    world = int(os.environ["WORLD_SIZE"])
     local = int(os.environ["LOCAL_RANK"])
     assert world == 2, "run with --nproc_per_node=2 (rank 0 = P, rank 1 = D)"
     torch.cuda.set_device(local)
@@ -192,7 +193,8 @@ def main() -> None:
                         t2 = time.perf_counter()
                         agent.release_xfer_handle(h)
                         if it > 0:                      # first is warm-up (UCX rkey cache)
-                            prep.append((t1 - t0) * 1e3); xfer.append((t2 - t1) * 1e3)
+                            prep.append((t1 - t0) * 1e3)
+                            xfer.append((t2 - t1) * 1e3)
                     nbytes = int(len(ids)) * page_bytes
                     row = {"gpu": a.gpu_label, "kv_heads_per_rank": heads, "head_dim": a.head_dim,
                            "block_size": a.block_size, "layers": a.layers, "layout": layout,
@@ -205,7 +207,8 @@ def main() -> None:
                     print(f"heads={heads} {layout:9s} tokens={tokens:>6} descs={len(ids):>8} "
                           f"{nbytes / 1e9:7.3f} GB  prep {row['prep_ms']:8.2f} ms  xfer {row['xfer_ms']:8.2f} ms"
                           f"  -> {row['eff_gbps']:6.1f} GB/s per GPU pair", flush=True)
-            agent.release_dlist_handle(local_side); agent.release_dlist_handle(remote_side)
+            agent.release_dlist_handle(local_side)
+            agent.release_dlist_handle(remote_side)
             agent.remove_remote_agent(remote_name)
         dist.barrier()
         agent.deregister_memory(reg)
