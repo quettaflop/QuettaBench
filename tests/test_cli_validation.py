@@ -47,6 +47,10 @@ class TestFlagValidation(unittest.TestCase):
         self.assert_rejected("mode.min_success_rate=1.5",
                              "mode.min_success_rate must be in [0.0, 1.0]")
 
+    def test_bad_serving_style_is_one_line_not_a_traceback(self):
+        self.assert_rejected("engine.serving_style=disagg:2p", "unknown serving_style 'disagg:2p'")
+        self.assertNotIn("Traceback", run_cli("engine.serving_style=disagg:2p").stderr)
+
 
 class TestUniformLenBounds(unittest.TestCase):
     def test_default_ratio_is_exact(self):

@@ -205,10 +205,14 @@ def _validate(values, origins, allow_unverified, where):
         if (low is not None and values[path] < low) or (high is not None and values[path] > high):
             raise ConfigError(f"{where}: {path} must be in [{low}, {high or 'inf'}], "
                               f"got {values[path]!r}")
-    parse_serving_style(values["engine.serving_style"])
-    # num_experts None (no MoE fact recorded) skips the check.
-    if values["engine.ep"] and values["engine.num_experts"] is not None:
-        check_ep_legal(values["engine.tp"], values["engine.num_experts"])
+    # validate.py raises ValueError; as ConfigError the CLI prints one line, message unchanged.
+    try:
+        parse_serving_style(values["engine.serving_style"])
+        # num_experts None (no MoE fact recorded) skips the check.
+        if values["engine.ep"] and values["engine.num_experts"] is not None:
+            check_ep_legal(values["engine.tp"], values["engine.num_experts"])
+    except ValueError as e:
+        raise ConfigError(str(e)) from None
     if not values["engine.verified"] and not allow_unverified:
         raise ConfigError(f"{where}: {values['run_name']} is not validated yet; "
                           "pass --allow-unverified to bring it up")

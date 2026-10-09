@@ -125,13 +125,13 @@ class LoaderRules(unittest.TestCase):
     # parse-time refusals
 
     def test_malformed_serving_style_keeps_parse_serving_style_message(self):
-        with self.assertRaises(ValueError) as ctx:
+        with self.assertRaises(ConfigError) as ctx:
             self.load({"engine": {"serving_style": "disagg:2p"}})
         self.assertEqual(str(ctx.exception), "unknown serving_style 'disagg:2p'; use aggregated, "
                          "disagg:<P>p<D>d, or ep<N>dp<M>")
 
     def test_ep_degree_must_divide_known_expert_count(self):
-        with self.assertRaisesRegex(ValueError, "ep=3 does not divide 256 experts"):
+        with self.assertRaisesRegex(ConfigError, "ep=3 does not divide 256 experts"):
             self.load({"engine": {"tp": 3}}, model={"ep": True, "num_experts": 256})
         self.one({"engine": {"tp": 8}}, model={"ep": True, "num_experts": 256})
         self.one({"engine": {"tp": 3}}, model={"ep": True})  # num_experts unknown: skipped
