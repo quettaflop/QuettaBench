@@ -875,7 +875,7 @@ def normalize_dashboard_scope(scope: str) -> str:
     return scope
 
 
-def get_args():
+def get_args(argv=None):
     parser = argparse.ArgumentParser(description="inference-benchmark runner")
     parser.add_argument("--url", required=False, help="Server endpoint URL")
     parser.add_argument("--model", required=False)
@@ -1030,40 +1030,42 @@ def get_args():
     parser.add_argument("--turn-style", type=str, default=None, help="Filter profiles by turn style")
     parser.add_argument("--serving-style", type=str, default=None, help="Filter profiles by serving style")
     parser.add_argument("--data-source", type=str, default=None, help="Filter profiles by data source")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.profile == "mooncake-trace" and args.backend != "vllm-completions":
         parser.error("--profile mooncake-trace sends token id prompts; "
                      "use --backend vllm-completions")
     return args
 
 
-if __name__ == "__main__":
-    args = get_args()
 
-    if args.list_profiles:
-        from ..workloads.profiles import filter_profiles, PROFILES, AGENT_TYPES, TURN_STYLES, SERVING_STYLES, DATA_SOURCES
-        filtered = filter_profiles(
-            agent_type=args.agent_type,
-            turn_style=args.turn_style,
-            serving_style=args.serving_style,
-            data_source=args.data_source,
-            include_inactive=args.include_inactive,
-        )
-        print(f"\n{'Name':<30} {'Agent Type':<18} {'Turn Style':<14} {'Serving':<20} {'Data Source':<12} {'ISL':<6} {'OSL':<6}")
-        print("-" * 110)
-        for name, p in sorted(filtered.items()):
-            print(f"{name:<30} {p.agent_type:<18} {p.turn_style:<14} {p.serving_style:<20} {p.data_source:<12} {p.isl_tokens:<6} {p.osl_tokens:<6}")
-        inactive_note = " including inactive" if args.include_inactive else ""
-        print(f"\n{len(filtered)} profiles shown{inactive_note} (of {len(PROFILES)} total)")
-        if any([args.agent_type, args.turn_style, args.serving_style, args.data_source]):
-            active = []
-            if args.agent_type: active.append(f"agent_type={args.agent_type}")
-            if args.turn_style: active.append(f"turn_style={args.turn_style}")
-            if args.serving_style: active.append(f"serving_style={args.serving_style}")
-            if args.data_source: active.append(f"data_source={args.data_source}")
-            print(f"Filters: {', '.join(active)}")
-        sys.exit(0)
+def list_profiles(args) -> None:
+    """--list-profiles: print the filtered profile table."""
+    from ..workloads.profiles import filter_profiles, PROFILES
+    filtered = filter_profiles(
+        agent_type=args.agent_type,
+        turn_style=args.turn_style,
+        serving_style=args.serving_style,
+        data_source=args.data_source,
+        include_inactive=args.include_inactive,
+    )
+    print(f"\n{'Name':<30} {'Agent Type':<18} {'Turn Style':<14} {'Serving':<20} {'Data Source':<12} {'ISL':<6} {'OSL':<6}")
+    print("-" * 110)
+    for name, p in sorted(filtered.items()):
+        print(f"{name:<30} {p.agent_type:<18} {p.turn_style:<14} {p.serving_style:<20} {p.data_source:<12} {p.isl_tokens:<6} {p.osl_tokens:<6}")
+    inactive_note = " including inactive" if args.include_inactive else ""
+    print(f"\n{len(filtered)} profiles shown{inactive_note} (of {len(PROFILES)} total)")
+    if any([args.agent_type, args.turn_style, args.serving_style, args.data_source]):
+        active = []
+        if args.agent_type: active.append(f"agent_type={args.agent_type}")
+        if args.turn_style: active.append(f"turn_style={args.turn_style}")
+        if args.serving_style: active.append(f"serving_style={args.serving_style}")
+        if args.data_source: active.append(f"data_source={args.data_source}")
+        print(f"Filters: {', '.join(active)}")
 
+
+def check_args(args) -> None:
+    """Refuse bad flag combinations (exit 1) and fill the derived defaults:
+    warmup width and sampling seed."""
     # --url and --model are required for actual benchmark runs
     if not args.url or not args.model:
         print("Error: --url and --model are required for benchmark runs.")
@@ -1146,21 +1148,30 @@ if __name__ == "__main__":
     elif args.sampling_seed < 0:
         args.sampling_seed = None
 
-    if args.mode:
-        if args.mode == "multi-turn":
-            print("NOTE: multi-turn mode requires server launched with --enable-prefix-caching (vLLM)")
-            if args.profile == "chat-singleturn":  # default — override for multi-turn
-                args.profile = "chat-multiturn"
-        if args.mode == "stress-test":
-            if not args.ignore_eos:
-                print("NOTE: stress-test mode auto-enables --ignore-eos (required for FP8 models)")
-                args.ignore_eos = True
-            if args.profile == "chat-singleturn":  # default — override for stress-test
-                args.profile = "random-1k"
-        if args.mode == "single-turn":
-            print("NOTE: single-turn mode requires server launched with --enable-prefix-caching (vLLM)")
-            print("      or radix cache (SGLang default). See scripts/launch_server.sh")
 
+def apply_mode(args) -> None:
+    """--mode side effects: multi-turn and stress-test swap the default profile,
+    stress-test forces ignore_eos; each prints what it needs from the server."""
+    if not args.mode:
+        return
+    if args.mode == "multi-turn":
+        print("NOTE: multi-turn mode requires server launched with --enable-prefix-caching (vLLM)")
+        if args.profile == "chat-singleturn":  # default — override for multi-turn
+            args.profile = "chat-multiturn"
+    if args.mode == "stress-test":
+        if not args.ignore_eos:
+            print("NOTE: stress-test mode auto-enables --ignore-eos (required for FP8 models)")
+            args.ignore_eos = True
+        if args.profile == "chat-singleturn":  # default — override for stress-test
+            args.profile = "random-1k"
+    if args.mode == "single-turn":
+        print("NOTE: single-turn mode requires server launched with --enable-prefix-caching (vLLM)")
+        print("      or radix cache (SGLang default). See scripts/launch_server.sh")
+
+
+def build_config(args):
+    """The results-file config dict for a checked run, plus what the run needs
+    beyond args: (config, profile, num_sessions, source_session_ids)."""
     profile = get_profile(args.profile)
     profile_name = profile.name
     if args.discard_first < 0:
@@ -1279,120 +1290,144 @@ if __name__ == "__main__":
             "engine_cache_telemetry": "not_available",
         },
     }
+    return config, profile, effective_num_sessions, source_session_ids
 
+
+def run_multi(config, args, profile_name, num_sessions, source_session_ids) -> None:
+    """Multi-turn run: dispatch, summarize per turn, gate, save both files."""
+    all_results, results_by_turn, duration = _run(run_multi_turn_benchmark(
+        url=args.url,
+        model=args.model,
+        profile_name=profile_name,
+        concurrency=args.concurrency,
+        backend_name=args.backend,
+        api_key=args.api_key,
+        warmup_requests=args.warmup,
+        timeout=args.timeout,
+        ignore_eos=args.ignore_eos,
+        max_context_tokens=args.max_context_tokens,
+        context_safety_margin_tokens=args.context_safety_margin_tokens,
+        seed=args.seed,
+        cache_block_size=args.prefix_cache_block_size,
+        num_sessions=num_sessions,
+        source_session_ids=source_session_ids,
+        turn_pacing=args.turn_pacing,
+        max_turn_index=args.max_turn_index,
+        trace_request_ids=args.trace_request_ids,
+        load_mode=args.load_mode,
+        arrival_pattern=args.arrival,
+        target_rate=args.target_rate,
+        tool_wait_ms=args.tool_wait_ms,
+        human_wait_ms=args.human_wait_ms,
+        use_recorded_waits=args.use_recorded_waits,
+        use_recorded_arrivals=args.use_recorded_arrivals,
+        temperature=args.temperature,
+        sampling_seed=args.sampling_seed,
+        exact_output_length=args.exact_output_length,
+        reset_prefix_cache_first=args.reset_prefix_cache,
+        warmup_concurrency=args.warmup_concurrency,
+    ))
+
+    summary = aggregate(
+        results=[r for r in all_results if r is not None],
+        duration_s=duration,
+        model=args.model,
+        profile=profile_name,
+        concurrency=args.concurrency,
+        load_mode=args.load_mode,
+        target_rate=args.target_rate if args.load_mode == "open-loop" else 0.0,
+        warmup_concurrency=args.warmup_concurrency if args.warmup else 0,
+    )
+
+    turn_summaries = aggregate_per_turn(results_by_turn)
+    print_multi_turn_summary(turn_summaries, summary)
+    _enforce(success_rate_gate(summary, args.min_success_rate))
+    _enforce(usage_gate(summary, args.allow_missing_usage))
+    save_results(summary, all_results, args.output, config)
+
+    # Also save per-turn breakdown
+    turn_output = per_turn_output_path(args.output)
+    Path(turn_output).parent.mkdir(parents=True, exist_ok=True)
+    with open(turn_output, "w") as f:
+        json.dump({
+            "config": config,
+            "per_turn": [ts.to_dict() for ts in turn_summaries],
+        }, f, indent=2)
+    print(f"Per-turn results saved to: {turn_output}")
+
+
+def run_single(config, args, profile_name) -> None:
+    """Single-turn run: dispatch, hold out --discard-first, gate, save."""
+    if (args.use_recorded_arrivals or args.use_recorded_waits
+            or args.tool_wait_ms or args.human_wait_ms):
+        print("WARNING: --use-recorded-arrivals / --use-recorded-waits / "
+              "--tool-wait-ms / --human-wait-ms apply to multi-turn "
+              "profiles only; ignoring them.")
+    results, duration = _run(run_benchmark(
+        url=args.url,
+        model=args.model,
+        profile_name=profile_name,
+        concurrency=args.concurrency,
+        num_requests=args.num_requests,
+        backend_name=args.backend,
+        api_key=args.api_key,
+        arrival_pattern=args.arrival,
+        target_rate=args.target_rate,
+        warmup_requests=args.warmup,
+        seed=args.seed,
+        timeout=args.timeout,
+        ignore_eos=args.ignore_eos,
+        max_context_tokens=args.max_context_tokens,
+        context_safety_margin_tokens=args.context_safety_margin_tokens,
+        trace_request_ids=args.trace_request_ids,
+        load_mode=args.load_mode,
+        temperature=args.temperature,
+        sampling_seed=args.sampling_seed,
+        exact_output_length=args.exact_output_length,
+        reset_prefix_cache_first=args.reset_prefix_cache,
+        warmup_concurrency=args.warmup_concurrency,
+        workload_file=args.workload_file,
+    ))
+
+    # Hold out the startup wave by dispatch order. Requests keep their data
+    # in per_request; they simply stop feeding the summary.
+    if args.discard_first:
+        for r in results[:args.discard_first]:
+            if r is not None:
+                r.excluded_from_summary = True
+
+    summary = aggregate(
+        results=[r for r in results if r is not None],
+        duration_s=duration,
+        model=args.model,
+        profile=profile_name,
+        concurrency=args.concurrency,
+        load_mode=args.load_mode,
+        target_rate=args.target_rate if args.load_mode == "open-loop" else 0.0,
+        warmup_concurrency=args.warmup_concurrency if args.warmup else 0,
+    )
+
+    print_summary(summary)
+    _enforce(transient_gate(args.num_requests, args.concurrency))
+    _enforce(success_rate_gate(summary, args.min_success_rate))
+    _enforce(usage_gate(summary, args.allow_missing_usage))
+    save_results(summary, results, args.output, config)
+
+
+def main(argv=None) -> None:
+    """The old runner CLI: parse, check, run the profile's mode, save."""
+    args = get_args(argv)
+    if args.list_profiles:
+        list_profiles(args)
+        sys.exit(0)
+    check_args(args)
+    apply_mode(args)
+    config, profile, num_sessions, source_session_ids = build_config(args)
     if profile.mode == "multi-turn":
-        all_results, results_by_turn, duration = _run(run_multi_turn_benchmark(
-            url=args.url,
-            model=args.model,
-            profile_name=profile_name,
-            concurrency=args.concurrency,
-            backend_name=args.backend,
-            api_key=args.api_key,
-            warmup_requests=args.warmup,
-            timeout=args.timeout,
-            ignore_eos=args.ignore_eos,
-            max_context_tokens=args.max_context_tokens,
-            context_safety_margin_tokens=args.context_safety_margin_tokens,
-            seed=args.seed,
-            cache_block_size=args.prefix_cache_block_size,
-            num_sessions=effective_num_sessions,
-            source_session_ids=source_session_ids,
-            turn_pacing=args.turn_pacing,
-            max_turn_index=args.max_turn_index,
-            trace_request_ids=args.trace_request_ids,
-            load_mode=args.load_mode,
-            arrival_pattern=args.arrival,
-            target_rate=args.target_rate,
-            tool_wait_ms=args.tool_wait_ms,
-            human_wait_ms=args.human_wait_ms,
-            use_recorded_waits=args.use_recorded_waits,
-            use_recorded_arrivals=args.use_recorded_arrivals,
-            temperature=args.temperature,
-            sampling_seed=args.sampling_seed,
-            exact_output_length=args.exact_output_length,
-            reset_prefix_cache_first=args.reset_prefix_cache,
-            warmup_concurrency=args.warmup_concurrency,
-        ))
-
-        summary = aggregate(
-            results=[r for r in all_results if r is not None],
-            duration_s=duration,
-            model=args.model,
-            profile=profile_name,
-            concurrency=args.concurrency,
-            load_mode=args.load_mode,
-            target_rate=args.target_rate if args.load_mode == "open-loop" else 0.0,
-            warmup_concurrency=args.warmup_concurrency if args.warmup else 0,
-        )
-
-        turn_summaries = aggregate_per_turn(results_by_turn)
-        print_multi_turn_summary(turn_summaries, summary)
-        _enforce(success_rate_gate(summary, args.min_success_rate))
-        _enforce(usage_gate(summary, args.allow_missing_usage))
-        save_results(summary, all_results, args.output, config)
-
-        # Also save per-turn breakdown
-        turn_output = per_turn_output_path(args.output)
-        Path(turn_output).parent.mkdir(parents=True, exist_ok=True)
-        with open(turn_output, "w") as f:
-            json.dump({
-                "config": config,
-                "per_turn": [ts.to_dict() for ts in turn_summaries],
-            }, f, indent=2)
-        print(f"Per-turn results saved to: {turn_output}")
-
+        run_multi(config, args, profile.name, num_sessions, source_session_ids)
     else:
-        if (args.use_recorded_arrivals or args.use_recorded_waits
-                or args.tool_wait_ms or args.human_wait_ms):
-            print("WARNING: --use-recorded-arrivals / --use-recorded-waits / "
-                  "--tool-wait-ms / --human-wait-ms apply to multi-turn "
-                  "profiles only; ignoring them.")
-        results, duration = _run(run_benchmark(
-            url=args.url,
-            model=args.model,
-            profile_name=profile_name,
-            concurrency=args.concurrency,
-            num_requests=args.num_requests,
-            backend_name=args.backend,
-            api_key=args.api_key,
-            arrival_pattern=args.arrival,
-            target_rate=args.target_rate,
-            warmup_requests=args.warmup,
-            seed=args.seed,
-            timeout=args.timeout,
-            ignore_eos=args.ignore_eos,
-            max_context_tokens=args.max_context_tokens,
-            context_safety_margin_tokens=args.context_safety_margin_tokens,
-            trace_request_ids=args.trace_request_ids,
-            load_mode=args.load_mode,
-            temperature=args.temperature,
-            sampling_seed=args.sampling_seed,
-            exact_output_length=args.exact_output_length,
-            reset_prefix_cache_first=args.reset_prefix_cache,
-            warmup_concurrency=args.warmup_concurrency,
-            workload_file=args.workload_file,
-        ))
+        run_single(config, args, profile.name)
 
-        # Hold out the startup wave by dispatch order. Requests keep their data
-        # in per_request; they simply stop feeding the summary.
-        if args.discard_first:
-            for r in results[:args.discard_first]:
-                if r is not None:
-                    r.excluded_from_summary = True
 
-        summary = aggregate(
-            results=[r for r in results if r is not None],
-            duration_s=duration,
-            model=args.model,
-            profile=profile_name,
-            concurrency=args.concurrency,
-            load_mode=args.load_mode,
-            target_rate=args.target_rate if args.load_mode == "open-loop" else 0.0,
-            warmup_concurrency=args.warmup_concurrency if args.warmup else 0,
-        )
-
-        print_summary(summary)
-        _enforce(transient_gate(args.num_requests, args.concurrency))
-        _enforce(success_rate_gate(summary, args.min_success_rate))
-        _enforce(usage_gate(summary, args.allow_missing_usage))
-        save_results(summary, results, args.output, config)
+if __name__ == "__main__":
+    main()
