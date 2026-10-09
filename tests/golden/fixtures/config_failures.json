@@ -39,6 +39,7 @@
   ],
   "exit": null
  },
+ "run_yaml_missing": "<REPO>/configs/runs/nope.yaml: no such file",
  "serving_style": {
   "EP8DP2": {
    "message": "unknown serving_style 'EP8DP2'; use aggregated, disagg:<P>p<D>d, or ep<N>dp<M>",
@@ -65,7 +66,6 @@
    "type": "ValueError"
   }
  },
- "vmin_fit_unknown_crate": "unknown crate 'nope'; workloads: llama, llama-tp1, llama-tp2, llama-tp4, llama-h200, llama-h200-fp8kv, qwen, qwen3, deepseek, glm53, glm53flash",
  "vmin_fit_unknown_grid": "unknown grid 'nope'; grids: llama, llama_single, table_h200, table_h200_big, prof, deepseek, qwen, qwen3, smoke",
  "vmin_fit_unknown_prompt_mode": "unknown prompt_mode 'random'; use distinct, clone, corpus, synth or trace",
  "vmin_fit_unverified": {

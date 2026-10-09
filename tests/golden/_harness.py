@@ -1,8 +1,8 @@
 """Shared plumbing for the golden tests: fixture compare/regen, crossval
-imports, and a CPU grid run (serve.main --grid: legacy_cli.grid_translate,
-then serve.run with a GridTrace and an InProcessDriver) on the vllm/torch
-stubs. The vmin_fit fixtures were captured from modes/vmin_fit.py, which
-this path replaced; they are compared unchanged.
+imports, and a CPU grid run (`qbench run configs/runs/<name>.yaml --set
+...`: runner, then serve.run with a GridTrace and an InProcessDriver) on the
+vllm/torch stubs. The vmin_fit fixtures were captured from
+modes/vmin_fit.py, which this path replaced; they are compared unchanged.
 
 QBENCH_GOLDEN_REGEN=1 rewrites every fixture from the current code instead of
 comparing; run it only when a behaviour change is intended.
@@ -47,6 +47,12 @@ ENV_OVERRIDE = {
     "VMIN_ATTEMPTS": "2",
     "XVAL_EVAL_POS": "25",
 }
+
+RUNS = REPO / "configs" / "runs"
+
+# vmin_fit sized qwen's KV with the dense per-head formula; the loader
+# refuses hybrid attention without kv_bytes, so the golden run says dense.
+AS_VMIN_FIT = {"qwen": ["--set", "engine.attention=dense"]}
 
 # The one (ctx, bs) cell the fake clock makes noisy, so a RESULT line with
 # r2 < 0.999 (table.py's LOW R2) comes out of the real grid code path.
@@ -110,18 +116,31 @@ def fake_generate_seconds(prompt_len, batch, max_tokens, call_no):
     return prefill_s + max_tokens * step_ms / 1000.0 + bend
 
 
-def run_grid_cli(argv, env, model_config=None, extra_workloads=None, baselines=None):
-    """serve.main(argv) for a --grid argv on the stubs under exactly `env`
+def grid_argv(name, *extra):
+    """`qbench run` argv for a workload's grid run on the stub weights dir."""
+    return ["run", str(RUNS / f"{name}.yaml"), "--set", "engine.model=<MODEL>",
+            *AS_VMIN_FIT.get(name, []), *extra]
+
+
+def loader_message(exit_msg):
+    """A loader refusal without its `<file> [<run>]: ` prefix."""
+    return exit_msg.split(": ", 1)[1]
+
+
+def run_grid_cli(argv, env, model_config=None, baselines=None):
+    """cli.main(argv) for a `qbench run` argv on the stubs under exactly `env`
     (os.environ is replaced, not merged), with the drivers' clock swapped
     for the stub's fake one. nvidia-smi is hidden so backend and
-    link-profile detection never depend on the host. extra_workloads join
-    xval_config's workloads. The compat baseline goes to `baselines` (a
-    throwaway dir when None), never into the repo. Returns stdout lines,
-    the LLM kwargs, the number of generate() calls and the SystemExit
-    message if one fired."""
+    link-profile detection never depend on the host. results/<run>/ goes
+    to a throwaway dir unless argv names --results-dir, and the compat
+    baseline to `baselines` (also throwaway when None), never into the
+    repo. Returns stdout lines, the LLM kwargs, the number of generate()
+    calls and the SystemExit message if one fired."""
     with tempfile.TemporaryDirectory() as model_dir:
         Path(model_dir, "config.json").write_text(json.dumps(model_config or DENSE_CONFIG))
         argv = [a.replace("<MODEL>", model_dir) for a in argv]
+        if "--results-dir" not in argv:
+            argv += ["--results-dir", str(Path(model_dir, "results"))]
         out = io.StringIO()
         with crossval_path(stubs=True), \
                 mock.patch.dict(os.environ, env, clear=True), \
@@ -129,19 +148,16 @@ def run_grid_cli(argv, env, model_config=None, extra_workloads=None, baselines=N
             vllm = importlib.import_module("vllm")
             vllm.reset()
             vllm.generate_seconds = fake_generate_seconds
-            serve = fresh_import("quettabench.modes.serve")
+            cli = fresh_import("quettabench.cli")
             drivers = importlib.import_module("quettabench.engines.drivers")
-            xval_config = importlib.import_module("quettabench.config.xval_config")
             results = importlib.import_module("quettabench.metrics.results")
-            workloads = {**xval_config.workloads(), **(extra_workloads or {})}
             clock = types.SimpleNamespace(perf_counter=vllm.CLOCK.perf_counter)
             exit_msg = None
-            with mock.patch.object(xval_config, "workloads", return_value=workloads), \
-                    mock.patch.object(drivers, "time", clock), \
+            with mock.patch.object(drivers, "time", clock), \
                     mock.patch.object(results, "BASELINES", Path(baselines or model_dir)), \
                     contextlib.redirect_stdout(out):
                 try:
-                    serve.main(argv)
+                    cli.main(argv)
                 except SystemExit as e:
                     exit_msg = str(e.code)
             llm_kwargs = [kw for name, kw in vllm.CALLS if name == "LLM"]

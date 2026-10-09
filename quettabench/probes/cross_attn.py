@@ -41,7 +41,7 @@ def time_call(fn) -> float:
 
 
 
-def main():
+def main(argv=None):
     ap = argparse.ArgumentParser()
     add_output_args(ap)
     ap.add_argument("--n-heads", type=int, required=True)
@@ -53,7 +53,7 @@ def main():
                          "the kernel's split-KV heuristics at q << kv)")
     ap.add_argument("--q-axis", default=",".join(map(str, Q_AXIS)))
     ap.add_argument("--ctx-axis", default=",".join(map(str, CTX_AXIS)))
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
     if a.fa_version == 0:
         a.fa_version = 3 if torch.cuda.get_device_capability()[0] >= 9 else 2
     dev, dt = torch.device("cuda"), torch.bfloat16

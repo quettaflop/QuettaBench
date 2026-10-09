@@ -84,7 +84,7 @@ def mk(B, T, H, K, V, dev, dt):
     return q, k, v, g, beta
 
 
-def main():
+def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--hv", type=int, default=32)     # linear_num_value_heads
     ap.add_argument("--dk", type=int, default=128)    # linear_key_head_dim
@@ -96,7 +96,7 @@ def main():
     ap.add_argument("--max-mem-gb", type=float, default=30.0)
     ap.add_argument("--ncu", action="store_true", help="NCU per-kernel timing (the standard); curated grid")
     ap.add_argument("--ncu-bin", default=os.environ.get("NCU_BIN", "ncu"))
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
     dev = torch.device("cuda"); dt = torch.bfloat16
     H, K, V = a.hv, a.dk, a.dv
     scale = 1.0 / (K ** 0.5)

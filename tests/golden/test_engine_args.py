@@ -1,9 +1,9 @@
 """Golden: the vLLM engine kwargs a grid run and trace_serve.py build per
 workload, captured through the tests/_stubs/vllm recorder.
 
-The grid side is run as vllm.sh runs it (serve --grid with the workload
-name and weights dir; the fixture's "vmin_fit" keys name the script it was
-captured from, which serve --grid replaced); trace_serve
+The grid side is run as `qbench run configs/runs/<name>.yaml --set
+engine.model=<weights>` (the fixture's "vmin_fit" keys name the script it
+was captured from, which that run replaced); trace_serve
 as xval.sh runs it (trace, --model, --workload, --tp from the workload).
 Both now build through engines/vllm.py translate(); the per-key diff is
 pinned and should be empty. qwen's trace_serve side is the loader's
@@ -20,7 +20,13 @@ from pathlib import Path
 from unittest import mock
 
 from tests.golden._harness import (
-    ENV_OVERRIDE, REPO, check_json, crossval_path, fresh_import, run_grid_cli,
+    ENV_OVERRIDE,
+    REPO,
+    check_json,
+    crossval_path,
+    fresh_import,
+    grid_argv,
+    run_grid_cli,
 )
 
 WORKLOADS = json.loads((REPO / "configs" / "workloads.json").read_text())["workloads"]
@@ -28,8 +34,7 @@ ABSENT = "<absent>"
 
 
 def vmin_fit_kwargs(name, env, extra_argv=()):
-    run = run_grid_cli(["--grid", "--workload", name, "--model", "<MODEL>", "--allow-unverified",
-                        *extra_argv], env)
+    run = run_grid_cli(grid_argv(name, "--allow-unverified", *extra_argv), env)
     (kwargs,) = run["llm_kwargs"]
     return kwargs
 
@@ -80,7 +85,7 @@ class EngineArgsGolden(unittest.TestCase):
             record[name] = {
                 "vmin_fit": vmin,
                 "vmin_fit_env_override": vmin_fit_kwargs(name, ENV_OVERRIDE),
-                "vmin_fit_nograph": vmin_fit_kwargs(name, {}, ["--nograph"]),
+                "vmin_fit_nograph": vmin_fit_kwargs(name, {}, ["--set", "engine.cudagraph=false"]),
                 "trace_serve": serve,
                 "diff_vmin_fit_vs_trace_serve": None if "exit" in serve else kwargs_diff(vmin, serve),
             }

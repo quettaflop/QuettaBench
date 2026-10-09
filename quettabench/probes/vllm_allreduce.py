@@ -39,13 +39,13 @@ def _time(call, iters=_ITERS, warmup=_WARMUP) -> float:
     return s.elapsed_time(e) / iters * 1000.0   # us per call
 
 
-def main():
+def main(argv=None):
     ap = argparse.ArgumentParser()
     add_output_args(ap)
     ap.add_argument("--disable-custom-allreduce", action="store_true",
                     help="mirror a server launched with --disable-custom-all-reduce "
                          "(vLLM then routes TP all-reduce through pynccl)")
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
     rank, world, local = int(os.environ["RANK"]), int(os.environ["WORLD_SIZE"]), int(os.environ["LOCAL_RANK"])
     torch.cuda.set_device(local)
     from vllm.config import ParallelConfig, VllmConfig, set_current_vllm_config

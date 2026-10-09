@@ -83,7 +83,7 @@ def _time_op(op: str, n_elems: int, world: int, iters: int, warmup: int) -> floa
     return (start.elapsed_time(end) / iters) / 1000.0
 
 
-def main():
+def main(argv=None):
     ap = argparse.ArgumentParser()
     add_output_args(ap)
     ap.add_argument("--hidden", type=int, required=True, help="model hidden_size (for prefill rate)")
@@ -92,7 +92,7 @@ def main():
     ap.add_argument("--ops", default="all_reduce,all_gather,reduce_scatter,all_to_all",
                     help="collectives to sweep (comma-separated). all_reduce is required "
                          "for the legacy tp_comm: scalars.")
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
 
     dist.init_process_group(backend="nccl")
     rank = dist.get_rank()

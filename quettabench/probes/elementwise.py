@@ -117,7 +117,7 @@ def fit(bytes_list, us_list) -> tuple[float, float]:
     return round(max(0.0, floor), 3), round(eff_bw_gb_s, 1)
 
 
-def main():
+def main(argv=None):
     ap = argparse.ArgumentParser()
     add_output_args(ap)
     ap.add_argument("--max-mem-gb", type=float, default=20.0)
@@ -130,7 +130,7 @@ def main():
                          "reshape_and_cache_flash) instead of torch-chain proxies; "
                          "adds the fused_add_rmsnorm + kv_cache_write entries the "
                          "composition prefers when present")
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
     dev = torch.device("cuda"); dt = torch.bfloat16
     if a.graph:
         from quettabench.probes._graph import graph_median_us  # noqa: PLC0415

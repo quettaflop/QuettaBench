@@ -48,8 +48,6 @@ class EngineKwargs(unittest.TestCase):
 class Exits(unittest.TestCase):
     def test_bad_names_keep_vmin_fit_messages(self):
         base = ["--grid", "--model", "m"]
-        self.assertEqual(exit_message(base + ["--workload", "nope"]),
-                         FAILURES["vmin_fit_unknown_crate"])
         self.assertEqual(exit_message(["--grid", "nope", "--workload", "llama", "--model", "m"]),
                          FAILURES["vmin_fit_unknown_grid"])
         self.assertEqual(exit_message(base + ["--workload", "llama"], {"PROMPT_MODE": "random"}),

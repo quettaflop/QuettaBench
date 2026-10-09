@@ -294,7 +294,7 @@ def sweep_routing(dev, e_default=128, k_default=8):
 
 
 
-def main() -> None:
+def main(argv=None) -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     add_output_args(ap)
@@ -327,7 +327,7 @@ def main() -> None:
                     help="triton: vLLM's fused_experts (Triton grouped GEMM). "
                          "flashinfer: FlashInfer's CUTLASS grouped kernel -- what "
                          "vLLM >= 0.28 actually serves for unquantized bf16 MoE.")
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
     global _GRAPH, _FP8, _BACKEND
     _GRAPH = a.graph
     _FP8 = (a.dtype == "fp8")

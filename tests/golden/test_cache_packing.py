@@ -5,7 +5,7 @@ fixtures/vmin_fit_llama.log is what vmin_fit.py printed for the llama
 workload on the stubs (fake clock, 48 GiB stub GPU), filtered the way
 vllm.sh filters it, plus one hand-written pre-normalization RESULT line (no
 ms_at_eval) as the last line so the baseline carries a RAW point.
-The first test proves the log is still what a grid run (serve --grid, which
+The first test proves the log is still what a grid run (qbench run, which
 replaced vmin_fit.py) prints; the second pins the baseline json cache.py
 writes from it, byte for byte. The third holds the compat baseline a grid
 run writes itself (results.RunWriter.write_baseline) to cache.py's bytes on
@@ -30,6 +30,7 @@ from tests.golden._harness import (
     check_text,
     crossval_path,
     fresh_import,
+    grid_argv,
     run_grid_cli,
 )
 from tests.golden.test_table_text import run_table
@@ -70,7 +71,7 @@ def pack_baseline(log_path, out_path):
 
 class VminFitLogGolden(unittest.TestCase):
     def test_log_is_what_a_grid_run_prints(self):
-        run = run_grid_cli(["--grid", "--workload", "llama", "--model", "<MODEL>"], {})
+        run = run_grid_cli(grid_argv("llama"), {})
         self.assertIsNone(run["exit"])
         log = "\n".join(l for l in run["stdout"] if VLLM_SH_FILTER.match(l)) + "\n"
         check_text(self, VMIN_FIT_LOG, log + LEGACY_RESULT + "\n")
@@ -89,8 +90,7 @@ class CompatBaselineGolden(unittest.TestCase):
     def test_grid_run_writes_cache_py_bytes(self):
         with tempfile.TemporaryDirectory() as td:
             with frozen_capture():
-                run = run_grid_cli(["--grid", "--workload", "llama", "--model", "<MODEL>"], {},
-                                   baselines=td)
+                run = run_grid_cli(grid_argv("llama"), {}, baselines=td)
             compat = (Path(td) / "vllm-llama.json").read_text()
             log = Path(td) / "raw.txt"
             log.write_text("\n".join(l for l in run["stdout"] if VLLM_SH_FILTER.match(l)) + "\n")

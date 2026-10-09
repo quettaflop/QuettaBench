@@ -184,17 +184,26 @@ def _force(values, origins, path, value, by, where):
     origins[path] = by
 
 
+def _one_of(allowed):
+    """'a, b or c'."""
+    words = [str(a) for a in allowed]
+    return ", ".join(words[:-1]) + " or " + words[-1]
+
+
 def _validate(values, origins, allow_unverified, where):
     for path, allowed in CHOICES.items():
         if values[path] not in allowed:
-            raise ConfigError(f"{where}: {path}={values[path]!r}; use one of {allowed}")
+            raise ConfigError(f"{where}: unknown {path.rsplit('.', 1)[-1]} {values[path]!r}; "
+                              f"use {_one_of(allowed)}")
     parse_serving_style(values["engine.serving_style"])
     # num_experts None (no MoE fact recorded) skips the check.
     if values["engine.ep"] and values["engine.num_experts"] is not None:
         check_ep_legal(values["engine.tp"], values["engine.num_experts"])
     if not values["engine.verified"] and not allow_unverified:
-        raise ConfigError(f"{where}: {values['engine.model_name'] or 'model'} is not verified; "
-                          "pass --set allow_unverified=true to bring it up")
+        raise ConfigError(f"{where}: {values['run_name']} is not validated yet; "
+                          "pass --allow-unverified to bring it up")
+    if values["mode.mode"] == "probe" and not values["mode.probe"]:
+        raise ConfigError(f"{where}: mode=probe needs mode.probe, a quettabench.probes module")
     if values["engine.attention"] in ("mla", "hybrid") and values["engine.kv_bytes"] is None:
         raise ConfigError(f"{where}: attention={values['engine.attention']} needs kv_bytes; "
                           "the dense per-head formula overestimates its KV")

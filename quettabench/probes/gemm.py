@@ -218,7 +218,7 @@ def time_matmul(m, n, k, dev, dt, graph: bool = False) -> float:
 
 
 
-def main():
+def main(argv=None):
     ap = argparse.ArgumentParser()
     add_output_args(ap)
     ap.add_argument("--wide", action="store_true", help="emit {method}/gemm_wide/{gpu}.csv (wide MoE shapes) instead of {method}/gemm/{gpu}.csv")
@@ -246,7 +246,7 @@ def main():
     ap.add_argument("--append", action="store_true",
                     help="merge into the target CSV instead of truncating it "
                          "(duplicate (M,N,K) rows collapse by min on load)")
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
     dev = torch.device("cuda"); dt = torch.bfloat16
     out = out_root(a); out.mkdir(parents=True, exist_ok=True)
     if a.dtype == "fp8" and a.ncu:

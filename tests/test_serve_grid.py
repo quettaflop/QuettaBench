@@ -7,15 +7,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tests.golden._harness import run_grid_cli
+from tests.golden._harness import grid_argv, run_grid_cli
 
 
-def grid_run(*argv):
+def grid_run(*sets):
     with tempfile.TemporaryDirectory() as td:
-        run = run_grid_cli(["--grid", *argv, "--workload", "llama", "--model", "<MODEL>",
-                            "--results-dir", td], {})
-        doc = json.loads((Path(td) / "run.json").read_text())
-        rows = [json.loads(line) for line in (Path(td) / "requests.jsonl").read_text().splitlines()]
+        run = run_grid_cli(grid_argv("llama", *sets, "--results-dir", td), {})
+        doc = json.loads((Path(td) / "llama" / "run.json").read_text())
+        rows = [json.loads(line) for line in
+                (Path(td) / "llama" / "requests.jsonl").read_text().splitlines()]
     return run, doc, rows
 
 
@@ -50,7 +50,7 @@ class GridRunFiles(unittest.TestCase):
                              phase != "fit")
 
     def test_dump_tokens_writes_text_rows(self):
-        _, _, rows = grid_run("smoke", "--dump-tokens")
+        _, _, rows = grid_run("--set", "mode.grid=smoke", "--set", "mode.returns=text")
         text = [r for r in rows if r["cell"]["phase"] == "text"]
         self.assertTrue(text)
         self.assertEqual({r["cell"]["step_point"] for r in text}, {64})

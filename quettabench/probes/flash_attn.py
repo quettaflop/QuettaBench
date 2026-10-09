@@ -72,7 +72,7 @@ def time_call(fn) -> float:
 
 
 
-def main():
+def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--n-heads", type=int, required=True)
     ap.add_argument("--n-kv-heads", type=int, required=True)
@@ -92,7 +92,7 @@ def main():
     ap.add_argument("--graph", action="store_true",
                     help="CUDA-graph-replay DECODE timing (graphed-decode-faithful, "
                          "no NCU needed) -> ncu/flash_attn/; prefill stays cuda_event")
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
     if a.fa_version == 0:   # auto: FA3 is Hopper-only (sm90+); Ampere/older need FA2
         a.fa_version = 3 if torch.cuda.get_device_capability()[0] >= 9 else 2
         print(f"[flash] auto fa_version={a.fa_version} for {torch.cuda.get_device_name(0)}", flush=True)

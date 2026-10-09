@@ -6,18 +6,30 @@ representative override of every env knob the crossval path reads. The
 record joins what xval_config.py hands the shell (its cli) with what a
 grid run resolves from it (its META/CAPACITY/SKIP/RESULT lines on the
 stubs, plus how many generate() calls the fit made). The "vmin_fit" keys
-name the script the fixture was captured from; serve --grid replaced it.
+name the script the fixture was captured from; qbench run replaced it.
 """
 
 import contextlib
 import io
 import json
 import os
+import shutil
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
+import yaml
+
 from tests.golden._harness import (
-    ENV_OVERRIDE, REPO, check_json, crossval_path, fresh_import, run_grid_cli,
+    ENV_OVERRIDE,
+    REPO,
+    check_json,
+    crossval_path,
+    fresh_import,
+    grid_argv,
+    loader_message,
+    run_grid_cli,
 )
 
 SCENARIOS = {"cleared": {}, "override": ENV_OVERRIDE}
@@ -32,12 +44,21 @@ MLA_CONFIG = {
     "qk_rope_head_dim": 64,
     "kv_lora_rank": 512,
 }
-MLA_WORKLOAD = {
-    "mla_no_kv_bytes": {
-        "name": "mla-probe", "dtype": "bfloat16", "weights_gib": 10, "maxlen": 9216,
-        "tp": 1, "grid": "smoke", "kv_dtype": "fp8_ds_mla", "verified": True,
-    }
-}
+MLA_MODEL = {"name": "mla-probe", "dtype": "bfloat16", "weights_gib": 10, "max_model_len": 9216,
+             "tp": 1, "kv_dtype": "fp8_ds_mla", "verified": True, "attention": "mla"}
+MLA_RUN = {"model": "mla_probe", "workload": {"kind": "grid"}, "mode": {"grid": "smoke"}}
+
+
+@contextlib.contextmanager
+def mla_run_yaml():
+    """configs/ copied to a scratch dir with the MLA model and its run added."""
+    with tempfile.TemporaryDirectory() as td:
+        configs = Path(td, "configs")
+        shutil.copytree(REPO / "configs", configs)
+        (configs / "models" / "mla_probe.yaml").write_text(yaml.safe_dump(MLA_MODEL))
+        run = configs / "runs" / "mla_no_kv_bytes.yaml"
+        run.write_text(yaml.safe_dump(MLA_RUN))
+        yield run
 
 
 def _cli(xval_config, *args):
@@ -94,8 +115,7 @@ def resolve_global(env):
 
 
 def resolve_vmin_fit(name, env):
-    run = run_grid_cli(["--grid", "--workload", name, "--model", "<MODEL>",
-                        "--allow-unverified"], env)
+    run = run_grid_cli(grid_argv(name, "--allow-unverified"), env)
     return {"stdout": run["stdout"], "generate_calls": run["generate_calls"], "exit": run["exit"]}
 
 
@@ -131,19 +151,24 @@ class ParseTimeFailuresGolden(unittest.TestCase):
             }
         unverified = [n for n in WORKLOAD_NAMES
                       if not resolve_xval(n, {})["workload"].get("verified")]
+        # The loader's refusals, without their `<file> [<run>]: ` prefix.
         failures["vmin_fit_unverified"] = {
-            n: run_grid_cli(["--grid", "--workload", n, "--model", "<MODEL>"], {})["exit"]
-            for n in unverified}
-        failures["vmin_fit_unknown_crate"] = run_grid_cli(
-            ["--grid", "--workload", "nope", "--model", "<MODEL>"], {})["exit"]
-        failures["vmin_fit_unknown_grid"] = run_grid_cli(
-            ["--grid", "nope", "--workload", "llama", "--model", "<MODEL>"], {})["exit"]
-        failures["vmin_fit_unknown_prompt_mode"] = run_grid_cli(
-            ["--grid", "--workload", "llama", "--model", "<MODEL>"], {"PROMPT_MODE": "random"})["exit"]
-        # Not a failure today: an MLA stack without kv_bytes falls back to the
-        # dense per-head formula silently (see REPORT.md).
-        mla = run_grid_cli(["--grid", "--workload", "mla_no_kv_bytes", "--model", "<MODEL>"], {},
-                           model_config=MLA_CONFIG, extra_workloads=MLA_WORKLOAD)
+            n: loader_message(run_grid_cli(grid_argv(n), {})["exit"]) for n in unverified}
+        failures["run_yaml_missing"] = run_grid_cli(grid_argv("nope"), {})["exit"].replace(
+            str(REPO), "<REPO>")
+        failures["vmin_fit_unknown_grid"] = loader_message(run_grid_cli(
+            grid_argv("llama", "--set", "mode.grid=nope"), {})["exit"])
+        failures["vmin_fit_unknown_prompt_mode"] = loader_message(run_grid_cli(
+            grid_argv("llama"), {"PROMPT_MODE": "random"})["exit"])
+        # vmin_fit sized an MLA stack without kv_bytes with the dense per-head
+        # formula, silently (REPORT.md). The loader refuses it; the CAPACITY
+        # vmin_fit printed is what the run gives when told dense explicitly.
+        with mla_run_yaml() as run_yaml:
+            refused = run_grid_cli(["run", str(run_yaml), "--set", "engine.model=<MODEL>"], {},
+                                   model_config=MLA_CONFIG)
+            self.assertIn("attention=mla needs kv_bytes", refused["exit"])
+            mla = run_grid_cli(["run", str(run_yaml), "--set", "engine.model=<MODEL>",
+                                "--set", "engine.attention=dense"], {}, model_config=MLA_CONFIG)
         failures["mla_without_kv_bytes"] = {
             "exit": mla["exit"],
             "capacity": [line for line in mla["stdout"] if line.startswith("CAPACITY")],

@@ -402,7 +402,7 @@ def _round(x):
     return "" if x is None else x
 
 
-def main():
+def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--model", default="/data48/kevinlau/models/Llama-3.1-8B-Instruct")
@@ -426,7 +426,7 @@ def main():
     ap.add_argument("--server-log", default="vllm_server_stage_split.log")
     ap.add_argument("--emit-nsys-cmd", action="store_true",
                     help="print the LANE B nsys wrapper command + worker hook and exit")
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
 
     base_url = f"http://127.0.0.1:{a.port}"
 

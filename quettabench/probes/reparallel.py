@@ -104,7 +104,7 @@ def _groups_of(k: int, world: int) -> list[list[int]]:
     return [list(range(g, g + k)) for g in range(0, world, k)]
 
 
-def main() -> None:
+def main(argv=None) -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     add_output_args(ap)
@@ -139,7 +139,7 @@ def main() -> None:
     ap.add_argument("--out-name", default=None,
                     help="CSV stem (default <gpu>_reshard); use e.g. <gpu>_reshard_val "
                          "for a held-out validation sweep that must not touch calibration")
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
 
     rank = int(os.environ["RANK"]); world = int(os.environ["WORLD_SIZE"])
     local = int(os.environ["LOCAL_RANK"])

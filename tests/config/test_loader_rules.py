@@ -124,7 +124,7 @@ class LoaderRules(unittest.TestCase):
         self.one({"engine": {"tp": 3}}, model={"ep": True})  # num_experts unknown: skipped
 
     def test_unverified_needs_allow_unverified(self):
-        with self.assertRaisesRegex(ConfigError, "Toy-1B is not verified"):
+        with self.assertRaisesRegex(ConfigError, "is not validated yet; pass --allow-unverified"):
             self.load(model={"verified": False})
         cfg = self.one(model={"verified": False}, overrides=["allow_unverified=true"])
         self.assertFalse(cfg.engine.verified)
@@ -137,7 +137,7 @@ class LoaderRules(unittest.TestCase):
                          24768)
 
     def test_bad_enum_value(self):
-        with self.assertRaisesRegex(ConfigError, "workload.prompt_mode='random'"):
+        with self.assertRaisesRegex(ConfigError, "unknown prompt_mode 'random'; use distinct, clone, corpus, synth or trace"):
             self.load(env={"PROMPT_MODE": "random"})
 
     # serve profile and load rules

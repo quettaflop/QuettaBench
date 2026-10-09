@@ -1,18 +1,27 @@
 """qbench: the one command line.
 
+  qbench run <run.yaml> [--set k=v ...] [--dry-run] [--results-dir DIR] [--allow-unverified]
+                                                      quettabench.runner
   qbench profile  --run results/<run> --source ...   quettabench.profiler
   qbench crossval ...                                 quettabench.crossval
   qbench export   --results ... --dest DIR            quettabench.export.quettasim
 
-Each door hands the rest of argv unchanged to its module's main(argv); the
-module owns its own flags and --help. Doors are imported only when chosen,
-so `qbench export` never imports the profiler. `python3 -m quettabench.cli`
-works from a checkout without installing.
+run is parsed here: --set is repeatable and its values are yaml scalars,
+--results-dir is the parent of results/<run>/. A config the loader refuses
+exits 1 with the loader's message. Every other door hands the rest of argv
+unchanged to its module's main(argv); the module owns its own flags and
+--help, and is imported only when chosen, so `qbench export` never imports
+the profiler. `python3 -m quettabench.cli` works from a checkout without
+installing.
 """
 
 import argparse
 import importlib
 import sys
+
+from quettabench import runner
+from quettabench.config.schema import ConfigError
+from quettabench.engines.base import UnsupportedField
 
 # door -> module whose main(argv) takes the remaining arguments
 DOORS = {
@@ -23,10 +32,19 @@ DOORS = {
 
 
 def parser():
-    """The top-level help: one line per door."""
+    """run's flags, and one help line per delegated door."""
     ap = argparse.ArgumentParser(prog="qbench", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    sub = ap.add_subparsers(dest="door", metavar="{" + ",".join(DOORS) + "}")
+    sub = ap.add_subparsers(dest="door", metavar="{run," + ",".join(DOORS) + "}")
+    run = sub.add_parser("run", help="quettabench.runner: one run yaml to results/<run>/")
+    run.add_argument("run_yaml", help="configs/runs/<name>.yaml")
+    run.add_argument("--set", dest="overrides", action="append", default=[], metavar="K=V",
+                     help="override one Config path, highest precedence (repeatable)")
+    run.add_argument("--dry-run", action="store_true",
+                     help="print each Config with its origins and LaunchSpec; start nothing")
+    run.add_argument("--results-dir", default="results", help="parent of <run>/ (default results)")
+    run.add_argument("--allow-unverified", action="store_true",
+                     help="run a model whose yaml says verified: false (bring-up only)")
     for door, module in DOORS.items():
         sub.add_parser(door, help=f"{module}.main", add_help=False)
     return ap
@@ -44,9 +62,16 @@ def main(argv=None):
     argv = sys.argv[1:] if argv is None else list(argv)
     if argv and argv[0] in DOORS:
         return delegate(argv[0], argv[1:])
-    parser().parse_args(argv)
-    parser().print_help()
-    return 2
+    ap = parser()
+    a = ap.parse_args(argv)
+    if a.door != "run":
+        ap.print_help()
+        return 2
+    try:
+        return runner.main(a.run_yaml, a.overrides, a.dry_run, a.results_dir,
+                           a.allow_unverified)
+    except (ConfigError, UnsupportedField) as e:
+        sys.exit(str(e))
 
 
 if __name__ == "__main__":

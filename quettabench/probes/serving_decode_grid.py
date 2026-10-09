@@ -410,7 +410,7 @@ def warmup_and_verify_eos(port: int, api_key: str, model_name: str) -> str:
 # ------------------------------------------------------------------------------------------------
 # Driver
 # ------------------------------------------------------------------------------------------------
-def main() -> None:
+def main(argv=None) -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--model", default="/data48/kevinlau/models/Llama-3.1-8B-Instruct")
@@ -438,7 +438,7 @@ def main() -> None:
     ap.add_argument("--out-summary", required=True, help="operator cell-summary CSV")
     ap.add_argument("--no-launch", action="store_true")
     ap.add_argument("--server-log", default="vllm_server_decode_grid.log")
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
 
     if a.pool_tokens is None and a.tensor_parallel_size == 4:
         lattice = LATTICE_TP4

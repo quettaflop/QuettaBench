@@ -105,6 +105,8 @@ class ModeCfg:
     fit_r2_stop: float = 0.999     # grid: a pass fitting at least this r2 ends the cell
     eval_pos: int | None = None    # None => hardware.timing_steps // 2
     cap_frac: float = 0.80
+    probe: str | None = None       # mode=probe: module under quettabench/probes/
+    probe_args: str = ""           # mode=probe: that probe's own flags, shell-quoted
 
 
 @dataclass(frozen=True)
