@@ -14,16 +14,19 @@ quettabench/probes/            kernel probes (need a GPU): gemm, moe, flash_attn
                                serving_stage_split
 quettabench/export/quettasim/  emitters: results files -> QuettaSim tables (no GPU)
 profiling/probes/              live_split_probe, pool_capacity_probe (no consumer found yet)
-profiling/kernel_composed/probes/  serving-shaped and live-server probes: fused_block, decode_batch,
-                               serving_frontend, pd_host, kv_transfer
+profiling/kernel_composed/probes/  serving-shaped probes: fused_block, decode_batch
+quettabench/profiling/         profiler sources: /metrics, energy, cost, gsm8k, and the
+                               live-server probes serving_frontend, pd_host, kv_transfer
 docs/runbooks/                 how-to-measure docs and preflight scripts
 tests/probes/                  probe contracts, GPU smoke, emitter tests
 justfile                       one recipe per probe, remote-probe, export
 ```
 
-The serving-shaped probes (`fused_block`, `decode_batch`) and the live-server probes
-(`serving_frontend`, `pd_host`, `kv_transfer`) fold into the grid trace and the profiling
-sources in a later commit; until then they stay under `profiling/kernel_composed/probes/`.
+The live-server probes (`serving_frontend`, `pd_host`, `kv_transfer`) moved to
+`quettabench/profiling/` and run through `qbench profile --source ...`.
+
+- `fused_block_probe.py` -- stays here; folds into a GridTrace variant in a later commit.
+- `decode_batch_probe.py` -- stays here; folds into a GridTrace variant in a later commit.
 
 ### Live-server probes left here
 

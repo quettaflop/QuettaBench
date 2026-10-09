@@ -2,7 +2,7 @@
 """Per-request HOST cost of a PD-disaggregated vLLM pair, by prompt length.
 
 The kernel-composed sim prices GPU work from measured kernels and the KV hand-off from
-kv_transfer_probe.py; what is left in a PD request's TTFT is host work that scales with
+kv_transfer.py; what is left in a PD request's TTFT is host work that scales with
 the WHOLE prompt -- JSON parsing, chat-template rendering, tokenizing, block hashing,
 connector bookkeeping -- paid once on P and once more on D (the proxy re-sends the full
 prompt to D after P answers). The device YAML's ``frontend:`` block carries that model;
