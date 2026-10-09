@@ -35,7 +35,7 @@ from quettabench.engines.base import (
 )
 from quettabench.engines.drivers import BenchDriver
 
-# bench.sh's pass pattern, per test (workloads.json "ok").
+# The line that marks a finished cell, per bench test (bench.sh's pass pattern).
 OK_BY_TEST = {
     "decode_loop": r"^LOOP ",
     "batch_bench": r"^\[batch_bench\] .*layers=all",

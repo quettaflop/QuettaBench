@@ -52,7 +52,7 @@ RUNS = REPO / "configs" / "runs"
 
 # vmin_fit sized qwen's KV with the dense per-head formula; the loader
 # refuses hybrid attention without kv_bytes, so the golden run says dense.
-AS_VMIN_FIT = {"qwen": ["--set", "engine.attention=dense"]}
+AS_VMIN_FIT = {"qwen": ["engine.attention=dense"]}
 
 # The one (ctx, bs) cell the fake clock makes noisy, so a RESULT line with
 # r2 < 0.999 (table.py's LOW R2) comes out of the real grid code path.
@@ -118,8 +118,8 @@ def fake_generate_seconds(prompt_len, batch, max_tokens, call_no):
 
 def grid_argv(name, *extra):
     """`qbench run` argv for a workload's grid run on the stub weights dir."""
-    return ["run", str(RUNS / f"{name}.yaml"), "--set", "engine.model=<MODEL>",
-            *AS_VMIN_FIT.get(name, []), *extra]
+    sets = ["engine.model=<MODEL>", *AS_VMIN_FIT.get(name, [])]
+    return ["run", str(RUNS / f"{name}.yaml"), *[a for s in sets for a in ("--set", s)], *extra]
 
 
 def loader_message(exit_msg):

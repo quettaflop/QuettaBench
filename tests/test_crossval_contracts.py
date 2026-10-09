@@ -1,8 +1,9 @@
-"""Offline checks for scripts/crossval.
+"""Offline checks for the cross-validation path.
 
-CI has no GPU, so this pins the wiring: scripts parse, shell helpers keep
-their exec bit, workloads.json stays consistent, the grids cover the cells
-the engine bench times, and table.py only compares like with like.
+CI has no GPU, so this pins the wiring: scripts parse, no shell entry
+points are left, the workload records (pinned in the config golden, which
+holds the loader to them) stay consistent, the grids cover the cells the
+engine bench times, and table.py only compares like with like.
 """
 
 import ast
@@ -15,6 +16,11 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
+
+from quettabench.config import loader
+from quettabench.config.schema import ConfigError
+from quettabench.config.validate import check_ep_legal
 
 REPO = Path(__file__).resolve().parents[1]
 CROSSVAL = REPO / "scripts" / "crossval"
@@ -29,7 +35,20 @@ def _scripts(suffix):
 
 
 def _load_workloads():
-    return json.loads((REPO / "configs" / "workloads.json").read_text())
+    """The merged records, grids and step points the retired workloads.json
+    held, as the config golden pins them for the loader."""
+    fixtures = REPO / "tests" / "golden" / "fixtures"
+    records = json.loads((fixtures / "config_workloads.json").read_text())
+    glob = json.loads((fixtures / "config_global.json").read_text())["cleared"]
+    return {"workloads": {n: r["cleared"]["xval_config"]["workload"] for n, r in records.items()},
+            "grids": glob["grids"], "step_points": glob["step_points"]}
+
+
+def _config(name, *sets, env=None):
+    """The loader's Config for configs/runs/<name>.yaml under exactly `env`."""
+    (cfg,) = loader.load(REPO / "configs" / "runs" / f"{name}.yaml",
+                         ["allow_unverified=true", *sets], env=env or {})
+    return cfg
 
 
 class CrossvalScripts(unittest.TestCase):
@@ -50,18 +69,12 @@ class CrossvalScripts(unittest.TestCase):
         self.assertIn("WORKLOADSUM", (QB / "metrics" / "results.py").read_text())
 
     def test_backend_detection_and_no_hard_nvidia_smi(self):
-        # backend() honors XVAL_BACKEND and reports cpu when no accel tooling is on
-        # PATH; the device picker and link detection must not hard-require nvidia-smi.
-        env = {k: v for k, v in os.environ.items() if k != "XVAL_BACKEND"}
-        env["PATH"] = "/nonexistent"
-        out = subprocess.run(
-            [sys.executable, str(QB / "config" / "xval_config.py"), "backend"],
-            capture_output=True, text=True, env=env).stdout.strip()
-        self.assertEqual(out, "cpu")
-        out = subprocess.run(
-            [sys.executable, str(QB / "config" / "xval_config.py"), "backend"],
-            capture_output=True, text=True, env={**os.environ, "XVAL_BACKEND": "tpu"}).stdout.strip()
-        self.assertEqual(out, "tpu")
+        # XVAL_BACKEND wins; with no accel tooling on PATH detection says cpu, and
+        # link detection on a non-cuda backend never calls nvidia-smi.
+        with mock.patch("shutil.which", return_value=None):
+            self.assertEqual(_config("llama").hardware.backend, "cpu")
+            self.assertEqual(_config("llama").hardware.link_profile, "nvlink")
+        self.assertEqual(_config("llama", env={"XVAL_BACKEND": "tpu"}).hardware.backend, "tpu")
 
     def test_pp_wired_in_grid_and_device_count(self):
         # A grid run passes pipeline_parallel_size (from XVAL_PP or the workload's pp),
@@ -72,36 +85,23 @@ class CrossvalScripts(unittest.TestCase):
         # cache.py parses META one key per line
         self.assertIn('"pp": e.pp', (QB / "modes" / "_grid.py").read_text())
         self.assertIn('f"META {k}={v}"', (QB / "metrics" / "results.py").read_text())
-        d1 = subprocess.run([sys.executable, str(QB / "config" / "xval_config.py"), "devices", "deepseek"],
-                            capture_output=True, text=True, check=True).stdout.strip()
-        self.assertEqual(d1, "8")  # deepseek tp8, pp1
-        d2 = subprocess.run([sys.executable, str(QB / "config" / "xval_config.py"), "devices", "deepseek"],
-                            capture_output=True, text=True,
-                            env={**os.environ, "XVAL_PP": "2"}).stdout.strip()
-        self.assertEqual(d2, "16")  # tp8 * pp2
+        ds = _config("deepseek").engine
+        self.assertEqual(ds.tp * ds.pp, 8)  # deepseek tp8, pp1
+        ds = _config("deepseek", env={"XVAL_PP": "2"}).engine
+        self.assertEqual(ds.tp * ds.pp, 16)  # tp8 * pp2
 
-    def test_link_profile_cli(self):
-        # One detection for bench.sh, vllm.sh and serve --grid: caller override wins,
-        # non-cuda backends take the no-pins nvlink profile.
-        out = subprocess.run(
-            [sys.executable, str(QB / "config" / "xval_config.py"), "link-profile"],
-            capture_output=True, text=True,
-            env={**os.environ, "XVAL_LINK_PROFILE": "pcie"}).stdout.strip()
-        self.assertEqual(out, "pcie")
-        env = {k: v for k, v in os.environ.items() if k != "XVAL_LINK_PROFILE"}
-        env["XVAL_BACKEND"] = "tpu"
-        out = subprocess.run(
-            [sys.executable, str(QB / "config" / "xval_config.py"), "link-profile"],
-            capture_output=True, text=True, env=env).stdout.strip()
-        self.assertEqual(out, "nvlink")
+    def test_link_profile_detection(self):
+        # One detection for both engines: caller override wins, non-cuda backends
+        # take the no-pins nvlink profile.
+        self.assertEqual(_config("llama", env={"XVAL_LINK_PROFILE": "pcie"}).hardware.link_profile,
+                         "pcie")
+        self.assertEqual(_config("llama", env={"XVAL_BACKEND": "tpu"}).hardware.link_profile,
+                         "nvlink")
 
-    def test_provision_cli(self):
-        # bootstrap.sh reads provisioning defaults through the config CLI.
-        out = subprocess.run(
-            [sys.executable, str(QB / "config" / "xval_config.py"), "provision", "cache_root"],
-            capture_output=True, text=True, check=True,
-        ).stdout.strip()
-        self.assertEqual(out, "/workspace/.xval-cache")
+    def test_provision_defaults(self):
+        # provision.py reads its defaults from the hardware yaml.
+        self.assertEqual(_config("llama").hardware.provision["cache_root"],
+                         "/workspace/.xval-cache")
 
     def test_lss_export_covers_or_fails_loudly(self):
         # Full probe coverage reproduces the reference key set; one missing cell
@@ -278,62 +278,39 @@ class CrossvalScripts(unittest.TestCase):
         # divide the expert count, and disagg rows never pair with aggregated.
         sys.path.insert(0, str(REPO))
         try:
-            from quettabench.config import xval_config
-            importlib.reload(xval_config)
-            self.assertEqual(xval_config.parse_serving_style("aggregated"), {"mode": "aggregated"})
-            self.assertEqual(xval_config.parse_serving_style(None), {"mode": "aggregated"})
-            self.assertEqual(xval_config.parse_serving_style("disagg:2p2d"),
+            from quettabench.config import validate
+            importlib.reload(validate)
+            self.assertEqual(validate.parse_serving_style("aggregated"), {"mode": "aggregated"})
+            self.assertEqual(validate.parse_serving_style(None), {"mode": "aggregated"})
+            self.assertEqual(validate.parse_serving_style("disagg:2p2d"),
                              {"mode": "disagg", "prefill": 2, "decode": 2})
-            self.assertEqual(xval_config.parse_serving_style("ep8dp2"),
+            self.assertEqual(validate.parse_serving_style("ep8dp2"),
                              {"mode": "ep_dp", "ep": 8, "dp": 2})
             for bad in ("disagg:0p1d", "disagg:2p", "ep8", "wideEP", "disagg:xp1d"):
                 with self.assertRaises(ValueError):
-                    xval_config.parse_serving_style(bad)
-            pre, dec = xval_config.disagg_gpu_sets(
-                xval_config.parse_serving_style("disagg:2p2d"), [0, 1, 2, 3])
+                    validate.parse_serving_style(bad)
+            pre, dec = validate.disagg_gpu_sets(
+                validate.parse_serving_style("disagg:2p2d"), [0, 1, 2, 3])
             self.assertEqual((pre, dec), ([0, 1], [2, 3]))
             self.assertFalse(set(pre) & set(dec))
             with self.assertRaises(ValueError):
-                xval_config.disagg_gpu_sets(
-                    xval_config.parse_serving_style("disagg:2p2d"), [0, 1, 2])
-            xval_config.check_ep_legal(8, 256)  # DeepSeek-V4-Flash: 256 experts
+                validate.disagg_gpu_sets(
+                    validate.parse_serving_style("disagg:2p2d"), [0, 1, 2])
+            validate.check_ep_legal(8, 256)  # DeepSeek-V4-Flash: 256 experts
             with self.assertRaises(ValueError):
-                xval_config.check_ep_legal(7, 256)
-            self.assertFalse(xval_config.serving_style_compatible("disagg:1p1d", "aggregated"))
-            self.assertTrue(xval_config.serving_style_compatible("aggregated", "aggregated"))
+                validate.check_ep_legal(7, 256)
+            self.assertFalse(validate.serving_style_compatible("disagg:1p1d", "aggregated"))
+            self.assertTrue(validate.serving_style_compatible("aggregated", "aggregated"))
             # disagg KV config: prefill producer and decode consumer share the port
             # and pool size, take distinct ranks; a wrong role raises.
-            pre = xval_config.disagg_kv_config("kv_producer", 0, "P2pConnector")
-            dec = xval_config.disagg_kv_config("kv_consumer", 1, "P2pConnector")
+            pre = validate.disagg_kv_config("kv_producer", 0, "P2pConnector")
+            dec = validate.disagg_kv_config("kv_consumer", 1, "P2pConnector")
             self.assertEqual(pre["kv_role"], "kv_producer")
             self.assertEqual(dec["kv_rank"], 1)
             self.assertEqual(pre["kv_port"], dec["kv_port"])
             self.assertEqual(pre["kv_parallel_size"], dec["kv_parallel_size"])
             with self.assertRaises(ValueError):
-                xval_config.disagg_kv_config("decode", 1, "P2pConnector")
-        finally:
-            sys.path.pop(0)
-        out = subprocess.run(
-            [sys.executable, str(QB / "config" / "xval_config.py"), "serving-style", "disagg:1p1d"],
-            capture_output=True, text=True, check=True).stdout.strip()
-        self.assertEqual(out, "mode=disagg prefill=1 decode=1")
-
-    def test_engine_registry(self):
-        # Item 3: trtllm resolves with a health path and needs an engine dir;
-        # amd is a loud stub. The trtllm and sglang launch stubs are parked
-        # (recoverable at 708cdbe).
-        sys.path.insert(0, str(REPO))
-        try:
-            from quettabench.config import xval_config
-            importlib.reload(xval_config)
-            trt = xval_config.resolve_engine("trtllm")
-            self.assertEqual(trt["serve"], "trtllm-serve")
-            self.assertEqual(trt["health"], "/health")
-            self.assertTrue(trt["engine_dir"])
-            with self.assertRaises(RuntimeError):
-                xval_config.resolve_engine("amd")
-            with self.assertRaises(ValueError):
-                xval_config.resolve_engine("bogus")
+                validate.disagg_kv_config("decode", 1, "P2pConnector")
         finally:
             sys.path.pop(0)
 
@@ -352,18 +329,10 @@ class CrossvalScripts(unittest.TestCase):
         self.assertFalse(wl["verified"], "bring-up gate: runs need ALLOW_UNVERIFIED=1")
         self.assertNotIn("bench", wl)
         self.assertNotIn("comm_bound_bs", wl)  # measured per model, never inherited
-        sys.path.insert(0, str(REPO))
-        try:
-            from quettabench.config import xval_config
-            importlib.reload(xval_config)
-            xval_config.check_ep_legal(wl["tp"], 256)  # 256 routed experts shard on tp8
-            self.assertIn(wl["grid"], xval_config.grids())
-        finally:
-            sys.path.pop(0)
-        d = subprocess.run(
-            [sys.executable, str(QB / "config" / "xval_config.py"), "devices", "glm53"],
-            capture_output=True, text=True, check=True).stdout.strip()
-        self.assertEqual(d, "8")
+        check_ep_legal(wl["tp"], 256)  # 256 routed experts shard on tp8
+        cfg = _config("glm53")
+        self.assertEqual(cfg.mode.grid, wl["grid"])
+        self.assertEqual(cfg.engine.tp * cfg.engine.pp, 8)
 
     def test_glm53flash_workload_contract(self):
         # GLM-5.3-Flash is a hybrid: 34 KDA linear-attention layers keep fixed-size
@@ -380,14 +349,8 @@ class CrossvalScripts(unittest.TestCase):
         self.assertFalse(wl["verified"], "bring-up gate: runs need ALLOW_UNVERIFIED=1")
         self.assertNotIn("bench", wl)
         self.assertNotIn("comm_bound_bs", wl)
-        sys.path.insert(0, str(REPO))
-        try:
-            from quettabench.config import xval_config
-            importlib.reload(xval_config)
-            xval_config.check_ep_legal(wl["tp"], 288)  # 288 routed experts shard on tp4
-            self.assertIn(wl["grid"], xval_config.grids())
-        finally:
-            sys.path.pop(0)
+        check_ep_legal(wl["tp"], 288)  # 288 routed experts shard on tp4
+        self.assertEqual(_config("glm53flash").mode.grid, wl["grid"])
 
     def test_agreement_inputs_present(self):
         for name in ("prompts.txt", "texts.txt"):
@@ -561,7 +524,7 @@ class EngineBenchContract(unittest.TestCase):
         self.assertTrue(expected <= grid, f"missing cells: {sorted(expected - grid)}")
 
     def test_deepseek_grid_covers_the_batch_bench_cells(self):
-        # bench.sh loops these cells from workloads.json.
+        # The QuettaServe bench loops the run's grid cells.
         grid = {tuple(c) for c in _load_workloads()["grids"]["deepseek"]}
         expected = {(ctx, bs) for ctx in (1024, 8192, 16384) for bs in (1, 4, 16, 64)}
         self.assertEqual(grid, expected, f"grid drift: {sorted(grid ^ expected)}")
@@ -1031,300 +994,44 @@ class TableParity(unittest.TestCase):
         self.assertIn("(0.0d)", out)
 
 
-class XvalConfigWorkloads(unittest.TestCase):
-    """workloads(), grids(), and step_points() contracts."""
+class ConfigTree(unittest.TestCase):
+    """configs/ through the loader: grids, step points and the collective env."""
 
-    def _load_xval_config(self):
-        sys.path.insert(0, str(REPO))
-        try:
-            from quettabench.config import xval_config
-            importlib.reload(xval_config)
-            return xval_config
-        finally:
-            sys.path.pop(0)
+    def test_grid_sizes_and_step_points(self):
+        self.assertEqual(len(_config("llama").grid.cells), 15)
+        self.assertEqual(len(_config("deepseek").grid.cells), 12)
+        self.assertEqual(len(_config("qwen3").grid.cells), 16)
+        self.assertEqual(_config("llama").grid.step_points, (60, 230, 400))
 
-    def test_workloads_contains_deepseek_and_llama(self):
-        xc = self._load_xval_config()
-        wls = xc.workloads()
-        self.assertIn("deepseek", wls)
-        self.assertIn("llama", wls)
-
-    def test_workloads_contains_json_only_crates(self):
-        # JSON-only crates must survive the merge; xval.yaml must not drop them.
-        xc = self._load_xval_config()
-        wls = xc.workloads()
-        for crate in ("smoke" if "smoke" in _load_workloads()["workloads"] else "qwen",
-                      "qwen", "llama-h200"):
-            if crate in _load_workloads()["workloads"]:
-                self.assertIn(crate, wls, f"JSON-only crate {crate!r} missing from merged workloads()")
-
-    def test_grids_contains_deepseek_and_llama(self):
-        xc = self._load_xval_config()
-        gs = xc.grids()
-        self.assertIn("deepseek", gs)
-        self.assertIn("llama", gs)
-
-    def test_grids_contains_json_only_grids(self):
-        # JSON-only grids (smoke, prof) must survive the merge.
-        xc = self._load_xval_config()
-        gs = xc.grids()
-        json_grids = _load_workloads()["grids"]
-        for grid in ("smoke", "prof"):
-            if grid in json_grids:
-                self.assertIn(grid, gs, f"JSON-only grid {grid!r} missing from merged grids()")
-
-    def test_deepseek_merged_record_has_grid_keys(self):
-        # the loader reads dtype, weights_gib, maxlen, kv_bytes from the model yaml.
-        xc = self._load_xval_config()
-        ds = xc.workloads()["deepseek"]
-        for key in ("dtype", "weights_gib", "maxlen", "kv_bytes"):
-            self.assertIn(key, ds, f"deepseek merged record missing {key!r} (needed by serve --grid)")
-
-    def test_workloads_matches_workloads_json(self):
-        # xval.yaml workloads superset-matches workloads.json for deepseek and llama.
-        xc = self._load_xval_config()
-        wls = xc.workloads()
-        json_wls = _load_workloads()["workloads"]
-        for key in ("deepseek", "llama"):
-            self.assertIn(key, wls, f"workloads() missing {key}")
-            self.assertIn(key, json_wls, f"workloads.json missing {key}")
-
-    def test_grids_matches_workloads_json(self):
-        xc = self._load_xval_config()
-        gs = xc.grids()
-        json_gs = _load_workloads()["grids"]
-        for key in ("deepseek", "llama"):
-            self.assertIn(key, gs)
-            self.assertIn(key, json_gs)
-            # Cell lists must be identical.
-            self.assertEqual(
-                [list(c) for c in gs[key]],
-                [list(c) for c in json_gs[key]],
-                f"grids()[{key!r}] diverges from workloads.json",
-            )
-
-    def test_llama_grid_has_15_cells(self):
-        xc = self._load_xval_config()
-        gs = xc.grids()
-        self.assertEqual(len(gs["llama"]), 15)
-
-    def test_llama_tp_defaults_to_1(self):
-        # llama has no tp key in xval.yaml; grid_config uses wl.get("tp", 1).
-        xc = self._load_xval_config()
-        wls = xc.workloads()
-        self.assertEqual(wls["llama"].get("tp", 1), 1)
-
-    def test_llama_dtype_is_float16(self):
-        xc = self._load_xval_config()
-        wls = xc.workloads()
-        self.assertEqual(wls["llama"]["dtype"], "float16")
-
-    def test_deepseek_tp_is_8(self):
-        xc = self._load_xval_config()
-        wls = xc.workloads()
-        self.assertEqual(wls["deepseek"]["tp"], 8)
-
-    def test_deepseek_grid_has_12_cells(self):
-        xc = self._load_xval_config()
-        gs = xc.grids()
-        self.assertEqual(len(gs["deepseek"]), 12)
-
-    def test_qwen3_workload_resolves_dense(self):
-        # qwen3 merges from workloads.json + xval.yaml; no expert_parallel.
-        xc = self._load_xval_config()
-        wls = xc.workloads()
-        self.assertIn("qwen3", wls)
-        qw = wls["qwen3"]
-        self.assertEqual(qw.get("tp"), 4)
+    def test_qwen3_resolves_dense_hybrid_kv(self):
+        e = _config("qwen3").engine
         # Hybrid stack: KV lives only in the 16 full-attention layers:
         # 16 layers x 2 (K+V) x 4 kv heads x 256 head_dim x 2 bytes (bf16).
-        self.assertEqual(qw.get("kv_bytes"), 16 * 2 * 4 * 256 * 2)
-        self.assertEqual(qw.get("dtype"), "bfloat16")
-        self.assertNotIn("expert_parallel", qw)
-        self.assertFalse(qw.get("verified"))
+        self.assertEqual((e.tp, e.kv_bytes, e.dtype, e.ep, e.verified),
+                         (4, 16 * 2 * 4 * 256 * 2, "bfloat16", False, False))
 
-    def test_qwen3_grid_resolves_16_cells(self):
-        xc = self._load_xval_config()
-        gs = xc.grids()
-        self.assertIn("qwen3", gs)
-        self.assertEqual(len(gs["qwen3"]), 16)
+    def test_pcie_pins_the_collective(self):
+        coll = _config("llama", "hardware.link_profile=pcie").hardware.collective
+        self.assertEqual(set(coll), {"NCCL_ALGO", "NCCL_PROTO", "NCCL_P2P_LEVEL",
+                                     "NCCL_IB_DISABLE", "NCCL_SOCKET_IFNAME",
+                                     "LLMSRV_NO_NVLS", "LLMSRV_TWOSHOT_MIN_BYTES"})
+        self.assertEqual((coll["NCCL_ALGO"], coll["NCCL_PROTO"], coll["NCCL_P2P_LEVEL"]),
+                         ("allreduce:tree;allgather:ring", "Simple", "SYS"))
 
-    def test_grid_inputs_shape(self):
-        # What grid_config reads: step_points, workloads, grids.
-        xc = self._load_xval_config()
-        cfg = {
-            "workloads": xc.workloads(),
-            "grids": xc.grids(),
-            "step_points": xc.step_points(),
-        }
-        self.assertIn("step_points", cfg)
-        self.assertIsInstance(cfg["step_points"], list)
-        self.assertTrue(cfg["step_points"])
-        self.assertIn("workloads", cfg)
-        self.assertIn("grids", cfg)
+    def test_nvlink_exports_only_ib(self):
+        # nvlink: pins come back empty (= not exported) so NCCL keeps NVLS/LL128
+        # and the engine keeps peer-allreduce; only IB stays off.
+        coll = _config("llama", "hardware.link_profile=nvlink").hardware.collective
+        self.assertEqual({k: v for k, v in coll.items() if v}, {"NCCL_IB_DISABLE": "1"})
 
-    def test_step_points_matches_workloads_json(self):
-        xc = self._load_xval_config()
-        self.assertEqual(xc.step_points(), _load_workloads()["step_points"])
+    def test_unknown_link_profile_is_refused(self):
+        with self.assertRaisesRegex(ConfigError, "unknown link profile 'tcp'"):
+            _config("llama", "hardware.link_profile=tcp")
 
-    def test_workloads_fallback_without_yaml(self):
-        # workloads() falls back to workloads.json when xval.yaml is absent.
-        import importlib
-        import shutil
-        td = Path(tempfile.mkdtemp())
-        try:
-            (td / "quettabench" / "config").mkdir(parents=True)
-            (td / "configs").mkdir()
-            shutil.copy(QB / "config" / "xval_config.py", td / "quettabench" / "config" / "xval_config.py")
-            shutil.copy(REPO / "configs" / "workloads.json", td / "configs" / "workloads.json")
-            sys.path.insert(0, str(td / "quettabench" / "config"))
-            import xval_config as _fresh
-            importlib.reload(_fresh)
-            wls = _fresh.workloads()
-            gs = _fresh.grids()
-            sp = _fresh.step_points()
-        finally:
-            sys.path.pop(0)
-            shutil.rmtree(td)
-        self.assertIn("deepseek", wls)
-        self.assertIn("llama", wls)
-        self.assertIn("deepseek", gs)
-        self.assertIn("llama", gs)
-        self.assertEqual(sp, [60, 230, 400])
-
-
-class XvalConfig(unittest.TestCase):
-    """xval.yaml and xval_config.py contracts."""
-
-    def _import_xval_config(self):
-        import importlib.util
-        spec = importlib.util.spec_from_file_location(
-            "xval_config", QB / "config" / "xval_config.py"
-        )
-        mod = importlib.util.load_from_spec(spec)
-        spec.loader.exec_module(mod)
-        return mod
-
-    def test_xval_yaml_parses(self):
-        import yaml
-        text = (REPO / "configs" / "xval.yaml").read_text()
-        data = yaml.safe_load(text)
-        self.assertIsInstance(data, dict)
-        self.assertTrue(data, "xval.yaml parsed to empty")
-
-    def test_loader_resolves_collective_block(self):
-        import yaml
-        # Load via the module directly (no vllm needed; xval_config is stdlib+yaml).
-        os.environ.pop("XVAL_LINK_PROFILE", None)
-        sys.path.insert(0, str(REPO))
-        try:
-            from quettabench.config import xval_config
-            importlib.reload(xval_config)
-            coll = xval_config.collective()
-        finally:
-            sys.path.pop(0)
-        expected_keys = {
-            "NCCL_ALGO", "NCCL_PROTO", "NCCL_P2P_LEVEL",
-            "NCCL_IB_DISABLE", "NCCL_SOCKET_IFNAME",
-            "LLMSRV_NO_NVLS", "LLMSRV_TWOSHOT_MIN_BYTES",
-        }
-        self.assertEqual(set(coll.keys()), expected_keys)
-        # Values from xval.yaml must match the documented defaults.
-        self.assertEqual(coll["NCCL_ALGO"], "allreduce:tree;allgather:ring")
-        self.assertEqual(coll["NCCL_PROTO"], "Simple")
-        self.assertEqual(coll["NCCL_P2P_LEVEL"], "SYS")
-
-    def test_collective_nvlink_profile_exports_only_ib(self):
-        # nvlink profile: pins come back empty (= not exported) so NCCL keeps
-        # NVLS/LL128 and the engine keeps peer-allreduce; only IB stays off.
-        sys.path.insert(0, str(REPO))
-        try:
-            from quettabench.config import xval_config
-            importlib.reload(xval_config)
-            coll = xval_config.collective(profile="nvlink")
-        finally:
-            sys.path.pop(0)
-        self.assertEqual(coll["NCCL_IB_DISABLE"], "1")
-        for key in (
-            "NCCL_ALGO", "NCCL_PROTO", "NCCL_P2P_LEVEL",
-            "NCCL_SOCKET_IFNAME", "LLMSRV_NO_NVLS", "LLMSRV_TWOSHOT_MIN_BYTES",
-        ):
-            self.assertEqual(coll[key], "", key)
-
-    def test_collective_profile_resolves_from_env(self):
-        sys.path.insert(0, str(REPO))
-        os.environ["XVAL_LINK_PROFILE"] = "nvlink"
-        try:
-            from quettabench.config import xval_config
-            importlib.reload(xval_config)
-            coll = xval_config.collective()
-        finally:
-            del os.environ["XVAL_LINK_PROFILE"]
-            sys.path.pop(0)
-        self.assertEqual(coll["NCCL_ALGO"], "")
-        self.assertEqual(coll["NCCL_IB_DISABLE"], "1")
-
-    def test_collective_rejects_unknown_profile(self):
-        sys.path.insert(0, str(REPO))
-        try:
-            from quettabench.config import xval_config
-            importlib.reload(xval_config)
-            with self.assertRaises(ValueError):
-                xval_config.collective(profile="tcp")
-        finally:
-            sys.path.pop(0)
-
-    def test_link_detection_has_no_sigpipe_grep(self):
-        # Piping nvidia-smi into grep -q SIGPIPEs it under pipefail and every
-        # box misdetects as pcie; detection must capture first, then match.
-        for sh in _scripts(".sh"):
-            text = sh.read_text()
-            if "nvidia-smi topo" not in text:
-                continue
-            self.assertNotRegex(
-                text, r"nvidia-smi topo[^\n|]*\|\s*grep",
-                f"{sh.name}: pipes nvidia-smi topo into grep (SIGPIPE misdetect)",
-            )
-            self.assertIn(
-                '_topo="$(nvidia-smi topo', text,
-                f"{sh.name}: must capture topo output before matching",
-            )
-
-    def test_loader_resolves_max_seq_headroom(self):
-        sys.path.insert(0, str(REPO))
-        try:
-            from quettabench.config import xval_config
-            importlib.reload(xval_config)
-            p = xval_config.run_params()
-        finally:
-            sys.path.pop(0)
-        self.assertEqual(p["max_seq_headroom"], 28)
-        self.assertEqual(p["timing_steps"], 100)
+    def test_max_seq_headroom(self):
+        h = _config("llama").hardware
         # max_seq formula: ctx + timing_steps + headroom = ctx + 128 at defaults.
-        ctx = 1024
-        self.assertEqual(ctx + p["timing_steps"] + p["max_seq_headroom"], ctx + 128)
-
-    def test_loader_falls_back_to_defaults_without_yaml(self):
-        """xval_config must return valid defaults even with no xval.yaml present."""
-        import importlib
-        import shutil
-        # Point _HERE at a temp dir with no xval.yaml.
-        td = Path(tempfile.mkdtemp())
-        os.environ.pop("XVAL_LINK_PROFILE", None)
-        try:
-            (td / "quettabench" / "config").mkdir(parents=True)
-            shutil.copy(QB / "config" / "xval_config.py", td / "quettabench" / "config" / "xval_config.py")
-            sys.path.insert(0, str(td / "quettabench" / "config"))
-            import xval_config as _fresh
-            importlib.reload(_fresh)
-            coll = _fresh.collective()
-            p = _fresh.run_params()
-        finally:
-            sys.path.pop(0)
-            shutil.rmtree(td)
-        self.assertEqual(coll["NCCL_ALGO"], "allreduce:tree;allgather:ring")
-        self.assertEqual(p["timing_steps"], 100)
-        self.assertEqual(p["max_seq_headroom"], 28)
+        self.assertEqual((h.timing_steps, h.max_seq_headroom), (100, 28))
 
 
 class TraceWorkloads(unittest.TestCase):

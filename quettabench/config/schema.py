@@ -46,7 +46,7 @@ class EngineCfg:
     model_name: str = ""              # display name: grid META model=, table.py crate match
     tp: int = 1
     pp: int = 1
-    ep: bool = False                  # workloads.json expert_parallel, serve.py ENABLE_EP
+    ep: bool = False                  # model yaml ep, ENABLE_EP
     dtype: str = "auto"
     kv_dtype: str = "auto"
     quant: str | None = None

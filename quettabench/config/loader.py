@@ -19,7 +19,7 @@ from quettabench.config.schema import (
     default_values,
     dict_field,
 )
-from quettabench.config.xval_config import check_ep_legal, parse_serving_style
+from quettabench.config.validate import check_ep_legal, parse_serving_style
 
 # model yaml key -> Config path
 MODEL_KEYS = {
@@ -148,7 +148,8 @@ def parse_arrival(spec):
 
 
 def detect_backend(tpu_name):
-    """xval_config.backend() without the env read: tooling on PATH decides."""
+    """The accelerator from the tooling on PATH: nvidia-smi cuda, rocm-smi rocm,
+    neuron-ls neuron, libtpu (or TPU_NAME) tpu, else cpu."""
     for tool, backend in (("nvidia-smi", "cuda"), ("rocm-smi", "rocm"), ("neuron-ls", "neuron")):
         if shutil.which(tool):
             return backend
@@ -158,8 +159,8 @@ def detect_backend(tpu_name):
 
 
 def detect_link_profile(backend):
-    """xval_config.link_profile() without the env read: nvlink when nvidia-smi
-    topo shows an NV* link, else pcie; non-cuda backends take nvlink."""
+    """nvlink when nvidia-smi topo shows an NV* link, else pcie; non-cuda
+    backends take nvlink, the profile without NCCL pins."""
     if backend != "cuda":
         return "nvlink"
     try:

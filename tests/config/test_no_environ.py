@@ -17,8 +17,6 @@ ENV_NAMES = ("environ", "getenv")
 OWNER = "quettabench/config/env_map.py"
 
 ALLOWLIST = {
-    # removed in commit 7: runner.py replaces the shell cli; detection lives in loader.py
-    "quettabench/config/xval_config.py",
     # removed in Phase 3: crossval.py reads results files; cache.py is deleted
     "quettabench/crossval/cache.py",
     # removed in Phase 3: table logic moves to crossval.py and reads Config

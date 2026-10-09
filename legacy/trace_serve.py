@@ -26,7 +26,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
 from quettabench.workloads import synth_bench
-from quettabench.config import xval_config
+from quettabench.config import validate
 from quettabench.workloads.arrival import parse_arrival, rebase_arrivals
 from quettabench.metrics.core import burst_recovery, sla_verdict, summarize_serve
 from quettabench.config import loader
@@ -326,7 +326,7 @@ def main():
     ap.add_argument("--gsm8k-n", type=int, help="number of GSM8k items to run")
     ap.add_argument("--json", help="write the aggregate summary to this path")
     args = ap.parse_args()
-    xval_config.parse_serving_style(args.serving_style)  # reject a malformed topology early
+    validate.parse_serving_style(args.serving_style)  # reject a malformed topology early
     if args.closed_loop:
         if args.closed_loop < 1:
             ap.error("--closed-loop needs N >= 1")

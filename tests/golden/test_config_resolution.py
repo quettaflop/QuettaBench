@@ -1,16 +1,19 @@
-"""Golden: crossval config resolution for every workload, and the failures
-that must stay at parse time.
+"""Golden: config resolution for every run yaml through the loader, and the
+failures that must stay at parse time.
 
 Each workload is resolved twice: with os.environ empty and with one
 representative override of every env knob the crossval path reads. The
-record joins what xval_config.py hands the shell (its cli) with what a
-grid run resolves from it (its META/CAPACITY/SKIP/RESULT lines on the
-stubs, plus how many generate() calls the fit made). The "vmin_fit" keys
-name the script the fixture was captured from; qbench run replaced it.
+"xval_config" keys hold what the retired xval_config.py resolved (merged
+workload record, grid cells, serving style); the loader must resolve the
+same values from configs/, field by field. "vmin_fit" is what a grid run
+prints on the stubs (META/CAPACITY/SKIP/RESULT lines, generate() calls),
+named for the script it was captured from; qbench run replaced it.
+"dry_run" pins the tp, pp, grid cells and QuettaServe bench block that
+`qbench run --dry-run` prints, which xval_config's tp/devices/cells/bench
+shell commands used to.
 """
 
 import contextlib
-import io
 import json
 import os
 import shutil
@@ -21,9 +24,20 @@ from unittest import mock
 
 import yaml
 
+from quettabench.config import loader
+from quettabench.config.validate import (
+    check_ep_legal,
+    disagg_gpu_sets,
+    disagg_kv_config,
+    parse_serving_style,
+)
+from quettabench.engines import base
 from tests.golden._harness import (
+    AS_VMIN_FIT,
     ENV_OVERRIDE,
+    FIXTURES,
     REPO,
+    RUNS,
     check_json,
     crossval_path,
     fresh_import,
@@ -33,7 +47,9 @@ from tests.golden._harness import (
 )
 
 SCENARIOS = {"cleared": {}, "override": ENV_OVERRIDE}
-WORKLOAD_NAMES = sorted(json.loads((REPO / "configs" / "workloads.json").read_text())["workloads"])
+WORKLOAD_NAMES = sorted(p.stem for p in RUNS.glob("*.yaml"))
+WORKLOADS = json.loads((FIXTURES / "config_workloads.json").read_text())
+DRY_RUN_KEYS = ("engine.tp ", "engine.pp ", "engine.extra.quettaserve ", "grid.cells ")
 
 # An MLA stack (DeepSeek-V3 shaped config) declared without kv_bytes.
 MLA_CONFIG = {
@@ -61,57 +77,47 @@ def mla_run_yaml():
         yield run
 
 
-def _cli(xval_config, *args):
-    """xval_config.py's shell interface: stdout, or the exit message."""
-    out = io.StringIO()
-    with contextlib.redirect_stdout(out):
-        try:
-            xval_config._cli(list(args))
-        except SystemExit as e:
-            return {"exit": str(e.code)}
-    return {"stdout": out.getvalue()}
-
-
 def _error(fn, *args, **kwargs):
+    """The exception's builtin class (a ConfigError is a ValueError) and message."""
     try:
         fn(*args, **kwargs)
     except Exception as e:  # the type is part of what is pinned
-        return {"type": type(e).__name__, "message": str(e)}
+        kind = next(c.__name__ for c in type(e).__mro__ if c.__module__ == "builtins")
+        return {"type": kind, "message": str(e)}
     return None
 
 
-def resolve_xval(name, env):
-    """What xval_config.py resolves for one workload under exactly `env`."""
-    with crossval_path(), mock.patch.dict(os.environ, env, clear=True), \
+def resolve(name, env, *sets):
+    """The loader's Config for one run yaml under exactly `env`, no tooling on
+    PATH; qwen as vmin_fit sized it (dense)."""
+    with mock.patch.dict(os.environ, env, clear=True), \
             mock.patch("shutil.which", return_value=None):
-        xc = fresh_import("quettabench.config.xval_config")
-        wl = xc.workloads()[name]
-        return {
-            "workload": wl,
-            "grid_cells": xc.grids()[wl["grid"]],
-            "serving_style": xc.parse_serving_style(wl.get("serving_style")),
-            "cli": {cmd: _cli(xc, cmd, name) for cmd in ("tp", "devices", "cells", "bench")},
-        }
+        (cfg,) = loader.load(RUNS / f"{name}.yaml",
+                             ["allow_unverified=true", *AS_VMIN_FIT.get(name, []), *sets])
+    return cfg
 
 
-def resolve_global(env):
-    """Workload-independent resolution under exactly `env`."""
-    with crossval_path(), mock.patch.dict(os.environ, env, clear=True), \
-            mock.patch("shutil.which", return_value=None):
-        xc = fresh_import("quettabench.config.xval_config")
-        return {
-            "grids": xc.grids(),
-            "step_points": xc.step_points(),
-            "run_params": xc.run_params(),
-            "provision": xc.provision(),
-            "backend": xc.backend(),
-            "link_profile": xc.link_profile(),
-            "collective": xc.collective(),
-            "collective_by_profile": {p: xc.collective(profile=p) for p in ("pcie", "nvlink")},
-            "cli": {cmd: _cli(xc, cmd) for cmd in
-                    ("collective", "run-params", "provision", "backend", "link-profile",
-                     "serving-style", "engine")},
-        }
+def check_record(case, cfg, old, env):
+    """cfg holds every value xval_config resolved for the workload."""
+    wl, e, m = old["workload"], cfg.engine, cfg.mode
+    case.assertEqual((e.model_name, e.dtype, e.weights_gib, e.max_model_len),
+                     (wl["name"], wl["dtype"], wl["weights_gib"], wl["maxlen"]))
+    case.assertEqual((e.tp, e.pp), (int(wl.get("tp", 1)), int(env.get("XVAL_PP", wl.get("pp", 1)))))
+    case.assertEqual((e.ep, e.kv_dtype, e.kv_bytes, e.quant, e.verified),
+                     (bool(wl.get("expert_parallel")), wl.get("kv_dtype") or "auto",
+                      wl.get("kv_bytes"), wl.get("quant"), wl["verified"]))
+    case.assertEqual(e.gpu_util, float(env.get("GPU_UTIL", wl.get("gpu_util", 0.90))))
+    bench = wl.get("bench")
+    case.assertEqual(e.extra.get("quettaserve"), bench and {
+        "crate": bench["crate"], "test": bench["test"],
+        "env_prefix": bench["env"], "family": bench["family"]})
+    case.assertEqual(cfg.crossval.get("comm_bound_bs"), wl.get("comm_bound_bs"))
+    for key in ("engine_commit", "checkpoint"):
+        case.assertEqual(cfg.provenance.get(key), wl.get(key))
+    case.assertEqual(cfg.workload.prompt_mode,
+                     env.get("PROMPT_MODE", wl.get("prompt_mode", "distinct")))
+    case.assertEqual((m.grid, cfg.grid.cells), (wl["grid"], tuple(map(tuple, old["grid_cells"]))))
+    case.assertEqual(parse_serving_style(e.serving_style), old["serving_style"])
 
 
 def resolve_vmin_fit(name, env):
@@ -119,38 +125,73 @@ def resolve_vmin_fit(name, env):
     return {"stdout": run["stdout"], "generate_calls": run["generate_calls"], "exit": run["exit"]}
 
 
+def resolve_dry_run(name, env):
+    stdout = run_grid_cli(grid_argv(name, "--allow-unverified", "--dry-run"), env)["stdout"]
+    return [line for line in stdout if line.startswith(DRY_RUN_KEYS)]
+
+
+def resolve_global(env):
+    """Workload-independent values, as the loader resolves them for llama."""
+    cfg = resolve("llama", env)
+    grids, step_points = loader._read_grids(REPO / "configs")
+    h = cfg.hardware
+    # xval_config.collective() took the profile from XVAL_LINK_PROFILE, else pcie.
+    default = env.get("XVAL_LINK_PROFILE", "pcie")
+    by_profile = {p: dict(resolve("llama", env, f"hardware.link_profile={p}").hardware.collective)
+                  for p in ("pcie", "nvlink")}
+    return {
+        "grids": grids,
+        "step_points": step_points,
+        "run_params": {"world": h.world, "timing_steps": h.timing_steps,
+                       "max_seq_headroom": h.max_seq_headroom},
+        "provision": dict(h.provision),
+        "backend": h.backend,
+        "link_profile": h.link_profile,
+        "collective": by_profile[default],
+        "collective_by_profile": by_profile,
+    }
+
+
 class ConfigResolutionGolden(unittest.TestCase):
     def test_global_resolution(self):
         check_json(self, "config_global", {s: resolve_global(env) for s, env in SCENARIOS.items()})
 
     def test_every_workload_resolves_as_captured(self):
-        record = {
-            name: {s: {"xval_config": resolve_xval(name, env),
-                       "vmin_fit": resolve_vmin_fit(name, env)}
-                   for s, env in SCENARIOS.items()}
-            for name in WORKLOAD_NAMES
-        }
+        self.assertEqual(WORKLOAD_NAMES, sorted(WORKLOADS))
+        record = {}
+        for name in WORKLOAD_NAMES:
+            record[name] = {}
+            for s, env in SCENARIOS.items():
+                old = WORKLOADS[name][s]["xval_config"]
+                with self.subTest(workload=name, env=s):
+                    check_record(self, resolve(name, env), old, env)
+                record[name][s] = {"xval_config": {k: v for k, v in old.items() if k != "cli"},
+                                   "vmin_fit": resolve_vmin_fit(name, env),
+                                   "dry_run": resolve_dry_run(name, env)}
         check_json(self, "config_workloads", record)
+
+    def test_qwen_needs_the_dense_override(self):
+        with self.assertRaisesRegex(loader.ConfigError, "attention=hybrid needs kv_bytes"):
+            loader.load(RUNS / "qwen.yaml", ["allow_unverified=true"], env={})
 
 
 class ParseTimeFailuresGolden(unittest.TestCase):
     def test_failures_keep_type_and_message(self):
-        with crossval_path(), mock.patch.dict(os.environ, {}, clear=True):
-            xc = fresh_import("quettabench.config.xval_config")
-            failures = {
-                "serving_style": {spec: _error(xc.parse_serving_style, spec) for spec in
-                                  ("disagg:0p1d", "disagg:2p", "ep4", "aggregate",
-                                   "disagg:1p1d:x", "EP8DP2")},
-                "disagg_oversubscribed": _error(
-                    xc.disagg_gpu_sets, xc.parse_serving_style("disagg:4p5d"), list(range(8))),
-                "ep_degree": {f"ep{ep}_experts{n}": _error(xc.check_ep_legal, ep, n)
-                              for ep, n in ((3, 256), (7, 288), (8, 256), (16, 288))},
-                "link_profile": _error(xc.collective, profile="infiniband"),
-                "kv_role": _error(xc.disagg_kv_config, "producer", 0, "NixlConnector"),
-                "engine": {e: _error(xc.resolve_engine, e) for e in ("rocm", "tgi")},
-            }
+        link = _error(resolve, "llama", {}, "hardware.link_profile=infiniband")
+        failures = {
+            "serving_style": {spec: _error(parse_serving_style, spec) for spec in
+                              ("disagg:0p1d", "disagg:2p", "ep4", "aggregate",
+                               "disagg:1p1d:x", "EP8DP2")},
+            "disagg_oversubscribed": _error(
+                disagg_gpu_sets, parse_serving_style("disagg:4p5d"), list(range(8))),
+            "ep_degree": {f"ep{ep}_experts{n}": _error(check_ep_legal, ep, n)
+                          for ep, n in ((3, 256), (7, 288), (8, 256), (16, 288))},
+            "link_profile": {**link, "message": loader_message(link["message"])},
+            "kv_role": _error(disagg_kv_config, "producer", 0, "NixlConnector"),
+            "engine_unknown": _error(base.get, "tgi"),
+        }
         unverified = [n for n in WORKLOAD_NAMES
-                      if not resolve_xval(n, {})["workload"].get("verified")]
+                      if not WORKLOADS[n]["cleared"]["xval_config"]["workload"].get("verified")]
         # The loader's refusals, without their `<file> [<run>]: ` prefix.
         failures["vmin_fit_unverified"] = {
             n: loader_message(run_grid_cli(grid_argv(n), {})["exit"]) for n in unverified}

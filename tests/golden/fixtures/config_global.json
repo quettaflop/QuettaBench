@@ -1,29 +1,6 @@
 {
  "cleared": {
   "backend": "cpu",
-  "cli": {
-   "backend": {
-    "stdout": "cpu\n"
-   },
-   "collective": {
-    "stdout": "NCCL_ALGO=allreduce:tree;allgather:ring\nNCCL_PROTO=Simple\nNCCL_P2P_LEVEL=SYS\nNCCL_IB_DISABLE=1\nNCCL_SOCKET_IFNAME=\nLLMSRV_NO_NVLS=1\nLLMSRV_TWOSHOT_MIN_BYTES=0\n"
-   },
-   "engine": {
-    "stdout": "serve=vllm serve health=/health engine_dir=False\n"
-   },
-   "link-profile": {
-    "stdout": "nvlink\n"
-   },
-   "provision": {
-    "stdout": "cache_root=/workspace/.xval-cache\npy=\nvllm_spec=\nqs_repo=\nqs_commit=\nnccl_lib=\n"
-   },
-   "run-params": {
-    "stdout": "100 28\n"
-   },
-   "serving-style": {
-    "stdout": "mode=aggregated\n"
-   }
-  },
   "collective": {
    "LLMSRV_NO_NVLS": "1",
    "LLMSRV_TWOSHOT_MIN_BYTES": "0",
@@ -411,29 +388,6 @@
  },
  "override": {
   "backend": "cuda",
-  "cli": {
-   "backend": {
-    "stdout": "cuda\n"
-   },
-   "collective": {
-    "stdout": "NCCL_ALGO=allreduce:tree;allgather:ring\nNCCL_PROTO=Simple\nNCCL_P2P_LEVEL=SYS\nNCCL_IB_DISABLE=1\nNCCL_SOCKET_IFNAME=\nLLMSRV_NO_NVLS=1\nLLMSRV_TWOSHOT_MIN_BYTES=0\n"
-   },
-   "engine": {
-    "stdout": "serve=vllm serve health=/health engine_dir=False\n"
-   },
-   "link-profile": {
-    "stdout": "pcie\n"
-   },
-   "provision": {
-    "stdout": "cache_root=/workspace/.xval-cache\npy=\nvllm_spec=\nqs_repo=\nqs_commit=\nnccl_lib=\n"
-   },
-   "run-params": {
-    "stdout": "100 28\n"
-   },
-   "serving-style": {
-    "stdout": "mode=aggregated\n"
-   }
-  },
   "collective": {
    "LLMSRV_NO_NVLS": "1",
    "LLMSRV_TWOSHOT_MIN_BYTES": "0",

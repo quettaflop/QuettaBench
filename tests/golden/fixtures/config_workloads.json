@@ -1,6 +1,12 @@
 {
  "deepseek": {
   "cleared": {
+   "dry_run": [
+    "engine.tp = 8  (model)",
+    "engine.pp = 1  (default)",
+    "engine.extra.quettaserve = {'crate': 'deepseek', 'test': 'batch_bench', 'env_prefix': 'DS', 'family': 'moe'}  (model)",
+    "grid.cells = [(1024, 1), (1024, 4), (1024, 16), (1024, 64), (8192, 1), (8192, 4), (8192, 16), (8192, 64), (16384, 1), (16384, 4), (16384, 16), (16384, 64)]"
+   ],
    "vmin_fit": {
     "exit": null,
     "generate_calls": 58,
@@ -39,20 +45,6 @@
     ]
    },
    "xval_config": {
-    "cli": {
-     "bench": {
-      "stdout": "deepseek\nbatch_bench\nDS\nmoe\n^\\[batch_bench\\] .*layers=all\n8\n"
-     },
-     "cells": {
-      "stdout": "1024 1\n1024 4\n1024 16\n1024 64\n8192 1\n8192 4\n8192 16\n8192 64\n16384 1\n16384 4\n16384 16\n16384 64\n"
-     },
-     "devices": {
-      "stdout": "8\n"
-     },
-     "tp": {
-      "stdout": "8\n"
-     }
-    },
     "grid_cells": [
      [
       1024,
@@ -131,6 +123,12 @@
    }
   },
   "override": {
+   "dry_run": [
+    "engine.tp = 8  (model)",
+    "engine.pp = 2  (env)",
+    "engine.extra.quettaserve = {'crate': 'deepseek', 'test': 'batch_bench', 'env_prefix': 'DS', 'family': 'moe'}  (model)",
+    "grid.cells = [(1024, 1), (1024, 4), (1024, 16), (1024, 64), (8192, 1), (8192, 4), (8192, 16), (8192, 64), (16384, 1), (16384, 4), (16384, 16), (16384, 64)]"
+   ],
    "vmin_fit": {
     "exit": null,
     "generate_calls": 52,
@@ -169,20 +167,6 @@
     ]
    },
    "xval_config": {
-    "cli": {
-     "bench": {
-      "stdout": "deepseek\nbatch_bench\nDS\nmoe\n^\\[batch_bench\\] .*layers=all\n8\n"
-     },
-     "cells": {
-      "stdout": "1024 1\n1024 4\n1024 16\n1024 64\n8192 1\n8192 4\n8192 16\n8192 64\n16384 1\n16384 4\n16384 16\n16384 64\n"
-     },
-     "devices": {
-      "stdout": "16\n"
-     },
-     "tp": {
-      "stdout": "8\n"
-     }
-    },
     "grid_cells": [
      [
       1024,
@@ -263,6 +247,11 @@
  },
  "glm53": {
   "cleared": {
+   "dry_run": [
+    "engine.tp = 8  (model)",
+    "engine.pp = 1  (default)",
+    "grid.cells = [(1024, 1), (1024, 4), (1024, 16), (1024, 64), (8192, 1), (8192, 4), (8192, 16), (8192, 64), (16384, 1), (16384, 4), (16384, 16), (16384, 64)]"
+   ],
    "vmin_fit": {
     "exit": null,
     "generate_calls": 58,
@@ -301,20 +290,6 @@
     ]
    },
    "xval_config": {
-    "cli": {
-     "bench": {
-      "exit": "workload glm53 has no bench config"
-     },
-     "cells": {
-      "stdout": "1024 1\n1024 4\n1024 16\n1024 64\n8192 1\n8192 4\n8192 16\n8192 64\n16384 1\n16384 4\n16384 16\n16384 64\n"
-     },
-     "devices": {
-      "stdout": "8\n"
-     },
-     "tp": {
-      "stdout": "8\n"
-     }
-    },
     "grid_cells": [
      [
       1024,
@@ -383,6 +358,11 @@
    }
   },
   "override": {
+   "dry_run": [
+    "engine.tp = 8  (model)",
+    "engine.pp = 2  (env)",
+    "grid.cells = [(1024, 1), (1024, 4), (1024, 16), (1024, 64), (8192, 1), (8192, 4), (8192, 16), (8192, 64), (16384, 1), (16384, 4), (16384, 16), (16384, 64)]"
+   ],
    "vmin_fit": {
     "exit": null,
     "generate_calls": 52,
@@ -421,20 +401,6 @@
     ]
    },
    "xval_config": {
-    "cli": {
-     "bench": {
-      "exit": "workload glm53 has no bench config"
-     },
-     "cells": {
-      "stdout": "1024 1\n1024 4\n1024 16\n1024 64\n8192 1\n8192 4\n8192 16\n8192 64\n16384 1\n16384 4\n16384 16\n16384 64\n"
-     },
-     "devices": {
-      "stdout": "16\n"
-     },
-     "tp": {
-      "stdout": "8\n"
-     }
-    },
     "grid_cells": [
      [
       1024,
@@ -505,6 +471,11 @@
  },
  "glm53flash": {
   "cleared": {
+   "dry_run": [
+    "engine.tp = 4  (model)",
+    "engine.pp = 1  (default)",
+    "grid.cells = [(1024, 1), (1024, 4), (1024, 16), (1024, 64), (8192, 1), (8192, 4), (8192, 16), (8192, 64), (16384, 1), (16384, 4), (16384, 16), (16384, 64)]"
+   ],
    "vmin_fit": {
     "exit": null,
     "generate_calls": 58,
@@ -543,20 +514,6 @@
     ]
    },
    "xval_config": {
-    "cli": {
-     "bench": {
-      "exit": "workload glm53flash has no bench config"
-     },
-     "cells": {
-      "stdout": "1024 1\n1024 4\n1024 16\n1024 64\n8192 1\n8192 4\n8192 16\n8192 64\n16384 1\n16384 4\n16384 16\n16384 64\n"
-     },
-     "devices": {
-      "stdout": "4\n"
-     },
-     "tp": {
-      "stdout": "4\n"
-     }
-    },
     "grid_cells": [
      [
       1024,
@@ -625,6 +582,11 @@
    }
   },
   "override": {
+   "dry_run": [
+    "engine.tp = 4  (model)",
+    "engine.pp = 2  (env)",
+    "grid.cells = [(1024, 1), (1024, 4), (1024, 16), (1024, 64), (8192, 1), (8192, 4), (8192, 16), (8192, 64), (16384, 1), (16384, 4), (16384, 16), (16384, 64)]"
+   ],
    "vmin_fit": {
     "exit": null,
     "generate_calls": 52,
@@ -663,20 +625,6 @@
     ]
    },
    "xval_config": {
-    "cli": {
-     "bench": {
-      "exit": "workload glm53flash has no bench config"
-     },
-     "cells": {
-      "stdout": "1024 1\n1024 4\n1024 16\n1024 64\n8192 1\n8192 4\n8192 16\n8192 64\n16384 1\n16384 4\n16384 16\n16384 64\n"
-     },
-     "devices": {
-      "stdout": "8\n"
-     },
-     "tp": {
-      "stdout": "4\n"
-     }
-    },
     "grid_cells": [
      [
       1024,
@@ -747,6 +695,11 @@
  },
  "llama": {
   "cleared": {
+   "dry_run": [
+    "engine.tp = 1  (default)",
+    "engine.pp = 1  (default)",
+    "grid.cells = [(4096, 1), (4096, 8), (4096, 16), (4096, 32), (4096, 64), (1024, 1), (1024, 8), (1024, 16), (1024, 32), (1024, 64), (100, 1), (100, 8), (100, 16), (100, 32), (100, 64)]"
+   ],
    "vmin_fit": {
     "exit": null,
     "generate_calls": 66,
@@ -787,20 +740,6 @@
     ]
    },
    "xval_config": {
-    "cli": {
-     "bench": {
-      "exit": "workload llama has no bench config"
-     },
-     "cells": {
-      "stdout": "4096 1\n4096 8\n4096 16\n4096 32\n4096 64\n1024 1\n1024 8\n1024 16\n1024 32\n1024 64\n100 1\n100 8\n100 16\n100 32\n100 64\n"
-     },
-     "devices": {
-      "stdout": "1\n"
-     },
-     "tp": {
-      "stdout": "1\n"
-     }
-    },
     "grid_cells": [
      [
       4096,
@@ -877,6 +816,11 @@
    }
   },
   "override": {
+   "dry_run": [
+    "engine.tp = 1  (default)",
+    "engine.pp = 2  (env)",
+    "grid.cells = [(4096, 1), (4096, 8), (4096, 16), (4096, 32), (4096, 64), (1024, 1), (1024, 8), (1024, 16), (1024, 32), (1024, 64), (100, 1), (100, 8), (100, 16), (100, 32), (100, 64)]"
+   ],
    "vmin_fit": {
     "exit": null,
     "generate_calls": 56,
@@ -917,20 +861,6 @@
     ]
    },
    "xval_config": {
-    "cli": {
-     "bench": {
-      "exit": "workload llama has no bench config"
-     },
-     "cells": {
-      "stdout": "4096 1\n4096 8\n4096 16\n4096 32\n4096 64\n1024 1\n1024 8\n1024 16\n1024 32\n1024 64\n100 1\n100 8\n100 16\n100 32\n100 64\n"
-     },
-     "devices": {
-      "stdout": "2\n"
-     },
-     "tp": {
-      "stdout": "1\n"
-     }
-    },
     "grid_cells": [
      [
       4096,
@@ -1009,6 +939,11 @@
  },
  "llama-h200": {
   "cleared": {
+   "dry_run": [
+    "engine.tp = 1  (run)",
+    "engine.pp = 1  (default)",
+    "grid.cells = [(1024, 1), (1024, 4), (1024, 16), (1024, 64), (8192, 1), (8192, 4), (8192, 16), (8192, 64), (16384, 1), (16384, 4), (16384, 16), (16384, 64)]"
+   ],
    "vmin_fit": {
     "exit": null,
     "generate_calls": 46,
@@ -1046,20 +981,6 @@
     ]
    },
    "xval_config": {
-    "cli": {
-     "bench": {
-      "exit": "workload llama-h200 has no bench config"
-     },
-     "cells": {
-      "stdout": "1024 1\n1024 4\n1024 16\n1024 64\n8192 1\n8192 4\n8192 16\n8192 64\n16384 1\n16384 4\n16384 16\n16384 64\n"
-     },
-     "devices": {
-      "stdout": "1\n"
-     },
-     "tp": {
-      "stdout": "1\n"
-     }
-    },
     "grid_cells": [
      [
       1024,
@@ -1125,6 +1046,11 @@
    }
   },
   "override": {
+   "dry_run": [
+    "engine.tp = 1  (run)",
+    "engine.pp = 2  (env)",
+    "grid.cells = [(1024, 1), (1024, 4), (1024, 16), (1024, 64), (8192, 1), (8192, 4), (8192, 16), (8192, 64), (16384, 1), (16384, 4), (16384, 16), (16384, 64)]"
+   ],
    "vmin_fit": {
     "exit": null,
     "generate_calls": 36,
@@ -1162,20 +1088,6 @@
     ]
    },
    "xval_config": {
-    "cli": {
-     "bench": {
-      "exit": "workload llama-h200 has no bench config"
-     },
-     "cells": {
-      "stdout": "1024 1\n1024 4\n1024 16\n1024 64\n8192 1\n8192 4\n8192 16\n8192 64\n16384 1\n16384 4\n16384 16\n16384 64\n"
-     },
-     "devices": {
-      "stdout": "2\n"
-     },
-     "tp": {
-      "stdout": "1\n"
-     }
-    },
     "grid_cells": [
      [
       1024,
@@ -1243,6 +1155,11 @@
  },
  "llama-h200-fp8kv": {
   "cleared": {
+   "dry_run": [
+    "engine.tp = 1  (run)",
+    "engine.pp = 1  (default)",
+    "grid.cells = [(16384, 64)]"
+   ],
    "vmin_fit": {
     "exit": null,
     "generate_calls": 1,
@@ -1269,20 +1186,6 @@
     ]
    },
    "xval_config": {
-    "cli": {
-     "bench": {
-      "exit": "workload llama-h200-fp8kv has no bench config"
-     },
-     "cells": {
-      "stdout": "16384 64\n"
-     },
-     "devices": {
-      "stdout": "1\n"
-     },
-     "tp": {
-      "stdout": "1\n"
-     }
-    },
     "grid_cells": [
      [
       16384,
@@ -1306,6 +1209,11 @@
    }
   },
   "override": {
+   "dry_run": [
+    "engine.tp = 1  (run)",
+    "engine.pp = 2  (env)",
+    "grid.cells = [(16384, 64)]"
+   ],
    "vmin_fit": {
     "exit": null,
     "generate_calls": 1,
@@ -1332,20 +1240,6 @@
     ]
    },
    "xval_config": {
-    "cli": {
-     "bench": {
-      "exit": "workload llama-h200-fp8kv has no bench config"
-     },
-     "cells": {
-      "stdout": "16384 64\n"
-     },
-     "devices": {
-      "stdout": "2\n"
-     },
-     "tp": {
-      "stdout": "1\n"
-     }
-    },
     "grid_cells": [
      [
       16384,
@@ -1371,6 +1265,11 @@
  },
  "llama-tp1": {
   "cleared": {
+   "dry_run": [
+    "engine.tp = 1  (run)",
+    "engine.pp = 1  (default)",
+    "grid.cells = [(100, 1), (1024, 1), (4096, 1), (8192, 1)]"
+   ],
    "vmin_fit": {
     "exit": null,
     "generate_calls": 17,
@@ -1400,20 +1299,6 @@
     ]
    },
    "xval_config": {
-    "cli": {
-     "bench": {
-      "exit": "workload llama-tp1 has no bench config"
-     },
-     "cells": {
-      "stdout": "100 1\n1024 1\n4096 1\n8192 1\n"
-     },
-     "devices": {
-      "stdout": "1\n"
-     },
-     "tp": {
-      "stdout": "1\n"
-     }
-    },
     "grid_cells": [
      [
       100,
@@ -1447,6 +1332,11 @@
    }
   },
   "override": {
+   "dry_run": [
+    "engine.tp = 1  (run)",
+    "engine.pp = 2  (env)",
+    "grid.cells = [(100, 1), (1024, 1), (4096, 1), (8192, 1)]"
+   ],
    "vmin_fit": {
     "exit": null,
     "generate_calls": 17,
@@ -1476,20 +1366,6 @@
     ]
    },
    "xval_config": {
-    "cli": {
-     "bench": {
-      "exit": "workload llama-tp1 has no bench config"
-     },
-     "cells": {
-      "stdout": "100 1\n1024 1\n4096 1\n8192 1\n"
-     },
-     "devices": {
-      "stdout": "2\n"
-     },
-     "tp": {
-      "stdout": "1\n"
-     }
-    },
     "grid_cells": [
      [
       100,
@@ -1525,6 +1401,11 @@
  },
  "llama-tp2": {
   "cleared": {
+   "dry_run": [
+    "engine.tp = 2  (run)",
+    "engine.pp = 1  (default)",
+    "grid.cells = [(100, 1), (1024, 1), (4096, 1), (8192, 1)]"
+   ],
    "vmin_fit": {
     "exit": null,
     "generate_calls": 17,
@@ -1554,20 +1435,6 @@
     ]
    },
    "xval_config": {
-    "cli": {
-     "bench": {
-      "exit": "workload llama-tp2 has no bench config"
-     },
-     "cells": {
-      "stdout": "100 1\n1024 1\n4096 1\n8192 1\n"
-     },
-     "devices": {
-      "stdout": "2\n"
-     },
-     "tp": {
-      "stdout": "2\n"
-     }
-    },
     "grid_cells": [
      [
       100,
@@ -1601,6 +1468,11 @@
    }
   },
   "override": {
+   "dry_run": [
+    "engine.tp = 2  (run)",
+    "engine.pp = 2  (env)",
+    "grid.cells = [(100, 1), (1024, 1), (4096, 1), (8192, 1)]"
+   ],
    "vmin_fit": {
     "exit": null,
     "generate_calls": 17,
@@ -1630,20 +1502,6 @@
     ]
    },
    "xval_config": {
-    "cli": {
-     "bench": {
-      "exit": "workload llama-tp2 has no bench config"
-     },
-     "cells": {
-      "stdout": "100 1\n1024 1\n4096 1\n8192 1\n"
-     },
-     "devices": {
-      "stdout": "4\n"
-     },
-     "tp": {
-      "stdout": "2\n"
-     }
-    },
     "grid_cells": [
      [
       100,
@@ -1679,6 +1537,11 @@
  },
  "llama-tp4": {
   "cleared": {
+   "dry_run": [
+    "engine.tp = 4  (run)",
+    "engine.pp = 1  (default)",
+    "grid.cells = [(100, 1), (1024, 1), (4096, 1), (8192, 1)]"
+   ],
    "vmin_fit": {
     "exit": null,
     "generate_calls": 17,
@@ -1708,20 +1571,6 @@
     ]
    },
    "xval_config": {
-    "cli": {
-     "bench": {
-      "exit": "workload llama-tp4 has no bench config"
-     },
-     "cells": {
-      "stdout": "100 1\n1024 1\n4096 1\n8192 1\n"
-     },
-     "devices": {
-      "stdout": "4\n"
-     },
-     "tp": {
-      "stdout": "4\n"
-     }
-    },
     "grid_cells": [
      [
       100,
@@ -1755,6 +1604,11 @@
    }
   },
   "override": {
+   "dry_run": [
+    "engine.tp = 4  (run)",
+    "engine.pp = 2  (env)",
+    "grid.cells = [(100, 1), (1024, 1), (4096, 1), (8192, 1)]"
+   ],
    "vmin_fit": {
     "exit": null,
     "generate_calls": 17,
@@ -1784,20 +1638,6 @@
     ]
    },
    "xval_config": {
-    "cli": {
-     "bench": {
-      "exit": "workload llama-tp4 has no bench config"
-     },
-     "cells": {
-      "stdout": "100 1\n1024 1\n4096 1\n8192 1\n"
-     },
-     "devices": {
-      "stdout": "8\n"
-     },
-     "tp": {
-      "stdout": "4\n"
-     }
-    },
     "grid_cells": [
      [
       100,
@@ -1833,6 +1673,11 @@
  },
  "qwen": {
   "cleared": {
+   "dry_run": [
+    "engine.tp = 1  (default)",
+    "engine.pp = 1  (default)",
+    "grid.cells = [(100, 1), (1024, 1), (4096, 1), (8192, 1), (32768, 1), (100, 8), (100, 16), (100, 32), (100, 64), (1024, 8), (1024, 16), (1024, 32), (1024, 64), (4096, 8), (4096, 16), (4096, 32), (4096, 64)]"
+   ],
    "vmin_fit": {
     "exit": null,
     "generate_calls": 70,
@@ -1875,20 +1720,6 @@
     ]
    },
    "xval_config": {
-    "cli": {
-     "bench": {
-      "exit": "workload qwen has no bench config"
-     },
-     "cells": {
-      "stdout": "100 1\n1024 1\n4096 1\n8192 1\n32768 1\n100 8\n100 16\n100 32\n100 64\n1024 8\n1024 16\n1024 32\n1024 64\n4096 8\n4096 16\n4096 32\n4096 64\n"
-     },
-     "devices": {
-      "stdout": "1\n"
-     },
-     "tp": {
-      "stdout": "1\n"
-     }
-    },
     "grid_cells": [
      [
       100,
@@ -1973,6 +1804,11 @@
    }
   },
   "override": {
+   "dry_run": [
+    "engine.tp = 1  (default)",
+    "engine.pp = 2  (env)",
+    "grid.cells = [(100, 1), (1024, 1), (4096, 1), (8192, 1), (32768, 1), (100, 8), (100, 16), (100, 32), (100, 64), (1024, 8), (1024, 16), (1024, 32), (1024, 64), (4096, 8), (4096, 16), (4096, 32), (4096, 64)]"
+   ],
    "vmin_fit": {
     "exit": null,
     "generate_calls": 64,
@@ -2015,20 +1851,6 @@
     ]
    },
    "xval_config": {
-    "cli": {
-     "bench": {
-      "exit": "workload qwen has no bench config"
-     },
-     "cells": {
-      "stdout": "100 1\n1024 1\n4096 1\n8192 1\n32768 1\n100 8\n100 16\n100 32\n100 64\n1024 8\n1024 16\n1024 32\n1024 64\n4096 8\n4096 16\n4096 32\n4096 64\n"
-     },
-     "devices": {
-      "stdout": "2\n"
-     },
-     "tp": {
-      "stdout": "1\n"
-     }
-    },
     "grid_cells": [
      [
       100,
@@ -2115,6 +1937,12 @@
  },
  "qwen3": {
   "cleared": {
+   "dry_run": [
+    "engine.tp = 4  (model)",
+    "engine.pp = 1  (default)",
+    "engine.extra.quettaserve = {'crate': 'qwen', 'test': 'decode_loop', 'env_prefix': 'QW', 'family': 'gdn'}  (model)",
+    "grid.cells = [(1024, 1), (1024, 4), (1024, 16), (1024, 64), (4096, 1), (4096, 4), (4096, 16), (4096, 64), (8192, 1), (8192, 4), (8192, 16), (8192, 64), (16384, 1), (16384, 4), (16384, 16), (16384, 64)]"
+   ],
    "vmin_fit": {
     "exit": null,
     "generate_calls": 74,
@@ -2156,20 +1984,6 @@
     ]
    },
    "xval_config": {
-    "cli": {
-     "bench": {
-      "stdout": "qwen\ndecode_loop\nQW\ngdn\n^LOOP \n4\n"
-     },
-     "cells": {
-      "stdout": "1024 1\n1024 4\n1024 16\n1024 64\n4096 1\n4096 4\n4096 16\n4096 64\n8192 1\n8192 4\n8192 16\n8192 64\n16384 1\n16384 4\n16384 16\n16384 64\n"
-     },
-     "devices": {
-      "stdout": "4\n"
-     },
-     "tp": {
-      "stdout": "4\n"
-     }
-    },
     "grid_cells": [
      [
       1024,
@@ -2259,6 +2073,12 @@
    }
   },
   "override": {
+   "dry_run": [
+    "engine.tp = 4  (model)",
+    "engine.pp = 2  (env)",
+    "engine.extra.quettaserve = {'crate': 'qwen', 'test': 'decode_loop', 'env_prefix': 'QW', 'family': 'gdn'}  (model)",
+    "grid.cells = [(1024, 1), (1024, 4), (1024, 16), (1024, 64), (4096, 1), (4096, 4), (4096, 16), (4096, 64), (8192, 1), (8192, 4), (8192, 16), (8192, 64), (16384, 1), (16384, 4), (16384, 16), (16384, 64)]"
+   ],
    "vmin_fit": {
     "exit": null,
     "generate_calls": 68,
@@ -2300,20 +2120,6 @@
     ]
    },
    "xval_config": {
-    "cli": {
-     "bench": {
-      "stdout": "qwen\ndecode_loop\nQW\ngdn\n^LOOP \n4\n"
-     },
-     "cells": {
-      "stdout": "1024 1\n1024 4\n1024 16\n1024 64\n4096 1\n4096 4\n4096 16\n4096 64\n8192 1\n8192 4\n8192 16\n8192 64\n16384 1\n16384 4\n16384 16\n16384 64\n"
-     },
-     "devices": {
-      "stdout": "8\n"
-     },
-     "tp": {
-      "stdout": "4\n"
-     }
-    },
     "grid_cells": [
      [
       1024,

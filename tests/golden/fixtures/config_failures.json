@@ -3,15 +3,9 @@
   "message": "disagg:4p5d needs 9 GPUs, have 8",
   "type": "ValueError"
  },
- "engine": {
-  "rocm": {
-   "message": "no ROCm host provisioned; the amd engine backend is a stub",
-   "type": "RuntimeError"
-  },
-  "tgi": {
-   "message": "unknown engine 'tgi'; known: vllm, trtllm, sglang",
-   "type": "ValueError"
-  }
+ "engine_unknown": {
+  "message": "unknown engine 'tgi'; known: quettaserve, vllm",
+  "type": "ValueError"
  },
  "ep_degree": {
   "ep16_experts288": null,

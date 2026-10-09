@@ -21,6 +21,7 @@ from unittest import mock
 
 from tests.golden._harness import (
     ENV_OVERRIDE,
+    FIXTURES,
     REPO,
     check_json,
     crossval_path,
@@ -29,7 +30,9 @@ from tests.golden._harness import (
     run_grid_cli,
 )
 
-WORKLOADS = json.loads((REPO / "configs" / "workloads.json").read_text())["workloads"]
+# The merged workload records xval_config resolved, pinned in the config golden.
+WORKLOADS = {name: rec["cleared"]["xval_config"]["workload"] for name, rec in
+             json.loads((FIXTURES / "config_workloads.json").read_text()).items()}
 ABSENT = "<absent>"
 
 

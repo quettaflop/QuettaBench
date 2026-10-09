@@ -12,7 +12,7 @@ import unittest
 from quettabench.config import loader
 from quettabench.config.schema import ConfigError
 from quettabench.engines import quettaserve
-from tests.golden._harness import REPO
+from tests.golden._harness import FIXTURES, REPO
 
 RUNS = REPO / "configs" / "runs"
 
@@ -99,9 +99,9 @@ class Qwen3Gdn(unittest.TestCase):
 
 class OkPattern(unittest.TestCase):
     def test_matches_the_workload_records(self):
-        wl = json.loads((REPO / "configs" / "workloads.json").read_text())["workloads"]
+        records = json.loads((FIXTURES / "config_workloads.json").read_text())
         for name in ("deepseek", "qwen3"):
-            bench = wl[name]["bench"]
+            bench = records[name]["cleared"]["xval_config"]["workload"]["bench"]
             self.assertEqual(quettaserve.OK_BY_TEST[bench["test"]], bench["ok"])
 
 
