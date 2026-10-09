@@ -17,6 +17,7 @@ from quettabench.config.xval_config import collective as _xval_collective, workl
 from quettabench.config.xval_config import grids as _xval_grids, step_points as _xval_step_points
 from quettabench.config.xval_config import link_profile as _xval_link_profile
 from quettabench.config.xval_config import run_params as _xval_run_params
+from quettabench.metrics.step_fit import fit, ms_at_eval
 CFG = {
     "workloads": _xval_workloads(),
     "grids": _xval_grids(),
@@ -63,19 +64,6 @@ def corpus_prompt_ids(tokenizer, n, slot):
         out.extend(ids[start:start + (n - len(out))])
         start = 0
     return out
-
-
-def fit(xs, ys):
-    n = len(xs)
-    mx, my = sum(xs) / n, sum(ys) / n
-    sxx = sum((x - mx) ** 2 for x in xs)
-    sxy = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
-    slope = sxy / sxx
-    inter = my - slope * mx
-    ss_res = sum((y - (inter + slope * x)) ** 2 for x, y in zip(xs, ys))
-    ss_tot = sum((y - my) ** 2 for y in ys)
-    r2 = 1 - ss_res / ss_tot if ss_tot else 0.0
-    return slope, inter, r2
 
 
 def main():
@@ -266,12 +254,9 @@ def main():
         kv_gib = ctx * bs * kv_b / (1 << 30)
         attn = kv_gib / (kv_gib + weights_gib)
         ms_slope = slope * 1e3
-        # Normalize the slope from the fit centroid (ctx+mean_steps) to the engine
-        # window (ctx+eval_pos). Only the KV-bound share (attn) of the step moves
-        # with KV length, so the shift is attn*(eval_pos-mean_steps)/(ctx+mean_steps):
-        # a sub-2% correction that vanishes as ctx grows. ms_per_step stays the raw
-        # slope for back-compat; ms_at_eval is the matched-KV number table.py pairs.
-        ms_eval = ms_slope * (1 + attn * (eval_pos - mean_steps) / (ctx + mean_steps))
+        # ms_per_step stays the raw slope for back-compat; ms_at_eval is the
+        # matched-KV number table.py pairs (see step_fit.ms_at_eval).
+        ms_eval = ms_at_eval(ms_slope, attn, eval_pos, mean_steps, ctx)
         print(
             f"RESULT mode={mode} tp={tp} kv={kv_dtype or dtype} ctx={ctx} bs={bs} "
             f"ms_per_step={ms_slope:.3f} ms_at_eval={ms_eval:.3f} eval_pos={eval_pos} "
