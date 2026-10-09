@@ -8,8 +8,10 @@ later turns stays in modes/serve.py.
 import asyncio
 import sys
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 
 from .live import RealTrace
 
@@ -31,9 +33,15 @@ class TurnPacing:
 
 class SessionTrace(RealTrace):
     """A RealTrace whose requests are turns: sessions() groups them by
-    session_id in first-appearance order, each ordered by turn."""
+    session_id in first-appearance order, each ordered by turn.
+
+    replies maps a session id to its assistant placeholder dicts: serve
+    writes each turn's engine reply into them, and later turns' messages
+    hold the same dicts. Empty for a trace that keeps its recorded replies.
+    """
 
     pacing = TurnPacing()
+    replies: Mapping = MappingProxyType({})
 
     def sessions(self):
         groups = {}

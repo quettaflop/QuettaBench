@@ -7,7 +7,7 @@ on it.
 
 import hashlib
 from abc import ABC, abstractmethod
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 
 VOCAB = 100_000  # safe id ceiling for the checkpoints under test
 
@@ -34,10 +34,20 @@ class Request:
     seed: int | None = None
     image_tokens: int | None = None
     source: str | None = None
+    # A workload profile's chat request: its messages and metadata objects,
+    # shared with the dataset so a later turn sees replies written into them.
+    # Not part of the replay schema, never hashed.
+    messages: list | None = None
+    metadata: dict | None = None
+
+    @property
+    def max_tokens(self):
+        return self.output_length
 
     def to_dict(self):
-        """The dict synth_bench.load_trace returns: set fields only."""
-        return {k: v for k, v in asdict(self).items() if v is not None}
+        """The dict synth_bench.load_trace returns: set replay fields only."""
+        plain = replace(self, messages=None, metadata=None)
+        return {k: v for k, v in asdict(plain).items() if v is not None}
 
 
 def request_digest(r):
@@ -90,3 +100,8 @@ class Trace(ABC):
 
     def workload_hash(self) -> str:
         return workload_hash(self.requests())
+
+    def warmup_requests(self, n) -> list[Request]:
+        """n requests to warm the engine with: the trace's own, cycled."""
+        reqs = self.requests()
+        return [reqs[i % len(reqs)] for i in range(n)] if reqs else []
