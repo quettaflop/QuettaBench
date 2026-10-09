@@ -38,7 +38,7 @@ from ..metrics.core import (
     transient_gate,
     usage_gate,
 )
-from ..engines.server_control import PrefixCacheResetError, reset_prefix_cache
+from ..engines.drivers import PrefixCacheResetError
 from ..workloads.profiles import get_profile
 from ..workloads.dataset import make_dataset
 from ..workloads.sessions import (
@@ -253,7 +253,7 @@ async def run_benchmark(
         # Reset AFTER warmup so the run starts from a genuinely cold cache
         # regardless of what warmup left behind.
         if reset_prefix_cache_first:
-            status = await reset_prefix_cache(session, url, backend_name, api_key, timeout)
+            status = await backend.reset(session, url, api_key, timeout)
             print(f"Prefix cache: {status}")
 
         # Schedule requests
@@ -463,7 +463,7 @@ async def run_multi_turn_benchmark(
         # Reset AFTER warmup so the run starts cold. Intra-run prefix reuse --
         # the thing multi-turn profiles exist to measure -- is unaffected.
         if reset_prefix_cache_first:
-            status = await reset_prefix_cache(session_http, url, backend_name, api_key, timeout)
+            status = await backend.reset(session_http, url, api_key, timeout)
             print(f"Prefix cache: {status}")
 
         semaphore = asyncio.Semaphore(concurrency)

@@ -33,6 +33,7 @@ from quettabench.engines.base import (
     UnsupportedField,
     register,
 )
+from quettabench.engines.drivers import HttpDriver
 
 SERVER_CMD = ("-m", "vllm.entrypoints.openai.api_server")
 SERVER_FLAGS = ("--enable-chunked-prefill", "--trust-remote-code")
@@ -148,7 +149,7 @@ class VllmAdapter(EngineAdapter):
         )
 
     def driver(self, spec, handle):
-        raise NotImplementedError("vllm drivers land with engines/drivers.py")
+        return HttpDriver("completions")
 
 
 ADAPTER = register(VllmAdapter())

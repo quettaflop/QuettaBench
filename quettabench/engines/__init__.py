@@ -1,35 +1,29 @@
-"""
-Backend registry. Maps backend name → module exposing send_request().
+"""Engine adapters, plus serve.py's --backend names mapped onto vllm's HTTP client.
 
-Supported backends:
-  openai       — any OpenAI-compatible /v1/chat/completions (vLLM, SGLang, lmdeploy)
-  vllm         — alias for openai
-  sglang       — alias for openai
-  vllm-completions — /v1/completions, takes token id or raw text prompts
+sglang resolves to the same client as vllm: the request path is identical,
+which is what the old backend registry did too.
 """
 
-from . import openai_chat
-from . import openai_completions
+from quettabench.engines import (  # noqa: F401  (registers the adapters)
+    quettaserve,
+    vllm,
+)
+from quettabench.engines.drivers import HttpDriver
 
-_BACKENDS = {
-    "openai": openai_chat,
-    "vllm": openai_chat,
-    "sglang": openai_chat,
-    "vllm-completions": openai_completions,
+# --backend name -> (adapter, HTTP endpoint)
+BACKENDS = {
+    "openai": ("vllm", "chat"),
+    "vllm": ("vllm", "chat"),
+    "sglang": ("vllm", "chat"),
+    "vllm-completions": ("vllm", "completions"),
 }
 
-SUPPORTED_BACKENDS = list(_BACKENDS.keys())
+SUPPORTED_BACKENDS = list(BACKENDS)
 
 
 def get_backend(name: str):
-    """
-    Return the backend module for the given name.
-
-    Usage:
-        backend = get_backend("vllm")
-        result = await backend.send_request(session, url, model, messages, max_tokens)
-    """
+    """HttpDriver for a --backend name; its send_request streams one request."""
     name = name.lower()
-    if name not in _BACKENDS:
+    if name not in BACKENDS:
         raise ValueError(f"Unknown backend '{name}'. Choose from: {SUPPORTED_BACKENDS}")
-    return _BACKENDS[name]
+    return HttpDriver(BACKENDS[name][1], name)

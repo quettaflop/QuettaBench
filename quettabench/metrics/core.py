@@ -44,6 +44,9 @@ class RequestResult:
     # Captured only when asked; used to splice the engine reply into later turns.
     # Not written to the result JSON.
     generated_text: Optional[str] = None
+    # Which first-token rule timed this request: HttpDriver's chat endpoint
+    # ("first_payload_chunk") or completions ("first_nonempty_text").
+    ttft_rule: Optional[str] = None
 
     # Client-side request shape/timing. These do not replace TTFT/TPOT/E2EL;
     # they explain scheduler pressure and workload shape for later predictors.
