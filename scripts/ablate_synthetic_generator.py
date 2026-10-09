@@ -22,8 +22,8 @@ ROOT = HERE.parent
 DIST = ROOT / "data" / "distributions"
 sys.path.insert(0, str(ROOT))
 
-from quettabench.workloads.distributional import DistributionalSampler  # noqa: E402
-from quettabench.workloads.trace_distributions import load_trace_distribution  # noqa: E402
+from analysis.synthetic.distributional import DistributionalSampler  # noqa: E402
+from analysis.synthetic.trace_distributions import load_trace_distribution  # noqa: E402
 
 # synthetic distribution  ->  realized file stem
 PAIRS = {

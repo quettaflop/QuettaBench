@@ -822,8 +822,10 @@ class DistributionalMultiTurnDataset(BaseDataset):
             if self._sessions is not None:
                 return
 
-            from .distributional import DistributionalSampler
-            from .trace_distributions import load_trace_distribution
+            # Imported here, not at the top: analysis.synthetic.distributional
+            # imports this module for BenchmarkRequest.
+            from analysis.synthetic.distributional import DistributionalSampler
+            from analysis.synthetic.trace_distributions import load_trace_distribution
 
             distribution = load_trace_distribution(self.filepath)
             sampler = DistributionalSampler(

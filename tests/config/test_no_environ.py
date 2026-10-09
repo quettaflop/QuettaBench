@@ -23,9 +23,6 @@ ALLOWLIST = {
     "quettabench/modes/vmin_fit.py",
     # removed in commit 6: serve takes a Config (ENABLE_EP -> engine.ep)
     "quettabench/modes/serve.py",
-    # removed in commit 4: the workload base class takes its knobs from Config.
-    # DISTRIBUTIONAL_* vars are not in env_map yet: no Config field for them.
-    "quettabench/workloads/distributional.py",
     # removed in Phase 3: crossval.py reads results files; cache.py is deleted
     "quettabench/crossval/cache.py",
     # removed in Phase 3: table logic moves to crossval.py and reads Config

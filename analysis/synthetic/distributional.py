@@ -14,7 +14,7 @@ import hashlib
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-from .dataset import BenchmarkRequest
+from quettabench.workloads.dataset import BenchmarkRequest
 from .trace_distributions import TraceDistribution, TraceTurnSample
 
 

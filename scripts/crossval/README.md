@@ -20,7 +20,7 @@ block or as `XVAL_*` env; see AGENTS.md.
 Add an agentic serving replay (with the workload-identity gate) to any run:
 
 ```bash
-synth_bench.py gen --profile deep_research --n 200 --out t.jsonl
+analysis/synthetic/agentic.py gen --profile deep_research --n 200 --out t.jsonl
 XVAL_SERVE_TRACE=t.jsonl ./oneshot.sh qwen3   # grid + baseline + table + SERVE/WORKLOADSUM
 ```
 

@@ -933,9 +933,10 @@ class TableParity(unittest.TestCase):
         import random
         sys.path.insert(0, str(REPO))
         try:
+            from analysis.synthetic import agentic
             from quettabench.workloads import synth_bench
             importlib.reload(synth_bench)
-            reqs = synth_bench.agentic_requests("deep_research", 24, seed=5)
+            reqs = agentic.agentic_requests("deep_research", 24, seed=5)
             h = synth_bench.workload_hash(reqs)
             shuffled = list(reqs)
             random.Random(7).shuffle(shuffled)
@@ -983,7 +984,7 @@ class TableParity(unittest.TestCase):
         # seed; a different seed or arrival time changes the workload hash.
         def gen(seed):
             fd, p = tempfile.mkstemp(suffix=".jsonl"); os.close(fd)
-            subprocess.run([sys.executable, str(QB / "workloads" / "synth_bench.py"), "gen",
+            subprocess.run([sys.executable, str(REPO / "analysis" / "synthetic" / "agentic.py"), "gen",
                             "--profile", "terminal_bench", "--n", "8", "--seed", str(seed),
                             "--out", p], check=True, capture_output=True)
             return p
@@ -1016,15 +1017,14 @@ class TableParity(unittest.TestCase):
         # distinct burst and gap specs, and a distinct realized arrival spread.
         sys.path.insert(0, str(REPO))
         try:
-            from quettabench.workloads import synth_bench
-            importlib.reload(synth_bench)
-            specs = synth_bench.AGENTIC
+            from analysis.synthetic import agentic
+            specs = agentic.AGENTIC
             self.assertGreater(len({s["burst"] for s in specs.values()}), 1)
             self.assertGreater(len({s["gap"] for s in specs.values()}), 1)
             def span(rs):
                 return max(r["arrival_ts"] for r in rs) - min(r["arrival_ts"] for r in rs)
-            dr = synth_bench.agentic_requests("deep_research", 40, seed=1)
-            tb = synth_bench.agentic_requests("terminal_bench", 40, seed=1)
+            dr = agentic.agentic_requests("deep_research", 40, seed=1)
+            tb = agentic.agentic_requests("terminal_bench", 40, seed=1)
             self.assertGreater(span(dr), span(tb),
                                "deep_research must arrive over a longer span than terminal_bench")
         finally:
@@ -1086,11 +1086,12 @@ class TableParity(unittest.TestCase):
         # in-range, and round-trips through load_trace.
         sys.path.insert(0, str(REPO))
         try:
+            from analysis.synthetic import agentic
             from quettabench.workloads import synth_bench
             importlib.reload(synth_bench)
-            for name, spec in synth_bench.AGENTIC.items():
-                a = synth_bench.agentic_requests(name, 40, seed=3)
-                b = synth_bench.agentic_requests(name, 40, seed=3)
+            for name, spec in agentic.AGENTIC.items():
+                a = agentic.agentic_requests(name, 40, seed=3)
+                b = agentic.agentic_requests(name, 40, seed=3)
                 self.assertEqual([r["prompt_token_ids"] for r in a],
                                  [r["prompt_token_ids"] for r in b], f"{name} not deterministic")
                 self.assertTrue(any(r["turn"] > 0 for r in a), f"{name} has no multi-turn session")

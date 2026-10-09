@@ -8,10 +8,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from quettabench.workloads.distributional import DistributionalSampler
+from analysis.synthetic.distributional import DistributionalSampler
 from quettabench.workloads.dataset import DistributionalMultiTurnDataset, make_dataset
 from quettabench.workloads.profiles import WorkloadProfile
-from quettabench.workloads.trace_distributions import (
+from analysis.synthetic.trace_distributions import (
     TraceDistributionError,
     parse_trace_distribution,
 )
@@ -351,7 +351,7 @@ class DistributionalSamplerTests(unittest.TestCase):
     def test_stable_text_seed_ignores_python_hash_seed(self):
         script = textwrap.dedent(
             """
-            from quettabench.workloads.distributional import _stable_text_seed
+            from analysis.synthetic.distributional import _stable_text_seed
             print(_stable_text_seed("s0_t0_user_0"))
             """
         )

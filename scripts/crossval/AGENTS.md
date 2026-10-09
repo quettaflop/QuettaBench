@@ -92,15 +92,15 @@ cache.py records the mode; table.py prints it in the baseline header.
 
 ## Trace workloads
 
-Agentic profiles (`synth_bench.py` `AGENTIC`): terminal_bench, deep_research,
+Agentic profiles (`analysis/synthetic/agentic.py` `AGENTIC`): terminal_bench, deep_research,
 deep_search, osworld (carries image_tokens), rl_cf. Each emits multi-turn
 sessions with a carried prefix and context growing per turn (session_id + turn
 fields). The token/turn spans are calibratable synthetic defaults, not measured
 captures; real captures replace them via load_trace.
 
-One JSONL schema (see synth_bench.py): `prompt_token_ids`, or `prompt_len`, or
-Mooncake `input_length`/`output_length`/`timestamp` (ms -> `arrival_ts`
-seconds); optional `session_id` and `output_token_ids` (the real assistant
+One JSONL schema (see quettabench/workloads/live.py): `prompt_token_ids`, or
+`prompt_len`, or Mooncake `input_length`/`output_length`/`timestamp` (ms ->
+`arrival_ts` seconds; `hash_ids` expand to shared 512-token blocks); optional `session_id` and `output_token_ids` (the real assistant
 tokens, kept for SPECSUM acceptance). `trace_tokenize.py <agent-bench.jsonl>
 --model <dir>` turns a real agent-bench capture (per-turn prompt_text plus
 reasoning_text/content_text) into this shape with the model's tokenizer. Static grid (`PROMPT_MODE=trace`) ignores
@@ -248,7 +248,8 @@ ctx+230 vs the engine median near ctx+50 (~17% more KV at the 1024 row, ~1% at
 | `vmin_fit.py` | vLLM decode slope fit per cell |
 | `cache.py` | packs a raw run into the baseline json |
 | `table.py` | the comparison at matched (ctx, bs, tp) |
-| `synth_bench.py` | trace generator/loader (uniform, swebench, Mooncake) |
+| `synth_bench.py` | synthetic streams (uniform, swebench), trace hash CLI |
+| `live.py` | the one trace reader (replay JSONL, Mooncake) |
 | `trace_tokenize.py` | agent-bench capture -> tokenized replay trace |
 | `trace_serve.py` | open-loop serving replay (vLLM) |
 | `greedy_agreement.py` / `logit_agreement.py` | correctness lanes |

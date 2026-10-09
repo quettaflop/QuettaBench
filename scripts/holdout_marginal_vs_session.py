@@ -37,8 +37,8 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(HERE))
 
 from build_trace_distributions import build_trajectory_distribution  # noqa: E402
-from quettabench.workloads.distributional import DistributionalSampler  # noqa: E402
-from quettabench.workloads.trace_distributions import parse_trace_distribution  # noqa: E402
+from analysis.synthetic.distributional import DistributionalSampler  # noqa: E402
+from analysis.synthetic.trace_distributions import parse_trace_distribution  # noqa: E402
 
 DATA = ROOT / "data"
 DATASETS = [
