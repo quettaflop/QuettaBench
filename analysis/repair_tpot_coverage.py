@@ -19,8 +19,8 @@ fields are recomputed from the repaired rows, and a top-level
 no stamp. A per-directory _tpot_repair.json manifest records counts.
 
 Usage:
-    python3 scripts/repair_tpot_coverage.py DIR [DIR ...]          # dry run
-    python3 scripts/repair_tpot_coverage.py --apply DIR [DIR ...]
+    python3 analysis/repair_tpot_coverage.py DIR [DIR ...]          # dry run
+    python3 analysis/repair_tpot_coverage.py --apply DIR [DIR ...]
 """
 
 import argparse

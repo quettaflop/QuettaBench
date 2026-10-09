@@ -34,7 +34,7 @@ CUDA_VISIBLE_DEVICES=0 ./scripts/launch_server.sh single-turn
 ```
 
 `benchmark.sh` holds the canonical run configurations (edit its CONFIG section
-per server). `scripts/build_trace_distributions.py` rebuilds the profile
+per server). `analysis/synthetic/build_trace_distributions.py` rebuilds the profile
 distribution JSONs in `data/distributions/` from the raw trajectory datasets.
 
 ## Documentation

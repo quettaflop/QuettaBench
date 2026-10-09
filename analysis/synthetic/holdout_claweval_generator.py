@@ -3,8 +3,8 @@
 
 Fit on train sessions, score on held-out test sessions.
 
-    python scripts/holdout_claweval_generator.py
-    python scripts/holdout_claweval_generator.py --splits 5 --seed 7
+    python analysis/synthetic/holdout_claweval_generator.py
+    python analysis/synthetic/holdout_claweval_generator.py --splits 5 --seed 7
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-ROOT = HERE.parent
+ROOT = HERE.parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(HERE))
 

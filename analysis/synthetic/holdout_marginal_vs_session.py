@@ -17,8 +17,8 @@ Reporting the same quantity for both variants isolates the path, since the fit
 data, seed, and estimator are identical.
 
 Usage:
-    python scripts/holdout_marginal_vs_session.py --traj data/swebench_trajectories.jsonl
-    python scripts/holdout_marginal_vs_session.py --all
+    python analysis/synthetic/holdout_marginal_vs_session.py --traj data/swebench_trajectories.jsonl
+    python analysis/synthetic/holdout_marginal_vs_session.py --all
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-ROOT = HERE.parent
+ROOT = HERE.parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(HERE))
 

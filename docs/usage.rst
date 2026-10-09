@@ -62,17 +62,17 @@ Synthetic trace workflow
 .. code-block:: bash
 
    # sample a synthetic trace like the real one
-   python scripts/synthesize_mooncake_trace.py \
+   python analysis/synthetic/synthesize_mooncake_trace.py \
        --trace data/mooncake/conversation_trace.jsonl \
        --out data/mooncake/synthetic.jsonl --seed 7
 
    # audit a replay: server reported token counts must equal the trace
-   python scripts/audit_live_replay.py \
+   python analysis/audit_live_replay.py \
        --result results/replay.json \
        --trace data/mooncake/conversation_trace.jsonl
 
    # gate two replays against each other
-   python scripts/score_replay_records.py \
+   python analysis/score_replay_records.py \
        --a results/replay.json --b results/synthetic_replay.json \
        --trace-a data/mooncake/conversation_trace.jsonl \
        --trace-b data/mooncake/synthetic.jsonl

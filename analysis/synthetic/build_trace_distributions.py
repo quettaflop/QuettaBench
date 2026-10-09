@@ -22,7 +22,7 @@ from typing import Any, Iterable
 
 
 HERE = Path(__file__).resolve().parent
-ROOT = HERE.parent
+ROOT = HERE.parent.parent
 DATA_DIR = ROOT / "data"
 DEFAULT_OUT_DIR = DATA_DIR / "distributions"
 

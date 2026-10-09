@@ -5,7 +5,7 @@ Legacy profiles filter entire sessions by max-turn ISL: if any turn exceeds
 distribution JSON so distributional + legacy draw from the same population.
 
 Usage:
-  python scripts/filter_distribution.py \\
+  python analysis/synthetic/filter_distribution.py \\
       data/distributions/swebench_multiturn.json \\
       --isl-limit 32768 \\
       --out data/distributions/swebench_multiturn_filtered.json

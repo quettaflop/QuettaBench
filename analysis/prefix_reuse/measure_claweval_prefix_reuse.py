@@ -24,7 +24,7 @@ approximation used for swebench/terminalbench/osworld, so the numbers are
 comparable across datasets.
 
 Usage:
-    python scripts/measure_claweval_prefix_reuse.py --traces ~/traces/<run-dir>
+    python analysis/prefix_reuse/measure_claweval_prefix_reuse.py --traces ~/traces/<run-dir>
 """
 
 from __future__ import annotations

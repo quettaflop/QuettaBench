@@ -68,5 +68,5 @@ Reproduce
 ---------
 
 Replay with ``--profile mooncake-trace --backend vllm-completions``,
-audit with ``scripts/audit_live_replay.py``, compare with
-``scripts/score_replay_records.py``. Commands are in :doc:`usage`.
+audit with ``analysis/audit_live_replay.py``, compare with
+``analysis/score_replay_records.py``. Commands are in :doc:`usage`.

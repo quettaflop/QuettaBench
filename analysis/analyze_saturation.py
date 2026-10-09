@@ -22,8 +22,8 @@ A ladder that never flattens gives a LOWER BOUND on mu, not mu. That case is
 reported explicitly rather than fitting a plateau that was never observed.
 
 Usage:
-    python3 scripts/analyze_saturation.py results/            # a sweep dir
-    python3 scripts/analyze_saturation.py results/ --json     # machine-readable
+    python3 analysis/analyze_saturation.py results/            # a sweep dir
+    python3 analysis/analyze_saturation.py results/ --json     # machine-readable
 """
 from __future__ import annotations
 

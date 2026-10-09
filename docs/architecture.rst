@@ -56,12 +56,12 @@ Scripts
 
 Standalone tools, run from the repo root:
 
-``scripts/synthesize_mooncake_trace.py``
+``analysis/synthetic/synthesize_mooncake_trace.py``
     Samples a synthetic Mooncake style trace from a real one.
 
-``scripts/audit_live_replay.py``
+``analysis/audit_live_replay.py``
     Audits a replay result against its source trace with the server's
     reported token counts.
 
-``scripts/score_replay_records.py``
+``analysis/score_replay_records.py``
     Compares two replay results and applies the acceptance gates.

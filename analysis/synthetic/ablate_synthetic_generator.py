@@ -5,8 +5,8 @@ Restore the pools from
 s3://agent-bench/archive/2026-08-26-realized-session-distributions/
 into data/distributions/ first.
 
-    python scripts/ablate_synthetic_generator.py
-    python scripts/ablate_synthetic_generator.py --hw h100 --benchmark swebench
+    python analysis/synthetic/ablate_synthetic_generator.py
+    python analysis/synthetic/ablate_synthetic_generator.py --hw h100 --benchmark swebench
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-ROOT = HERE.parent
+ROOT = HERE.parent.parent
 DIST = ROOT / "data" / "distributions"
 sys.path.insert(0, str(ROOT))
 
