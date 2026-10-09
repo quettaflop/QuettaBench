@@ -89,7 +89,7 @@ class CrossvalScripts(unittest.TestCase):
     def test_pp_wired_in_grid_and_device_count(self):
         # A grid run passes pipeline_parallel_size (from XVAL_PP or the workload's pp),
         # and the device count the orchestrator provisions is tp * pp.
-        src = (QB / "modes" / "legacy_cli.py").read_text() + (QB / "engines" / "vllm.py").read_text()  # kwargs built there
+        src = (QB / "config" / "env_map.py").read_text() + (QB / "engines" / "vllm.py").read_text()
         self.assertIn("pipeline_parallel_size", src)
         self.assertIn("XVAL_PP", src)
         # cache.py parses META one key per line
@@ -431,7 +431,7 @@ class CrossvalScripts(unittest.TestCase):
 
     def test_grid_run_supports_moe_bringup(self):
         # expert parallel on vLLM, plus an opt-in to run before certified.
-        src = (QB / "modes" / "legacy_cli.py").read_text() + (QB / "engines" / "vllm.py").read_text()  # kwargs built there
+        src = (QB / "cli.py").read_text() + (QB / "engines" / "vllm.py").read_text()
         self.assertIn("enable_expert_parallel", src)
         self.assertIn("allow-unverified", src)
 
@@ -824,11 +824,11 @@ class TableParity(unittest.TestCase):
         # clone must reproduce the engine's synthetic prompt so both sides
         # route alike; all three regimes must be selectable.
         self.assertIn("(i * 137 + 11) % 100_000", (QB / "workloads" / "grid.py").read_text())
-        src = (QB / "workloads" / "grid.py").read_text() + (QB / "modes" / "legacy_cli.py").read_text()
+        src = (QB / "workloads" / "grid.py").read_text() + (QB / "config" / "schema.py").read_text()
         self.assertIn("prompt_mode", src)
         for mode in ('"clone"', '"corpus"', '"distinct"'):
             self.assertIn(mode, src)
-        self.assertIn("dump_tokens", src.replace("-", "_"))
+        self.assertIn('returns: str = "none"', src)  # text: the routing-parity token dump
 
     def test_cache_records_prompt_mode(self):
         # A baseline without its routing regime is not comparable later.
@@ -1112,7 +1112,7 @@ class XvalConfigWorkloads(unittest.TestCase):
                 self.assertIn(grid, gs, f"JSON-only grid {grid!r} missing from merged grids()")
 
     def test_deepseek_merged_record_has_grid_keys(self):
-        # legacy_cli.grid_config reads dtype, weights_gib, maxlen, kv_bytes from the workload.
+        # the loader reads dtype, weights_gib, maxlen, kv_bytes from the model yaml.
         xc = self._load_xval_config()
         ds = xc.workloads()["deepseek"]
         for key in ("dtype", "weights_gib", "maxlen", "kv_bytes"):

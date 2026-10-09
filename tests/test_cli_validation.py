@@ -1,4 +1,5 @@
-"""CLI validation in runner's __main__ block, plus path/bounds helpers."""
+"""qbench run refuses out-of-range values before anything starts, plus the
+path and bounds helpers the old runner tests covered."""
 
 import subprocess
 import sys
@@ -10,42 +11,42 @@ from quettabench.workloads.dataset import _uniform_len_bounds
 
 ROOT = Path(__file__).resolve().parent.parent
 
-BASE = [
-    sys.executable, "-m", "quettabench.modes.serve",
-    "--url", "http://127.0.0.1:1", "--model", "m", "--tensor-parallel-size", "1",
-]
+BASE = [sys.executable, "-m", "quettabench.cli", "run", "configs/runs/llama.yaml", "--dry-run",
+        "--set", "engine.model=m", "--set", "mode.grid=null"]
 
 
-def run_cli(*extra: str) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        BASE + list(extra), cwd=ROOT, capture_output=True, text=True, timeout=30
-    )
+def run_cli(*sets: str) -> subprocess.CompletedProcess:
+    argv = [a for s in sets for a in ("--set", s)]
+    return subprocess.run(BASE + argv, cwd=ROOT, capture_output=True, text=True, timeout=30)
 
 
 class TestFlagValidation(unittest.TestCase):
-    def assert_rejected(self, args, needle):
-        proc = run_cli(*args)
+    def assert_rejected(self, value, needle):
+        proc = run_cli(value)
         self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
-        self.assertIn(needle, proc.stdout)
+        self.assertIn(needle, proc.stderr)
+
+    def test_accepted(self):
+        self.assertEqual(run_cli().returncode, 0)
 
     def test_concurrency_zero_rejected(self):
-        self.assert_rejected(["--concurrency", "0"], "--concurrency must be >= 1")
+        self.assert_rejected("mode.concurrency=0", "mode.concurrency must be in [1, inf], got 0")
 
     def test_concurrency_negative_rejected(self):
-        self.assert_rejected(["--concurrency", "-2"], "--concurrency must be >= 1")
+        self.assert_rejected("mode.concurrency=-2", "mode.concurrency must be in [1, inf]")
 
     def test_num_requests_zero_rejected(self):
-        self.assert_rejected(["--num-requests", "0"], "--num-requests must be >= 1")
+        self.assert_rejected("workload.num_requests=0", "workload.num_requests must be in [1, inf]")
 
     def test_warmup_negative_rejected(self):
-        self.assert_rejected(["--warmup", "-1"], "--warmup must be >= 0")
+        self.assert_rejected("mode.warmup=-1", "mode.warmup must be in [0, inf]")
 
-    def test_max_turn_index_negative_rejected(self):
-        self.assert_rejected(["--max-turn-index", "-1"], "--max-turn-index must be >= 0")
+    def test_turn_waits_negative_rejected(self):
+        self.assert_rejected("workload.tool_wait_ms=-1", "workload.tool_wait_ms must be in [0.0, inf]")
 
     def test_min_success_rate_out_of_range_rejected(self):
-        self.assert_rejected(["--min-success-rate", "1.5"],
-                             "--min-success-rate must be in [0, 1]")
+        self.assert_rejected("mode.min_success_rate=1.5",
+                             "mode.min_success_rate must be in [0.0, 1.0]")
 
 
 class TestPerTurnOutputPath(unittest.TestCase):

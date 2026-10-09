@@ -17,8 +17,7 @@ writer as it finishes. Then the gates from metrics.core (exit 1 on abort)
 and the workload identity gate: the served requests must hash to
 trace.workload_hash(), else the run is "failed" and exits 3.
 
-main(argv) is the old runner CLI (python -m quettabench.modes.serve ...),
-translated by modes/legacy_cli.py, --grid included; commit 7 removes it.
+quettabench/runner.py builds the trace, driver and writer and calls run.
 """
 
 import asyncio
@@ -44,26 +43,12 @@ from ..metrics.core import (
     transient_gate,
     usage_gate,
 )
-from ..metrics.results import (
-    goodprobe_line,
-    legacy_grid_lines,
-    print_legacy_lines,
-    write_legacy_per_turn,
-    write_legacy_results,
-)
+from ..metrics.results import goodprobe_line, legacy_grid_lines, print_legacy_lines
 from ..workloads.arrival import offered_rate, parse_arrival, rebase_arrivals
 from ..workloads.base import workload_hash
 from ..workloads.sessions import SessionTrace
 from ._grid import run_grid
 from ._sessions_dispatch import RunAborted, SessionDispatcher, no_limit
-from .legacy_cli import (
-    apply_mode,
-    check_args,
-    get_args,
-    grid_translate,
-    list_profiles,
-    translate,
-)
 
 WORKLOAD_SCHEMA_VERSION = "distributional-synthetic-v1"
 TRACE_REQUEST_ID_PREFIX = "agenticbench"
@@ -428,26 +413,3 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
         summary.reason = f"{core.failed_requests} of {core.num_requests} requests failed"
     writer.finish(summary.to_dict(), status=summary.status, reason=summary.reason)
     return summary
-
-
-def main(argv=None) -> None:
-    """The old runner CLI: parse, check, translate to Config/Trace/Driver, run, save."""
-    args = get_args(argv)
-    if args.grid is not None:
-        cfg, trace, driver, writer = grid_translate(args)
-        run(trace, driver, cfg.mode, writer)
-        return
-    if args.list_profiles:
-        list_profiles(args)
-        sys.exit(0)
-    check_args(args)
-    apply_mode(args)
-    config, cfg, trace, driver, writer = translate(args)
-    summary = run(trace, driver, cfg.mode, writer, cfg.workload)
-    write_legacy_results(summary.core, summary.rows, args.output, config)
-    if summary.turns:
-        write_legacy_per_turn(summary.turns, args.output, config)
-
-
-if __name__ == "__main__":
-    main()

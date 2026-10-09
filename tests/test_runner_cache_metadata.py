@@ -1,8 +1,8 @@
-import unittest
 import contextlib
 import io
 import json
 import tempfile
+import unittest
 from pathlib import Path
 
 from quettabench.metrics.core import (
@@ -14,13 +14,9 @@ from quettabench.metrics.core import (
 )
 from quettabench.metrics.results import BENCHMARK_SCHEMA_VERSION
 from quettabench.metrics.results import write_legacy_results as save_results
-from quettabench.modes.legacy_cli import (
-    _resolve_cache_state,
-    _resolve_tri_state,
-    resolve_multi_turn_num_sessions,
-)
 from quettabench.workloads.dataset import BenchmarkRequest
 from quettabench.workloads.profiles import get_profile
+from quettabench.workloads.sessions import resolve_multi_turn_num_sessions
 
 
 class RunnerCacheMetadataTests(unittest.TestCase):
@@ -287,18 +283,6 @@ class RunnerCacheMetadataTests(unittest.TestCase):
         self.assertEqual(row["block_aligned_new_prefill_tokens"], 90)
         self.assertEqual(row["request_metadata"]["planned_new_prefill_tokens"], 75)
         self.assertAlmostEqual(row["client_queue_wait_ms"], 300.0)
-
-    def test_cache_state_metadata_resolution(self):
-        chat = get_profile("chat-multiturn")
-        random = get_profile("random-1k")
-
-        self.assertEqual(_resolve_cache_state("auto", chat), ("expected_on", "profile_default"))
-        self.assertEqual(_resolve_cache_state("auto", random), ("expected_off", "profile_default"))
-        self.assertEqual(_resolve_cache_state("off", chat), ("off", "cli"))
-
-    def test_tri_state_metadata_resolution(self):
-        self.assertEqual(_resolve_tri_state("auto"), ("unknown", "not_reported"))
-        self.assertEqual(_resolve_tri_state("on"), ("on", "cli"))
 
     def test_synthetic_multiturn_sessions_floor_at_concurrency(self):
         profile = get_profile("swebench-multiturn-synth")

@@ -35,6 +35,11 @@ RUN_KEYS = ("model", "engine", "workload", "mode", "hardware", "matrix")
 HARDWARE_FILE_KEYS = ("world", "timing_steps", "max_seq_headroom", "collective", "provision")
 GRIDS_KEYS = ("grids", "step_points")
 RATE_ARRIVALS = ("poisson", "ramp", "burst")
+# path -> (lowest, highest) allowed; None is no bound
+RANGES = {"mode.concurrency": (1, None), "workload.num_requests": (1, None),
+          "mode.warmup": (0, None), "mode.discard_first": (0, None),
+          "mode.min_success_rate": (0.0, 1.0), "workload.tool_wait_ms": (0.0, None),
+          "workload.human_wait_ms": (0.0, None)}
 
 
 def _read_yaml(path):
@@ -195,6 +200,10 @@ def _validate(values, origins, allow_unverified, where):
         if values[path] not in allowed:
             raise ConfigError(f"{where}: unknown {path.rsplit('.', 1)[-1]} {values[path]!r}; "
                               f"use {_one_of(allowed)}")
+    for path, (low, high) in RANGES.items():
+        if (low is not None and values[path] < low) or (high is not None and values[path] > high):
+            raise ConfigError(f"{where}: {path} must be in [{low}, {high or 'inf'}], "
+                              f"got {values[path]!r}")
     parse_serving_style(values["engine.serving_style"])
     # num_experts None (no MoE fact recorded) skips the check.
     if values["engine.ep"] and values["engine.num_experts"] is not None:

@@ -31,7 +31,7 @@ ENV_MAP = {
     "VMIN_ATTEMPTS": ("mode.vmin_attempts", int, "vmin_fit.py:256"),
     "PROMPT_MODE": ("workload.prompt_mode", str, "vmin_fit.py:130"),
     "GPU_UTIL": ("engine.gpu_util", float, "vmin_fit.py:127"),
-    "ENABLE_EP": ("engine.ep", _truthy, "serve.py:1323, now modes/legacy_cli.py"),
+    "ENABLE_EP": ("engine.ep", _truthy, "serve.py:1323"),
     "NCCL_ALGO": ("hardware.collective.NCCL_ALGO", str, "vmin_fit.py:30,149 table.py:119"),
     "NCCL_PROTO": ("hardware.collective.NCCL_PROTO", str, "vmin_fit.py:30,150 table.py:120"),
     "QS_SHA": ("provenance.engine_sha", str, "cache.py:46"),

@@ -4,6 +4,7 @@ from .grid import GridTrace
 from .live import RealTrace
 from .profile_trace import ProfileSessionTrace, ProfileTrace
 from .profiles import PROFILE_ALIASES, PROFILES, get_profile
+from .sessions import TurnPacing, resolve_multi_turn_num_sessions
 
 
 def build(cfg, tokenizer=None):
@@ -20,5 +21,10 @@ def build(cfg, tokenizer=None):
     profile = get_profile(w.source)
     dataset_kw = {"random_seed": w.seed, "tokenizer_name": cfg.engine.model or ""}
     if w.kind == "sessions":
-        return ProfileSessionTrace(profile, warmup=cfg.mode.warmup, **dataset_kw)
+        pacing = TurnPacing(w.pacing, w.tool_wait_ms, w.human_wait_ms, w.use_recorded_waits,
+                            w.use_recorded_arrivals)
+        sessions, _ = resolve_multi_turn_num_sessions(profile, cfg.mode.concurrency)
+        return ProfileSessionTrace(profile, warmup=cfg.mode.warmup, pacing=pacing,
+                                   max_turn_index=w.max_turn_index, num_sessions=sessions,
+                                   **dataset_kw)
     return ProfileTrace(profile, w.num_requests, warmup=cfg.mode.warmup, **dataset_kw)

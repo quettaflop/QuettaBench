@@ -5,13 +5,14 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
 
-from quettabench.workloads.dataset import TrajectoryMultiTurnDataset
-
-from quettabench.modes.serve import get_args
+from quettabench.config.schema import ModeCfg, WorkloadCfg
+from quettabench.workloads.dataset import (
+    TrajectoryMultiTurnDataset,
+    session_arrival_ms,
+    turn_wait_metadata,
+)
 from quettabench.workloads.sessions import inter_turn_wait_s
-from quettabench.workloads.dataset import session_arrival_ms, turn_wait_metadata
 
 
 class TestInterTurnWait(unittest.TestCase):
@@ -98,16 +99,15 @@ class TestTrajectoryLoadWaits(unittest.TestCase):
             self.assertEqual(session.turns[1].metadata["human_wait_after_ms"], 90.0)
 
 
-class TestCliDefaults(unittest.TestCase):
+class TestConfigDefaults(unittest.TestCase):
     def test_turn_pacing_defaults_to_per_session(self):
-        with patch("sys.argv", ["runner"]):
-            args = get_args()
-        self.assertEqual(args.turn_pacing, "per-session")
-        self.assertEqual(args.tool_wait_ms, 0.0)
-        self.assertEqual(args.human_wait_ms, 0.0)
-        self.assertFalse(args.use_recorded_waits)
-        self.assertFalse(args.use_recorded_arrivals)
-        self.assertEqual(args.load_mode, "closed-loop")
+        w = WorkloadCfg()
+        self.assertEqual(w.pacing, "per-session")
+        self.assertEqual(w.tool_wait_ms, 0.0)
+        self.assertEqual(w.human_wait_ms, 0.0)
+        self.assertFalse(w.use_recorded_waits)
+        self.assertFalse(w.use_recorded_arrivals)
+        self.assertEqual(ModeCfg().load, "closed")
 
 
 if __name__ == "__main__":

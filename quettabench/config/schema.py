@@ -17,6 +17,7 @@ CHOICES = {
     "engine.instrumentation": ("none", "nsys", "torch"),
     "workload.kind": ("live", "grid", "sessions"),
     "workload.prompt_mode": ("distinct", "clone", "corpus", "synth", "trace"),
+    "workload.pacing": ("per-session", "interleaved"),
     "mode.mode": ("serve", "probe"),
     "mode.serve_profile": (None, "stress-test", "single-turn", "multi-turn"),
     "mode.load": ("closed", "open"),
@@ -75,6 +76,13 @@ class WorkloadCfg:
     prompt_mode: str = "distinct"     # grid runs only
     seed: int = 42
     num_requests: int = 100
+    # kind sessions only (workloads/sessions.py TurnPacing)
+    pacing: str = "per-session"       # interleaved: a barrier after every turn index
+    tool_wait_ms: float = 0.0
+    human_wait_ms: float = 0.0
+    use_recorded_waits: bool = False
+    use_recorded_arrivals: bool = False
+    max_turn_index: int | None = None
 
 
 @dataclass(frozen=True)
