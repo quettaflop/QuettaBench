@@ -1,9 +1,11 @@
 """qbench run: a run yaml to results/<run>/, the same sequence every time.
 
 load the yaml (+ --set, + env through env_map) into one Config per matrix
-point, then per Config: translate it to a LaunchSpec, launch the server
-unless the adapter drives the engine itself (in-process grid, cargo
-bench), get the driver, build the Trace, and let modes/serve.py run trace
+point, then per Config: translate it to a LaunchSpec, put the collective
+env and the GPUs (hardware.visible_devices, else the first idle tp * pp)
+into this process for the engine to inherit, launch the server unless the
+adapter drives the engine itself (in-process grid, cargo bench), get the
+driver, build the Trace, and let modes/serve.py run trace
 through driver into a RunWriter; the server is stopped whatever happens.
 mode: probe runs quettabench.probes.<name> with --out results/<run>/
 instead and records it in the same run.json. --dry-run prints each Config
@@ -50,7 +52,9 @@ def run_one(cfg, out):
         return run_probe(cfg, out)
     adapter = base.get(cfg.engine.name)
     spec = adapter.translate(cfg)
-    env_map.export(cfg.hardware.collective)  # NCCL reads it in this process or the child
+    gpus = cfg.hardware.visible_devices or launcher.idle_gpus(cfg.engine.tp * cfg.engine.pp,
+                                                              cfg.hardware.backend)
+    env_map.export({**cfg.hardware.collective, "CUDA_VISIBLE_DEVICES": gpus})
     handle = launcher.start(spec, out) if adapter.needs_server(cfg) else launcher.NoServer(out)
     try:
         driver = adapter.driver(spec, handle)

@@ -131,7 +131,8 @@ def run_grid_cli(argv, env, model_config=None, baselines=None):
     """cli.main(argv) for a `qbench run` argv on the stubs under exactly `env`
     (os.environ is replaced, not merged), with the drivers' clock swapped
     for the stub's fake one. nvidia-smi is hidden so backend and
-    link-profile detection never depend on the host. results/<run>/ goes
+    link-profile detection never depend on the host, and the idle-GPU pick
+    answers "0" as on a one-GPU box. results/<run>/ goes
     to a throwaway dir unless argv names --results-dir, and the compat
     baseline to `baselines` (also throwaway when None), never into the
     repo. Returns stdout lines, the LLM kwargs, the number of generate()
@@ -150,10 +151,12 @@ def run_grid_cli(argv, env, model_config=None, baselines=None):
             vllm.generate_seconds = fake_generate_seconds
             cli = fresh_import("quettabench.cli")
             drivers = importlib.import_module("quettabench.engines.drivers")
+            launcher = importlib.import_module("quettabench.engines.launcher")
             results = importlib.import_module("quettabench.metrics.results")
             clock = types.SimpleNamespace(perf_counter=vllm.CLOCK.perf_counter)
             exit_msg = None
             with mock.patch.object(drivers, "time", clock), \
+                    mock.patch.object(launcher, "idle_gpus", return_value="0"), \
                     mock.patch.object(results, "BASELINES", Path(baselines or model_dir)), \
                     contextlib.redirect_stdout(out):
                 try:

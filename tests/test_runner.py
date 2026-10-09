@@ -1,6 +1,7 @@
 """qbench run's sequence without a GPU: --dry-run on every run yaml prints
 its Config and LaunchSpec and writes nothing, a matrix runs once per point,
-and mode: probe hands the probe its flags plus --out results/<run>/."""
+the engine gets the caller's GPUs or the first idle tp * pp, and mode:
+probe hands the probe its flags plus --out results/<run>/."""
 
 import contextlib
 import io
@@ -14,7 +15,8 @@ from unittest import mock
 
 import yaml
 
-from quettabench import cli
+from quettabench import cli, runner
+from quettabench.config import loader
 from tests.golden._harness import REPO
 
 RUNS = sorted((REPO / "configs" / "runs").glob("*.yaml"))
@@ -74,6 +76,30 @@ class DryRun(unittest.TestCase):
         _, exit_msg = qbench("run", str(RUNS[0].with_name("llama.yaml")), "--dry-run",
                              "--set", "mode.grid=nope")
         self.assertIn("unknown grid 'nope'", exit_msg)
+
+
+class GpuPick(unittest.TestCase):
+    def exported(self, *sets):
+        """What run_one puts into the environment, with the engine stubbed out."""
+        (cfg,) = loader.load(RUNS[0].with_name("llama-tp2.yaml"),
+                             ["engine.model=/w", "hardware.backend=cuda", *sets], env={})
+        adapter = mock.Mock(**{"needs_server.return_value": False})
+        with mock.patch.object(runner.base, "get", return_value=adapter), \
+                mock.patch.object(runner.launcher, "idle_gpus", return_value="3,5") as idle, \
+                mock.patch.object(runner.env_map, "export") as export, \
+                mock.patch.object(runner.workloads, "build"), \
+                mock.patch.object(runner, "RunWriter"), mock.patch.object(runner.serve, "run"), \
+                tempfile.TemporaryDirectory() as td:
+            runner.run_one(cfg, Path(td))
+        return export.call_args.args[0]["CUDA_VISIBLE_DEVICES"], idle.call_args
+
+    def test_idle_gpus_for_tp_times_pp(self):
+        gpus, idle = self.exported("engine.pp=2")
+        self.assertEqual((gpus, idle.args), ("3,5", (4, "cuda")))
+
+    def test_caller_devices_win(self):
+        gpus, idle = self.exported("hardware.visible_devices=6,7")
+        self.assertEqual((gpus, idle), ("6,7", None))
 
 
 class ProbeMode(unittest.TestCase):

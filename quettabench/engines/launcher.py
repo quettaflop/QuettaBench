@@ -64,8 +64,8 @@ class NoServer:
 
 
 def idle_gpus(n, backend, visible_devices=None):
-    """scripts/crossval/free_gpu.sh: on cuda the first n GPUs using under
-    1000 MiB; other backends take the caller's CUDA_VISIBLE_DEVICES or 0..n-1."""
+    """On cuda the first n GPUs using under 1000 MiB (free_gpu.sh's rule);
+    other backends take the caller's CUDA_VISIBLE_DEVICES or 0..n-1."""
     if backend != "cuda":
         return visible_devices or ",".join(str(i) for i in range(n))
     rows = subprocess.run(

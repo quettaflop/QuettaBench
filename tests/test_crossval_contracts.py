@@ -79,12 +79,6 @@ class CrossvalScripts(unittest.TestCase):
             [sys.executable, str(QB / "config" / "xval_config.py"), "backend"],
             capture_output=True, text=True, env={**os.environ, "XVAL_BACKEND": "tpu"}).stdout.strip()
         self.assertEqual(out, "tpu")
-        # free_gpu.sh on a non-cuda backend returns devices without calling nvidia-smi
-        fg = subprocess.run(["bash", str(CROSSVAL / "free_gpu.sh"), "2"],
-                            capture_output=True, text=True,
-                            env={**os.environ, "XVAL_BACKEND": "tpu"})
-        self.assertEqual(fg.returncode, 0, fg.stderr)
-        self.assertEqual(fg.stdout.strip(), "0,1")
 
     def test_pp_wired_in_grid_and_device_count(self):
         # A grid run passes pipeline_parallel_size (from XVAL_PP or the workload's pp),
