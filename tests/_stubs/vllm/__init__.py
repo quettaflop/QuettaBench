@@ -1,7 +1,7 @@
-"""CPU stand-in for the slice of vLLM the crossval scripts touch.
+"""CPU stand-in for the slice of vLLM the grid run touches.
 
 Records every constructor's kwargs in CALLS and runs generate() on a fake
-clock, so a test can drive a grid run (serve --grid) end to end without a
+clock, so a test can drive a grid run (qbench run with mode.grid) end to end without a
 GPU. The real code targets an unpinned vLLM (see tests/golden/REPORT.md);
 only the names the InProcessDriver imports exist here.
 """

@@ -3,7 +3,7 @@
 InProcessDriver builds vLLM inside this process from spec.engine_kwargs and
 times one grid batch per generate() call, or scores it (returns="logits").
 ReferenceDriver scores with transformers, the FIDELITY reference. BenchDriver runs a QuettaServe
-bench per grid cell, as bench.sh does, and reads its rows with
+bench per grid cell, as bench.sh did, and reads its rows with
 crossval/reader.py's bench log parser. HttpDriver streams
 OpenAI-compatible requests at a launched server. Its two
 endpoints keep their own first-token rules, recorded on every result as

@@ -6,8 +6,8 @@ engine.model=<weights>` (the fixture's "vmin_fit" keys name the script it
 was captured from, which that run replaced). The serve side is the
 fixture's "trace_serve" key: the engine trace_serve.py built from the run
 yaml with --model and --tp as xval.sh passed them, now
-engines/vllm.py translate() of the same Config (trace_serve.py is deleted;
-it built through translate() too). The per-key diff is pinned and should be
+engines/vllm.py translate() of the same Config (trace_serve.py retired in
+1547230; it built through translate() too). The per-key diff is pinned and should be
 empty. qwen's serve side is the loader's refusal (hybrid without kv_bytes);
 the fixture holds it with the "trace_serve: " prefix that script put on
 every exit.
@@ -43,7 +43,7 @@ def vmin_fit_kwargs(name, env, extra_argv=()):
 
 def serve_kwargs(name):
     """engine_kwargs of the run yaml with --model and the workload's --tp, as
-    trace_serve built them, or the loader's refusal."""
+    the retired trace_serve.py built them, or the loader's refusal."""
     tp = WORKLOADS[name].get("tp", 1)
     try:
         (cfg,) = loader.load(RUNS / f"{name}.yaml", ["allow_unverified=true",

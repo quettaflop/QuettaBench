@@ -17,7 +17,9 @@ def _nonempty(raw):
     return bool(raw)
 
 
-# env var -> (Config path, converter, old reader)
+# env var -> (Config path, converter, old reader). The old reader is where
+# the pre-refactor code read the var, as file:line at 01adc03; every one of
+# those files has since retired.
 ENV_MAP = {
     "XVAL_LINK_PROFILE": ("hardware.link_profile", str, "xval_config.py:79,283 vmin_fit.py:27,151"),
     "XVAL_BACKEND": ("hardware.backend", str, "xval_config.py:182"),
@@ -56,7 +58,7 @@ def read_env(env=None, only=None):
 
     env=None reads the process environment; only, when given, limits the
     read to those var names. Where two vars feed one field the
-    first in ENV_MAP order wins (QS_SHA over DS_ENGINE_SHA, as cache.py does),
+    first in ENV_MAP order wins (QS_SHA over DS_ENGINE_SHA, as cache.py did),
     except XVAL_CORPUS and XVAL_TRACE: both set to different files is refused,
     since the source a grid run reads would depend on prompt_mode silently.
     """

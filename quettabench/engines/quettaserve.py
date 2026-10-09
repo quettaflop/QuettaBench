@@ -1,9 +1,9 @@
-"""QuettaServe adapter: the cargo bench argv and the per-cell env bench.sh exports.
+"""QuettaServe adapter: the cargo bench argv and the per-cell env bench.sh exported.
 
 QuettaServe cannot listen yet, so there is no server_argv; the spec runs the
 crate's bench test once per grid cell. Everything here is
-scripts/crossval/bench.sh restated as data, with its env reads moved to
-Config fields:
+scripts/crossval/bench.sh (retired in 4f954c2) restated as data, with its
+env reads moved to Config fields:
 
   <P>_CKPT              engine.model
   <P>_WORLD             engine.tp (bench.sh: <P>_WORLD, default the workload tp)

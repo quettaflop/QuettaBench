@@ -108,7 +108,7 @@ def compare_runs(ours_rows, theirs_rows):
 
 
 def render(rows):
-    """The old scripts' AGREE / DISAGREE / SUMMARY lines and xval.sh's FIDELITY line."""
+    """The AGREE / DISAGREE / SUMMARY lines and the FIDELITY line the retired agreement scripts and xval.sh printed."""
     lines = []
     for r in rows:
         kind = r["kind"]

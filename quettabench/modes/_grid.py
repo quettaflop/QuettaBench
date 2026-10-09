@@ -9,7 +9,8 @@ to mode.vmin_attempts passes over the step points, stopping at the first
 pass that fits r2 >= mode.fit_r2_stop. Every batch goes through the
 driver, every row through the writer; RESULT is metrics.step_fit.fit_run
 over the cell's rows. Lines print through results.print_legacy_grid_lines
-as the run advances, byte for byte what modes/vmin_fit.py printed.
+as the run advances, byte for byte what vmin_fit.py printed before it
+retired in 3b53e6d.
 
 A driver that measures steps itself (BenchDriver, the QuettaServe cargo
 bench) goes through run_bench instead: the same SKIP rules pick the cells,

@@ -3,8 +3,8 @@
 No real vmin_fit log exists in the repo or in the 2026-09-28 bench backup, so
 fixtures/vmin_fit_llama.log is what vmin_fit.py printed for the llama
 workload on the stubs (fake clock, 48 GiB stub GPU), filtered the way
-vllm.sh filters it, plus one hand-written pre-normalization RESULT line (no
-ms_at_eval) as the last line. cache.py packed that log into
+vllm.sh filtered it (retired in 4f954c2), plus one hand-written pre-normalization RESULT line (no
+ms_at_eval) as the last line. cache.py (retired in 332daaa) packed that log into
 fixtures/baseline_llama.json, the old baseline layout crossval still reads.
 
 The first test proves the log is still what a grid run (qbench run, which

@@ -75,7 +75,7 @@ class ProfileSessionTrace(SessionTrace):
                 f"Profile '{profile.name}' does not use a multi-turn dataset")
         sessions = dataset.sessions
         if not sessions:
-            raise ValueError("No multi-turn sessions loaded — check ShareGPT dataset and filter bounds")
+            raise ValueError("No multi-turn sessions loaded -- check ShareGPT dataset and filter bounds")
         self.max_turns = max(len(s.turns) for s in sessions)
         print(f"Loaded {len(sessions)} sessions, max {self.max_turns} turns per session")
         reqs = []

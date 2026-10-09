@@ -10,11 +10,13 @@ here is one a launch on real GPUs already used:
          --max-model-len ...`; scripts/launch_server.sh:86-96 and
          scripts/sweep_all_profiles.sh:109-119 for --dtype,
          --enable-chunked-prefill, --enable-prefix-caching and
-         --trust-remote-code; sweep_all_profiles.sh:19,26 (env).
+         --trust-remote-code; sweep_all_profiles.sh:19,26 (env). Both
+         scripts retired in 40f7fc3.
          max_num_seqs and max_num_batched_tokens come in through extra.vllm.
   kwargs quettabench/modes/vmin_fit.py LLM(...) and legacy/trace_serve.py
-         AsyncEngineArgs(...) as they stood at 708cdbe
-  nsys   scripts/crossval/prof.sh:16
+         AsyncEngineArgs(...) as they stood at 708cdbe (retired in
+         3b53e6d and 1547230)
+  nsys   scripts/crossval/prof.sh:16 (retired in 4f954c2)
 
 The server binary is `vllm` on PATH, or the `vllm` script beside
 hardware.provision.py when a venv is provisioned (v4sweep ran {VENV}/vllm).
@@ -27,8 +29,8 @@ NONE). serving_style other than aggregated and instrumentation=torch have no
 flag or kwarg anywhere and raise.
 
 The two sides differ by design in their constants: the server gets
---enable-chunked-prefill and --trust-remote-code as both scripts pass them;
-the kwargs get disable_log_stats and trust_remote_code as vmin_fit passes them.
+--enable-chunked-prefill and --trust-remote-code as both scripts passed them;
+the kwargs get disable_log_stats and trust_remote_code as vmin_fit passed them.
 """
 
 from pathlib import Path
