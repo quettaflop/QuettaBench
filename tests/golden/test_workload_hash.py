@@ -23,7 +23,7 @@ class WorkloadHashGolden(unittest.TestCase):
     def test_hash_identity_rules(self):
         with crossval_path(), mock.patch.dict(os.environ, {}, clear=True):
             synth_bench = fresh_import("quettabench.workloads.synth_bench")
-            trace_serve = fresh_import("legacy.trace_serve")
+            arrival = fresh_import("quettabench.workloads.arrival")
             reqs = synth_bench.load_trace(str(TRACE))
             paced = synth_bench.workload_hash(reqs)
             completion_reversed = synth_bench.workload_hash(list(reversed(reqs)))
@@ -34,7 +34,7 @@ class WorkloadHashGolden(unittest.TestCase):
             altered_hash = synth_bench.workload_hash(altered)
 
             injected = copy.deepcopy(reqs)
-            schedule = trace_serve.injected_arrivals("poisson:2.0", len(injected))
+            schedule = arrival.parse_arrival("poisson:2.0", len(injected))
             for r, t in zip(injected, schedule):
                 r["arrival_ts"] = round(t, 6)
             injected_hash = synth_bench.workload_hash(injected)

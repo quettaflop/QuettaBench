@@ -26,35 +26,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parents[1]))
 from quettabench.workloads import synth_bench
 from quettabench.config import xval_config
-from quettabench.workloads.arrival import burst_arrivals, poisson_arrivals, ramp_arrivals
+from quettabench.workloads.arrival import parse_arrival, rebase_arrivals
 from quettabench.metrics.core import burst_recovery, sla_verdict, summarize_serve
-
-
-def injected_arrivals(spec, n):
-    """Arrival schedule for --arrival; None means keep the trace's own times.
-    Specs: poisson:<rate>, ramp:<start>:<end>, burst:<n>x<size>@<gap_s>."""
-    if spec == "trace":
-        return None
-    kind, _, rest = spec.partition(":")
-    if kind == "poisson":
-        return poisson_arrivals(n, float(rest))
-    if kind == "ramp":
-        a, b = rest.split(":")
-        return ramp_arrivals(n, float(a), float(b))
-    if kind == "burst":
-        nb, rest2 = rest.split("x")
-        size, gap = rest2.split("@")
-        return burst_arrivals(n, int(nb), int(size), float(gap))
-    raise ValueError(f"unknown arrival spec {spec!r}")
-
-
-def plan_arrivals(reqs, speed):
-    """Submission offsets in seconds: arrival_ts scaled by --speed (first at 0),
-    else all 0 (back-to-back)."""
-    if not any("arrival_ts" in r for r in reqs):
-        return [0.0] * len(reqs)
-    t0 = min(r.get("arrival_ts", 0.0) for r in reqs)
-    return [max(0.0, (r.get("arrival_ts", t0) - t0)) / max(speed, 1e-9) for r in reqs]
 
 
 def summarize(records, wall_s):
@@ -269,7 +242,8 @@ def _run_goodput(args, reqs, expected):
         speed = next(gen)
         best, fail_bound, iters = None, None, 0
         while True:
-            records, wall, done = await _serve(engine, reqs, plan_arrivals(reqs, speed), args)
+            offsets = rebase_arrivals([r.get("arrival_ts") for r in reqs], speed)
+            records, wall, done = await _serve(engine, reqs, offsets, args)
             iters += 1
             replayed = synth_bench.workload_hash(done)
             if replayed != expected:
@@ -317,7 +291,7 @@ def main():
                     help="off by default so both engines pay full prefill; on to measure the cache")
     ap.add_argument("--speed", type=float, default=1.0, help="arrival time compression factor")
     ap.add_argument("--arrival", default="trace",
-                    help="trace | poisson:<rate> | ramp:<start>:<end> | burst:<n>x<size>@<gap_s>")
+                    help="trace | steady | poisson:<rate> | ramp:<start>:<end> | burst:<n>x<size>@<gap_s>")
     ap.add_argument("--closed-loop", type=int, metavar="N",
                     help="submit under a concurrency cap of N instead of arrival times; "
                          "ttft is measured from the slot grant (comparable to a "
@@ -360,13 +334,13 @@ def main():
     reqs = synth_bench.load_trace(args.trace)
     if args.limit:
         reqs = reqs[: args.limit]
-    injected = injected_arrivals(args.arrival, len(reqs))
+    injected = parse_arrival(args.arrival, len(reqs))
     if injected is not None:
         # Injected schedules join the workload identity: arrival_ts is a hash
         # input, so trace-paced and injected runs can never share a hash.
         for r, t in zip(reqs, injected):
             r["arrival_ts"] = round(t, 6)
-    offsets = plan_arrivals(reqs, args.speed)
+    offsets = rebase_arrivals([r.get("arrival_ts") for r in reqs], args.speed)
     # A trace with no arrival_ts submits everything at t=0 in open loop, so every
     # ttft is engine queue wait plus prefill, not a first-token figure any client
     # would see. Say so rather than let the number be read as one.

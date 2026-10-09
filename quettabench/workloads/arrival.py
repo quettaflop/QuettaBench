@@ -1,35 +1,15 @@
-"""
-Request arrival pattern generators.
+"""Request arrival schedules, one spec syntax for every caller.
 
-Supports:
-- "steady": fixed concurrency (InferenceX default — kept for comparison)
-- "poisson": Poisson process arrivals at target rate (most realistic for web services)
-
-Each generator yields timestamps (seconds from benchmark start) at which
-to dispatch each request.
+parse_arrival turns a spec string (trace | steady | poisson:<r> |
+ramp:<a>:<b> | burst:<n>x<size>@<gap>) into offsets in seconds from the
+start of the run. serve.py's --arrival/--target-rate pair is translated into
+that syntax by arrival_spec.
 """
 
-import random
 import math
-
-from typing import Iterator
+import random
 
 ARRIVAL_PATTERNS = ["steady", "poisson", "ramp"]
-
-
-def steady_arrivals(num_requests: int, concurrency: int) -> list[float]:
-    """
-    Fixed concurrency: dispatch requests in batches of `concurrency`.
-    Requests within a batch start simultaneously (t=0 offset within batch).
-    Returns list of dispatch times (seconds).
-
-    This matches llm-bench and InferenceX default behavior.
-    """
-    times = []
-    # All requests at t=0 (fire-and-forget concurrency control via semaphore)
-    for i in range(num_requests):
-        times.append(0.0)
-    return times
 
 
 def poisson_arrivals(num_requests: int, target_rate: float, seed: int = 42) -> list[float]:
@@ -98,6 +78,39 @@ def burst_arrivals(num_requests: int, n_bursts: int, burst_size: int, gap_s: flo
     return times
 
 
+def parse_arrival(spec: str, n: int, seed: int = 42) -> list[float] | None:
+    """Arrival offsets in seconds for n requests from one spec string:
+    trace (None: keep the trace's own times), steady (all at t=0),
+    poisson:<rate>, ramp:<start>:<end>, burst:<n>x<size>@<gap_s>."""
+    if spec == "trace":
+        return None
+    if spec == "steady":
+        return [0.0] * n
+    kind, _, rest = spec.partition(":")
+    if kind == "poisson":
+        return poisson_arrivals(n, float(rest), seed)
+    if kind == "ramp":
+        a, b = rest.split(":")
+        return ramp_arrivals(n, float(a), float(b), seed)
+    if kind == "burst":
+        nb, rest2 = rest.split("x")
+        size, gap = rest2.split("@")
+        return burst_arrivals(n, int(nb), int(size), float(gap))
+    raise ValueError(f"unknown arrival spec {spec!r}")
+
+
+def arrival_spec(pattern: str, target_rate: float) -> str:
+    """serve.py's --arrival/--target-rate pair as a parse_arrival spec; ramp
+    climbs from a tenth of the rate to the rate."""
+    if pattern == "steady":
+        return "steady"
+    if pattern == "poisson":
+        return f"poisson:{target_rate}"
+    if pattern == "ramp":
+        return f"ramp:{target_rate * 0.1}:{target_rate}"
+    raise ValueError(f"Unknown arrival pattern: '{pattern}'. Use 'steady', 'poisson', or 'ramp'.")
+
+
 def make_arrival_times(
     pattern: str,
     num_requests: int,
@@ -105,21 +118,16 @@ def make_arrival_times(
     target_rate: float = 10.0,
     seed: int = 42,
 ) -> list[float]:
-    """
-    Factory: create arrival times for the given pattern.
+    """serve.py's entry: translate the pair, then parse_arrival. concurrency
+    is unused (steady paces by semaphore, not by schedule)."""
+    return parse_arrival(arrival_spec(pattern, target_rate), num_requests, seed)
 
-    Args:
-        pattern: "steady", "poisson", or "ramp"
-        num_requests: number of requests
-        concurrency: used by "steady" pattern
-        target_rate: requests/sec for "poisson" and "ramp"
-        seed: random seed
-    """
-    if pattern == "steady":
-        return steady_arrivals(num_requests, concurrency)
-    elif pattern == "poisson":
-        return poisson_arrivals(num_requests, target_rate, seed)
-    elif pattern == "ramp":
-        return ramp_arrivals(num_requests, target_rate * 0.1, target_rate, seed)
-    else:
-        raise ValueError(f"Unknown arrival pattern: '{pattern}'. Use 'steady', 'poisson', or 'ramp'.")
+
+def rebase_arrivals(ts: list, speed: float) -> list[float]:
+    """Submission offsets: arrival times shifted by the earliest and divided by
+    speed. A missing time takes part in the shift as 0 and submits at once;
+    no times at all gives all 0 (trace_serve's plan_arrivals, unchanged)."""
+    if all(t is None for t in ts):
+        return [0.0] * len(ts)
+    t0 = min(0.0 if t is None else t for t in ts)
+    return [max(0.0, (t0 if t is None else t) - t0) / max(speed, 1e-9) for t in ts]

@@ -241,19 +241,18 @@ class CrossvalScripts(unittest.TestCase):
         # trace-paced and an injected run can never be conflated.
         sys.path.insert(0, str(REPO))
         try:
-            from legacy import trace_serve
-            from quettabench.workloads import synth_bench
-            importlib.reload(trace_serve)
+            from quettabench.workloads import arrival, synth_bench
+            importlib.reload(arrival)
             importlib.reload(synth_bench)
-            self.assertIsNone(trace_serve.injected_arrivals("trace", 8))
-            p = trace_serve.injected_arrivals("poisson:2.0", 8)
-            self.assertEqual(p, trace_serve.injected_arrivals("poisson:2.0", 8))
+            self.assertIsNone(arrival.parse_arrival("trace", 8))
+            p = arrival.parse_arrival("poisson:2.0", 8)
+            self.assertEqual(p, arrival.parse_arrival("poisson:2.0", 8))
             self.assertEqual(sorted(p), p)
-            b = trace_serve.injected_arrivals("burst:2x4@5.0", 8)
+            b = arrival.parse_arrival("burst:2x4@5.0", 8)
             self.assertEqual(b, [0.0] * 4 + [5.0] * 4)
             with self.assertRaises(ValueError):
-                trace_serve.injected_arrivals("burst:1x4@5.0", 8)  # spec too small
-            r = trace_serve.injected_arrivals("ramp:0.5:4.0", 8)
+                arrival.parse_arrival("burst:1x4@5.0", 8)  # spec too small
+            r = arrival.parse_arrival("ramp:0.5:4.0", 8)
             self.assertEqual(len(r), 8)
             reqs = synth_bench.synth_requests(4, 64, seed=1)
             h0 = synth_bench.workload_hash(reqs)
@@ -1506,10 +1505,9 @@ class TraceWorkloads(unittest.TestCase):
             importlib.reload(trace_serve)
         finally:
             sys.path.pop(0)
-        offs = trace_serve.plan_arrivals(
-            [{"arrival_ts": 10.0}, {"arrival_ts": 11.0}, {"arrival_ts": 14.0}], speed=2.0)
-        self.assertEqual(offs, [0.0, 0.5, 2.0])
-        self.assertEqual(trace_serve.plan_arrivals([{}, {}], speed=1.0), [0.0, 0.0])
+        from quettabench.workloads.arrival import rebase_arrivals
+        self.assertEqual(rebase_arrivals([10.0, 11.0, 14.0], speed=2.0), [0.0, 0.5, 2.0])
+        self.assertEqual(rebase_arrivals([None, None], speed=1.0), [0.0, 0.0])
         s = trace_serve.summarize(
             [{"ttft_ms": 10.0, "tpot_ms": 5.0, "out_tokens": 3},
              {"ttft_ms": 30.0, "tpot_ms": None, "out_tokens": 1},
