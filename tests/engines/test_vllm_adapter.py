@@ -1,8 +1,8 @@
 """translate(cfg).engine_kwargs equals vmin_fit's golden LLM kwargs for every
 run yaml, and server_argv is the api_server argv the launch scripts use.
 
-Documented spelling difference: translate always passes
-pipeline_parallel_size; vmin_fit left it out at pp == 1.
+translate always passes pipeline_parallel_size; vmin_fit used to leave it
+out at pp == 1, a spelling difference only (golden regenerated with it).
 """
 
 import json
@@ -30,16 +30,12 @@ def spec_for(name, env=None, sets=()):
     return vllm_adapter.ADAPTER.translate(cfg)
 
 
-def with_pp(kwargs):
-    return {"pipeline_parallel_size": 1, **kwargs}
-
-
 class KwargsMatchVminFit(unittest.TestCase):
     def test_every_run_yaml(self):
         for name in sorted(GOLDEN):
             with self.subTest(name=name):
                 self.assertEqual(spec_for(name).engine_kwargs,
-                                 with_pp(GOLDEN[name]["vmin_fit"]))
+                                 GOLDEN[name]["vmin_fit"])
 
     def test_env_override(self):
         for name in sorted(GOLDEN):
@@ -51,7 +47,7 @@ class KwargsMatchVminFit(unittest.TestCase):
         for name in sorted(GOLDEN):
             with self.subTest(name=name):
                 spec = spec_for(name, sets=["engine.cudagraph=false"])
-                self.assertEqual(spec.engine_kwargs, with_pp(GOLDEN[name]["vmin_fit_nograph"]))
+                self.assertEqual(spec.engine_kwargs, GOLDEN[name]["vmin_fit_nograph"])
                 self.assertIn("cudagraph=False", spec.server_unsupported)
 
 

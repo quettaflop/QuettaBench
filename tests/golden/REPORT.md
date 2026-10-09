@@ -111,6 +111,22 @@ add `--ep`, `--dtype`, `--max-model-len`, `--gpu-util`, but nothing derives
 them from the workload. `pipeline_parallel_size=1` vs absent is only a
 spelling difference.
 
+Resolved by the owner: one builder, workload record wins.
+
+- Both scripts now take their kwargs from `quettabench/engines/vllm.py`
+  `translate(cfg).engine_kwargs` and build the engine through
+  `drivers.InProcessDriver`. vmin_fit fills an `EngineCfg` from the workload
+  record it already reads; trace_serve takes `--workload <name>` (xval.sh
+  passes it) and loads `configs/runs/<name>.yaml`, with explicit engine
+  flags overriding it.
+- `engine_args.json` regenerated. trace_serve side: equal to vmin_fit's for
+  10 workloads, so every `diff_vmin_fit_vs_trace_serve` is `{}`. qwen's
+  trace_serve side is the loader's refusal (`attention=hybrid needs
+  kv_bytes`), recorded as an exit message; its diff is `null`.
+- vmin_fit side: one key added, `pipeline_parallel_size: 1` wherever pp is
+  1 (the owner picked "always present" for this spelling difference). No
+  other vmin_fit value changed.
+
 ## STOP finding, item 4: the two percentile implementations disagree
 
 `trace_serve._pct(sorted_vals, q)` returns `sorted_vals[min(n - 1, int(q * n))]`

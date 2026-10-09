@@ -2,9 +2,10 @@
 workload, captured through the tests/_stubs/vllm recorder.
 
 vmin_fit is run as vllm.sh runs it (workload name, weights dir); trace_serve
-as xval.sh runs it (trace, --model, --tp from the workload, nothing else).
-The two builders disagree for every workload; the per-key diff is pinned
-here and written out in REPORT.md. It is recorded, not reconciled.
+as xval.sh runs it (trace, --model, --workload, --tp from the workload).
+Both now build through engines/vllm.py translate(); the per-key diff is
+pinned and should be empty. qwen's trace_serve side is the loader's
+refusal (hybrid without kv_bytes), recorded as its exit message.
 """
 
 import contextlib
@@ -36,13 +37,17 @@ def trace_serve_kwargs(name):
     with tempfile.TemporaryDirectory() as td:
         trace = Path(td) / "trace.jsonl"
         trace.write_text(json.dumps({"prompt_token_ids": [1, 2, 3], "output_length": 4}) + "\n")
-        argv = ["trace_serve.py", str(trace), "--model", "<MODEL>", "--tp", tp]
+        argv = ["trace_serve.py", str(trace), "--model", "<MODEL>", "--workload", name,
+                "--tp", tp]
         with crossval_path(stubs=True), mock.patch.dict(os.environ, {}, clear=True), \
                 mock.patch("sys.argv", argv), contextlib.redirect_stdout(io.StringIO()):
             vllm = fresh_import("vllm")
             trace_serve = fresh_import("legacy.trace_serve")
-            with halted_engine(vllm):
-                trace_serve.main()
+            try:
+                with halted_engine(vllm):
+                    trace_serve.main()
+            except SystemExit as e:
+                return {"exit": str(e.code).replace(str(REPO), "<REPO>")}
             ((ctor, kwargs),) = vllm.CALLS
     assert ctor == "AsyncEngineArgs", ctor
     return kwargs
@@ -74,7 +79,7 @@ class EngineArgsGolden(unittest.TestCase):
                 "vmin_fit_env_override": vmin_fit_kwargs(name, ENV_OVERRIDE),
                 "vmin_fit_nograph": vmin_fit_kwargs(name, {}, ["--nograph"]),
                 "trace_serve": serve,
-                "diff_vmin_fit_vs_trace_serve": kwargs_diff(vmin, serve),
+                "diff_vmin_fit_vs_trace_serve": None if "exit" in serve else kwargs_diff(vmin, serve),
             }
         check_json(self, "engine_args", record)
 

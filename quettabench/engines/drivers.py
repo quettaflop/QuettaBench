@@ -1,5 +1,6 @@
 """How work reaches an engine: one Driver per way of driving it.
 
+InProcessDriver builds vLLM inside this process from spec.engine_kwargs.
 BenchDriver runs a QuettaServe bench per grid cell, as bench.sh does, and
 reads its rows with crossval/table.py's parsers. HttpDriver streams
 OpenAI-compatible requests at a launched server. Its two
@@ -498,3 +499,29 @@ class BenchDriver(Driver):
             self._log(f"FAIL ctx={ctx} bs={bs} (bench exited {rc}; see {self.log_path})")
             raise BenchFailed(f"bench exited {rc}")
         return passed
+
+
+class InProcessDriver(Driver):
+    """vLLM in this process, built from spec.engine_kwargs on first use.
+
+    Grid runs only, and only until the HTTP-vs-in-process parity gate
+    (QBENCH_STRUCTURE.md section 5) passes; a pass deletes this class.
+    vllm is imported inside the builders because it exists only on GPU boxes.
+    """
+
+    def __init__(self, spec):
+        self.spec = spec
+
+    def llm(self):
+        """vmin_fit's engine: vllm.LLM(**engine_kwargs)."""
+        from vllm import LLM
+        return LLM(**self.spec.engine_kwargs)
+
+    def async_engine(self):
+        """trace_serve's engine: AsyncLLMEngine from AsyncEngineArgs(**engine_kwargs)."""
+        from vllm.engine.arg_utils import AsyncEngineArgs
+        from vllm.engine.async_llm_engine import AsyncLLMEngine
+        return AsyncLLMEngine.from_engine_args(AsyncEngineArgs(**self.spec.engine_kwargs))
+
+    def run(self, requests, *, concurrency, **kwargs):
+        raise NotImplementedError("vmin_fit and trace_serve drive the engine themselves for now")

@@ -72,6 +72,6 @@ fi
 if [ -n "${XVAL_SERVE_TRACE:-}" ]; then
     echo "workload_hash=$("$PY" "$HERE/../../quettabench/workloads/synth_bench.py" hash "$XVAL_SERVE_TRACE")"
     CUDA_VISIBLE_DEVICES="$GPUS" "$PY" "$HERE/../../legacy/trace_serve.py" "$XVAL_SERVE_TRACE" \
-        --model "$MDIR" --tp "$TP" ${XVAL_SERVE_ARGS:-} \
+        --model "$MDIR" --workload "$CRATE" --tp "$TP" ${XVAL_SERVE_ARGS:-} \
         | grep -E "^META|^WORKLOADSUM|^WORKLOADVOID|^SERVESUM|^SLASUM"
 fi

@@ -89,7 +89,7 @@ class CrossvalScripts(unittest.TestCase):
     def test_pp_wired_in_grid_and_device_count(self):
         # vmin_fit passes pipeline_parallel_size (from XVAL_PP or the workload's pp),
         # and the device count the orchestrator provisions is tp * pp.
-        src = (QB / "modes" / "vmin_fit.py").read_text()
+        src = (QB / "modes" / "vmin_fit.py").read_text() + (QB / "engines" / "vllm.py").read_text()  # kwargs built there
         self.assertIn("pipeline_parallel_size", src)
         self.assertIn("XVAL_PP", src)
         self.assertIn("META pp=", src)  # cache.py parses META one key per line
@@ -515,7 +515,7 @@ class CrossvalScripts(unittest.TestCase):
 
     def test_vmin_fit_supports_moe_bringup(self):
         # expert parallel on vLLM, plus an opt-in to run before certified.
-        src = (QB / "modes" / "vmin_fit.py").read_text()
+        src = (QB / "modes" / "vmin_fit.py").read_text() + (QB / "engines" / "vllm.py").read_text()  # kwargs built there
         self.assertIn("enable_expert_parallel", src)
         self.assertIn("allow-unverified", src)
 
@@ -734,7 +734,7 @@ class TableParity(unittest.TestCase):
         self.assertIn("QUANT MISMATCH", out)
         self.assertIn("QUANT bf16/nvfp4", out)
         self.assertNotIn("0.50x", out)
-        src = (QB / "modes" / "vmin_fit.py").read_text()
+        src = (QB / "modes" / "vmin_fit.py").read_text() + (QB / "engines" / "vllm.py").read_text()  # kwargs built there
         self.assertIn("quantization", src)
         self.assertIn("META quant=", src)
 

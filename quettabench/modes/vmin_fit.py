@@ -9,7 +9,7 @@ from pathlib import Path
 
 import torch
 import vllm
-from vllm import LLM, SamplingParams
+from vllm import SamplingParams
 
 # CFG comes from xval_config: xval.yaml when present, workloads.json fallback.
 sys.path.insert(0, str(Path(__file__).parents[2]))
@@ -17,6 +17,9 @@ from quettabench.config.xval_config import collective as _xval_collective, workl
 from quettabench.config.xval_config import grids as _xval_grids, step_points as _xval_step_points
 from quettabench.config.xval_config import link_profile as _xval_link_profile
 from quettabench.config.xval_config import run_params as _xval_run_params
+from quettabench.config.schema import Config, EngineCfg, HardwareCfg, ModeCfg, WorkloadCfg
+from quettabench.engines import vllm as vllm_adapter
+from quettabench.engines.drivers import InProcessDriver
 from quettabench.metrics.step_fit import fit, ms_at_eval
 from quettabench.workloads.grid import GridTrace, distinct_ids
 from quettabench.workloads.live import RealTrace
@@ -112,35 +115,19 @@ def main():
     print(f"META tp={tp}", flush=True)
     print(f"META pp={pp}", flush=True)
 
-    kw = {}
-    if pp > 1:
-        kw["pipeline_parallel_size"] = pp
-    if args.nograph:
-        kw["compilation_config"] = {"cudagraph_mode": "NONE"}
-    if kv_dtype:
-        kw["kv_cache_dtype"] = kv_dtype
     # Quantized weights (nvfp4 / fp8): pass through to vLLM and record it so the
     # table never pairs an fp4 row against a bf16 baseline as if equal.
     quant = wl.get("quant")
-    if quant:
-        kw["quantization"] = quant
     print(f"META quant={quant or dtype}", flush=True)
     # MoE workloads shard their experts across the tp ranks.
     if wl.get("expert_parallel"):
-        kw["enable_expert_parallel"] = True
         print("META expert_parallel=1", flush=True)
 
-    llm = LLM(
-        model=args.model,
-        dtype=dtype,
-        tensor_parallel_size=tp,
-        gpu_memory_utilization=util,
-        max_model_len=maxlen,
-        enable_prefix_caching=False,
-        disable_log_stats=True,
-        trust_remote_code=True,
-        **kw,
-    )
+    engine = EngineCfg(model=args.model, tp=tp, pp=pp, ep=bool(wl.get("expert_parallel")),
+                       dtype=dtype, kv_dtype=kv_dtype or "auto", quant=quant or None,
+                       max_model_len=maxlen, gpu_util=util, cudagraph=not args.nograph)
+    run = Config(engine=engine, workload=WorkloadCfg(), mode=ModeCfg(), hardware=HardwareCfg())
+    llm = InProcessDriver(vllm_adapter.ADAPTER.translate(run)).llm()
 
     cfg = json.load(open(os.path.join(args.model, "config.json")))
     cfg = cfg.get("text_config", cfg)

@@ -13,6 +13,7 @@ client. META prints ttft_basis; numbers from different bases do not compare.
 
 import argparse
 import asyncio
+import dataclasses
 import json
 import os
 import re
@@ -28,6 +29,12 @@ from quettabench.workloads import synth_bench
 from quettabench.config import xval_config
 from quettabench.workloads.arrival import parse_arrival, rebase_arrivals
 from quettabench.metrics.core import burst_recovery, sla_verdict, summarize_serve
+from quettabench.config import loader
+from quettabench.config.schema import Config, ConfigError, EngineCfg, HardwareCfg, ModeCfg, WorkloadCfg
+from quettabench.engines import vllm as vllm_adapter
+from quettabench.engines.drivers import InProcessDriver
+
+RUNS = Path(__file__).parents[1] / "configs" / "runs"
 
 
 def summarize(records, wall_s):
@@ -151,19 +158,25 @@ def goodput_search(start=1.0, max_iters=6, tol=0.1):
             speed = speed / 2
 
 
-def _engine_args(args):
-    from vllm.engine.arg_utils import AsyncEngineArgs
-    return AsyncEngineArgs(
-        model=args.model,
-        tensor_parallel_size=args.tp,
-        pipeline_parallel_size=args.pp,
-        enable_expert_parallel=args.ep,
-        dtype=args.dtype,
-        max_model_len=args.max_model_len,
-        gpu_memory_utilization=args.gpu_util,
-        enable_prefix_caching=args.prefix_caching,
-        trust_remote_code=True,
-    )
+# Engine flags: EngineCfg field -> value when neither --workload nor the flag sets it.
+STANDALONE_ENGINE = {"tp": 1, "pp": 1, "ep": False, "dtype": "bfloat16",
+                     "max_model_len": 40960, "gpu_util": 0.90, "prefix_caching": False}
+
+
+def _engine_cfg(args):
+    """EngineCfg from the --workload run yaml (the workload record, as vmin_fit
+    reads it), else the standalone defaults; engine flags given on the
+    command line override either."""
+    given = {k: getattr(args, k) for k in STANDALONE_ENGINE if getattr(args, k) is not None}
+    if args.workload:
+        try:
+            (cfg,) = loader.load(RUNS / f"{args.workload}.yaml", ["allow_unverified=true"])
+        except ConfigError as e:
+            sys.exit(f"trace_serve: {e}")
+        engine = cfg.engine
+    else:
+        engine = EngineCfg(**STANDALONE_ENGINE)
+    return dataclasses.replace(engine, model=args.model, **given)
 
 
 async def _serve(engine, reqs, offsets, args):
@@ -236,8 +249,7 @@ def _run_goodput(args, reqs, expected):
     the workload-identity gate; a mismatch voids the whole sweep because a
     partially completed probe would inflate the reported rate."""
     async def sweep():
-        from vllm.engine.async_llm_engine import AsyncLLMEngine
-        engine = AsyncLLMEngine.from_engine_args(_engine_args(args))
+        engine = InProcessDriver(args.engine_spec).async_engine()
         gen = goodput_search(start=args.speed)
         speed = next(gen)
         best, fail_bound, iters = None, None, 0
@@ -281,13 +293,15 @@ def main():
     ap.add_argument("--engine", choices=("vllm",), default="vllm",
                     help="quettaserve adapter lands when it has continuous batching")
     ap.add_argument("--model", required=True)
-    ap.add_argument("--tp", type=int, default=1)
-    ap.add_argument("--pp", type=int, default=1, help="pipeline parallel size")
-    ap.add_argument("--ep", action="store_true", help="enable expert parallel (MoE)")
-    ap.add_argument("--dtype", default="bfloat16")
-    ap.add_argument("--max-model-len", type=int, default=40960)
-    ap.add_argument("--gpu-util", type=float, default=0.90)
-    ap.add_argument("--prefix-caching", action="store_true",
+    ap.add_argument("--workload", help="configs/runs/<name>.yaml whose engine fields build "
+                    "the engine (xval.sh passes the workload); flags below override it")
+    ap.add_argument("--tp", type=int)
+    ap.add_argument("--pp", type=int, help="pipeline parallel size")
+    ap.add_argument("--ep", action="store_true", default=None, help="enable expert parallel (MoE)")
+    ap.add_argument("--dtype")
+    ap.add_argument("--max-model-len", type=int)
+    ap.add_argument("--gpu-util", type=float)
+    ap.add_argument("--prefix-caching", action="store_true", default=None,
                     help="off by default so both engines pay full prefill; on to measure the cache")
     ap.add_argument("--speed", type=float, default=1.0, help="arrival time compression factor")
     ap.add_argument("--arrival", default="trace",
@@ -331,6 +345,12 @@ def main():
     if args.gsm8k_file and args.goodput:
         ap.error("the gsm8k sidecar runs on a single replay; drop --goodput")
 
+    engine = _engine_cfg(args)
+    args.tp, args.pp, args.ep, args.prefix_caching = (
+        engine.tp, engine.pp, engine.ep, engine.prefix_caching)
+    args.engine_spec = vllm_adapter.ADAPTER.translate(
+        Config(engine=engine, workload=WorkloadCfg(), mode=ModeCfg(), hardware=HardwareCfg()))
+
     reqs = synth_bench.load_trace(args.trace)
     if args.limit:
         reqs = reqs[: args.limit]
@@ -368,8 +388,7 @@ def main():
     sampler = threading.Thread(target=_power_sampler, args=(samples, stop), daemon=True)
 
     async def _single():
-        from vllm.engine.async_llm_engine import AsyncLLMEngine
-        engine = AsyncLLMEngine.from_engine_args(_engine_args(args))
+        engine = InProcessDriver(args.engine_spec).async_engine()
         if args.energy:
             sampler.start()  # after the model load so joules cover the replay only
         out = await _serve(engine, reqs, offsets, args)

@@ -1,33 +1,14 @@
 {
  "deepseek": {
-  "diff_vmin_fit_vs_trace_serve": {
-   "disable_log_stats": [
-    true,
-    "<absent>"
-   ],
-   "enable_expert_parallel": [
-    true,
-    false
-   ],
-   "kv_cache_dtype": [
-    "fp8_ds_mla",
-    "<absent>"
-   ],
-   "max_model_len": [
-    33280,
-    40960
-   ],
-   "pipeline_parallel_size": [
-    "<absent>",
-    1
-   ]
-  },
+  "diff_vmin_fit_vs_trace_serve": {},
   "trace_serve": {
+   "disable_log_stats": true,
    "dtype": "bfloat16",
-   "enable_expert_parallel": false,
+   "enable_expert_parallel": true,
    "enable_prefix_caching": false,
    "gpu_memory_utilization": 0.9,
-   "max_model_len": 40960,
+   "kv_cache_dtype": "fp8_ds_mla",
+   "max_model_len": 33280,
    "model": "<MODEL>",
    "pipeline_parallel_size": 1,
    "tensor_parallel_size": 8,
@@ -42,6 +23,7 @@
    "kv_cache_dtype": "fp8_ds_mla",
    "max_model_len": 33280,
    "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
    "tensor_parallel_size": 8,
    "trust_remote_code": true
   },
@@ -70,41 +52,23 @@
    "kv_cache_dtype": "fp8_ds_mla",
    "max_model_len": 33280,
    "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
    "tensor_parallel_size": 8,
    "trust_remote_code": true
   }
  },
  "glm53": {
-  "diff_vmin_fit_vs_trace_serve": {
-   "disable_log_stats": [
-    true,
-    "<absent>"
-   ],
-   "enable_expert_parallel": [
-    true,
-    false
-   ],
-   "max_model_len": [
-    33280,
-    40960
-   ],
-   "pipeline_parallel_size": [
-    "<absent>",
-    1
-   ],
-   "quantization": [
-    "fp8",
-    "<absent>"
-   ]
-  },
+  "diff_vmin_fit_vs_trace_serve": {},
   "trace_serve": {
+   "disable_log_stats": true,
    "dtype": "bfloat16",
-   "enable_expert_parallel": false,
+   "enable_expert_parallel": true,
    "enable_prefix_caching": false,
    "gpu_memory_utilization": 0.9,
-   "max_model_len": 40960,
+   "max_model_len": 33280,
    "model": "<MODEL>",
    "pipeline_parallel_size": 1,
+   "quantization": "fp8",
    "tensor_parallel_size": 8,
    "trust_remote_code": true
   },
@@ -116,6 +80,7 @@
    "gpu_memory_utilization": 0.9,
    "max_model_len": 33280,
    "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
    "quantization": "fp8",
    "tensor_parallel_size": 8,
    "trust_remote_code": true
@@ -144,42 +109,24 @@
    "gpu_memory_utilization": 0.9,
    "max_model_len": 33280,
    "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
    "quantization": "fp8",
    "tensor_parallel_size": 8,
    "trust_remote_code": true
   }
  },
  "glm53flash": {
-  "diff_vmin_fit_vs_trace_serve": {
-   "disable_log_stats": [
-    true,
-    "<absent>"
-   ],
-   "enable_expert_parallel": [
-    true,
-    false
-   ],
-   "max_model_len": [
-    33280,
-    40960
-   ],
-   "pipeline_parallel_size": [
-    "<absent>",
-    1
-   ],
-   "quantization": [
-    "fp8",
-    "<absent>"
-   ]
-  },
+  "diff_vmin_fit_vs_trace_serve": {},
   "trace_serve": {
+   "disable_log_stats": true,
    "dtype": "bfloat16",
-   "enable_expert_parallel": false,
+   "enable_expert_parallel": true,
    "enable_prefix_caching": false,
    "gpu_memory_utilization": 0.9,
-   "max_model_len": 40960,
+   "max_model_len": 33280,
    "model": "<MODEL>",
    "pipeline_parallel_size": 1,
+   "quantization": "fp8",
    "tensor_parallel_size": 4,
    "trust_remote_code": true
   },
@@ -191,6 +138,7 @@
    "gpu_memory_utilization": 0.9,
    "max_model_len": 33280,
    "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
    "quantization": "fp8",
    "tensor_parallel_size": 4,
    "trust_remote_code": true
@@ -219,40 +167,20 @@
    "gpu_memory_utilization": 0.9,
    "max_model_len": 33280,
    "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
    "quantization": "fp8",
    "tensor_parallel_size": 4,
    "trust_remote_code": true
   }
  },
  "llama": {
-  "diff_vmin_fit_vs_trace_serve": {
-   "disable_log_stats": [
-    true,
-    "<absent>"
-   ],
-   "dtype": [
-    "float16",
-    "bfloat16"
-   ],
-   "enable_expert_parallel": [
-    "<absent>",
-    false
-   ],
-   "max_model_len": [
-    9216,
-    40960
-   ],
-   "pipeline_parallel_size": [
-    "<absent>",
-    1
-   ]
-  },
+  "diff_vmin_fit_vs_trace_serve": {},
   "trace_serve": {
-   "dtype": "bfloat16",
-   "enable_expert_parallel": false,
+   "disable_log_stats": true,
+   "dtype": "float16",
    "enable_prefix_caching": false,
    "gpu_memory_utilization": 0.9,
-   "max_model_len": 40960,
+   "max_model_len": 9216,
    "model": "<MODEL>",
    "pipeline_parallel_size": 1,
    "tensor_parallel_size": 1,
@@ -265,6 +193,7 @@
    "gpu_memory_utilization": 0.9,
    "max_model_len": 9216,
    "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
    "tensor_parallel_size": 1,
    "trust_remote_code": true
   },
@@ -289,39 +218,19 @@
    "gpu_memory_utilization": 0.9,
    "max_model_len": 9216,
    "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
    "tensor_parallel_size": 1,
    "trust_remote_code": true
   }
  },
  "llama-h200": {
-  "diff_vmin_fit_vs_trace_serve": {
-   "disable_log_stats": [
-    true,
-    "<absent>"
-   ],
-   "dtype": [
-    "float16",
-    "bfloat16"
-   ],
-   "enable_expert_parallel": [
-    "<absent>",
-    false
-   ],
-   "max_model_len": [
-    17408,
-    40960
-   ],
-   "pipeline_parallel_size": [
-    "<absent>",
-    1
-   ]
-  },
+  "diff_vmin_fit_vs_trace_serve": {},
   "trace_serve": {
-   "dtype": "bfloat16",
-   "enable_expert_parallel": false,
+   "disable_log_stats": true,
+   "dtype": "float16",
    "enable_prefix_caching": false,
    "gpu_memory_utilization": 0.9,
-   "max_model_len": 40960,
+   "max_model_len": 17408,
    "model": "<MODEL>",
    "pipeline_parallel_size": 1,
    "tensor_parallel_size": 1,
@@ -334,6 +243,7 @@
    "gpu_memory_utilization": 0.9,
    "max_model_len": 17408,
    "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
    "tensor_parallel_size": 1,
    "trust_remote_code": true
   },
@@ -358,39 +268,20 @@
    "gpu_memory_utilization": 0.9,
    "max_model_len": 17408,
    "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
    "tensor_parallel_size": 1,
    "trust_remote_code": true
   }
  },
  "llama-h200-fp8kv": {
-  "diff_vmin_fit_vs_trace_serve": {
-   "disable_log_stats": [
-    true,
-    "<absent>"
-   ],
-   "enable_expert_parallel": [
-    "<absent>",
-    false
-   ],
-   "kv_cache_dtype": [
-    "fp8",
-    "<absent>"
-   ],
-   "max_model_len": [
-    17408,
-    40960
-   ],
-   "pipeline_parallel_size": [
-    "<absent>",
-    1
-   ]
-  },
+  "diff_vmin_fit_vs_trace_serve": {},
   "trace_serve": {
+   "disable_log_stats": true,
    "dtype": "bfloat16",
-   "enable_expert_parallel": false,
    "enable_prefix_caching": false,
    "gpu_memory_utilization": 0.9,
-   "max_model_len": 40960,
+   "kv_cache_dtype": "fp8",
+   "max_model_len": 17408,
    "model": "<MODEL>",
    "pipeline_parallel_size": 1,
    "tensor_parallel_size": 1,
@@ -404,6 +295,7 @@
    "kv_cache_dtype": "fp8",
    "max_model_len": 17408,
    "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
    "tensor_parallel_size": 1,
    "trust_remote_code": true
   },
@@ -430,39 +322,19 @@
    "kv_cache_dtype": "fp8",
    "max_model_len": 17408,
    "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
    "tensor_parallel_size": 1,
    "trust_remote_code": true
   }
  },
  "llama-tp1": {
-  "diff_vmin_fit_vs_trace_serve": {
-   "disable_log_stats": [
-    true,
-    "<absent>"
-   ],
-   "dtype": [
-    "float16",
-    "bfloat16"
-   ],
-   "enable_expert_parallel": [
-    "<absent>",
-    false
-   ],
-   "max_model_len": [
-    9216,
-    40960
-   ],
-   "pipeline_parallel_size": [
-    "<absent>",
-    1
-   ]
-  },
+  "diff_vmin_fit_vs_trace_serve": {},
   "trace_serve": {
-   "dtype": "bfloat16",
-   "enable_expert_parallel": false,
+   "disable_log_stats": true,
+   "dtype": "float16",
    "enable_prefix_caching": false,
    "gpu_memory_utilization": 0.9,
-   "max_model_len": 40960,
+   "max_model_len": 9216,
    "model": "<MODEL>",
    "pipeline_parallel_size": 1,
    "tensor_parallel_size": 1,
@@ -475,6 +347,7 @@
    "gpu_memory_utilization": 0.9,
    "max_model_len": 9216,
    "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
    "tensor_parallel_size": 1,
    "trust_remote_code": true
   },
@@ -499,39 +372,19 @@
    "gpu_memory_utilization": 0.9,
    "max_model_len": 9216,
    "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
    "tensor_parallel_size": 1,
    "trust_remote_code": true
   }
  },
  "llama-tp2": {
-  "diff_vmin_fit_vs_trace_serve": {
-   "disable_log_stats": [
-    true,
-    "<absent>"
-   ],
-   "dtype": [
-    "float16",
-    "bfloat16"
-   ],
-   "enable_expert_parallel": [
-    "<absent>",
-    false
-   ],
-   "max_model_len": [
-    9216,
-    40960
-   ],
-   "pipeline_parallel_size": [
-    "<absent>",
-    1
-   ]
-  },
+  "diff_vmin_fit_vs_trace_serve": {},
   "trace_serve": {
-   "dtype": "bfloat16",
-   "enable_expert_parallel": false,
+   "disable_log_stats": true,
+   "dtype": "float16",
    "enable_prefix_caching": false,
    "gpu_memory_utilization": 0.9,
-   "max_model_len": 40960,
+   "max_model_len": 9216,
    "model": "<MODEL>",
    "pipeline_parallel_size": 1,
    "tensor_parallel_size": 2,
@@ -544,6 +397,7 @@
    "gpu_memory_utilization": 0.9,
    "max_model_len": 9216,
    "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
    "tensor_parallel_size": 2,
    "trust_remote_code": true
   },
@@ -568,39 +422,19 @@
    "gpu_memory_utilization": 0.9,
    "max_model_len": 9216,
    "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
    "tensor_parallel_size": 2,
    "trust_remote_code": true
   }
  },
  "llama-tp4": {
-  "diff_vmin_fit_vs_trace_serve": {
-   "disable_log_stats": [
-    true,
-    "<absent>"
-   ],
-   "dtype": [
-    "float16",
-    "bfloat16"
-   ],
-   "enable_expert_parallel": [
-    "<absent>",
-    false
-   ],
-   "max_model_len": [
-    9216,
-    40960
-   ],
-   "pipeline_parallel_size": [
-    "<absent>",
-    1
-   ]
-  },
+  "diff_vmin_fit_vs_trace_serve": {},
   "trace_serve": {
-   "dtype": "bfloat16",
-   "enable_expert_parallel": false,
+   "disable_log_stats": true,
+   "dtype": "float16",
    "enable_prefix_caching": false,
    "gpu_memory_utilization": 0.9,
-   "max_model_len": 40960,
+   "max_model_len": 9216,
    "model": "<MODEL>",
    "pipeline_parallel_size": 1,
    "tensor_parallel_size": 4,
@@ -613,6 +447,7 @@
    "gpu_memory_utilization": 0.9,
    "max_model_len": 9216,
    "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
    "tensor_parallel_size": 4,
    "trust_remote_code": true
   },
@@ -637,39 +472,15 @@
    "gpu_memory_utilization": 0.9,
    "max_model_len": 9216,
    "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
    "tensor_parallel_size": 4,
    "trust_remote_code": true
   }
  },
  "qwen": {
-  "diff_vmin_fit_vs_trace_serve": {
-   "disable_log_stats": [
-    true,
-    "<absent>"
-   ],
-   "enable_expert_parallel": [
-    "<absent>",
-    false
-   ],
-   "max_model_len": [
-    33280,
-    40960
-   ],
-   "pipeline_parallel_size": [
-    "<absent>",
-    1
-   ]
-  },
+  "diff_vmin_fit_vs_trace_serve": null,
   "trace_serve": {
-   "dtype": "bfloat16",
-   "enable_expert_parallel": false,
-   "enable_prefix_caching": false,
-   "gpu_memory_utilization": 0.9,
-   "max_model_len": 40960,
-   "model": "<MODEL>",
-   "pipeline_parallel_size": 1,
-   "tensor_parallel_size": 1,
-   "trust_remote_code": true
+   "exit": "trace_serve: <REPO>/configs/runs/qwen.yaml [qwen]: attention=hybrid needs kv_bytes; the dense per-head formula overestimates its KV"
   },
   "vmin_fit": {
    "disable_log_stats": true,
@@ -678,6 +489,7 @@
    "gpu_memory_utilization": 0.9,
    "max_model_len": 33280,
    "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
    "tensor_parallel_size": 1,
    "trust_remote_code": true
   },
@@ -702,28 +514,16 @@
    "gpu_memory_utilization": 0.9,
    "max_model_len": 33280,
    "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
    "tensor_parallel_size": 1,
    "trust_remote_code": true
   }
  },
  "qwen3": {
-  "diff_vmin_fit_vs_trace_serve": {
-   "disable_log_stats": [
-    true,
-    "<absent>"
-   ],
-   "enable_expert_parallel": [
-    "<absent>",
-    false
-   ],
-   "pipeline_parallel_size": [
-    "<absent>",
-    1
-   ]
-  },
+  "diff_vmin_fit_vs_trace_serve": {},
   "trace_serve": {
+   "disable_log_stats": true,
    "dtype": "bfloat16",
-   "enable_expert_parallel": false,
    "enable_prefix_caching": false,
    "gpu_memory_utilization": 0.9,
    "max_model_len": 40960,
@@ -739,6 +539,7 @@
    "gpu_memory_utilization": 0.9,
    "max_model_len": 40960,
    "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
    "tensor_parallel_size": 4,
    "trust_remote_code": true
   },
@@ -763,6 +564,7 @@
    "gpu_memory_utilization": 0.9,
    "max_model_len": 40960,
    "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
    "tensor_parallel_size": 4,
    "trust_remote_code": true
   }
