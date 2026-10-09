@@ -1,8 +1,8 @@
 """Run dirs built from the golden data, the way serve writes them.
 
-grid_run_dir is a real grid run on the stubs (serve --grid --results-dir),
-git and the clock frozen as the cache-packing golden freezes them, plus the
-two things no run produces: the pre-normalization RAW cell (no ms_at_eval)
+grid_run_dir is a real grid run on the stubs (qbench run --results-dir),
+git rev-parse frozen to the golden baseline's bench_sha, plus the two things
+no run produces: the pre-normalization RAW cell (no ms_at_eval)
 the golden baseline carries as its last point, and the finish time set to
 the baseline's recorded_utc. bench_run_dir is a QuettaServe run: the bench
 log where BenchDriver keeps it, its rows in requests.jsonl, and run.json
@@ -11,7 +11,9 @@ with the step section fit_run derives from those rows.
 
 import json
 import shutil
+import types
 from pathlib import Path
+from unittest import mock
 
 from quettabench.config.schema import (
     Config,
@@ -23,10 +25,10 @@ from quettabench.config.schema import (
 from quettabench.engines.drivers import BenchDriver
 from quettabench.metrics.results import RunWriter
 from quettabench.metrics.step_fit import fit_run
-from tests.golden._harness import run_grid_cli
-from tests.golden.test_cache_packing import frozen_capture
+from tests.golden._harness import grid_argv, run_grid_cli
 
 RECORDED = "2026-09-21T14:13:20+00:00"
+FAKE_BENCH_SHA = "0123abc"
 RAW_STEP = {"ctx": 4096, "bs": 64, "tp": 1, "ms_per_step": 19.874, "ms_at_eval": None,
             "eval_pos": 0, "r2": 0.9995, "prefill_s": 1.1, "raw": [2.29, 5.67, 9.05]}
 
@@ -40,9 +42,10 @@ def _edit_run_json(path, edit):
 def grid_run_dir(out):
     """results/<run>/ of the llama grid on the stubs, as the golden baseline's run."""
     out = Path(out)
-    with frozen_capture():
-        run = run_grid_cli(["--grid", "--workload", "llama", "--model", "<MODEL>",
-                            "--results-dir", str(out)], {})
+    fake_git = types.SimpleNamespace(stdout=FAKE_BENCH_SHA + "\n")
+    with mock.patch("subprocess.run", return_value=fake_git):
+        run = run_grid_cli(grid_argv("llama", "--set", f"run_name={out.name}",
+                                     "--results-dir", str(out.parent)), {})
     if run["exit"] is not None:
         raise RuntimeError(f"grid run exited: {run['exit']}")
 

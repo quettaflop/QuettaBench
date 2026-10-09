@@ -43,7 +43,7 @@ from ..metrics.core import (
     transient_gate,
     usage_gate,
 )
-from ..metrics.results import goodprobe_line, legacy_grid_lines, print_legacy_lines
+from ..metrics.results import goodprobe_line, print_legacy_lines
 from ..workloads.arrival import offered_rate, parse_arrival, rebase_arrivals
 from ..workloads.base import workload_hash
 from ..workloads.sessions import SessionTrace
@@ -349,14 +349,11 @@ def identity(trace, served) -> dict:
 
 def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
     """One measured run of trace through driver; see the module docstring.
-    A grid run reads its engine facts from writer.cfg, the run's Config, and
-    also leaves the compat baseline table.py reads until Phase 3."""
+    A grid run reads its engine facts from writer.cfg, the run's Config."""
     if mode.grid:
         record, steps, rows = run_grid(trace, driver, writer.cfg, writer)
         summary = Summary(None, rows, sections={"grid": record})
         writer.finish(summary.to_dict(), steps=steps)
-        if "meta" in record:  # the compat baseline is the in-process grid's layout
-            writer.write_baseline(legacy_grid_lines(record))
         return summary
     if mode.goodput_sweep and (mode.load != "open" or not (mode.sla_ttft_ms or mode.sla_tpot_ms)):
         raise ValueError("goodput sweep needs open load and mode.sla_ttft_ms and/or sla_tpot_ms")

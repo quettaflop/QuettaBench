@@ -3,7 +3,7 @@
 CI has no GPU, so this pins the wiring: scripts parse, no shell entry
 points are left, the workload records (pinned in the config golden, which
 holds the loader to them) stay consistent, the grids cover the cells the
-engine bench times, and table.py only compares like with like.
+engine bench times, and crossval only compares like with like.
 """
 
 import ast
@@ -82,7 +82,7 @@ class CrossvalScripts(unittest.TestCase):
         src = (QB / "config" / "env_map.py").read_text() + (QB / "engines" / "vllm.py").read_text()
         self.assertIn("pipeline_parallel_size", src)
         self.assertIn("XVAL_PP", src)
-        # cache.py parses META one key per line
+        # the grid run prints META one key per line
         self.assertIn('"pp": e.pp', (QB / "modes" / "_grid.py").read_text())
         self.assertIn('f"META {k}={v}"', (QB / "metrics" / "results.py").read_text())
         ds = _config("deepseek").engine
@@ -531,7 +531,7 @@ class EngineBenchContract(unittest.TestCase):
 
 
 class TableParity(unittest.TestCase):
-    """table.py prints ratios only when both sides timed the same quantity:
+    """crossval prints ratios only when both sides timed the same quantity:
     the engine's pipelined decode_loop against the baseline's slope. A
     criterion per-step log gets its cells printed with ratios withheld, and
     rows whose KV formats differ carry a KV flag."""
@@ -556,8 +556,9 @@ class TableParity(unittest.TestCase):
             bench.write_text(bench_text)
             cache.write_text(json.dumps(base))
             out = subprocess.run(
-                [sys.executable, str(QB / "crossval" / "table.py"), str(bench), str(cache)],
-                capture_output=True, text=True, env={**os.environ, **(env or {})},
+                [sys.executable, "-m", "quettabench.crossval", str(bench), str(cache),
+                 "--json", str(Path(td) / "xval.json")],
+                capture_output=True, text=True, env={**os.environ, **(env or {})}, cwd=REPO,
             )
         self.assertEqual(out.returncode, expect_rc, out.stderr)
         return out.stdout
@@ -711,8 +712,9 @@ class TableParity(unittest.TestCase):
             bench.write_text(bench_text)
             cache.write_text(json.dumps(base))
             out = subprocess.run(
-                [sys.executable, str(QB / "crossval" / "table.py"), str(bench), str(cache)],
-                capture_output=True, text=True, env=os.environ,
+                [sys.executable, "-m", "quettabench.crossval", str(bench), str(cache),
+                 "--json", str(Path(td) / "xval.json")],
+                capture_output=True, text=True, env=os.environ, cwd=REPO,
             )
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertIn("COMM", out.stdout)
@@ -739,8 +741,9 @@ class TableParity(unittest.TestCase):
             bench.write_text(bench_text)
             cache.write_text(json.dumps(base))
             out = subprocess.run(
-                [sys.executable, str(QB / "crossval" / "table.py"), str(bench), str(cache)],
-                capture_output=True, text=True, env=os.environ,
+                [sys.executable, "-m", "quettabench.crossval", str(bench), str(cache),
+                 "--json", str(Path(td) / "xval.json")],
+                capture_output=True, text=True, env=os.environ, cwd=REPO,
             )
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertNotIn("COMM", out.stdout)
@@ -758,7 +761,7 @@ class TableParity(unittest.TestCase):
 
     def test_cache_records_prompt_mode(self):
         # A baseline without its routing regime is not comparable later.
-        self.assertIn("prompt_mode", (QB / "crossval" / "cache.py").read_text())
+        self.assertIn("prompt_mode", (QB / "crossval" / "reader.py").read_text())
         self.assertIn("prompt_mode", (QB / "crossval" / "compare.py").read_text())
 
     def test_corpus_mode_requires_an_explicit_corpus(self):

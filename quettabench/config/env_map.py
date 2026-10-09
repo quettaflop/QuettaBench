@@ -13,7 +13,7 @@ def _truthy(raw):
 
 
 def _nonempty(raw):
-    """table.py's XVAL_ALLOW_METHOD_MISMATCH rule: any non-empty value."""
+    """crossval's XVAL_ALLOW_METHOD_MISMATCH rule (old table.py): any non-empty value."""
     return bool(raw)
 
 

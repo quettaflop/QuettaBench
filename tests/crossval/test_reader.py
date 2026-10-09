@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 from quettabench.crossval import reader
-from tests.crossval._rundirs import bench_run_dir, grid_run_dir
+from tests.crossval._rundirs import bench_run_dir
 from tests.golden._harness import FIXTURES
 
 
@@ -63,13 +63,6 @@ class Baseline(unittest.TestCase):
 
 
 class RunDir(unittest.TestCase):
-    def test_grid_run_reads_as_the_baseline_packed_from_its_log(self):
-        with tempfile.TemporaryDirectory() as td:
-            run = reader.read_run(grid_run_dir(Path(td) / "vllm-llama"))
-        base = reader.read_baseline(FIXTURES / "baseline_llama.json")
-        self.assertEqual(run.header, base.header)
-        self.assertEqual(run.rows, base.rows)
-
     def test_bench_run_reads_as_its_log(self):
         for log in ("bench_loop.log", "bench_criterion.log"):
             with self.subTest(log=log), tempfile.TemporaryDirectory() as td:

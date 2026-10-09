@@ -43,7 +43,7 @@ DICT_KEYS = {
 class EngineCfg:
     name: str = "vllm"
     model: str | None = None       # weights dir or HF id: serve --grid --model
-    model_name: str = ""              # display name: grid META model=, table.py crate match
+    model_name: str = ""              # display name: grid META model=, crossval comm_bound_bs match
     tp: int = 1
     pp: int = 1
     ep: bool = False                  # model yaml ep, ENABLE_EP
@@ -147,8 +147,8 @@ class Config:
     hardware: HardwareCfg
     grid: GridCfg | None = None
     run_name: str = ""
-    provenance: Mapping[str, Any] = field(default_factory=dict)  # cache.py engine_sha
-    crossval: Mapping[str, Any] = field(default_factory=dict)    # table.py comm_bound_bs
+    provenance: Mapping[str, Any] = field(default_factory=dict)  # engine_sha
+    crossval: Mapping[str, Any] = field(default_factory=dict)    # crossval comm_bound_bs
     origins: Mapping[str, str] = field(default_factory=dict)
 
     def to_dict(self):

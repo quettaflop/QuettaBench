@@ -1,5 +1,5 @@
 """GPU smoke for the vLLM baseline: qbench run on the one-cell smoke grid
-must write run.json with a step and the compat baseline. Skips without
+must write run.json with a step section and the gpu metadata. Skips without
 CUDA and MODEL, so hosted CI collects and skips it; a GPU runner executes
 it.
 
@@ -36,15 +36,14 @@ class CrossvalBaselineSmoke(unittest.TestCase):
             subprocess.run(
                 [os.environ.get("VLLM_PY", sys.executable), "-m", "quettabench.cli", "run",
                  "configs/runs/llama.yaml", "--set", "mode.grid=smoke",
-                 "--set", "run_name=llama-smoke",  # never the real vllm-llama.json baseline
+                 "--set", "run_name=llama-smoke",
                  "--set", f"engine.model={os.environ['MODEL']}", "--results-dir", td],
                 cwd=REPO, check=True, timeout=1200, env=env,
             )
             doc = json.loads((Path(td) / "llama-smoke" / "run.json").read_text())
         self.assertEqual(doc["run_status"]["status"], "ok")
         self.assertTrue(doc["steps"], "the smoke cell produced no step")
-        baseline = REPO / "results" / "baselines" / "vllm-llama-smoke.json"
-        self.assertIn("gpu", json.loads(baseline.read_text()), "baseline missing gpu metadata")
+        self.assertTrue(doc["summary"]["grid"]["meta"]["gpu"], "run missing gpu metadata")
 
 
 if __name__ == "__main__":

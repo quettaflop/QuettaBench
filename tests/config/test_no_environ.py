@@ -17,8 +17,6 @@ ENV_NAMES = ("environ", "getenv")
 OWNER = "quettabench/config/env_map.py"
 
 ALLOWLIST = {
-    # removed in Phase 3: crossval.py reads results files; cache.py is deleted
-    "quettabench/crossval/cache.py",
     # kernel probes: torchrun's RANK/WORLD_SIZE/LOCAL_RANK are the launcher protocol, NCU_BIN names the profiler binary
     "quettabench/probes/flash_attn.py",
     "quettabench/probes/gdn.py",

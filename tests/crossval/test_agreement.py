@@ -7,13 +7,13 @@ import unittest
 from pathlib import Path
 
 from quettabench.crossval import agreement, reader
-from tests.golden._harness import run_grid_cli
+from tests.golden._harness import grid_argv, run_grid_cli
 
 
 def text_run(out):
-    """A stub llama grid run with mode.returns=text (serve --grid --dump-tokens)."""
-    run = run_grid_cli(["--grid", "--workload", "llama", "--model", "<MODEL>", "--dump-tokens",
-                        "--results-dir", str(out)], {})
+    """A stub llama grid run with mode.returns=text."""
+    run = run_grid_cli(grid_argv("llama", "--set", "mode.returns=text", "--set", f"run_name={out.name}",
+                                 "--results-dir", str(out.parent)), {})
     assert run["exit"] is None, run["exit"]
     return reader.read_rows(out)
 

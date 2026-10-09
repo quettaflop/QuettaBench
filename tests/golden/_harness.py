@@ -55,7 +55,7 @@ RUNS = REPO / "configs" / "runs"
 AS_VMIN_FIT = {"qwen": ["engine.attention=dense"]}
 
 # The one (ctx, bs) cell the fake clock makes noisy, so a RESULT line with
-# r2 < 0.999 (table.py's LOW R2) comes out of the real grid code path.
+# r2 < 0.999 (crossval's LOW R2) comes out of the real grid code path.
 NOISY_CELL = (1024, 16)
 
 
@@ -127,16 +127,15 @@ def loader_message(exit_msg):
     return exit_msg.split(": ", 1)[1]
 
 
-def run_grid_cli(argv, env, model_config=None, baselines=None):
+def run_grid_cli(argv, env, model_config=None):
     """cli.main(argv) for a `qbench run` argv on the stubs under exactly `env`
     (os.environ is replaced, not merged), with the drivers' clock swapped
     for the stub's fake one. nvidia-smi is hidden so backend and
     link-profile detection never depend on the host, and the idle-GPU pick
-    answers "0" as on a one-GPU box. results/<run>/ goes
-    to a throwaway dir unless argv names --results-dir, and the compat
-    baseline to `baselines` (also throwaway when None), never into the
-    repo. Returns stdout lines, the LLM kwargs, the number of generate()
-    calls and the SystemExit message if one fired."""
+    answers "0" as on a one-GPU box. results/<run>/ goes to a throwaway
+    dir unless argv names --results-dir, never into the repo. Returns
+    stdout lines, the LLM kwargs, the number of generate() calls and the
+    SystemExit message if one fired."""
     with tempfile.TemporaryDirectory() as model_dir:
         Path(model_dir, "config.json").write_text(json.dumps(model_config or DENSE_CONFIG))
         argv = [a.replace("<MODEL>", model_dir) for a in argv]
@@ -152,12 +151,10 @@ def run_grid_cli(argv, env, model_config=None, baselines=None):
             cli = fresh_import("quettabench.cli")
             drivers = importlib.import_module("quettabench.engines.drivers")
             launcher = importlib.import_module("quettabench.engines.launcher")
-            results = importlib.import_module("quettabench.metrics.results")
             clock = types.SimpleNamespace(perf_counter=vllm.CLOCK.perf_counter)
             exit_msg = None
             with mock.patch.object(drivers, "time", clock), \
                     mock.patch.object(launcher, "idle_gpus", return_value="0"), \
-                    mock.patch.object(results, "BASELINES", Path(baselines or model_dir)), \
                     contextlib.redirect_stdout(out):
                 try:
                     cli.main(argv)
