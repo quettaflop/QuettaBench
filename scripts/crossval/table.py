@@ -111,6 +111,7 @@ def main():
         + (f"  bench {cache['bench_sha'][:9]}" if cache.get("bench_sha") else "")
         + (f"  engine {cache['engine_sha'][:9]}" if cache.get("engine_sha") else "")
         + (f"  prompts {cache['prompt_mode']}" if cache.get("prompt_mode") else "")
+        + (f"  eval_pos {cache['eval_pos']}" if cache.get("eval_pos") else "")
         + (f"  nccl={nccl_algo}/{nccl_proto}" if nccl_algo or nccl_proto else "")
     )
     if age_d > STALE_DAYS:
@@ -174,9 +175,16 @@ def main():
     for ctx, bs, tp in shared:
         ms_a, group, kv_a = ours[(ctx, bs, tp)]
         p = theirs[(ctx, bs, tp)]
-        ms_b = p["ms_per_step"]
+        # Pair against the KV-position-normalized vLLM number when present, so both
+        # columns are decode cost at the same resident KV (ctx+eval_pos).
+        ms_b = p.get("ms_at_eval") or p["ms_per_step"]
+        tps_b = bs * 1000.0 / ms_b
         r2 = p.get("r2", float("nan"))
         flag = "  LOW R2" if r2 < 0.999 else ""
+        # Pre-normalization baseline: ms is the raw slope at the fit centroid, not
+        # eval_pos. Marked so a mixed table is never read as matched-KV.
+        if not p.get("ms_at_eval"):
+            flag += "  RAW"
         kv_b = p.get("kv", cache.get("dtype", "?"))
         kv_flagged = False
         if kv_a and kv_short.get(kv_a, kv_a) != kv_short.get(kv_b, kv_b):
@@ -191,12 +199,12 @@ def main():
         if group == "decode_loop_eager":
             flag += "  EAGER"
         if matched and not kv_flagged and not comm_flagged:
-            ratio = f"{(bs * 1000.0 / ms_a) / p['tok_s']:>6.2f}x"
+            ratio = f"{(bs * 1000.0 / ms_a) / tps_b:>6.2f}x"
         else:
             ratio = f"{'--':>7}"
         print(
             f"{group:<20} {ctx:>6} {bs:>4} {tp:>4} {ms_a:>10.3f} {ms_b:>9.3f} "
-            f"{bs * 1000.0 / ms_a:>12.0f} {p['tok_s']:>11.0f} "
+            f"{bs * 1000.0 / ms_a:>12.0f} {tps_b:>11.0f} "
             f"{ratio} {r2:>7.5f}{flag}"
         )
         if comm_flagged and not comm_footnote_printed:

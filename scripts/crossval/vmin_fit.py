@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from xval_config import collective as _xval_collective, workloads as _xval_workloads
 from xval_config import grids as _xval_grids, step_points as _xval_step_points
 from xval_config import link_profile as _xval_link_profile
+from xval_config import run_params as _xval_run_params
 CFG = {
     "workloads": _xval_workloads(),
     "grids": _xval_grids(),
@@ -108,6 +109,13 @@ def main():
         sys.exit(f"unknown grid {gridname!r}; grids: {', '.join(grids)}")
     points = grids[gridname]
     steps = CFG["step_points"]
+    # The raw slope is the marginal decode cost at the centroid of the fit
+    # points (about ctx + mean(steps)); the engine times its loop around
+    # ctx + timing_steps/2. eval_pos names that engine window so the vLLM number
+    # normalizes to the same resident-KV length and both columns compare decode
+    # cost at one KV position. XVAL_EVAL_POS overrides the default.
+    mean_steps = sum(steps) / len(steps)
+    eval_pos = int(os.environ.get("XVAL_EVAL_POS", _xval_run_params()["timing_steps"] // 2))
 
     mode = "NOGRAPH" if args.nograph else "FULL"
     tp = int(wl.get("tp", 1))
@@ -136,6 +144,8 @@ def main():
     print(f"META dtype={dtype}", flush=True)
     print(f"META grid={gridname}", flush=True)
     print(f"META mode={mode}", flush=True)
+    print(f"META eval_pos={eval_pos}", flush=True)
+    print(f"META step_points={steps}", flush=True)
     print(f"META nccl_algo={os.environ.get('NCCL_ALGO','auto')}", flush=True)
     print(f"META nccl_proto={os.environ.get('NCCL_PROTO','auto')}", flush=True)
     print(f"META link_profile={os.environ['XVAL_LINK_PROFILE']}", flush=True)
@@ -254,10 +264,19 @@ def main():
                 break
         r2, slope, inter, ys = best
         kv_gib = ctx * bs * kv_b / (1 << 30)
+        attn = kv_gib / (kv_gib + weights_gib)
+        ms_slope = slope * 1e3
+        # Normalize the slope from the fit centroid (ctx+mean_steps) to the engine
+        # window (ctx+eval_pos). Only the KV-bound share (attn) of the step moves
+        # with KV length, so the shift is attn*(eval_pos-mean_steps)/(ctx+mean_steps):
+        # a sub-2% correction that vanishes as ctx grows. ms_per_step stays the raw
+        # slope for back-compat; ms_at_eval is the matched-KV number table.py pairs.
+        ms_eval = ms_slope * (1 + attn * (eval_pos - mean_steps) / (ctx + mean_steps))
         print(
             f"RESULT mode={mode} tp={tp} kv={kv_dtype or dtype} ctx={ctx} bs={bs} "
-            f"ms_per_step={slope * 1e3:.3f} r2={r2:.5f} prefill_s={inter:.2f} "
-            f"kv_gib={kv_gib:.1f} attn_share={kv_gib / (kv_gib + weights_gib):.3f} "
+            f"ms_per_step={ms_slope:.3f} ms_at_eval={ms_eval:.3f} eval_pos={eval_pos} "
+            f"mean_steps={mean_steps:.0f} r2={r2:.5f} prefill_s={inter:.2f} "
+            f"kv_gib={kv_gib:.1f} attn_share={attn:.3f} "
             f"raw={[round(y, 2) for y in ys]}",
             flush=True,
         )

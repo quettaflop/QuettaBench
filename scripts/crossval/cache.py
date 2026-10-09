@@ -9,12 +9,26 @@ def main():
     for line in text.splitlines():
         if not line.startswith("RESULT"):
             continue
-        d = dict(re.findall(r"(\w+)=([-\d.A-Za-z_]+)", line.split("raw=")[0]))
+        head, _, rawpart = line.partition("raw=")
+        d = dict(re.findall(r"(\w+)=([-\d.A-Za-z_]+)", head))
         ctx, bs, ms = int(d["ctx"]), int(d["bs"]), float(d["ms_per_step"])
+        # ms_at_eval is the slope normalized to the engine's KV window (eval_pos);
+        # None on pre-normalization logs (kept None, not ms, so table.py flags the
+        # row RAW instead of mistaking a raw slope for a normalized one). raw ys are
+        # kept (with step_points in the header) so a later re-reference needs no re-run.
+        ms_eval = float(d["ms_at_eval"]) if "ms_at_eval" in d else None
+        try:
+            raw = json.loads(rawpart) if rawpart else None
+        except ValueError:
+            raw = None
         points.append({
-            "ctx": ctx, "bs": bs, "tp": int(d.get("tp", "1")), "ms_per_step": ms,
+            "ctx": ctx, "bs": bs, "tp": int(d.get("tp", "1")),
+            "ms_per_step": ms, "ms_at_eval": ms_eval,
+            "eval_pos": int(d.get("eval_pos", "0")),
+            "attn_share": float(d.get("attn_share", "0")),
+            "prefill_s": float(d.get("prefill_s", "0")),
             "tok_s": bs * 1000.0 / ms, "r2": float(d["r2"]),
-            "kv": d.get("kv", meta.get("dtype", "?")),
+            "kv": d.get("kv", meta.get("dtype", "?")), "raw": raw,
         })
     if not points:
         sys.exit(f"no RESULT lines in {raw}")
@@ -42,6 +56,8 @@ def main():
         "dtype": meta.get("dtype", "?"),
         "grid": meta.get("grid", "?"),
         "method": "slope",
+        "eval_pos": int(meta.get("eval_pos", "0")),
+        "step_points": json.loads(meta["step_points"]) if "step_points" in meta else None,
         "kv_dtype": points[0]["kv"],
         "expert_parallel": meta.get("expert_parallel") == "1",
         "nccl_algo": meta.get("nccl_algo"),
