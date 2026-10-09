@@ -14,7 +14,7 @@ from quettabench.metrics.core import (
 )
 from quettabench.metrics.results import BENCHMARK_SCHEMA_VERSION
 from quettabench.metrics.results import write_legacy_results as save_results
-from quettabench.modes.serve import (
+from quettabench.modes.legacy_cli import (
     _resolve_cache_state,
     _resolve_tri_state,
     resolve_multi_turn_num_sessions,
