@@ -19,7 +19,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 JUSTFILE = ROOT / "justfile"
 PROBES_DIR = ROOT / "quettabench" / "probes"
-UNMOVED_PROBES = ROOT / "profiling" / "kernel_composed" / "probes"
 PROFILING_DIR = ROOT / "quettabench" / "profiling"
 
 
@@ -74,7 +73,6 @@ def probe_invocations() -> list[tuple[Path, set[str]]]:
     out = []
     for block in recipe_blocks(JUSTFILE):
         probes = [PROBES_DIR / f"{m}.py" for m in re.findall(r"-m quettabench\.probes\.([a-z0-9_]+)", block)]
-        probes += [UNMOVED_PROBES / m for m in re.findall(r"kernel_composed/probes/([a-z0-9_]+\.py)", block)]
         probes += [PROFILING_DIR / f"{m}.py" for m in re.findall(r"-m quettabench\.profiling\.([a-z0-9_]+)", block)]
         flags = {t for t in block.split() if t.startswith("--") and "=" not in t}
         out.extend((probe, flags) for probe in probes)

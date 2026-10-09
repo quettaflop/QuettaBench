@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
-# profiling/probes/live_split_probe.py
 """Live concurrency sweep — measure the cached-host SHARED vs PER-REQ split on the REAL serving stack.
 
 The offline batch CSV gave the wrong split (it lacked the HTTP/IPC stack that dominates the cached rate).
 This fires B CONCURRENT cache-hit requests (shared primed prefix P + a fresh small new tail each) at the live
 vLLM server and measures per-request TTFT, then fits TTFT(B,P) = floor + shared*P + perreq*B*P — the exact
 decomposition the headline applies (shared once/step + perreq per request). Reports the shared/perreq split.
+
+  python3 -m quettabench.probes.live_split --gpu-label H100 --url http://localhost:8771/v1/chat/completions
+writes results/probes/<gpu>/live_split_<gpu>.csv (--out changes the directory).
 """
 import asyncio, json, time, random, csv, argparse, statistics as st
 import aiohttp
+import numpy as np
+
+from quettabench.probes.base import add_output_args, out_root
 
 _VOCAB = ("the of and to in a is that for it as was with on be at by this had not are but from or "
           "have an they which one you were her all she there would their we him been has when who "
@@ -49,7 +54,6 @@ async def measure(session, url, model, B, P, rounds):
 
 
 def fit(rows):
-    import numpy as np
     X = np.array([[1.0, r["P"], r["B"] * r["P"]] for r in rows]); y = np.array([r["ttft_ms"] for r in rows])
     b, *_ = np.linalg.lstsq(X, y, rcond=None)
     return b  # floor, shared(/tok), perreq(/tok)
@@ -62,8 +66,10 @@ async def main():
     ap.add_argument("--Bs", default="1,2,4,8,16")
     ap.add_argument("--Ps", default="2000,8000,16000")
     ap.add_argument("--rounds", type=int, default=3)
-    ap.add_argument("--out", default="live_split.csv")
+    add_output_args(ap)
     a = ap.parse_args()
+    out = out_root(a) / f"live_split_{a.gpu_label}.csv"
+    out.parent.mkdir(parents=True, exist_ok=True)
     Bs = [int(x) for x in a.Bs.split(",")]; Ps = [int(x) for x in a.Ps.split(",")]
     rows = []
     async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=600),
@@ -73,7 +79,7 @@ async def main():
                 t = await measure(s, a.url, a.model, B, P, a.rounds)
                 rows.append({"B": B, "P": P, "ttft_ms": round(t, 3)})
                 print(f"  B={B:>3} P={P:>6}  ttft={t:8.2f} ms", flush=True)
-    with open(a.out, "w", newline="") as f:
+    with open(out, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=["B", "P", "ttft_ms"]); w.writeheader(); w.writerows(rows)
     fl, sh, pr = fit(rows)
     tot = sh + pr

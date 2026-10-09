@@ -1,8 +1,8 @@
 # Kernel probes — tables for QuettaSim
 
 Writes the `ncu/` vs `cuda_event/` layout that QuettaSim `kernel_composed`
-interpolates, under `results/probes/<gpu>/`. `just export` routes them to QuettaSim. Not the
-live-server / serving-wall probes in `profiling/`.
+interpolates, under `results/probes/<gpu>/`. `just export` routes them to QuettaSim. The
+live-server probes that sit beside them are listed under "Live-server probes" below.
 
 The `kernel_composed` cost backend prices each serving step from **measured**
 kernel tables in QuettaSim's `data/kernel_data/`. To make the simulator support a
@@ -106,8 +106,11 @@ PYTHON_BIN=/home/<user>/miniconda3/envs/vllm/bin/python \
 | `reparallel` | `cuda_event/reparallel/{gpu}_reshard[_dp\|_ep].csv` | torchrun; NVLink cost of switching parallelism in place (tp reshard, dp replica broadcast, ep expert restage; `--mode xnode/plan` for cross-node, see the probe header) |
 | `kv_transfer` (now `quettabench/profiling/kv_transfer.py`; profiler source reads its CSV) | `cuda_event/kv_transfer/{gpu}.csv` | PD KV hand-off through NIXL/UCX, laid out as vLLM's NixlConnector issues it (descriptor list per (layer, block)) |
 | `pd_host` (now `quettabench/profiling/pd_host.py`, a profiler source) | `cuda_event/pd_host/{gpu}.csv` | per-request HOST cost of a PD pair by prompt length (parse/template/tokenize/hash, paid on P and again on D) |
-| `decode_batch_probe.py` (still in `profiling/kernel_composed/probes/`) | mixed-step profile CSV | controlled decode-step-vs-batch curve, pins batched-decode pricing at concurrency |
-| `fused_block_probe.py` (same) | mixed-step profile CSV | ONE real transformer-block forward, to check the additivity assumption in `fused_step_ms` without a checkpoint |
+| `fused_block` | `validation/fused_block_profile_{model}_tp{N}_{gpu}.csv` | ONE real transformer-block forward, to check the additivity assumption in `fused_step_ms` without a checkpoint; model shapes from QuettaSim's `engine/device_spec/models/` (`--spec-dir`) |
+
+The decode-step-vs-batch curve the old `decode_batch_probe.py` measured is a grid run now:
+`qbench run configs/runs/decode_batch_llama.yaml` (grid `decode_batch`: ctx 20000, bs 1 2 4 8 11
+16 24) writes the per-cell ms/step to `results/decode_batch_llama/`.
 
 `quettabench/profiling/serving_frontend.py` (a profiler source) is the live-server probe that fits
 the device-YAML `frontend:` + `serving:` blocks against a running `vllm serve`
@@ -178,3 +181,38 @@ times raw `torch.matmul` cuBLAS, not vLLM's GEMM — prefer `--ncu`.
   TTFT and TPOT (`serving-fit` fits only the conc1 floor today). `tp-comm` measures the
   real all-reduce cost fine, but on A100 it over-corrects low-conc TPOT (the real tp2 gap is
   large-batch decode under-pricing). Treat the current output as a starting point, not final.
+
+## Live-server probes
+
+These drive a running (or, for `pool_capacity`, self-launched) vLLM OpenAI server instead of
+a kernel:
+
+- `serving_decode_grid`, `serving_stage_split` -- read by the exporters.
+- `live_split` -- cached-host shared vs per-request split (the 50/50 in
+  `docs/runbooks/serving_stage_split_plan.md`; `stage_split_rates` keeps that fraction).
+- `pool_capacity` -- usable KV-pool capacity under prefix caching (the
+  `available_kv_blocks` the saturated-ceiling emitter reads).
+
+`live_split` and `pool_capacity` have no consumer in the exporters, but their results feed
+numbers the simulator carries as constants. Both take `--gpu-label` and `--out` like the
+kernel probes.
+
+## Install
+
+The runner needs no GPU (`pip install -r requirements.txt`). On a GPU host add the probe
+deps: `pip install -r requirements.txt -r requirements-probe.txt` (torch and vllm). Nsight
+Systems and the CUDA toolkit are system prerequisites. Pin torch and vllm to the versions
+your serving stack runs, or the kernel numbers will not match production.
+
+## Data flow
+
+Raw probe output is bulky and goes to R2 under `profiling/raw/`; `just export` turns results
+dirs into the small curated tables, which are committed into the consumer repos (QuettaSim,
+agentic-serve). QuettaBench holds the tools, not the curated tables.
+
+## Tests
+
+`python3 -m pytest tests/probes/` runs the probe contracts and emitter tests on fixtures, no
+GPU. Two skip when their optional inputs are absent (the stage-split artifact regeneration
+needs the gitignored source CSVs; the decode-grid `load_grid` check needs the consumer's
+`simulator` package), and the GPU smoke test skips without CUDA.

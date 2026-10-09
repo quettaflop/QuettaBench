@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# profiling/probes/pool_capacity_probe.py
 """Effective KV-pool capacity under APC: prime K distinct T-token prompts (K*T well
 past the nominal pool), then probe newest->oldest. The hit/miss boundary (server-side
 prefill-span delta: ~T-token re-prefill on a miss, ~one block on a hit) is the USABLE
@@ -7,8 +6,9 @@ pool in tokens -- watermark/rounding/transients included. Also prints the server
 startup KV-block lines for the static number.
 
 Run (self-launches the server):
-  CUDA_VISIBLE_DEVICES=3 python pool_capacity_probe.py --port 8794 \
-      --tokens 4096 --count 120 --out pool_capacity_H100.txt
+  CUDA_VISIBLE_DEVICES=3 python3 -m quettabench.probes.pool_capacity --gpu-label H100 \
+      --port 8794 --tokens 4096 --count 120
+writes results/probes/<gpu>/pool_capacity_<gpu>.txt (--out changes the directory).
 """
 from __future__ import annotations
 
@@ -28,6 +28,8 @@ for _p in [e for e in sys.path if e == _SCRIPT_DIR]:
     sys.path.remove(_p)
 
 import aiohttp  # noqa: E402
+
+from quettabench.probes.base import add_output_args, out_root  # noqa: E402
 
 _VOCAB = ("the of and to in a is that for it as was with on be at by this had not are but from or "
           "have an they which one you were her all she there would their we him been has when who "
@@ -90,6 +92,7 @@ async def run(base_url, model, tokens, count, out_path):
                          f"effective pool ~= {resident} tokens "
                          f"({resident/16:.0f} blocks; pinned 27250 = 436000 tok)")
     out = Path(out_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("\n".join(lines) + "\n")
     for ln in lines[-3:]:
         print(ln, flush=True)
@@ -115,9 +118,10 @@ def main():
     ap.add_argument("--port", type=int, default=8794)
     ap.add_argument("--tokens", type=int, default=4096)
     ap.add_argument("--count", type=int, default=120)
-    ap.add_argument("--out", default="pool_capacity_H100.txt")
     ap.add_argument("--server-log", default="vllm_pool_probe.log")
+    add_output_args(ap)
     a = ap.parse_args()
+    out = out_root(a) / f"pool_capacity_{a.gpu_label}.txt"
 
     cmd = [sys.executable, "-m", "vllm.entrypoints.openai.api_server",
            "--model", a.model, "--served-model-name", a.served_model_name,
@@ -136,7 +140,7 @@ def main():
             if re.search(r"GPU KV cache size|# GPU blocks|kv cache", line, re.I):
                 print("SERVER:", line.split("]")[-1].strip(), flush=True)
         asyncio.run(run(f"http://127.0.0.1:{a.port}", a.served_model_name,
-                        a.tokens, a.count, a.out))
+                        a.tokens, a.count, out))
     finally:
         proc.terminate()
         try:

@@ -47,7 +47,11 @@ from tests.golden._harness import (
 )
 
 SCENARIOS = {"cleared": {}, "override": ENV_OVERRIDE}
-WORKLOAD_NAMES = sorted(p.stem for p in RUNS.glob("*.yaml"))
+# Run yamls and grids written after the capture have no old xval_config to
+# match; their own tests pin them (test_crossval_contracts ConfigTree).
+ADDED_RUNS = {"decode_batch_llama"}
+ADDED_GRIDS = {"decode_batch"}
+WORKLOAD_NAMES = sorted(p.stem for p in RUNS.glob("*.yaml") if p.stem not in ADDED_RUNS)
 WORKLOADS = json.loads((FIXTURES / "config_workloads.json").read_text())
 DRY_RUN_KEYS = ("engine.tp ", "engine.pp ", "engine.extra.quettaserve ", "grid.cells ")
 
@@ -140,7 +144,7 @@ def resolve_global(env):
     by_profile = {p: dict(resolve("llama", env, f"hardware.link_profile={p}").hardware.collective)
                   for p in ("pcie", "nvlink")}
     return {
-        "grids": grids,
+        "grids": {k: v for k, v in grids.items() if k not in ADDED_GRIDS},
         "step_points": step_points,
         "run_params": {"world": h.world, "timing_steps": h.timing_steps,
                        "max_seq_headroom": h.max_seq_headroom},
@@ -197,8 +201,12 @@ class ParseTimeFailuresGolden(unittest.TestCase):
             n: loader_message(run_grid_cli(grid_argv(n), {})["exit"]) for n in unverified}
         failures["run_yaml_missing"] = run_grid_cli(grid_argv("nope"), {})["exit"].replace(
             str(REPO), "<REPO>")
-        failures["vmin_fit_unknown_grid"] = loader_message(run_grid_cli(
+        # The message lists every grid; the ones added since the capture are dropped.
+        unknown_grid = loader_message(run_grid_cli(
             grid_argv("llama", "--set", "mode.grid=nope"), {})["exit"])
+        for added in ADDED_GRIDS:
+            unknown_grid = unknown_grid.replace(f", {added}", "")
+        failures["vmin_fit_unknown_grid"] = unknown_grid
         failures["vmin_fit_unknown_prompt_mode"] = loader_message(run_grid_cli(
             grid_argv("llama"), {"PROMPT_MODE": "random"})["exit"])
         # vmin_fit sized an MLA stack without kv_bytes with the dense per-head

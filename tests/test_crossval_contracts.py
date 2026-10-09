@@ -1007,6 +1007,12 @@ class ConfigTree(unittest.TestCase):
         self.assertEqual(len(_config("qwen3").grid.cells), 16)
         self.assertEqual(_config("llama").grid.step_points, (60, 230, 400))
 
+    def test_decode_batch_run_has_the_retired_probes_cells(self):
+        # decode_batch_probe.py's defaults: --ctx 20000 --batches 1 2 4 8 11 16 24.
+        grid = _config("decode_batch_llama").grid
+        self.assertEqual(grid.cells, tuple((20000, bs) for bs in (1, 2, 4, 8, 11, 16, 24)))
+        self.assertEqual(grid.cells_over_maxlen, ())
+
     def test_qwen3_resolves_dense_hybrid_kv(self):
         e = _config("qwen3").engine
         # Hybrid stack: KV lives only in the 16 full-attention layers:

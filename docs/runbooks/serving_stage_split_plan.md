@@ -29,7 +29,7 @@ Llama-3.1-8B, c1):
 | FLOOR | **~26 ms** | `prefill_floor_llama31_8b.json` |
 | GPU paged-attn cached slope (device) | **~1.5 ms/1k** | `cached_prefill_v3_H100.csv` (R²=0.9992) |
 | cached top-level stack | model 2.4 / IPC 0.7 / HTTP 2.8 ms/1k | results doc §1 (live) |
-| shared/perreq split | **50/50** | `live_split_probe.py` B-sweep |
+| shared/perreq split | **50/50** | `quettabench/probes/live_split.py` B-sweep |
 
 The new bench **reuses these as constants** and only resolves the two open residuals:
 - the **NEW dispatch residual** (~6 ms/1k = serving 31 − offline GEMM 25) → framework-dispatch stage,
@@ -229,7 +229,7 @@ split of the NEW prefill slope.
 - **`PREFILL_HOST_SHARED` / `PREFILL_HOST_PERREQ`** ← `frontend_residual.cached` is the c1 **SUM**
   (~3.7 ms/1k of HTTP-parse + chat-template + IPC + detok). c1 cannot identify the shared/perreq
   split (the two regressors are the identical `cached` column at 1 req/step) — the split stays at
-  the **50/50** from the live concurrency B-sweep (`live_split_probe.py`). This bench measures the
+  the **50/50** from the live concurrency B-sweep (`quettabench/probes/live_split.py`). This bench measures the
   SUM and attributes it to the frontend host stack (not model physics), confirming the 2.8 HTTP +
   0.7 IPC decomposition.
 - **Already-de-fitted constants** (tokenize 1.33, IPC 0.7, GEMM 25, paged-attn 1.5) are reused: they

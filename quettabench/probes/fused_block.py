@@ -26,31 +26,27 @@ Ops are vLLM's own wherever the grids used vLLM's own -- the block-scaled FP8 li
 `fused_experts`, `flash_attn_varlen_func` -- so a discrepancy is the composition's,
 not a different kernel's.
 
-  CUDA_VISIBLE_DEVICES=1 python fused_block_probe.py --model qwen3-235b-a22b-fp8 --tp 4
+  CUDA_VISIBLE_DEVICES=1 python3 -m quettabench.probes.fused_block --gpu-label H200 \
+      --spec-dir <QuettaSim>/engine/device_spec/models --model qwen3-235b-a22b-fp8 --tp 4
+
+writes results/probes/<gpu>/validation/fused_block_profile_<model>_tp<N>_<gpu>.csv
+(--out changes the directory).
 """
 from __future__ import annotations
 
 import argparse
 import csv
-import os
-import sys
 from pathlib import Path
 
 import torch
 import yaml
 
+from quettabench.probes._graph import graph_time_us
+from quettabench.probes.base import add_output_args, out_root
+
 DEFAULT_PREFILL = [512, 1024, 2048, 4096, 8192]
 _VLLM_CTX = None      # see main(): must outlive every CustomOp construction
 DEFAULT_BATCH = [0, 1, 8, 16, 32]
-
-
-def _default_out_dir() -> str:
-    for env in ("KERNEL_DATA", "QUETTASIM_DATA"):
-        raw = (os.environ.get(env) or "").strip()
-        if raw:
-            p = Path(raw).expanduser()
-            return str(p if env == "KERNEL_DATA" else p / "kernel_data")
-    return str(Path(__file__).resolve().parents[2] / "data" / "kernel_data")
 
 
 class Block:
@@ -172,13 +168,14 @@ class Block:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model", required=True, help="model YAML stem under device_spec/models")
+    ap.add_argument("--spec-dir", required=True,
+                    help="QuettaSim's model yaml dir, engine/device_spec/models")
+    ap.add_argument("--model", required=True, help="model yaml stem under --spec-dir")
     ap.add_argument("--tp", type=int, default=1)
     ap.add_argument("--prefill", default=",".join(map(str, DEFAULT_PREFILL)))
     ap.add_argument("--batch", default=",".join(map(str, DEFAULT_BATCH)))
     ap.add_argument("--decode-ctx", type=int, default=32768)
-    ap.add_argument("--gpu-label", default="H200")
-    ap.add_argument("--out-dir", default=_default_out_dir())
+    add_output_args(ap)
     a = ap.parse_args()
 
     from vllm.config import VllmConfig, set_current_vllm_config
@@ -189,11 +186,8 @@ def main() -> None:
     global _VLLM_CTX
     _VLLM_CTX = set_current_vllm_config(VllmConfig())
     _VLLM_CTX.__enter__()
-    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))  # repo root, for quettabench.probes
-    from quettabench.probes._graph import graph_time_us
 
-    root = Path(__file__).resolve().parents[2]
-    spec = yaml.safe_load((root / "device_spec" / "models" / f"{a.model}.yaml").read_text())
+    spec = yaml.safe_load((Path(a.spec_dir) / f"{a.model}.yaml").read_text())
     prec = (spec.get("precision") or {})
     fp8 = str(prec.get("activations", "bfloat16")).startswith("fp8")
     dev = torch.device("cuda")
@@ -223,7 +217,7 @@ def main() -> None:
             del x, ab
             torch.cuda.empty_cache()
 
-    dst = Path(a.out_dir) / "validation"
+    dst = out_root(a) / "validation"
     dst.mkdir(parents=True, exist_ok=True)
     tag = f"{a.model}_tp{a.tp}_{a.gpu_label}"
     path = dst / f"fused_block_profile_{tag}.csv"
