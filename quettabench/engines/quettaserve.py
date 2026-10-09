@@ -19,7 +19,8 @@ Config fields:
 Per-cell values come from a `cell=(ctx, bs)` argument to translate rather
 than a for_cell(spec, ...) helper: they are a pure function of (cfg, ctx,
 bs) and translate already holds cfg, while a helper would need the prefix,
-steps and headroom carried again on the spec.
+steps and headroom carried again on the spec. translate(cfg) of a grid run
+lists every cell's spec in spec.cells, the loop bench.sh ran.
 """
 
 from pathlib import Path
@@ -111,6 +112,8 @@ class QuettaServeAdapter(EngineAdapter):
                  "--release", "--", "--nocapture"])
         if engine.instrumentation == "nsys":
             argv = [a.format(out=f"results/{cfg.run_name}/nsys") for a in NSYS] + argv
+        cells = () if cell is not None or cfg.grid is None else tuple(
+            (ctx, bs, self.translate(cfg, (ctx, bs))) for ctx, bs in cfg.grid.cells)
         return LaunchSpec(
             adapter=self.name,
             bench_argv=tuple(argv),
@@ -120,11 +123,16 @@ class QuettaServeAdapter(EngineAdapter):
             instrumentation=engine.instrumentation,
             ok_pattern=OK_BY_TEST[bench["test"]],
             log_header=header,
+            cells=cells,
         )
+
+    def needs_server(self, cfg):
+        """QuettaServe cannot listen yet: the bench is its own process per cell."""
+        return False
 
     def driver(self, spec, handle):
         """Bench rows logged to <results_dir>/bench.log, as bench.sh's out-log."""
-        return BenchDriver(Path(handle.results_dir) / "bench.log")
+        return BenchDriver(Path(handle.results_dir) / "bench.log", spec.cells)
 
 
 ADAPTER = register(QuettaServeAdapter())

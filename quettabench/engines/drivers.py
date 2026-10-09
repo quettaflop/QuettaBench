@@ -506,8 +506,9 @@ class BenchDriver(Driver):
     Rows come from table.ours_points on the finished log, so they are what
     the table reads."""
 
-    def __init__(self, log_path):
+    def __init__(self, log_path, cells=()):
         self.log_path = Path(log_path)
+        self.cells = cells
 
     def run(self, cell_specs, *, concurrency=1, **kwargs):
         """cell_specs: (ctx, bs, translate(cfg, (ctx, bs))) per cell; yields rows."""

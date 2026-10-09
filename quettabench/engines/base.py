@@ -40,6 +40,8 @@ class LaunchSpec:
     server_unsupported: tuple = ()
     ok_pattern: str | None = None     # bench stdout line that marks a finished cell
     log_header: str = ""              # bench.sh's `>>> ctx= bs= ...` line for this cell
+    cells: tuple = ()                 # ((ctx, bs, per-cell spec), ...): one bench run each
+    timeout_s: int = 120              # client timeout per request, from mode.timeout
 
     def child_argv(self, argv):
         """argv run under `env`, so the child gets env and env_drop applied on
@@ -60,6 +62,12 @@ class EngineAdapter(ABC):
     @abstractmethod
     def driver(self, spec, handle):
         """The Driver that sends work to an engine started from spec."""
+
+    def needs_server(self, cfg):
+        """Whether runner launches spec.server_argv before driving. A grid run
+        does not: it times batches in-process until the HTTP-vs-in-process
+        parity gate passes."""
+        return cfg.mode.grid is None
 
     def profiler_hook(self, handle):
         """Attach point for the profiler; Phase 2. Returns None until then."""

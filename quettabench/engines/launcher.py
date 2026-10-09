@@ -52,6 +52,17 @@ class Handle:
         return True
 
 
+@dataclass
+class NoServer:
+    """The handle of a run whose driver starts the engine itself (in-process
+    vLLM, the cargo bench): the results dir, no endpoint, nothing to stop."""
+    results_dir: Path
+    endpoint: str | None = None
+
+    def stop(self):
+        pass
+
+
 def idle_gpus(n, backend, visible_devices=None):
     """scripts/crossval/free_gpu.sh: on cuda the first n GPUs using under
     1000 MiB; other backends take the caller's CUDA_VISIBLE_DEVICES or 0..n-1."""

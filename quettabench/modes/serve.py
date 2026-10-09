@@ -370,7 +370,8 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
         record, steps, rows = run_grid(trace, driver, writer.cfg, writer)
         summary = Summary(None, rows, sections={"grid": record})
         writer.finish(summary.to_dict(), steps=steps)
-        writer.write_baseline(legacy_grid_lines(record))
+        if "meta" in record:  # the compat baseline is the in-process grid's layout
+            writer.write_baseline(legacy_grid_lines(record))
         return summary
     if mode.goodput_sweep and (mode.load != "open" or not (mode.sla_ttft_ms or mode.sla_tpot_ms)):
         raise ValueError("goodput sweep needs open load and mode.sla_ttft_ms and/or sla_tpot_ms")

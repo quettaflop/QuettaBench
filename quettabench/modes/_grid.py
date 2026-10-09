@@ -11,6 +11,10 @@ driver, every row through the writer; RESULT is metrics.step_fit.fit_run
 over the cell's rows. Lines print through results.print_legacy_grid_lines
 as the run advances, byte for byte what modes/vmin_fit.py printed.
 
+A driver that times whole cells in its own process (BenchDriver, the
+QuettaServe cargo bench) goes through run_bench instead: its rows are
+already ms per step, so there is no capacity gate, warmup or fit.
+
 A sibling of serve.py the way _sessions_dispatch.py is, to keep serve.py
 one screenful per mechanism.
 """
@@ -19,6 +23,7 @@ import json
 import os
 import sys
 
+from ..metrics.core import RequestResult
 from ..metrics.results import print_legacy_grid_lines
 from ..metrics.step_fit import GIB, fit, fit_run
 from ..workloads.base import Request
@@ -95,10 +100,22 @@ def measure_cell(driver, writer, mode, steps, prompts, cell):
     return out
 
 
+def run_bench(driver, writer):
+    """Every cell of driver.cells through the bench; each row is written
+    with its measured ms per step, and steps passes them through."""
+    rows = list(driver.run(driver.cells))
+    for row in rows:
+        writer.append(RequestResult(success=True, cell=row["cell"]),
+                      **{k: v for k, v in row.items() if k != "cell"})
+    return {"bench_log": str(driver.log_path)}, fit_run(rows, None, None, None), rows
+
+
 def run_grid(trace, driver, cfg, writer):
     """One grid run; returns (record, steps, rows). record is what the
     legacy lines print from and the run.json grid section; steps is
     fit_run over every fit row."""
+    if getattr(driver, "cells", None):
+        return run_bench(driver, writer)
     mode, engine = cfg.mode, cfg.engine
     eval_pos = mode.eval_pos if mode.eval_pos is not None else cfg.hardware.timing_steps // 2
     steps = trace.step_points

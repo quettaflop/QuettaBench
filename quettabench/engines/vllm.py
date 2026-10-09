@@ -41,7 +41,7 @@ from quettabench.engines.base import (
     UnsupportedField,
     register,
 )
-from quettabench.engines.drivers import HttpDriver
+from quettabench.engines.drivers import HttpDriver, InProcessDriver
 
 SERVER_CMD = "serve"
 SERVER_FLAGS = ("--enable-chunked-prefill", "--trust-remote-code")
@@ -160,10 +160,16 @@ class VllmAdapter(EngineAdapter):
             health_path="/health",
             port=engine.port,
             instrumentation=engine.instrumentation,
+            timeout_s=cfg.mode.timeout,
         )
 
     def driver(self, spec, handle):
-        return HttpDriver("completions")
+        """InProcessDriver when nothing was launched (a grid run), else the
+        launched server's /v1/completions with the model it was started on."""
+        if handle.endpoint is None:
+            return InProcessDriver(spec)
+        return HttpDriver("completions", url=handle.endpoint + "/v1/completions",
+                          model=spec.engine_kwargs["model"], timeout=spec.timeout_s)
 
 
 ADAPTER = register(VllmAdapter())
