@@ -5,7 +5,7 @@ import sys
 import unittest
 from pathlib import Path
 
-from quettabench.modes.serve import per_turn_output_path
+from quettabench.metrics.results import per_turn_output_path
 from quettabench.workloads.dataset import _uniform_len_bounds
 
 ROOT = Path(__file__).resolve().parent.parent

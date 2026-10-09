@@ -31,6 +31,7 @@ class Handle:
     pid: int
     results_dir: Path
     proc: subprocess.Popen
+    gpu: str = ""
 
     def stop(self, grace_s=30):
         """SIGTERM the process group; SIGKILL whatever is left after grace_s."""
@@ -64,6 +65,16 @@ def idle_gpus(n, backend, visible_devices=None):
     if len(ids) < n:
         raise RuntimeError(f"NEED {n} FREE GPUS, have: {' '.join(ids) or 'none'}")
     return ",".join(ids[:n])
+
+
+def gpu_name():
+    """First GPU's name from nvidia-smi; empty when there is none, never a crash."""
+    try:
+        out = subprocess.run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+                             capture_output=True, text=True, check=False).stdout
+    except OSError:
+        return ""
+    return out.splitlines()[0].strip() if out.strip() else ""
 
 
 def redacted(env):
@@ -101,7 +112,7 @@ def start(spec, results_dir, *, backend="local", timeout_s=1800, poll_s=1.0):
         proc = subprocess.Popen(spec.child_argv(spec.server_argv), stdout=log,
                                 stderr=subprocess.STDOUT, start_new_session=True)
     endpoint = f"http://127.0.0.1:{spec.port}"
-    handle = Handle(spec.adapter, endpoint, proc.pid, results_dir, proc)
+    handle = Handle(spec.adapter, endpoint, proc.pid, results_dir, proc, gpu_name())
     try:
         wait_healthy(proc, endpoint + spec.health_path, timeout_s, poll_s)
     except BaseException:

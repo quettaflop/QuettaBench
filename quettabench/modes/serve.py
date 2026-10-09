@@ -18,11 +18,9 @@ import asyncio
 import argparse
 import dataclasses
 import itertools
-import json
 import sys
 import time
 import os
-from pathlib import Path
 
 from contextlib import asynccontextmanager
 
@@ -38,6 +36,7 @@ from ..metrics.core import (
     transient_gate,
     usage_gate,
 )
+from ..metrics.results import write_legacy_per_turn, write_legacy_results
 from ..engines.drivers import PrefixCacheResetError
 from ..workloads.profiles import get_profile
 from ..workloads.dataset import make_dataset
@@ -51,8 +50,6 @@ from ..workloads.arrival import make_arrival_times, ARRIVAL_PATTERNS
 
 
 from ..engines import SUPPORTED_BACKENDS
-# v5: greedy-by-default + seed; failed requests keep partial timings and error_kind.
-BENCHMARK_SCHEMA_VERSION = 5
 WORKLOAD_SCHEMA_VERSION = "distributional-synthetic-v1"
 TRACE_REQUEST_ID_PREFIX = "agenticbench"
 
@@ -65,13 +62,6 @@ TRACE_REQUEST_ID_PREFIX = "agenticbench"
 LOAD_MODES = ("closed-loop", "open-loop")
 OPEN_LOOP_ARRIVALS = ("poisson", "ramp")
 TURN_PACINGS = ("per-session", "interleaved")
-
-
-def per_turn_output_path(output: str) -> str:
-    """Per-turn breakdown path for a results file; always differs from ``output``."""
-    p = Path(output)
-    stem = p.stem if p.suffix else p.name
-    return str(p.with_name(stem + "_per_turn.json"))
 
 
 @asynccontextmanager
@@ -763,93 +753,6 @@ def _run(coro):
         sys.exit(1)
 
 
-def save_results(summary, results, output_path: str, config: dict):
-    """Save summary + per-request data to JSON."""
-    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-    # Stamp the schema version so result files are self-describing (v4 =
-    # fixed streaming client + coverage-guarded tpot). setdefault keeps any
-    # explicitly provided value.
-    config = dict(config)
-    config.setdefault("benchmark_schema_version", BENCHMARK_SCHEMA_VERSION)
-    output = {
-        "config": config,
-        "summary": summary.to_dict(),
-        "per_request": [
-            {
-                "success": r.success,
-                "ttft_ms": round(r.ttft * 1000, 2) if r.ttft else None,
-                "tpot_ms": round(r.tpot * 1000, 2) if r.tpot else None,
-                "itl_ms": [round(t * 1000, 2) for t in r.itl] if r.itl else [],
-                "e2el_ms": round(r.e2el * 1000, 2) if r.e2el else None,
-                "input_tokens": r.input_tokens,
-                "output_tokens": r.output_tokens,
-                "error": r.error,
-                **({"error_kind": r.error_kind} if r.error_kind is not None else {}),
-                "usage_reported": r.usage_reported,
-                **({"excluded_from_summary": True} if r.excluded_from_summary else {}),
-                **({"request_index": r.request_index}
-                   if r.request_index is not None else {}),
-                **({"max_tokens_requested": r.max_tokens_requested}
-                   if r.max_tokens_requested is not None else {}),
-                **({"message_count": r.message_count}
-                   if r.message_count is not None else {}),
-                **({"prompt_chars": r.prompt_chars}
-                   if r.prompt_chars is not None else {}),
-                **({"scheduled_at_ms": round(r.scheduled_at_s * 1000, 2)}
-                   if r.scheduled_at_s is not None else {}),
-                **({"dispatch_started_at_ms": round(r.dispatch_started_at_s * 1000, 2)}
-                   if r.dispatch_started_at_s is not None else {}),
-                **({"semaphore_acquired_at_ms": round(r.semaphore_acquired_at_s * 1000, 2)}
-                   if r.semaphore_acquired_at_s is not None else {}),
-                **({"completed_at_ms": round(r.completed_at_s * 1000, 2)}
-                   if r.completed_at_s is not None else {}),
-                **({"client_schedule_delay_ms": round(r.client_schedule_delay_s * 1000, 2)}
-                   if r.client_schedule_delay_s is not None else {}),
-                **({"client_queue_wait_ms": round(r.client_queue_wait_s * 1000, 2)}
-                   if r.client_queue_wait_s is not None else {}),
-                **({"client_request_wall_ms": round(r.client_request_wall_s * 1000, 2)}
-                   if r.client_request_wall_s is not None else {}),
-                **({"session_id": r.session_id} if r.session_id is not None else {}),
-                **({"turn_index": r.turn_index} if r.turn_index is not None else {}),
-                **({"previous_context_tokens": r.previous_context_tokens}
-                   if r.previous_context_tokens is not None else {}),
-                **({"total_context_tokens": r.total_context_tokens}
-                   if r.total_context_tokens is not None else {}),
-                **({"new_prefill_tokens": r.new_prefill_tokens}
-                   if r.new_prefill_tokens is not None else {}),
-                **({"cached_context_tokens": r.cached_context_tokens}
-                   if r.cached_context_tokens is not None else {}),
-                **({"cache_hit_rate": round(r.cache_hit_rate, 4)}
-                   if r.cache_hit_rate is not None else {}),
-                **({"cache_estimate_source": r.cache_estimate_source}
-                   if r.cache_estimate_source is not None else {}),
-                **({"cache_block_size": r.cache_block_size}
-                   if r.cache_block_size is not None else {}),
-                **({"block_aligned_cached_context_tokens": r.block_aligned_cached_context_tokens}
-                   if r.block_aligned_cached_context_tokens is not None else {}),
-                **({"block_aligned_new_prefill_tokens": r.block_aligned_new_prefill_tokens}
-                   if r.block_aligned_new_prefill_tokens is not None else {}),
-                **({"block_aligned_cache_hit_rate": round(r.block_aligned_cache_hit_rate, 4)}
-                   if r.block_aligned_cache_hit_rate is not None else {}),
-                **({"uncached_prefix_tail_tokens": r.uncached_prefix_tail_tokens}
-                   if r.uncached_prefix_tail_tokens is not None else {}),
-                **({"total_context_blocks": r.total_context_blocks}
-                   if r.total_context_blocks is not None else {}),
-                **({"cached_context_blocks": r.cached_context_blocks}
-                   if r.cached_context_blocks is not None else {}),
-                **({"new_prefill_blocks": r.new_prefill_blocks}
-                   if r.new_prefill_blocks is not None else {}),
-                **({"request_metadata": r.request_metadata}
-                   if r.request_metadata else {}),
-            }
-            for r in results if r is not None
-        ],
-    }
-    with open(output_path, "w") as f:
-        json.dump(output, f, indent=2)
-    print(f"Results saved to: {output_path}")
-
-
 def _resolve_cache_state(cli_value: str, profile) -> tuple[str, str]:
     if cli_value != "auto":
         return cli_value, "cli"
@@ -1343,17 +1246,8 @@ def run_multi(config, args, profile_name, num_sessions, source_session_ids) -> N
     print_multi_turn_summary(turn_summaries, summary)
     _enforce(success_rate_gate(summary, args.min_success_rate))
     _enforce(usage_gate(summary, args.allow_missing_usage))
-    save_results(summary, all_results, args.output, config)
-
-    # Also save per-turn breakdown
-    turn_output = per_turn_output_path(args.output)
-    Path(turn_output).parent.mkdir(parents=True, exist_ok=True)
-    with open(turn_output, "w") as f:
-        json.dump({
-            "config": config,
-            "per_turn": [ts.to_dict() for ts in turn_summaries],
-        }, f, indent=2)
-    print(f"Per-turn results saved to: {turn_output}")
+    write_legacy_results(summary, all_results, args.output, config)
+    write_legacy_per_turn(turn_summaries, args.output, config)
 
 
 def run_single(config, args, profile_name) -> None:
@@ -1411,7 +1305,7 @@ def run_single(config, args, profile_name) -> None:
     _enforce(transient_gate(args.num_requests, args.concurrency))
     _enforce(success_rate_gate(summary, args.min_success_rate))
     _enforce(usage_gate(summary, args.allow_missing_usage))
-    save_results(summary, results, args.output, config)
+    write_legacy_results(summary, results, args.output, config)
 
 
 def main(argv=None) -> None:

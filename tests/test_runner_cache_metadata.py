@@ -12,12 +12,12 @@ from quettabench.metrics.core import (
     annotate_multi_turn_cache_estimate,
     annotate_request_observability,
 )
+from quettabench.metrics.results import BENCHMARK_SCHEMA_VERSION
+from quettabench.metrics.results import write_legacy_results as save_results
 from quettabench.modes.serve import (
-    BENCHMARK_SCHEMA_VERSION,
     _resolve_cache_state,
     _resolve_tri_state,
     resolve_multi_turn_num_sessions,
-    save_results,
 )
 from quettabench.workloads.dataset import BenchmarkRequest
 from quettabench.workloads.profiles import get_profile

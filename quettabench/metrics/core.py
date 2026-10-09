@@ -15,13 +15,7 @@ import time
 
 @dataclass
 class RequestResult:
-    """Per-request benchmark result. Shared across all backends.
-
-    The target schema adds three fields once serve.py produces them:
-    ttft_basis ("slot" | "arrival": what TTFT is measured from), cell
-    ({ctx, bs, tp, step_point} for grid runs, else None) and accepted_tokens
-    (leading tokens matching the trace's reference reply). Not here yet.
-    """
+    """Per-request benchmark result. Shared across all backends."""
     success: bool
     ttft: Optional[float] = None          # seconds to first token
     itl: list = field(default_factory=list)  # inter-token latencies (seconds)
@@ -47,6 +41,16 @@ class RequestResult:
     # Which first-token rule timed this request: HttpDriver's chat endpoint
     # ("first_payload_chunk") or completions ("first_nonempty_text").
     ttft_rule: Optional[str] = None
+    # What TTFT is measured from: "slot" (closed loop, the concurrency slot
+    # grant) or "arrival" (open loop, the scheduled arrival).
+    ttft_basis: Optional[str] = None
+    # Leading generated tokens equal to the trace's reference reply (SPECSUM);
+    # None unless the trace has output_token_ids and the driver returned tokens.
+    accepted_tokens: Optional[int] = None
+    # Generated token ids, when the driver returns them. Not written.
+    generated_token_ids: Optional[list] = None
+    # {ctx, bs, tp, step_point} for grid runs, else None.
+    cell: Optional[dict] = None
 
     # Client-side request shape/timing. These do not replace TTFT/TPOT/E2EL;
     # they explain scheduler pressure and workload shape for later predictors.
