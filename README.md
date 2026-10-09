@@ -91,7 +91,7 @@ is skipped, as is one with ctx + max(step_points) + 2 > max_model_len.
 
 The table prints a ratio only for like with like. It is withheld when the
 method differs (criterion groups synchronize every iteration; force with
-`XVAL_ALLOW_METHOD_MISMATCH=1`), when quantization differs (`QUANT
+`--allow-method-mismatch`), when quantization differs (`QUANT
 MISMATCH`), and when serving topology differs (`SERVING MISMATCH`). KV dtype
 mismatches are flagged `KV`, rows at `bs >= comm_bound_bs` `COMM` (the TP
 allreduce dominates and is node-specific), fits with r2 < 0.999 `LOW R2`,

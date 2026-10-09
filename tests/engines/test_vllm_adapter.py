@@ -64,8 +64,16 @@ class ServerArgv(unittest.TestCase):
         self.assertEqual((spec.health_path, spec.port), ("/health", 8000))
 
     def test_fields_without_a_flag_block_the_server_only(self):
-        self.assertEqual(spec_for("glm53").server_unsupported, ("quant=fp8",))
-        self.assertEqual(spec_for("glm53").server_argv, ())
+        blocked = spec_for("glm53", sets=["engine.pp=2"])
+        self.assertEqual(blocked.server_unsupported, ("pp=2",))
+        self.assertEqual(blocked.server_argv, ())
+        self.assertEqual(blocked.engine_kwargs["pipeline_parallel_size"], 2)
+
+    def test_quant_is_read_from_the_checkpoint_on_the_server(self):
+        spec = spec_for("glm53")
+        self.assertEqual(spec.server_unsupported, ())
+        self.assertNotIn("--quantization", spec.server_argv)
+        self.assertEqual(spec.engine_kwargs["quantization"], "fp8")
 
     def test_kv_dtype_is_kv_cache_dtype(self):
         argv = list(spec_for("deepseek").server_argv)

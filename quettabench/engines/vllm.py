@@ -23,10 +23,13 @@ hardware.provision.py when a venv is provisioned (v4sweep ran {VENV}/vllm).
 
 A field whose value has no flag in those launches lands in
 server_unsupported: the launcher refuses the spec, the in-process path still
-builds. Today that is pp > 1, quant and cudagraph=False (the sweeps'
+builds. Today that is pp > 1 and cudagraph=False (the sweeps'
 --enforce-eager is a different switch, not proven equal to cudagraph_mode
-NONE). serving_style other than aggregated and instrumentation=torch have no
-flag or kwarg anywhere and raise.
+NONE). quant adds no server flag: v4sweep.py launched the GLM fp8 checkpoints
+with no --quantization and the server read the method from the checkpoint
+config; in-process the kwarg is what vmin_fit passed. serving_style other
+than aggregated and instrumentation=torch have no flag or kwarg anywhere and
+raise.
 
 The two sides differ by design in their constants: the server gets
 --enable-chunked-prefill and --trust-remote-code as both scripts passed them;
@@ -100,7 +103,7 @@ FIELDS = {
     "ep":             (switch("--enable-expert-parallel"), kw_when("enable_expert_parallel", bool)),
     "dtype":          (flag("--dtype"),                    kw("dtype")),
     "kv_dtype":       (unless("auto", "--kv-cache-dtype"), kw_when("kv_cache_dtype", lambda v: v != "auto")),
-    "quant":          (only(None),                         kw_when("quantization", bool)),
+    "quant":          (lambda v: [],                       kw_when("quantization", bool)),  # server reads it from the checkpoint
     "max_model_len":  (flag("--max-model-len"),            kw("max_model_len")),
     "gpu_util":       (flag("--gpu-memory-utilization"),   kw("gpu_memory_utilization")),
     "prefix_caching": (switch("--enable-prefix-caching"),  kw("enable_prefix_caching")),
