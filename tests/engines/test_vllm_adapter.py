@@ -1,5 +1,6 @@
 """translate(cfg).engine_kwargs equals vmin_fit's golden LLM kwargs for every
-run yaml, and server_argv is the api_server argv the launch scripts use.
+run yaml, and server_argv is the `vllm serve <model>` form the H200 campaign
+harness (v4sweep.py) launched.
 
 translate always passes pipeline_parallel_size; vmin_fit used to leave it
 out at pp == 1, a spelling difference only (golden regenerated with it).
@@ -52,11 +53,10 @@ class KwargsMatchVminFit(unittest.TestCase):
 
 
 class ServerArgv(unittest.TestCase):
-    def test_llama_is_the_launch_script_argv(self):
+    def test_llama_is_the_vllm_serve_argv(self):
         spec = spec_for("llama")
         self.assertEqual(list(spec.server_argv), [
-            "python3", "-m", "vllm.entrypoints.openai.api_server",
-            "--model", "<MODEL>", "--port", "8000", "--tensor-parallel-size", "1",
+            "vllm", "serve", "<MODEL>", "--port", "8000", "--tensor-parallel-size", "1",
             "--dtype", "float16", "--max-model-len", "9216",
             "--gpu-memory-utilization", "0.9",
             "--enable-chunked-prefill", "--trust-remote-code"])
@@ -65,9 +65,28 @@ class ServerArgv(unittest.TestCase):
         self.assertEqual((spec.health_path, spec.port), ("/health", 8000))
 
     def test_fields_without_a_flag_block_the_server_only(self):
-        self.assertEqual(spec_for("deepseek").server_unsupported, ("kv_dtype=fp8_ds_mla",))
         self.assertEqual(spec_for("glm53").server_unsupported, ("quant=fp8",))
-        self.assertEqual(spec_for("deepseek").server_argv, ())
+        self.assertEqual(spec_for("glm53").server_argv, ())
+
+    def test_kv_dtype_is_kv_cache_dtype(self):
+        argv = list(spec_for("deepseek").server_argv)
+        self.assertEqual(argv[argv.index("--kv-cache-dtype") + 1], "fp8_ds_mla")
+        self.assertNotIn("--kv-cache-dtype", spec_for("llama").server_argv)
+
+    def test_provisioned_venv_runs_its_own_vllm(self):
+        spec = spec_for("llama", sets=["hardware.provision.py=/venv/bin/python3"])
+        self.assertEqual(list(spec.server_argv[:2]), ["/venv/bin/vllm", "serve"])
+
+    def test_h200_campaign_flags(self):
+        """v4sweep.py glm_tep: kv fp8, EP, seq and batched-token caps via extra.vllm."""
+        argv = list(spec_for("llama", sets=[
+            "engine.kv_dtype=fp8", "engine.ep=true", "engine.gpu_util=0.95",
+            "engine.extra.vllm={max_num_seqs: 32, max_num_batched_tokens: 4096}"]).server_argv)
+        for pair in (["--kv-cache-dtype", "fp8"], ["--gpu-memory-utilization", "0.95"],
+                     ["--max-num-seqs", "32"], ["--max-num-batched-tokens", "4096"]):
+            i = argv.index(pair[0])
+            self.assertEqual(argv[i:i + 2], pair)
+        self.assertIn("--enable-expert-parallel", argv)
 
     def test_expert_parallel_and_prefix_caching_switches(self):
         argv = spec_for("glm53flash", sets=["engine.quant=null", "engine.prefix_caching=true"]
