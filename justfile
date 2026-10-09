@@ -1,6 +1,14 @@
-# QuettaBench recipes. Probe and export recipes only; run/profile/crossval land with the CLI.
+# QuettaBench recipes: each is one command line; the logic lives in quettabench/.
 #
-# Probes write under results/probes/<gpu>/ (pass --out through `just probe` to change that).
+#   just provision configs/runs/llama.yaml --set hardware.provision.py=/venv/bin/python
+#   just dry configs/runs/llama.yaml --set engine.model=/weights/llama
+#   just run configs/runs/llama.yaml --set engine.model=/weights/llama
+#   just profile --run results/llama --source metrics
+#   just crossval ...
+#   just export --results results/<run> --dest ../QuettaSim/engine/data
+#
+# .env (written by `just provision`) sets PYTHON_BIN and the cache dirs. Probes write
+# under results/probes/<gpu>/ (pass --out through `just probe` to change that).
 # `just export` is the only route from results/ to QuettaSim.
 #
 #   REMOTE_HOST=a100  GPU_ID=0  PYTHON_BIN=~/miniconda3/envs/vllm/bin/python
@@ -26,6 +34,36 @@ r2_profile := env_var_or_default("AWS_PROFILE", "r2")
 
 default:
     @just --list
+
+# Check and set up this box for the given run yamls (--dry-run prints the plan; writes .env)
+provision *args:
+    {{py}} -m quettabench.provision {{args}}
+
+# One run yaml to results/<run>/
+run cfg *args:
+    {{py}} -m quettabench.cli run {{cfg}} {{args}}
+
+# The run's resolved Config (with origins) and LaunchSpec; starts nothing
+dry cfg *args:
+    {{py}} -m quettabench.cli run {{cfg}} --dry-run {{args}}
+
+# Same as run: a sweep is the matrix: block in the run yaml, one results/<run>/ per point
+sweep cfg *args:
+    {{py}} -m quettabench.cli run {{cfg}} {{args}}
+
+# Attach to a finished or running results/<run>/ and append profile.json
+profile *args:
+    {{py}} -m quettabench.cli profile {{args}}
+
+# Compare results dirs (QuettaServe vs vLLM at matched cells)
+crossval *args:
+    {{py}} -m quettabench.cli crossval {{args}}
+
+test:
+    python3 -m pytest tests -q
+
+lint:
+    ruff check quettabench tests
 
 # Show the GPU(s) the probes will target (local, or REMOTE_HOST if set).
 gpu-info:
@@ -60,7 +98,7 @@ remote-probe name gpu=gpu *args:
 
 # QuettaSim tables from results dirs: just export --results results/<run> --dest <dir>
 export *args:
-    {{py}} -m quettabench.export.quettasim {{args}}
+    {{py}} -m quettabench.cli export {{args}}
 
 # Storage is method-explicit: ncu/ = graphed-decode-faithful, cuda_event/ =
 # eager-prefill-faithful. The QuettaSim loader reads decode+gemm+elementwise from

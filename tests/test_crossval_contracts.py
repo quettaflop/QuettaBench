@@ -40,31 +40,14 @@ class CrossvalScripts(unittest.TestCase):
         for script in scripts:
             ast.parse(script.read_text(), filename=str(script))
 
-    def test_shell_scripts_have_valid_syntax(self):
-        scripts = _scripts(".sh")
-        self.assertTrue(scripts, "no shell scripts under scripts/crossval")
-        for script in scripts:
-            subprocess.run(["bash", "-n", str(script)], check=True)
+    def test_no_shell_entry_points_left(self):
+        # qbench, provision and the justfile replaced every crossval shell script.
+        self.assertEqual(_scripts(".sh"), [])
 
-    def test_shell_scripts_are_executable(self):
-        for script in _scripts(".sh"):
-            self.assertTrue(
-                os.access(script, os.X_OK),
-                f"{script.name} is exec'd directly and must keep its +x bit",
-            )
-
-    def test_shell_scripts_do_not_inline_python(self):
-        for sh in _scripts(".sh"):
-            self.assertNotIn("python3 -c", sh.read_text(), f"{sh.name} inlines python")
-
-    def test_xval_wires_serving_and_identity_gate(self):
-        # The orchestrator runs a trace serving replay with the workload-identity
-        # gate when XVAL_SERVE_TRACE is set.
-        text = (CROSSVAL / "xval.sh").read_text()
-        self.assertIn("XVAL_SERVE_TRACE", text)
-        self.assertIn("trace_serve.py", text)
-        self.assertIn("synth_bench.py", text)
-        self.assertIn("WORKLOADSUM", text)
+    def test_serve_wires_the_identity_gate(self):
+        # Every serve run hashes what it served against the trace's own hash.
+        self.assertIn("workload_hash", (QB / "modes" / "serve.py").read_text())
+        self.assertIn("WORKLOADSUM", (QB / "metrics" / "results.py").read_text())
 
     def test_backend_detection_and_no_hard_nvidia_smi(self):
         # backend() honors XVAL_BACKEND and reports cpu when no accel tooling is on
@@ -408,7 +391,7 @@ class CrossvalScripts(unittest.TestCase):
 
     def test_agreement_inputs_present(self):
         for name in ("prompts.txt", "texts.txt"):
-            lines = [l for l in (CROSSVAL / name).read_text().splitlines() if l.strip()]
+            lines = [l for l in (REPO / "data" / name).read_text().splitlines() if l.strip()]
             self.assertTrue(lines, f"{name} is empty")
 
     def test_grid_run_supports_moe_bringup(self):
@@ -417,23 +400,22 @@ class CrossvalScripts(unittest.TestCase):
         self.assertIn("enable_expert_parallel", src)
         self.assertIn("allow-unverified", src)
 
-    def _bench(self, workload, prefix, stub_body, env=None):
-        import subprocess as sp
-
+    def _bench(self, workload, stub_body, sets=(), env=None):
+        """qbench run of the workload on QuettaServe with a stub bench binary."""
         with tempfile.TemporaryDirectory() as td:
             stub = Path(td) / "stub"
             stub.write_text("#!/usr/bin/env bash\n" + stub_body + "\n")
             stub.chmod(0o755)
-            log = Path(td) / "sweep.log"
-            run_env = {**os.environ, f"{prefix}_CKPT": "/dev/null",
-                       f"{prefix}_BENCH_BIN": str(stub), "QS_DIR": td}
-            run_env.pop("QS_KERNELS", None)
-            run_env.pop(f"{prefix}_MODE", None)
-            run_env.update(env or {})
-            out = sp.run(
-                ["bash", str(CROSSVAL / "bench.sh"), workload, str(log)],
-                capture_output=True, text=True, cwd=td, env=run_env,
-            )
+            argv = [sys.executable, "-m", "quettabench.cli", "run",
+                    str(REPO / "configs" / "runs" / f"{workload}.yaml"), "--allow-unverified",
+                    "--results-dir", td, "--set", "engine.name=quettaserve",
+                    "--set", "engine.model=/dev/null", "--set", f"engine.extra.bench_bin={stub}",
+                    "--set", f"engine.extra.qs_dir={td}"]
+            for item in sets:
+                argv += ["--set", item]
+            out = subprocess.run(argv, capture_output=True, text=True, cwd=REPO,
+                                 env={**os.environ, "XVAL_BACKEND": "cpu", **(env or {})})
+            log = Path(td) / workload / "bench.log"
             return out, log.read_text() if log.exists() else ""
 
     BENCH_LINE = (
@@ -445,8 +427,8 @@ class CrossvalScripts(unittest.TestCase):
 
     def test_bench_runs_the_deepseek_grid_at_the_workload_tp(self):
         # world from the workload tp, every cell runs, DS_LAYERS blocked.
-        out, log = self._bench("deepseek", "DS", self.BENCH_LINE,
-                               env={"DS_CFG": "/dev/null", "DS_LAYERS": "6"})
+        out, log = self._bench("deepseek", self.BENCH_LINE, ["engine.extra.qs_cfg=/dev/null"],
+                               env={"DS_LAYERS": "6"})
         self.assertEqual(out.returncode, 0, out.stderr)
         cfg = _load_workloads()
         tp = cfg["workloads"]["deepseek"]["tp"]
@@ -455,7 +437,7 @@ class CrossvalScripts(unittest.TestCase):
         self.assertEqual(set(cells), {(str(tp), "all")})
 
     def test_bench_fails_when_a_cell_produces_no_line(self):
-        out, _ = self._bench("deepseek", "DS", "exit 0", env={"DS_CFG": "/dev/null"})
+        out, _ = self._bench("deepseek", "exit 0", ["engine.extra.qs_cfg=/dev/null"])
         self.assertEqual(out.returncode, 1)
         self.assertIn("FAIL", out.stderr)
 
@@ -467,8 +449,7 @@ class CrossvalScripts(unittest.TestCase):
     def test_bench_qwen_defaults_exact_to_eager(self):
         # exact has no graph wiring, so with cubins present the driver must
         # pick the eager step and stamp kern/mode into every cell.
-        out, log = self._bench("qwen3", "QW", self.QWEN_LINE,
-                               env={"QS_VLLM_GDN_DIR": "/dev/null"})
+        out, log = self._bench("qwen3", self.QWEN_LINE, ["engine.extra.gdn_dir=/dev/null"])
         self.assertEqual(out.returncode, 0, out.stderr)
         cfg = _load_workloads()
         modes = re.findall(r"^LOOP .*mode=(\w+)", log, re.M)
@@ -477,9 +458,9 @@ class CrossvalScripts(unittest.TestCase):
         self.assertIn("kern=exact", log)
 
     def test_bench_requires_a_bench_section(self):
-        out, _ = self._bench("llama", "XX", "exit 0")
+        out, _ = self._bench("llama", "exit 0")
         self.assertNotEqual(out.returncode, 0)
-        self.assertIn("bench", out.stderr + out.stdout)
+        self.assertIn("no quettaserve: block", out.stderr)
 
 
 class WorkloadsConfig(unittest.TestCase):
@@ -665,12 +646,12 @@ class TableParity(unittest.TestCase):
         self.assertNotIn("EAGER", out)
         self.assertNotIn("decode_loop_eager", out)
 
-    def test_bench_script_wires_the_gdn_family(self):
+    def test_bench_adapter_wires_the_gdn_family(self):
         # The gdn family owns the kernel env and the eager default for exact.
-        text = (CROSSVAL / "bench.sh").read_text()
-        self.assertIn("QS_KERNELS=exact", text)
-        self.assertIn("MODE=eager", text)
-        self.assertIn("mode=$MODE", text)
+        text = (QB / "engines" / "quettaserve.py").read_text()
+        self.assertIn('"exact" if gdn_dir else "rust"', text)
+        self.assertIn('"eager" if kernels == "exact" else "graph"', text)
+        self.assertIn("mode={mode}", text)
 
     def test_per_step_bench_gets_no_ratio(self):
         out = self._table(
@@ -931,7 +912,6 @@ class TableParity(unittest.TestCase):
         text = (REPO / "legacy" / "trace_serve.py").read_text()
         for tag in ("--sla-ttft-ms", "--sla-tpot-ms", "SLASUM", "BURSTSUM", "SPECSUM"):
             self.assertIn(tag, text)
-        self.assertIn("FIDELITY", (CROSSVAL / "xval.sh").read_text())
 
     def test_burst_recovery_and_acceptance(self):
         sys.path.insert(0, str(REPO))

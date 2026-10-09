@@ -21,7 +21,7 @@ from vllm import LLM, SamplingParams
 
 PROMPTS = [
     line.strip()
-    for line in (Path(__file__).parents[2] / "scripts" / "crossval" / "prompts.txt").read_text().splitlines()
+    for line in (Path(__file__).parents[2] / "data" / "prompts.txt").read_text().splitlines()
     if line.strip()
 ]
 

@@ -25,7 +25,7 @@ from quettabench.config import xval_config as _xval_config
 
 TEXTS = [
     line.strip()
-    for line in (Path(__file__).parents[2] / "scripts" / "crossval" / "texts.txt").read_text().splitlines()
+    for line in (Path(__file__).parents[2] / "data" / "texts.txt").read_text().splitlines()
     if line.strip()
 ]
 
