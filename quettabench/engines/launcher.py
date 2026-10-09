@@ -9,7 +9,6 @@ GPU box validates it.
 
 import json
 import os
-import re
 import signal
 import subprocess
 import time
@@ -20,8 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from quettabench.engines.base import UnsupportedField
-
-SECRET_NAME = re.compile(r"TOKEN|KEY|^HF_")
+from quettabench.metrics.results import redact
 
 
 @dataclass
@@ -88,11 +86,6 @@ def gpu_name():
     return out.splitlines()[0].strip() if out.strip() else ""
 
 
-def redacted(env):
-    """env with every *TOKEN*, *KEY* and HF_* value replaced, for results/."""
-    return {k: "<redacted>" if SECRET_NAME.search(k) else v for k, v in env.items()}
-
-
 def wait_healthy(proc, url, timeout_s, poll_s):
     """Poll url until it answers 200; fail fast if the server exits first."""
     deadline = time.monotonic() + timeout_s
@@ -129,7 +122,7 @@ def start(spec, results_dir, *, backend="local", timeout_s=1800, poll_s=1.0):
     except BaseException:
         handle.stop()
         raise
-    launch = {**asdict(spec), "env": redacted(spec.env)}
+    launch = {**asdict(spec), "env": redact(spec.env)}
     (results_dir / "engine.json").write_text(json.dumps({
         "adapter": spec.adapter,
         "endpoint": endpoint,

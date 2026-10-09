@@ -40,7 +40,9 @@ BASELINES = REPO / "results" / "baselines"
 
 
 def redact(env):
-    """env with the value of every secret-looking key replaced by REDACTED."""
+    """env with the value of every secret-looking key replaced by REDACTED:
+    the one rule for results/, used by run.json's provenance and by the
+    launcher's engine.json."""
     return {k: "REDACTED" if SECRET_NAME.search(k) else v for k, v in (env or {}).items()}
 
 

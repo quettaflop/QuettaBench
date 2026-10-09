@@ -40,7 +40,8 @@ class LocalLauncher(unittest.TestCase):
     def spec(self, **kw):
         return LaunchSpec(adapter="fake", port=self.port, health_path="/health",
                           server_argv=(sys.executable, str(FAKE), str(self.port), str(self.state)),
-                          env={"FAKE_MARK": "from-spec", "HF_TOKEN": "secret"}, **kw)
+                          env={"FAKE_MARK": "from-spec", "HF_TOKEN": "secret",
+                               "DB_SECRET": "secret"}, **kw)
 
     def test_start_health_engine_json_stop(self):
         handle = launcher.start(self.spec(), self.dir / "run", timeout_s=30, poll_s=0.1)
@@ -52,7 +53,8 @@ class LocalLauncher(unittest.TestCase):
         self.assertEqual(record["pid"], handle.pid)
         self.assertEqual(record["instrumentation"], "none")
         self.assertEqual(record["launch_spec"]["env"],
-                         {"FAKE_MARK": "from-spec", "HF_TOKEN": "<redacted>"})
+                         {"FAKE_MARK": "from-spec", "HF_TOKEN": "REDACTED",
+                          "DB_SECRET": "REDACTED"})  # the results.redact rule
         self.assertNotIn("secret", (self.dir / "run" / "engine.json").read_text())
         self.assertTrue(alive(state["child_pid"]))
         handle.stop(grace_s=5)
