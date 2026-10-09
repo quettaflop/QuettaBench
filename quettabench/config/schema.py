@@ -14,6 +14,7 @@ class ConfigError(ValueError):
 CHOICES = {
     "engine.name": ("vllm", "quettaserve", "sglang", "trtllm"),
     "engine.attention": ("dense", "mla", "hybrid"),
+    "engine.instrumentation": ("none", "nsys", "torch"),
     "workload.kind": ("live", "grid", "sessions"),
     "workload.prompt_mode": ("distinct", "clone", "corpus", "synth", "trace"),
     "mode.mode": ("serve", "probe"),
@@ -51,6 +52,8 @@ class EngineCfg:
     prefix_caching: bool = False
     serving_style: str = "aggregated"
     cudagraph: bool = True            # inverse of vmin_fit --nograph
+    port: int = 8000                  # launch_server.sh default
+    instrumentation: str = "none"     # armed at launch: none | nsys | torch
     extra: Mapping[str, Any] = field(default_factory=dict)  # quettaserve bench block lives here
     # Facts the capacity gate needs (vmin_fit CAPACITY line).
     kv_bytes: int | None = None    # per token; None allowed only for dense

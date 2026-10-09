@@ -4,8 +4,6 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
-INSTRUMENTATION = ("none", "nsys", "torch")
-
 
 class UnsupportedField(ValueError):
     """A Config value the engine has no flag for in any launch run today."""
