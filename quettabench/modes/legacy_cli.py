@@ -30,7 +30,7 @@ LOAD_MODES = ("closed-loop", "open-loop")
 OPEN_LOOP_ARRIVALS = ("poisson", "ramp")
 TURN_PACINGS = ("per-session", "interleaved")
 # Flags added after the old results layout froze; kept out of its config dict.
-NEW_FLAGS = ("results_dir",)
+NEW_FLAGS = ("results_dir", "sla_ttft_ms", "sla_tpot_ms", "goodput_sweep")
 
 
 def _resolve_cache_state(cli_value: str, profile) -> tuple[str, str]:
@@ -150,6 +150,13 @@ def get_args(argv=None):
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--timeout", type=int, default=120)
     parser.add_argument("--output", default="results/latest.json")
+    parser.add_argument("--sla-ttft-ms", type=float, default=None,
+                        help="SLA: max p99 TTFT ms; adds SLASUM and BURSTSUM.")
+    parser.add_argument("--sla-tpot-ms", type=float, default=None,
+                        help="SLA: max p99 TPOT ms/token; adds SLASUM.")
+    parser.add_argument("--goodput-sweep", action="store_true",
+                        help="Bisect arrival speed to the SLA PASS/FAIL boundary (max 6 "
+                             "probes); needs --open-loop and an --sla-* bound.")
     parser.add_argument("--results-dir", default=None,
                         help="Also write the new layout (run.json, requests.jsonl) to this "
                              "directory, results/<run>/ by convention.")
@@ -292,6 +299,12 @@ def check_args(args) -> None:
         print(f"Error: --arrival {args.arrival} describes open-loop offered load, but the run "
               f"is closed-loop, so --concurrency would still cap it. Pass --open-loop to "
               f"remove the cap, or use --arrival steady.")
+        sys.exit(1)
+
+    if args.goodput_sweep and (args.load_mode != "open-loop"
+                               or not (args.sla_ttft_ms or args.sla_tpot_ms)):
+        print("Error: --goodput-sweep sweeps arrival speed against an SLA; it needs "
+              "--open-loop and --sla-ttft-ms and/or --sla-tpot-ms.")
         sys.exit(1)
 
     if args.tool_wait_ms < 0 or args.human_wait_ms < 0:
@@ -510,7 +523,9 @@ def run_config(args, profile, enable_ep):
         reset_prefix_cache=args.reset_prefix_cache,
         allow_missing_usage=args.allow_missing_usage,
         trace_request_ids=args.trace_request_ids,
-        prefix_cache_block_size=args.prefix_cache_block_size)
+        prefix_cache_block_size=args.prefix_cache_block_size,
+        sla_ttft_ms=args.sla_ttft_ms, sla_tpot_ms=args.sla_tpot_ms,
+        goodput_sweep=args.goodput_sweep)
     workload = WorkloadCfg(kind="sessions" if multi else "live", source=profile.name,
                            arrival=arrival_of(args, multi), seed=args.seed,
                            num_requests=args.num_requests)

@@ -20,6 +20,7 @@ translated by modes/legacy_cli.py; commit 7 removes it.
 """
 
 import asyncio
+import dataclasses
 import sys
 import time
 from dataclasses import dataclass, field
@@ -28,16 +29,25 @@ from ..config.schema import WorkloadCfg
 from ..engines.drivers import PrefixCacheResetError
 from ..metrics.core import (
     BenchmarkSummary,
+    acceptance,
     aggregate,
     aggregate_per_turn,
     annotate_request_observability,
+    burst_recovery,
     print_multi_turn_summary,
     print_summary,
+    sla_verdict,
     success_rate_gate,
+    summarize_serve,
     transient_gate,
     usage_gate,
 )
-from ..metrics.results import write_legacy_per_turn, write_legacy_results
+from ..metrics.results import (
+    goodprobe_line,
+    print_legacy_lines,
+    write_legacy_per_turn,
+    write_legacy_results,
+)
 from ..workloads.arrival import offered_rate, parse_arrival, rebase_arrivals
 from ..workloads.base import workload_hash
 from ..workloads.sessions import SessionTrace
@@ -139,11 +149,26 @@ async def warmup(trace, driver, mode, count, multi_turn):
                          "this profile; check the server log before benchmarking.")
 
 
-async def replay(trace, driver, mode, writer, offsets, request_id):
+def emitter(mode, writer, probe=None):
+    """emit(request, result): stamp the TTFT basis, score acceptance against the
+    trace's reference reply when the driver returned tokens, write the row."""
+    basis = "arrival" if mode.load == "open" else "slot"
+    tag = {} if probe is None else {"probe": probe}
+
+    def emit(request, result):
+        result.ttft_basis = basis
+        if request.output_token_ids and result.generated_token_ids is not None:
+            result.accepted_tokens = acceptance(request.output_token_ids,
+                                                result.generated_token_ids)[0]
+        writer.append(result, **tag)
+
+    return emit
+
+
+async def replay(trace, driver, mode, emit, offsets, request_id):
     """Single-turn dispatch; returns ([(request, result)] by index, start time).
     The first mode.discard_first requests are held out of the summary."""
     open_loop = mode.load == "open"
-    basis = "arrival" if open_loop else "slot"
     slots = asyncio.Semaphore(mode.concurrency)
     reqs = trace.requests()
     rows = [None] * len(reqs)
@@ -162,10 +187,9 @@ async def replay(trace, driver, mode, writer, offsets, request_id):
             result, request_index=i, request=request, scheduled_at_s=at,
             dispatch_started_at_s=dispatched, semaphore_acquired_at_s=granted,
             completed_at_s=time.perf_counter() - start)
-        result.ttft_basis = basis
         if i < mode.discard_first:
             result.excluded_from_summary = True
-        writer.append(result)
+        emit(request, result)
         rows[i] = (request, result)
 
     await asyncio.gather(*(dispatch(i, r, t) for i, (r, t) in enumerate(zip(reqs, offsets))))
@@ -177,15 +201,15 @@ async def replay(trace, driver, mode, writer, offsets, request_id):
     return rows, start
 
 
-async def measure(trace, driver, mode, writer, workload, request_id):
-    """Warm, reset, dispatch: (results, results_by_turn | None, served, duration)."""
+async def measure(trace, driver, mode, emit, workload, request_id):
+    """Warm, reset, dispatch: (results, results_by_turn | None, [(request, result)], duration)."""
     multi = isinstance(trace, SessionTrace)
     offsets = None if multi else arrival_offsets(trace, workload)
     sessions = None
     if multi:
         sessions = SessionDispatcher(trace, mode, workload,
                                      lambda r, **kw: driver.send(r, **kw, **sampling(mode, r)),
-                                     request_id, writer)
+                                     request_id, emit)
         sessions.announce()
     async with driver.session(mode.concurrency, mode.load == "open"):
         if mode.warmup > 0:
@@ -194,11 +218,114 @@ async def measure(trace, driver, mode, writer, workload, request_id):
         if mode.reset_prefix_cache:
             print(f"Prefix cache: {await driver.reset()}")
         if multi:
-            results, by_turn, served, start = await sessions.run()
+            results, by_turn, pairs, start = await sessions.run()
         else:
-            rows, start = await replay(trace, driver, mode, writer, offsets, request_id)
-            results, by_turn, served = [r for _, r in rows], None, [q for q, _ in rows]
-    return results, by_turn, served, time.perf_counter() - start
+            pairs, start = await replay(trace, driver, mode, emit, offsets, request_id)
+            results, by_turn = [r for _, r in pairs], None
+    return results, by_turn, pairs, time.perf_counter() - start
+
+
+def serve_records(pairs, open_loop):
+    """trace_serve's records from the successful, counted rows: TTFT (whole
+    latency when no token came), wall-clock TPOT, output tokens, and the
+    arrival burst windows bucket by (the slot grant under a closed loop)."""
+    out = []
+    for _, r in pairs:
+        if not r.success or r.excluded_from_summary:
+            continue
+        n = r.output_tokens
+        arrival = r.scheduled_at_s if open_loop and r.scheduled_at_s is not None \
+            else r.semaphore_acquired_at_s
+        out.append({"ttft_ms": (r.ttft or r.e2el) * 1e3, "out_tokens": n, "arrival_s": arrival,
+                    "tpot_ms": (r.e2el - r.ttft) * 1e3 / (n - 1) if r.ttft and n > 1 else None})
+    return out
+
+
+def spec_section(pairs):
+    """SPECSUM: mean accepted leading tokens and rate over the scored rows."""
+    scored = [(r.accepted_tokens, len(q.output_token_ids)) for q, r in pairs
+              if r.accepted_tokens is not None]
+    if not scored:
+        return {"spec": "off"}
+    return {"spec": "measured", "n": len(scored),
+            "accept_len": sum(a for a, _ in scored) / len(scored),
+            "accept_rate": sum(a / n for a, n in scored) / len(scored)}
+
+
+def crossval_sections(pairs, duration, mode):
+    """serve (nearest-rank, as SERVESUM always was), sla, burst and spec."""
+    out = {"spec": spec_section(pairs)}
+    records = serve_records(pairs, mode.load == "open")
+    if not records:
+        return out
+    s = out["serve"] = summarize_serve(records, duration, "nearest")
+    if mode.sla_ttft_ms or mode.sla_tpot_ms:
+        bound = sla_verdict(s, mode.sla_ttft_ms, mode.sla_tpot_ms)
+        out["sla"] = {"verdict": "FAIL" if bound else "PASS", "bound": bound,
+                      "ttft_p99": s["ttft_ms"]["p99"],
+                      "tpot_p99": s["tpot_ms"]["p99"] if s["tpot_ms"] else 0,
+                      "rate_req_s": s["req_s"],
+                      "sla_ttft_ms": mode.sla_ttft_ms, "sla_tpot_ms": mode.sla_tpot_ms}
+    if mode.sla_ttft_ms:
+        recovery, peak = burst_recovery(records, mode.sla_ttft_ms)
+        out["burst"] = {"peak_ttft_p99": peak, "recovery_s": recovery,
+                        "target_ms": mode.sla_ttft_ms}
+    return out
+
+
+def goodput_search(start=1.0, max_iters=6, tol=0.1):
+    """Generator bisection over speed: yields the next speed, receives whether
+    that probe met the SLA. Doubles from start to the first FAIL, halves to
+    the first PASS, then bisects until the bracket is within tol; at most
+    max_iters probes (legacy/trace_serve.py goodput_search)."""
+    lo = hi = None
+    speed = start
+    for _ in range(max_iters):
+        passed = yield speed
+        if passed:
+            lo = speed
+        else:
+            hi = speed
+        if lo is not None and hi is not None:
+            if (hi - lo) <= tol * hi:
+                return
+            speed = (lo + hi) / 2
+        elif passed:
+            speed = speed * 2
+        else:
+            speed = speed / 2
+
+
+def sweep(trace, driver, mode, writer, workload, request_id):
+    """--goodput-sweep: one measure() per probe speed (warmup on the first
+    only), rows tagged with their probe. Stops at the first probe whose
+    served set breaks the workload identity. Returns the last probe's
+    measure() result and the goodput section."""
+    gen, probes, best, fail_bound = goodput_search(start=workload.speed), [], None, []
+    speed = next(gen)
+    while True:
+        probe_mode = mode if not probes else dataclasses.replace(mode, warmup=0)
+        out = asyncio.run(measure(trace, driver, probe_mode, emitter(mode, writer, len(probes)),
+                                  dataclasses.replace(workload, speed=speed), request_id))
+        section = {"max_req_s": None, "speed": None, "fail_bound": fail_bound, "probes": probes}
+        if not identity(trace, [q for q, _ in out[2]])["match"]:
+            return out, {**section, "iterations": len(probes) + 1}
+        s = summarize_serve(serve_records(out[2], True), out[3], "nearest")
+        bound = sla_verdict(s, mode.sla_ttft_ms, mode.sla_tpot_ms)
+        probe = {"speed": speed, "verdict": "FAIL" if bound else "PASS", "bound": bound,
+                 "req_s": s["req_s"]}
+        print(goodprobe_line(probe), flush=True)
+        probes.append(probe)
+        if not bound and (best is None or s["req_s"] > best["req_s"]):
+            best = probe
+        if bound:
+            fail_bound = bound
+        try:
+            speed = gen.send(not bound)
+        except StopIteration:
+            break
+    return out, {"max_req_s": best and best["req_s"], "speed": best and best["speed"],
+                 "fail_bound": fail_bound, "iterations": len(probes), "probes": probes}
 
 
 def stop(writer, summary, status, reason, code):
@@ -225,6 +352,8 @@ def identity(trace, served) -> dict:
 
 def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
     """One measured run of trace through driver; see the module docstring."""
+    if mode.goodput_sweep and (mode.load != "open" or not (mode.sla_ttft_ms or mode.sla_tpot_ms)):
+        raise ValueError("goodput sweep needs open load and mode.sla_ttft_ms and/or sla_tpot_ms")
     name = trace_name(trace)
 
     def request_id(session, turn, index):
@@ -233,9 +362,13 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
         return make_trace_request_id(profile_name=name, concurrency=mode.concurrency,
                                      session_id=session, turn_index=turn, request_index=index)
 
+    goodput = None
     try:
-        results, by_turn, served, duration = asyncio.run(
-            measure(trace, driver, mode, writer, workload, request_id))
+        if mode.goodput_sweep:
+            measured, goodput = sweep(trace, driver, mode, writer, workload, request_id)
+        else:
+            measured = asyncio.run(measure(trace, driver, mode, emitter(mode, writer), workload,
+                                           request_id))
     except PrefixCacheResetError as e:
         # Fatal by design: going on would measure the warm cache the reset prevents.
         print(f"ABORT: prefix cache reset failed: {e}")
@@ -243,6 +376,7 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
     except RunAborted as e:
         print(e)
         stop(writer, None, "aborted", str(e), 1)
+    results, by_turn, pairs, duration = measured
 
     core = aggregate(
         results=[r for r in results if r is not None], duration_s=duration,
@@ -260,13 +394,14 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
     enforce(success_rate_gate(core, mode.min_success_rate), writer, summary)
     enforce(usage_gate(core, mode.allow_missing_usage), writer, summary)
 
-    summary.sections["workload"] = ident = identity(trace, served)
+    ident = summary.sections["workload"] = identity(trace, [q for q, _ in pairs])
+    summary.sections.update({"goodput": goodput} if goodput else
+                            crossval_sections(pairs, duration, mode))
+    print_legacy_lines(summary.sections)
     if not ident["match"]:
-        print(f"WORKLOADSUM expected={ident['expected']} replayed={ident['replayed']} "
-              f"match=0 n={ident['n']}/{ident['of']}", flush=True)
-        print("WORKLOADVOID replayed workload differs from the trace; comparison is void",
-              flush=True)
         stop(writer, summary.to_dict(), "failed", "workload identity", IDENTITY_EXIT)
+    if goodput and goodput["max_req_s"] is None:
+        stop(writer, summary.to_dict(), "aborted", "no passing speed within budget", 1)
     if core.failed_requests:
         summary.status = "partial"
         summary.reason = f"{core.failed_requests} of {core.num_requests} requests failed"

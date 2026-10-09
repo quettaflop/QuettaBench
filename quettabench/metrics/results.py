@@ -211,3 +211,71 @@ def write_legacy_per_turn(turn_summaries, output: str, config: dict):
             "per_turn": [ts.to_dict() for ts in turn_summaries],
         }, f, indent=2)
     print(f"Per-turn results saved to: {turn_output}")
+
+
+# The crossval summary lines, formats exactly as legacy/trace_serve.py
+# printed them (split_map "Output line formats"); xval.sh and cache.py grep them.
+PCTS = (50, 90, 95, 99)
+
+
+def workload_line(w):
+    return (f"WORKLOADSUM expected={w['expected']} replayed={w['replayed']} "
+            f"match={int(w['match'])} n={w['n']}/{w['of']}")
+
+
+def goodprobe_line(p):
+    return (f"GOODPROBE speed={p['speed']:g} verdict={p['verdict']} "
+            f"bound={','.join(p['bound']) or 'none'} req_s={p['req_s']:.3f}")
+
+
+def legacy_lines(summary):
+    """SERVESUM, SLASUM, BURSTSUM, SPECSUM and GOODPUTSUM for the sections
+    summary has, then WORKLOADSUM/WORKLOADVOID, in trace_serve's order."""
+    lines = []
+    w = summary.get("workload")
+    if w is not None:
+        lines.append(workload_line(w))
+        if not w["match"]:
+            void = "sweep" if "goodput" in summary else "comparison"
+            lines.append(f"WORKLOADVOID replayed workload differs from the trace; {void} is void")
+    s = summary.get("serve")
+    if s is not None:
+        tp = s["tpot_ms"]
+        lines.append(
+            f"SERVESUM n={s['n']} "
+            + " ".join(f"ttft_ms_p{q}={s['ttft_ms'][f'p{q}']:.1f}" for q in PCTS) + " "
+            + (" ".join(f"tpot_ms_p{q}={tp[f'p{q}']:.3f}" for q in PCTS) + " "
+               if tp else "tpot_ms_p50=- ")
+            + f"req_s={s['req_s']:.3f} tok_s={s['tok_s']:.1f}")
+    sla = summary.get("sla")
+    if sla is not None:
+        lines.append(
+            f"SLASUM verdict={sla['verdict']} bound={','.join(sla['bound']) or 'none'} "
+            f"ttft_p99={sla['ttft_p99']:.1f}/{sla['sla_ttft_ms'] or '-'} "
+            f"tpot_p99={sla['tpot_p99']:.3f}/{sla['sla_tpot_ms'] or '-'} "
+            f"rate_req_s={sla['rate_req_s']:.3f}")
+    b = summary.get("burst")
+    if b is not None and b["peak_ttft_p99"] is not None:
+        rec = "na" if b["recovery_s"] is None else f"{b['recovery_s']:.1f}"
+        lines.append(f"BURSTSUM peak_ttft_p99={b['peak_ttft_p99']:.1f} "
+                     f"recovery_s={rec} target_ms={b['target_ms']}")
+    spec = summary.get("spec")
+    if spec is not None:
+        lines.append(f"SPECSUM spec=measured accept_len={spec['accept_len']:.2f} "
+                     f"accept_rate={spec['accept_rate']:.3f} n={spec['n']}"
+                     if spec["spec"] == "measured" else "SPECSUM spec=off note=needs-real-text-trace")
+    g = summary.get("goodput")
+    if g is not None and (w is None or w["match"]):
+        bound = ",".join(g["fail_bound"])
+        lines.append(f"GOODPUTSUM max_req_s={g['max_req_s']:.3f} speed={g['speed']:g} "
+                     f"bound={bound or 'none-within-range'} iterations={g['iterations']}"
+                     if g["max_req_s"] is not None else
+                     f"GOODPUTSUM max_req_s=none bound={bound or 'na'} "
+                     f"iterations={g['iterations']} note=no-passing-speed-within-budget")
+    return lines
+
+
+def print_legacy_lines(summary):
+    """Print legacy_lines(summary), flushed, as trace_serve did."""
+    for line in legacy_lines(summary):
+        print(line, flush=True)

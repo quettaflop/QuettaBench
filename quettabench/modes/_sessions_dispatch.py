@@ -47,16 +47,16 @@ async def no_limit():
 class SessionDispatcher:
     """One multi-turn replay. send(request, request_id=, capture_text=) is
     the driver call with sampling bound; request_id(session, turn, index)
-    names a request or returns None; every result goes to writer.append."""
+    names a request or returns None; emit(request, result) takes every
+    result as it finishes."""
 
-    def __init__(self, trace, mode, workload, send, request_id, writer):
+    def __init__(self, trace, mode, workload, send, request_id, emit):
         self.trace, self.mode, self.workload = trace, mode, workload
-        self.send, self.request_id, self.writer = send, request_id, writer
+        self.send, self.request_id, self.emit = send, request_id, emit
         self.sessions = trace.sessions()
         self.max_turns = getattr(trace, "max_turns", max(len(s) for s in self.sessions))
         self.pacing = trace.pacing
         self.open_loop = mode.load == "open"
-        self.basis = "arrival" if self.open_loop else "slot"
 
     def announce(self):
         """Before warmup: say what interleaved pacing does to the numbers."""
@@ -72,7 +72,7 @@ class SessionDispatcher:
                       "--turn-pacing interleaved (everyone starts turn 0 together).")
 
     async def run(self):
-        """(results in turn order, results_by_turn, served requests, start time)."""
+        """(results in turn order, results_by_turn, [(request, result)] served, start)."""
         self.slots = asyncio.Semaphore(self.mode.concurrency)
         self.by_turn = {i: [] for i in range(self.max_turns)}
         self.served = []
@@ -115,9 +115,8 @@ class SessionDispatcher:
             previous_output_tokens=self.prev_output.get(sid, 0),
             # Placeholders mean the engine reply is spliced into later prompts.
             reply_in_cache=bool(self.trace.replies.get(sid)))
-        result.ttft_basis = self.basis
-        self.served.append(request)
-        self.writer.append(result)
+        self.served.append((request, result))
+        self.emit(request, result)
         return result
 
     def _record(self, request, result):

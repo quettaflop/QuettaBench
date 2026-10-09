@@ -501,6 +501,17 @@ def sla_verdict(summary: dict, sla_ttft_ms, sla_tpot_ms) -> list[str]:
     return bound
 
 
+def acceptance(reference_ids, generated_ids) -> tuple[int, float]:
+    """Matched leading-token length and rate between the trace's real assistant
+    tokens and what the engine generated (legacy/trace_serve.py _acceptance)."""
+    n = 0
+    for a, b in zip(reference_ids, generated_ids):
+        if a != b:
+            break
+        n += 1
+    return n, (n / len(reference_ids) if reference_ids else 0.0)
+
+
 def burst_recovery(records, sla_ttft_ms, window_s: float = 5.0):
     """(recovery_s, peak_p99) over arrival windows of window_s seconds.
 
