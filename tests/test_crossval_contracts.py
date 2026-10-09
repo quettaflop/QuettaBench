@@ -875,6 +875,7 @@ class TableParity(unittest.TestCase):
         text = (REPO / "legacy" / "trace_serve.py").read_text()
         for tag in ("--sla-ttft-ms", "--sla-tpot-ms", "SLASUM", "BURSTSUM", "SPECSUM"):
             self.assertIn(tag, text)
+        self.assertIn("FIDELITY", (QB / "crossval" / "agreement.py").read_text())
 
     def test_burst_recovery_and_acceptance(self):
         sys.path.insert(0, str(REPO))

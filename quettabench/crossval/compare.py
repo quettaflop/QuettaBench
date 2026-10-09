@@ -9,12 +9,14 @@ without withholding, when theirs is older than 14 days or the two sides'
 NCCL pins differ. One rule is new: when both sides carry a workload_hash
 and the hashes differ, every row is withheld (reason "workload").
 
-render(report) is table.py's text, byte for byte.
+render(report) is table.py's text, byte for byte, with the agreement rows
+(crossval/agreement.py) printed after the cell table.
 """
 
 from dataclasses import dataclass, field
 
 from quettabench.config import xval_config
+from quettabench.crossval import agreement
 from quettabench.crossval.reader import Side, age_days
 
 # Age past which the baseline draws a warning: drivers and kernels move, and
@@ -198,8 +200,11 @@ def render_table(report):
 
 
 def render(report):
-    """table.py's stdout for report; the table is left out when no cell pairs."""
+    """table.py's stdout for report, then the agreement rows; the table is
+    left out when no cell pairs."""
     lines = render_preamble(report)
     if report.rows:
         lines += render_table(report)
+    if report.agreement:
+        lines += [""] + agreement.render(report.agreement)
     return "".join(line + "\n" for line in lines)
