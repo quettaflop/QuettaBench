@@ -24,6 +24,7 @@ import subprocess
 import sys
 import time
 from abc import ABC, abstractmethod
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlsplit, urlunsplit
@@ -387,28 +388,80 @@ class HttpDriver(Driver):
     """OpenAI-compatible streaming client for one endpoint of a launched server.
 
     backend_name is serve.py's --backend; it picks the cache-reset endpoint.
+    url, model, api_key and timeout (seconds, for every request and the
+    reset) bind the driver to one server; send() and run() use them over
+    the aiohttp session opened by session().
     """
 
-    def __init__(self, endpoint, backend_name="vllm"):
+    version = None  # the server is not asked for one
+
+    def __init__(self, endpoint, backend_name="vllm", *, url=None, model=None,
+                 api_key="test", timeout=60):
         self.endpoint, self.backend_name = endpoint, backend_name
         self._stream, self.ttft_rule = ENDPOINTS[endpoint]
+        self.url, self.model, self.api_key, self.timeout = url, model, api_key, timeout
+        self._http = None
 
     async def send_request(self, *args, **kwargs) -> RequestResult:
         result = await self._stream(*args, **kwargs)
         result.ttft_rule = self.ttft_rule
         return result
 
-    def run(self, requests, *, concurrency, **kwargs):
-        raise NotImplementedError("serve.py calls send_request per request until it takes a Driver")
+    @asynccontextmanager
+    async def session(self, concurrency, open_loop=False):
+        """One aiohttp session for a run. Open loop must not cap connections:
+        a connector limit would silently become the concurrency cap."""
+        connector = aiohttp.TCPConnector(limit=0 if open_loop else concurrency + 10)
+        timeout = aiohttp.ClientTimeout(total=self.timeout)
+        async with aiohttp.ClientSession(connector=connector, timeout=timeout) as http:
+            self._http = http
+            try:
+                yield http
+            finally:
+                self._http = None
 
-    async def reset(self, session, url: str, api_key: str = "test", timeout: int = 60) -> str:
+    async def send(self, request, *, ignore_eos=False, temperature=0.0, seed=None,
+                   min_tokens=0, request_id=None, capture_text=False) -> RequestResult:
+        """Stream one Request: token ids when it has them, else its messages.
+        capture_text is passed only when set; the completions body has none."""
+        extra = {}
+        if request.prompt_token_ids:
+            extra["prompt_token_ids"] = request.prompt_token_ids
+        if capture_text:
+            extra["capture_text"] = True
+        return await self.send_request(
+            session=self._http, url=self.url, model=self.model, messages=request.messages,
+            max_tokens=request.max_tokens, api_key=self.api_key, ignore_eos=ignore_eos,
+            temperature=temperature, seed=seed, min_tokens=min_tokens, request_id=request_id,
+            **extra)
+
+    def run(self, requests, *, concurrency, **sampling):
+        """Closed loop at `concurrency` over requests; yields results in request order."""
+        async def all_of_them():
+            slots = asyncio.Semaphore(concurrency)
+
+            async def one(request):
+                async with slots:
+                    return await self.send(request, **sampling)
+
+            async with self.session(concurrency):
+                return await asyncio.gather(*(one(r) for r in requests))
+
+        yield from asyncio.run(all_of_them())
+
+    async def reset(self, session=None, url=None, api_key=None, timeout=None) -> str:
         """
         Reset the server's prefix cache. Returns a short status string for logging.
+        Arguments left out come from the bound server and its open session.
 
         Raises PrefixCacheResetError if the backend has no known reset endpoint or
         the server rejects the call -- silently continuing would produce exactly the
         cross-cell contamination this exists to prevent.
         """
+        session = self._http if session is None else session
+        url = self.url if url is None else url
+        api_key = self.api_key if api_key is None else api_key
+        timeout = self.timeout if timeout is None else timeout
         backend_name = self.backend_name
         endpoint = _RESET_ENDPOINTS.get(backend_name.lower())
         if endpoint is None:

@@ -3,9 +3,12 @@
 import asyncio
 import json
 import unittest
+from contextlib import asynccontextmanager
+from unittest import mock
 
 from quettabench.engines import get_backend
 from quettabench.engines.drivers import HttpDriver, PrefixCacheResetError
+from quettabench.workloads.base import Request
 
 
 class _Resp:
@@ -94,6 +97,69 @@ class Backends(unittest.TestCase):
     def test_reset_404_names_dev_mode(self):
         with self.assertRaisesRegex(PrefixCacheResetError, "VLLM_SERVER_DEV_MODE=1"):
             asyncio.run(get_backend("vllm").reset(_Session([], status=404), "http://h:1/v1/x"))
+
+
+class BoundDriver(unittest.TestCase):
+    """send/run/reset against the server the driver was built for."""
+
+    def driver(self, endpoint="completions", chunks=({"choices": [{"text": "a"}]},)):
+        drv = HttpDriver(endpoint, "vllm-completions", url="http://h:8000/v1/completions",
+                         model="m", api_key="k", timeout=9)
+        self.stub = _Session(list(chunks))
+
+        @asynccontextmanager
+        async def session(concurrency, open_loop=False):
+            drv._http = self.stub
+            yield self.stub
+
+        return drv, session
+
+    def test_send_routes_token_ids_and_sampling(self):
+        drv, session = self.driver()
+
+        async def go():
+            async with session(1):
+                return await drv.send(Request([5, 6], 2, output_length=3), ignore_eos=True,
+                                      seed=7, min_tokens=3, request_id="r1")
+
+        result = asyncio.run(go())
+        url, body = self.stub.posts[0]
+        self.assertEqual(url, "http://h:8000/v1/completions")
+        self.assertEqual((body["prompt"], body["max_tokens"], body["seed"], body["min_tokens"],
+                          body["ignore_eos"], body["request_id"]), ([5, 6], 3, 7, 3, True, "r1"))
+        self.assertEqual(result.ttft_rule, "first_nonempty_text")
+
+    def test_chat_send_uses_messages_and_captures_text_when_asked(self):
+        drv, session = self.driver("chat", [{"choices": [{"delta": {"content": "hey"}}]}])
+        msgs = [{"role": "user", "content": "hi"}]
+
+        async def go():
+            async with session(1):
+                return await drv.send(Request([], 0, output_length=2, messages=msgs),
+                                      capture_text=True)
+
+        result = asyncio.run(go())
+        self.assertEqual(self.stub.posts[0][1]["messages"], msgs)
+        self.assertEqual(result.generated_text, "hey")
+
+    def test_run_yields_in_request_order(self):
+        drv, session = self.driver()
+        with mock.patch.object(drv, "session", session):
+            out = list(drv.run([Request([i], 1, output_length=1) for i in range(5)],
+                               concurrency=2))
+        self.assertEqual(len(out), 5)
+        self.assertEqual(sorted(b["prompt"] for _, b in self.stub.posts), [[i] for i in range(5)])
+        self.assertTrue(all(r.success for r in out))
+
+    def test_reset_defaults_to_the_bound_server(self):
+        drv, session = self.driver()
+
+        async def go():
+            async with session(1):
+                return await drv.reset()
+
+        self.assertEqual(asyncio.run(go()),
+                         "prefix cache reset via http://h:8000/reset_prefix_cache")
 
 
 if __name__ == "__main__":
