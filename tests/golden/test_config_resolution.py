@@ -39,8 +39,6 @@ from tests.golden._harness import (
     REPO,
     RUNS,
     check_json,
-    crossval_path,
-    fresh_import,
     grid_argv,
     loader_message,
     run_grid_cli,
@@ -224,13 +222,11 @@ class ParseTimeFailuresGolden(unittest.TestCase):
         }
         check_json(self, "config_failures", failures)
 
-    def test_trace_serve_rejects_malformed_serving_style_before_loading(self):
-        with crossval_path(), mock.patch.dict(os.environ, {}, clear=True):
-            trace_serve = fresh_import("legacy.trace_serve")
-            argv = ["trace_serve.py", "/nonexistent.jsonl", "--model", "m",
-                    "--serving-style", "disagg:2p"]
-            with mock.patch("sys.argv", argv):
-                err = _error(trace_serve.main)
+    def test_malformed_serving_style_is_refused_at_load(self):
+        # trace_serve.py checked --serving-style before loading the trace; the
+        # loader now checks engine.serving_style before anything runs.
+        err = _error(loader.load, RUNS / "llama.yaml",
+                     ["engine.model=m", "engine.serving_style=disagg:2p"], env={})
         check_json(self, "config_trace_serve_style_error", err)
 
 

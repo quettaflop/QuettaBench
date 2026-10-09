@@ -19,7 +19,7 @@ dependencies = [
 [project.scripts]
 qbench = "quettabench.cli:main"
 
-# Only the package installs: analysis/, data/, legacy/ and tests/ are not
+# Only the package installs: analysis/, data/ and tests/ are not
 # importable names to put on site-packages next to the stdlib.
 [tool.setuptools.packages.find]
 include = ["quettabench*"]

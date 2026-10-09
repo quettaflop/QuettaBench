@@ -16,16 +16,14 @@ CELL = {"ctx": 8, "bs": 3, "tp": 1, "step_point": 5, "phase": "fit", "attempt": 
 
 
 class Builders(unittest.TestCase):
-    def test_llm_and_async_engine_get_the_same_kwargs(self):
+    def test_llm_gets_the_kwargs_on_first_use(self):
         with crossval_path(stubs=True):
             vllm = fresh_import("vllm")
             vllm.reset()
             driver = InProcessDriver(LaunchSpec(adapter="vllm", engine_kwargs=KWARGS))
             self.assertEqual(vllm.CALLS, [])
             driver.llm()
-            with self.assertRaises(vllm.StubHalt):
-                driver.async_engine()
-            self.assertEqual(vllm.CALLS, [("LLM", KWARGS), ("AsyncEngineArgs", KWARGS)])
+            self.assertEqual(vllm.CALLS, [("LLM", KWARGS)])
 
     def test_llm_is_built_once(self):
         with crossval_path(stubs=True):

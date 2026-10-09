@@ -610,12 +610,6 @@ class InProcessDriver(Driver):
     def tokenizer(self):
         return self.llm().get_tokenizer()
 
-    def async_engine(self):
-        """trace_serve's engine: AsyncLLMEngine from AsyncEngineArgs(**engine_kwargs)."""
-        from vllm.engine.arg_utils import AsyncEngineArgs
-        from vllm.engine.async_llm_engine import AsyncLLMEngine
-        return AsyncLLMEngine.from_engine_args(AsyncEngineArgs(**self.spec.engine_kwargs))
-
     def generate(self, prompts, max_tokens):
         """(seconds, outputs) of one greedy generate() that ignores EOS, so
         every prompt decodes exactly max_tokens; the clock spans only the call."""

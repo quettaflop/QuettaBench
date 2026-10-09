@@ -1,5 +1,5 @@
 """SPECSUM, SLA, burst and the goodput sweep on serve's one path, with the
-summary lines in legacy/trace_serve.py's exact formats."""
+summary lines in the exact formats legacy/trace_serve.py printed."""
 
 import contextlib
 import io

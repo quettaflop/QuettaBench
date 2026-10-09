@@ -29,7 +29,7 @@ VERIFIED_CRATE = "llama"
 
 
 def _scripts(suffix):
-    roots = (CROSSVAL, QB, REPO / "legacy", REPO / "analysis")
+    roots = (CROSSVAL, QB, REPO / "analysis")
     return sorted(p for root in roots for p in root.rglob(f"*{suffix}")
                   if "__pycache__" not in p.parts)
 
@@ -178,29 +178,25 @@ class CrossvalScripts(unittest.TestCase):
     def test_goodput_search_and_verdict(self):
         # The sweep must bracket the PASS/FAIL boundary within its probe cap;
         # an uncapped search would double forever on a flat SLA response.
-        sys.path.insert(0, str(REPO))
+        from quettabench.metrics.core import sla_verdict
+        from quettabench.modes.serve import goodput_search
+        gen = goodput_search(start=1.0)
+        speeds, speed = [], next(gen)
         try:
-            from legacy import trace_serve
-            importlib.reload(trace_serve)
-            gen = trace_serve.goodput_search(start=1.0)
-            speeds, speed = [], next(gen)
-            try:
-                while True:
-                    speeds.append(speed)
-                    speed = gen.send(speed < 4.0)  # SLA passes strictly below 4.0
-            except StopIteration:
-                pass
-            self.assertLessEqual(len(speeds), 6)
-            passing = [x for x in speeds if x < 4.0]
-            failing = [x for x in speeds if x >= 4.0]
-            self.assertTrue(passing and failing, speeds)
-            self.assertGreater(max(passing), 3.0, speeds)  # tightened to the boundary
-            s = {"ttft_ms": {"p99": 900.0}, "tpot_ms": {"p99": 40.0}}
-            self.assertEqual(trace_serve.sla_verdict(s, 500.0, 50.0), ["ttft_p99"])
-            self.assertEqual(trace_serve.sla_verdict(s, None, None), [])
-            self.assertIn("GOODPUTSUM", (REPO / "legacy" / "trace_serve.py").read_text())
-        finally:
-            sys.path.pop(0)
+            while True:
+                speeds.append(speed)
+                speed = gen.send(speed < 4.0)  # SLA passes strictly below 4.0
+        except StopIteration:
+            pass
+        self.assertLessEqual(len(speeds), 6)
+        passing = [x for x in speeds if x < 4.0]
+        failing = [x for x in speeds if x >= 4.0]
+        self.assertTrue(passing and failing, speeds)
+        self.assertGreater(max(passing), 3.0, speeds)  # tightened to the boundary
+        s = {"ttft_ms": {"p99": 900.0}, "tpot_ms": {"p99": 40.0}}
+        self.assertEqual(sla_verdict(s, 500.0, 50.0), ["ttft_p99"])
+        self.assertEqual(sla_verdict(s, None, None), [])
+        self.assertIn("GOODPUTSUM", (QB / "metrics" / "results.py").read_text())
 
     def test_injected_arrivals(self):
         # Injected schedules must be deterministic, must match their spec, and
@@ -230,48 +226,28 @@ class CrossvalScripts(unittest.TestCase):
             sys.path.pop(0)
 
     def test_energy_integration(self):
-        sys.path.insert(0, str(REPO))
-        try:
-            from legacy import trace_serve
-            importlib.reload(trace_serve)
-            self.assertEqual(trace_serve.integrate_power([100.0, 100.0, 100.0], 1.0), 300.0)
-            self.assertEqual(trace_serve.integrate_power([], 1.0), 0.0)
-            self.assertIn("ENERGYSUM", (REPO / "legacy" / "trace_serve.py").read_text())
-        finally:
-            sys.path.pop(0)
+        from quettabench.profiling.wrapped import integrate_power
+        self.assertEqual(integrate_power([100.0, 100.0, 100.0], 1.0), 300.0)
+        self.assertEqual(integrate_power([], 1.0), 0.0)
+        self.assertIn("ENERGYSUM", (QB / "profiler.py").read_text())
 
     def test_cost_math(self):
-        sys.path.insert(0, str(REPO))
-        try:
-            from legacy import trace_serve
-            importlib.reload(trace_serve)
-            # 2 GPUs at $3.60/hr for 30 min producing 1M tokens: $3.60, $3.60/M.
-            usd, per_m = trace_serve.cost_per_m_tokens(3.6, 2, 1800.0, 1_000_000)
-            self.assertAlmostEqual(usd, 3.6)
-            self.assertAlmostEqual(per_m, 3.6)
-            self.assertIn("COSTSUM", (REPO / "legacy" / "trace_serve.py").read_text())
-        finally:
-            sys.path.pop(0)
+        from quettabench.profiling.wrapped import cost_per_m_tokens
+        # 2 GPUs at $3.60/hr for 30 min producing 1M tokens: $3.60, $3.60/M.
+        usd, per_m = cost_per_m_tokens(3.6, 2, 1800.0, 1_000_000)
+        self.assertAlmostEqual(usd, 3.6)
+        self.assertAlmostEqual(per_m, 3.6)
+        self.assertIn("COSTSUM", (QB / "profiler.py").read_text())
 
     def test_gsm8k_answer_parse(self):
-        sys.path.insert(0, str(REPO))
-        try:
-            from legacy import trace_serve
-            importlib.reload(trace_serve)
-            f = trace_serve.gsm8k_answer
-            self.assertEqual(f("Natalia sold 48 clips. #### 72"), "72")
-            self.assertEqual(f("so the total is $1,234."), "1234")
-            self.assertEqual(f("the answer is 3.5 apples"), "3.5")
-            self.assertIsNone(f("no numbers here"))
-            src = (REPO / "legacy" / "trace_serve.py").read_text()
-            self.assertIn("ACCSUM", src)
-            # The gsm8k result must not share the name `acc` with SPECSUM's record
-            # list, or the (empty, for synthetic traces) SPECSUM list clobbers it
-            # and ACCSUM silently never prints.
-            self.assertIn("gsm8k_acc", src)
-            self.assertNotIn("if acc:\n        print(f\"ACCSUM", src)
-        finally:
-            sys.path.pop(0)
+        from quettabench.profiling.wrapped import gsm8k_answer as f
+        self.assertEqual(f("Natalia sold 48 clips. #### 72"), "72")
+        self.assertEqual(f("so the total is $1,234."), "1234")
+        self.assertEqual(f("the answer is 3.5 apples"), "3.5")
+        self.assertIsNone(f("no numbers here"))
+        # ACCSUM prints from the profile's own accuracy section, so SPECSUM's
+        # records can no longer clobber it the way trace_serve's shared `acc` could.
+        self.assertIn("ACCSUM", (QB / "profiler.py").read_text())
 
     def test_serving_style_contract(self):
         # Item 1a: serving topology parses, disagg GPU pools are disjoint, ep must
@@ -875,29 +851,27 @@ class TableParity(unittest.TestCase):
             sys.path.pop(0)
 
     def test_serving_emits_verdicts(self):
-        text = (REPO / "legacy" / "trace_serve.py").read_text()
-        for tag in ("--sla-ttft-ms", "--sla-tpot-ms", "SLASUM", "BURSTSUM", "SPECSUM"):
-            self.assertIn(tag, text)
+        schema = (QB / "config" / "schema.py").read_text()
+        for field in ("sla_ttft_ms", "sla_tpot_ms"):
+            self.assertIn(field, schema)
+        lines = (QB / "metrics" / "results.py").read_text()
+        for tag in ("SLASUM", "BURSTSUM", "SPECSUM"):
+            self.assertIn(tag, lines)
         self.assertIn("FIDELITY", (QB / "crossval" / "agreement.py").read_text())
 
     def test_burst_recovery_and_acceptance(self):
-        sys.path.insert(0, str(REPO))
-        try:
-            from legacy import trace_serve
-            importlib.reload(trace_serve)
-            self.assertEqual(trace_serve._acceptance([1, 2, 3, 4], [1, 2, 9, 4]), (2, 0.5))
-            self.assertEqual(trace_serve._acceptance([], [])[0], 0)
-            recs = ([{"arrival_s": t, "ttft_ms": 100.0} for t in range(0, 5)]
-                    + [{"arrival_s": t, "ttft_ms": 9000.0} for t in range(5, 10)]
-                    + [{"arrival_s": t, "ttft_ms": 100.0} for t in range(15, 20)])
-            rec_s, peak = trace_serve.burst_recovery(recs, sla_ttft_ms=1000.0, window_s=5.0)
-            self.assertEqual(peak, 9000.0)
-            self.assertIsNotNone(rec_s)
-            self.assertGreater(rec_s, 0)
-            never = [{"arrival_s": t, "ttft_ms": 9000.0} for t in range(0, 10)]
-            self.assertIsNone(trace_serve.burst_recovery(never, 1000.0, 5.0)[0])
-        finally:
-            sys.path.pop(0)
+        from quettabench.metrics.core import acceptance, burst_recovery
+        self.assertEqual(acceptance([1, 2, 3, 4], [1, 2, 9, 4]), (2, 0.5))
+        self.assertEqual(acceptance([], [])[0], 0)
+        recs = ([{"arrival_s": t, "ttft_ms": 100.0} for t in range(0, 5)]
+                + [{"arrival_s": t, "ttft_ms": 9000.0} for t in range(5, 10)]
+                + [{"arrival_s": t, "ttft_ms": 100.0} for t in range(15, 20)])
+        rec_s, peak = burst_recovery(recs, sla_ttft_ms=1000.0, window_s=5.0)
+        self.assertEqual(peak, 9000.0)
+        self.assertIsNotNone(rec_s)
+        self.assertGreater(rec_s, 0)
+        never = [{"arrival_s": t, "ttft_ms": 9000.0} for t in range(0, 10)]
+        self.assertIsNone(burst_recovery(never, 1000.0, 5.0)[0])
 
     def test_r2_tokenize_and_output_ids_survive_load(self):
         # The real-text path: agent-bench turns -> requests carrying output_token_ids
@@ -1092,21 +1066,17 @@ class TraceWorkloads(unittest.TestCase):
         self.assertEqual(reqs[1]["arrival_ts"], 3.5)
         self.assertEqual(reqs[1]["output_length"], 2)
 
-    def test_trace_serve_helpers_are_gpu_free(self):
-        # The serving replay must import without vLLM (CI has no GPU stack).
-        sys.path.insert(0, str(REPO))
-        try:
-            from legacy import trace_serve
-            importlib.reload(trace_serve)
-        finally:
-            sys.path.pop(0)
+    def test_serve_helpers_are_gpu_free(self):
+        # The serving procedure must import without vLLM (CI has no GPU stack).
+        from quettabench.metrics.core import summarize_serve
+        from quettabench.modes import serve  # noqa: F401
         from quettabench.workloads.arrival import rebase_arrivals
         self.assertEqual(rebase_arrivals([10.0, 11.0, 14.0], speed=2.0), [0.0, 0.5, 2.0])
         self.assertEqual(rebase_arrivals([None, None], speed=1.0), [0.0, 0.0])
-        s = trace_serve.summarize(
+        s = summarize_serve(
             [{"ttft_ms": 10.0, "tpot_ms": 5.0, "out_tokens": 3},
              {"ttft_ms": 30.0, "tpot_ms": None, "out_tokens": 1},
-             {"ttft_ms": 20.0, "tpot_ms": 7.0, "out_tokens": 3}], wall_s=2.0)
+             {"ttft_ms": 20.0, "tpot_ms": 7.0, "out_tokens": 3}], wall_s=2.0, method="nearest")
         self.assertEqual(s["n"], 3)
         self.assertEqual(s["ttft_ms"]["p50"], 20.0)
         self.assertEqual(s["ttft_ms"]["p99"], 30.0)

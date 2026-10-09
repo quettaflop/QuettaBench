@@ -169,7 +169,7 @@ are withheld. glm53 and glm53flash have no engine bench yet: vLLM side only.
 | `scripts/sweep_*_profiles[_sglang].sh` | a `matrix:` block in the run yaml, `just sweep <yaml>` |
 | `python -m quettabench.modes.serve ...` (and its `--output` file) | `just run ...`; results in `results/<run>/` |
 | `vmin_fit.py <wl>` / `serve --grid --workload <wl>` | `just run configs/runs/<wl>.yaml --set engine.model=<weights>` (`--nograph`: `--set engine.cudagraph=false`, `--dump-tokens`: `--set mode.returns=text`) |
-| `trace_serve.py <trace> --model <w>` | `just run <yaml> --set mode.grid=null --set workload.kind=live --set workload.source=<trace> --set mode.load=open --set workload.arrival=trace`; energy, cost, gsm8k: `just profile --source energy|cost|gsm8k` (`legacy/trace_serve.py` stays runnable until Phase 3) |
+| `trace_serve.py <trace> --model <w>` | `just run <yaml> --set mode.grid=null --set workload.kind=live --set workload.source=<trace> --set mode.load=open --set workload.arrival=trace`; energy, cost, gsm8k: `just profile --source energy|cost|gsm8k` |
 | `cache.py <log> <out>` | written by every grid run: `results/baselines/vllm-<run>.json` |
 | `table.py <bench-log> <baseline>` | `just crossval` (until it lands: `python3 -m quettabench.crossval.table results/<run>/bench.log results/baselines/vllm-<run>.json`) |
 | `xval_config.py tp|devices|cells|bench <wl>` | `just dry configs/runs/<wl>.yaml` (`engine.tp`, `engine.pp`, `grid.cells`, `engine.extra.quettaserve`) |
@@ -192,7 +192,6 @@ quettabench/profiling/    sources the profiler attaches with
 quettabench/probes/       kernel probes; quettabench/export/ routes to QuettaSim
 configs/                  models, runs, grids, hardware
 analysis/, data/          one-off studies and data fetch; not imported by the package
-legacy/trace_serve.py     parked until Phase 3
 ```
 
 ## Data

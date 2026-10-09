@@ -1,8 +1,9 @@
 """profiling/wrapped.py gives trace_serve's numbers on the same inputs.
 
-Every case is hand-computed and also checked against the legacy function,
-so a drift in either shows up here. nvidia-smi is the fake script next to
-this file, passed by path; no GPU, no network beyond a localhost fake.
+Every case is hand-computed; until trace_serve.py was deleted each was also
+checked against its function, which these were moved from unchanged.
+nvidia-smi is the fake script next to this file, passed by path; no GPU, no
+network beyond a localhost fake.
 """
 
 import json
@@ -11,7 +12,6 @@ import time
 import unittest
 from pathlib import Path
 
-from legacy import trace_serve
 from quettabench.profiling import wrapped
 from tests.profiling import fake_endpoint
 
@@ -30,8 +30,6 @@ class Energy(unittest.TestCase):
         samples = [300.0, 310.5, 290.25]
         self.assertEqual(wrapped.integrate_power(samples, 1.0), 900.75)
         self.assertEqual(wrapped.integrate_power(samples, 0.5), 450.375)
-        self.assertEqual(wrapped.integrate_power(samples, 1.0),
-                         trace_serve.integrate_power(samples, 1.0))
         self.assertEqual(wrapped.integrate_power([], 1.0), 0)
 
     def test_energy_section(self):
@@ -83,8 +81,6 @@ class Cost(unittest.TestCase):
         # 2 GPUs x $3/h x 1800 s = $3.00; 3.00 * 1e6 / 1.5e6 tokens = $2.00 per M
         self.assertEqual(wrapped.cost_per_m_tokens(3.0, 2, 1800.0, 1_500_000), (3.0, 2.0))
         self.assertEqual(wrapped.cost_per_m_tokens(2.5, 4, 90.0, 0)[1], 0.25 * 1e6)
-        for args in ((3.0, 2, 1800.0, 1_500_000), (2.49, 8, 123.4, 98765), (1, 1, 0.0, 0)):
-            self.assertEqual(wrapped.cost_per_m_tokens(*args), trace_serve.cost_per_m_tokens(*args))
 
     def test_cost_section(self):
         c = wrapped.cost_section(3, 2, 1800.0, 1_500_000)
@@ -101,7 +97,6 @@ class Gsm8k(unittest.TestCase):
         for text, want in self.CASES:
             with self.subTest(text):
                 self.assertEqual(wrapped.gsm8k_answer(text), want)
-                self.assertEqual(wrapped.gsm8k_answer(text), trace_serve.gsm8k_answer(text))
 
     def test_load_and_score(self):
         with tempfile.TemporaryDirectory() as tmp:

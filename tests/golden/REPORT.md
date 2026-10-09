@@ -239,6 +239,21 @@ NOTE all requests submit at t=0 (no arrival_ts in trace): ttft is queue-dominate
 The SERVESUM percentiles are `_pcts` (nearest rank, item 4). Exit codes:
 3 on a workload mismatch, 1 when goodput finds no passing speed.
 
+2026-10-09: `legacy/trace_serve.py` is deleted. Where each line above prints
+from now:
+
+- WORKLOADSUM, WORKLOADVOID, SERVESUM, SLASUM, BURSTSUM, SPECSUM, GOODPUTSUM:
+  `quettabench/metrics/results.py` `legacy_lines` / `print_legacy_lines`,
+  called by `modes/serve.py` at the end of a serve run.
+- GOODPROBE: `metrics/results.py` `goodprobe_line`, printed per probe by
+  `modes/serve.py`'s goodput sweep.
+- ENERGYSUM, ACCSUM, COSTSUM: `quettabench/profiler.py` (`qbench profile`),
+  same formats and order.
+- META (serve run), SERVE per request, NOTE: no printer. The run's settings
+  are run.json's config and each request is a requests.jsonl row.
+  Exit codes are unchanged (`modes/serve.py`: 3 on a workload mismatch, 1
+  when goodput finds no passing speed).
+
 ## Item 8: bootstrap.sh dry run
 
 Runs on CPU. It needs bash, python3 with PyYAML (for `xval_config.py`), and a

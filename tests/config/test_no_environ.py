@@ -1,6 +1,6 @@
 """os.environ is read only by quettabench/config/env_map.py.
 
-AST scan of quettabench/ and legacy/ for os.environ, os.getenv, environ[...]
+AST scan of quettabench/ for os.environ, os.getenv, environ[...]
 and `from os import environ|getenv`. Files that still read env today are on
 ALLOWLIST with the commit that removes the read (Stage 2 numbering). The test
 fails on a new reader, and on an allowlisted file that no longer reads env,
@@ -12,7 +12,7 @@ import unittest
 
 from tests.golden._harness import REPO
 
-ROOTS = ("quettabench", "legacy")
+ROOTS = ("quettabench",)
 ENV_NAMES = ("environ", "getenv")
 OWNER = "quettabench/config/env_map.py"
 
@@ -24,8 +24,6 @@ ALLOWLIST = {
     "quettabench/probes/reparallel.py",
     "quettabench/probes/vllm_allreduce.py",
     "quettabench/profiling/kv_transfer.py",
-    # removed in Phase 3 exit: legacy/ is deleted
-    "legacy/trace_serve.py",
 }
 
 

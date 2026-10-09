@@ -1,31 +1,30 @@
-"""Golden: the vLLM engine kwargs a grid run and trace_serve.py build per
+"""Golden: the vLLM engine kwargs a grid run and a serve run build per
 workload, captured through the tests/_stubs/vllm recorder.
 
 The grid side is run as `qbench run configs/runs/<name>.yaml --set
 engine.model=<weights>` (the fixture's "vmin_fit" keys name the script it
-was captured from, which that run replaced); trace_serve
-as xval.sh runs it (trace, --model, --workload, --tp from the workload).
-Both now build through engines/vllm.py translate(); the per-key diff is
-pinned and should be empty. qwen's trace_serve side is the loader's
-refusal (hybrid without kv_bytes), recorded as its exit message.
+was captured from, which that run replaced). The serve side is the
+fixture's "trace_serve" key: the engine trace_serve.py built from the run
+yaml with --model and --tp as xval.sh passed them, now
+engines/vllm.py translate() of the same Config (trace_serve.py is deleted;
+it built through translate() too). The per-key diff is pinned and should be
+empty. qwen's serve side is the loader's refusal (hybrid without kv_bytes);
+the fixture holds it with the "trace_serve: " prefix that script put on
+every exit.
 """
 
-import contextlib
-import io
 import json
-import os
-import tempfile
 import unittest
-from pathlib import Path
-from unittest import mock
 
+from quettabench.config import loader
+from quettabench.config.schema import ConfigError
+from quettabench.engines import vllm as vllm_adapter
 from tests.golden._harness import (
     ENV_OVERRIDE,
     FIXTURES,
     REPO,
+    RUNS,
     check_json,
-    crossval_path,
-    fresh_import,
     grid_argv,
     run_grid_cli,
 )
@@ -42,35 +41,16 @@ def vmin_fit_kwargs(name, env, extra_argv=()):
     return kwargs
 
 
-def trace_serve_kwargs(name):
-    """AsyncEngineArgs kwargs from trace_serve.main() with xval.sh's argv."""
-    tp = str(WORKLOADS[name].get("tp", 1))
-    with tempfile.TemporaryDirectory() as td:
-        trace = Path(td) / "trace.jsonl"
-        trace.write_text(json.dumps({"prompt_token_ids": [1, 2, 3], "output_length": 4}) + "\n")
-        argv = ["trace_serve.py", str(trace), "--model", "<MODEL>", "--workload", name,
-                "--tp", tp]
-        with crossval_path(stubs=True), mock.patch.dict(os.environ, {}, clear=True), \
-                mock.patch("sys.argv", argv), contextlib.redirect_stdout(io.StringIO()):
-            vllm = fresh_import("vllm")
-            trace_serve = fresh_import("legacy.trace_serve")
-            try:
-                with halted_engine(vllm):
-                    trace_serve.main()
-            except SystemExit as e:
-                return {"exit": str(e.code).replace(str(REPO), "<REPO>")}
-            ((ctor, kwargs),) = vllm.CALLS
-    assert ctor == "AsyncEngineArgs", ctor
-    return kwargs
-
-
-@contextlib.contextmanager
-def halted_engine(vllm):
-    """The stub engine raises StubHalt once its args are built; swallow it."""
+def serve_kwargs(name):
+    """engine_kwargs of the run yaml with --model and the workload's --tp, as
+    trace_serve built them, or the loader's refusal."""
+    tp = WORKLOADS[name].get("tp", 1)
     try:
-        yield
-    except vllm.StubHalt:
-        pass
+        (cfg,) = loader.load(RUNS / f"{name}.yaml", ["allow_unverified=true",
+                             "engine.model=<MODEL>", f"engine.tp={tp}"], env={})
+    except ConfigError as e:
+        return {"exit": "trace_serve: " + str(e).replace(str(REPO), "<REPO>")}
+    return dict(vllm_adapter.ADAPTER.translate(cfg).engine_kwargs)
 
 
 def kwargs_diff(a, b):
@@ -84,7 +64,7 @@ class EngineArgsGolden(unittest.TestCase):
         record = {}
         for name in sorted(WORKLOADS):
             vmin = vmin_fit_kwargs(name, {})
-            serve = trace_serve_kwargs(name)
+            serve = serve_kwargs(name)
             record[name] = {
                 "vmin_fit": vmin,
                 "vmin_fit_env_override": vmin_fit_kwargs(name, ENV_OVERRIDE),
