@@ -22,8 +22,8 @@ TRACE = FIXTURES / "hash_trace.jsonl"
 class WorkloadHashGolden(unittest.TestCase):
     def test_hash_identity_rules(self):
         with crossval_path(), mock.patch.dict(os.environ, {}, clear=True):
-            synth_bench = fresh_import("synth_bench")
-            trace_serve = fresh_import("trace_serve")
+            synth_bench = fresh_import("quettabench.workloads.synth_bench")
+            trace_serve = fresh_import("legacy.trace_serve")
             reqs = synth_bench.load_trace(str(TRACE))
             paced = synth_bench.workload_hash(reqs)
             completion_reversed = synth_bench.workload_hash(list(reversed(reqs)))

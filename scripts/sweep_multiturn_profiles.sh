@@ -186,7 +186,7 @@ for PROFILE in $PROFILES; do
         fi
         echo ""
         echo "=== profile=$PROFILE conc=$CONC (multi-turn) ==="
-        OPENAI_API_KEY="$API_KEY" "$PY" -m src.benchmark.runner \
+        OPENAI_API_KEY="$API_KEY" "$PY" -m quettabench.modes.serve \
             --url        "http://localhost:$PORT/v1/chat/completions" \
             --model      "$MODEL_PATH" \
             --backend    "$BACKEND" \

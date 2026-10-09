@@ -1,7 +1,7 @@
 import calendar, json, os, re, sys, time
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent))
-import xval_config as _xval
+sys.path.insert(0, str(Path(__file__).parents[2]))
+from quettabench.config import xval_config as _xval
 
 # Age past which the baseline draws a warning: drivers and kernels move, and
 # ratios against a stale vLLM capture mislead.

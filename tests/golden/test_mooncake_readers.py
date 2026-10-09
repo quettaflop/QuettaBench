@@ -16,7 +16,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from src.workloads.mooncake import MooncakeTraceDataset
+from quettabench.workloads.mooncake import MooncakeTraceDataset
 from tests.golden._harness import FIXTURES, check_json, crossval_path, fresh_import
 
 TRACE = FIXTURES / "mooncake_5.jsonl"
@@ -54,7 +54,7 @@ def read_src(path):
 
 def read_crossval(path):
     with crossval_path(), mock.patch.dict(os.environ, {}, clear=True):
-        synth_bench = fresh_import("synth_bench")
+        synth_bench = fresh_import("quettabench.workloads.synth_bench")
         reqs = synth_bench.load_trace(str(path))
         workload_hash = synth_bench.workload_hash(reqs)
     first = reqs[0]["prompt_token_ids"]

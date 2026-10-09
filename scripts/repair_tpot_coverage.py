@@ -32,7 +32,7 @@ import sys
 from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from src.benchmark.metrics import _percentile  # noqa: E402
+from quettabench.metrics.core import _percentile  # noqa: E402
 
 COVERAGE_THRESHOLD = 0.8
 RULE = "len(itl)<0.8*(out-1) -> tpot=(e2el-ttft)/(out-1)"

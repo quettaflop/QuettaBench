@@ -23,12 +23,10 @@ import threading
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
-import synth_bench
-import xval_config
-
-sys.path.insert(0, str(Path(__file__).parents[2]))
-from src.workloads.arrival import burst_arrivals, poisson_arrivals, ramp_arrivals
+sys.path.insert(0, str(Path(__file__).parents[1]))
+from quettabench.workloads import synth_bench
+from quettabench.config import xval_config
+from quettabench.workloads.arrival import burst_arrivals, poisson_arrivals, ramp_arrivals
 
 
 def injected_arrivals(spec, n):

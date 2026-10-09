@@ -11,7 +11,7 @@ import os
 import unittest
 from unittest import mock
 
-from src.benchmark.metrics import _percentile
+from quettabench.metrics.core import _percentile
 from tests.golden._harness import check_json, crossval_path, fresh_import
 
 QUANTILES = (50, 90, 95, 99)
@@ -35,7 +35,7 @@ def _call(fn, *args):
 class PercentileGolden(unittest.TestCase):
     def test_both_implementations_on_fixed_arrays(self):
         with crossval_path(), mock.patch.dict(os.environ, {}, clear=True):
-            trace_serve = fresh_import("trace_serve")
+            trace_serve = fresh_import("legacy.trace_serve")
             record = {}
             for name, data in ARRAYS.items():
                 ordered = sorted(data)  # _pct's callers always pass sorted values

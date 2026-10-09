@@ -6,9 +6,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from src.benchmark.runner import make_trace_request_id
-from src.workloads.dataset import ShareGPTDataset, TrajectoryMultiTurnDataset, make_dataset
-from src.workloads.profiles import WorkloadProfile
+from quettabench.modes.serve import make_trace_request_id
+from quettabench.workloads.dataset import ShareGPTDataset, TrajectoryMultiTurnDataset, make_dataset
+from quettabench.workloads.profiles import WorkloadProfile
 
 
 def words(n: int) -> str:

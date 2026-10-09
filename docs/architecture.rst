@@ -7,33 +7,33 @@ results. Modules are listed in the order a request flows through them.
 Workloads
 ---------
 
-:mod:`src.workloads.profiles`
+:mod:`quettabench.workloads.profiles`
     Registry of workload profiles. A profile names its dataset, data
     file, length bounds, execution mode and whether the server must
     run with prefix caching.
 
-:mod:`src.workloads.dataset`
+:mod:`quettabench.workloads.dataset`
     Dataset factory and classes. A dataset yields one request at a
     time: messages or token ids, a max_tokens target and request
     metadata.
 
-:mod:`src.workloads.mooncake`
+:mod:`quettabench.workloads.mooncake`
     Mooncake production trace support. Parses the trace and expands
     hash ids into deterministic 512 token blocks so prefix sharing
     survives replay.
 
-:mod:`src.workloads.distributional`
+:mod:`quettabench.workloads.distributional`
     Distributional synthetic multi turn sessions, sampled from the
     compact trace distributions loaded by
-    :mod:`src.workloads.trace_distributions`.
+    :mod:`quettabench.workloads.trace_distributions`.
 
-:mod:`src.workloads.arrival`
+:mod:`quettabench.workloads.arrival`
     Arrival schedules: steady, poisson and ramp.
 
 Execution
 ---------
 
-:mod:`src.benchmark.runner`
+:mod:`quettabench.modes.serve`
     CLI entry point. Builds the dataset and arrival schedule, warms up
     the server, dispatches requests closed loop or open loop, and
     writes the results JSON.
@@ -42,16 +42,16 @@ Execution
     The three execution modes (stress test, single turn, multi turn)
     and the flags each requires.
 
-:mod:`src.engines`
+:mod:`quettabench.engines`
     Backend registry. openai, vllm and sglang post chat completions;
     vllm-completions posts to /v1/completions and accepts token id
     prompts for exact trace replay.
 
-:mod:`src.benchmark.metrics`
+:mod:`quettabench.metrics.core`
     Per request results and aggregation: p50, p90 and p99 for TTFT,
     TPOT, ITL and E2EL.
 
-:mod:`src.benchmark.server_control`
+:mod:`quettabench.engines.server_control`
     Server state control between sweep cells, for example prefix
     cache resets.
 

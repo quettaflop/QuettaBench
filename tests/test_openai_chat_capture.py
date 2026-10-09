@@ -4,7 +4,7 @@ import asyncio
 import json
 import unittest
 
-from src.engines.openai_chat import send_request
+from quettabench.engines.openai_chat import send_request
 
 
 def _sse(chunks: list[dict]) -> list[bytes]:

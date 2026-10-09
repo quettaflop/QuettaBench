@@ -5,7 +5,7 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 n="${1:-1}"
-if [ "$(python3 "$HERE/xval_config.py" backend)" = cuda ]; then
+if [ "$(python3 "$HERE/../../quettabench/config/xval_config.py" backend)" = cuda ]; then
   mapfile -t ids < <(nvidia-smi --query-gpu=index,memory.used --format=csv,noheader \
     | awk -F', ' '$2+0<1000 { print $1 }')
   if [ "${#ids[@]}" -lt "$n" ]; then

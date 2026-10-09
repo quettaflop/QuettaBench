@@ -126,5 +126,5 @@ if [[ -n "$IGNORE_EOS" ]]; then
   RUNNER_ARGS+=(--ignore-eos)
 fi
 
-OPENAI_API_KEY="$API_KEY" "$PYTHON" -m src.benchmark.runner \
+OPENAI_API_KEY="$API_KEY" "$PYTHON" -m quettabench.modes.serve \
   "${RUNNER_ARGS[@]}"

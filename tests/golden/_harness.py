@@ -22,7 +22,7 @@ STUBS = REPO / "tests" / "_stubs"
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 REGEN = os.environ.get("QBENCH_GOLDEN_REGEN") == "1"
 
-CROSSVAL_MODULES = ("xval_config", "synth_bench", "trace_serve", "vmin_fit", "cache", "table")
+CROSSVAL_MODULES = ("quettabench", "legacy")
 STUB_MODULE_ROOTS = ("vllm", "torch")
 
 # Llama-3.1-8B shaped config.json: the dense kv formula gives 131072 B/token.
@@ -79,7 +79,7 @@ def _drop_modules(roots):
 def crossval_path(stubs=False):
     """Fresh imports of the crossval scripts (and the vllm/torch stubs when
     asked); everything imported inside is dropped again on exit."""
-    added = [str(CROSSVAL)] + ([str(STUBS)] if stubs else [])
+    added = [str(REPO)] + ([str(STUBS)] if stubs else [])
     roots = CROSSVAL_MODULES + (STUB_MODULE_ROOTS if stubs else ())
     _drop_modules(roots)
     for p in added:
@@ -122,7 +122,7 @@ def run_vmin_fit(argv, env, model_config=None, extra_workloads=None):
             vllm = importlib.import_module("vllm")
             vllm.reset()
             vllm.generate_seconds = fake_generate_seconds
-            vmin_fit = fresh_import("vmin_fit")
+            vmin_fit = fresh_import("quettabench.modes.vmin_fit")
             if extra_workloads:
                 vmin_fit.CFG["workloads"].update(extra_workloads)
             exit_msg = None

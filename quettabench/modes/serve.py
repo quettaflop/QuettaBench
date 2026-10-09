@@ -2,7 +2,7 @@
 Benchmark runner — orchestrates a full benchmark run.
 
 Usage:
-    python -m src.benchmark.runner \
+    python -m quettabench.modes.serve \
         --url http://localhost:8000/v1/chat/completions \
         --model meta-llama/Llama-3.1-8B-Instruct \
         --backend vllm \
@@ -26,7 +26,7 @@ from pathlib import Path
 
 from contextlib import asynccontextmanager
 
-from .metrics import (
+from ..metrics.core import (
     aggregate,
     aggregate_per_turn,
     annotate_multi_turn_cache_estimate,
@@ -34,7 +34,7 @@ from .metrics import (
     print_summary,
     print_multi_turn_summary,
 )
-from .server_control import PrefixCacheResetError, reset_prefix_cache
+from ..engines.server_control import PrefixCacheResetError, reset_prefix_cache
 from ..workloads.profiles import get_profile
 from ..workloads.dataset import make_dataset
 from ..workloads.arrival import make_arrival_times, ARRIVAL_PATTERNS

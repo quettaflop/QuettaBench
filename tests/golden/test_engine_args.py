@@ -17,10 +17,10 @@ from pathlib import Path
 from unittest import mock
 
 from tests.golden._harness import (
-    CROSSVAL, ENV_OVERRIDE, check_json, crossval_path, fresh_import, run_vmin_fit,
+    ENV_OVERRIDE, REPO, check_json, crossval_path, fresh_import, run_vmin_fit,
 )
 
-WORKLOADS = json.loads((CROSSVAL / "workloads.json").read_text())["workloads"]
+WORKLOADS = json.loads((REPO / "configs" / "workloads.json").read_text())["workloads"]
 ABSENT = "<absent>"
 
 
@@ -40,7 +40,7 @@ def trace_serve_kwargs(name):
         with crossval_path(stubs=True), mock.patch.dict(os.environ, {}, clear=True), \
                 mock.patch("sys.argv", argv), contextlib.redirect_stdout(io.StringIO()):
             vllm = fresh_import("vllm")
-            trace_serve = fresh_import("trace_serve")
+            trace_serve = fresh_import("legacy.trace_serve")
             with halted_engine(vllm):
                 trace_serve.main()
             ((ctor, kwargs),) = vllm.CALLS

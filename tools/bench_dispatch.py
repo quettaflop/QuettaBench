@@ -58,7 +58,7 @@ def commands(job):
     w, h = job["workload"], job["hardware"]
     return [
         f"bash scripts/crossval/xval.sh {w} $WEIGHTS_{w}",
-        (f"python3 scripts/crossval/trace_serve.py traces/{w}.jsonl --model $WEIGHTS_{w} "
+        (f"python3 legacy/trace_serve.py traces/{w}.jsonl --model $WEIGHTS_{w} "
          f"--sla-ttft-ms 2000 --sla-tpot-ms 100 --energy --gpu-cost-hr $COST_{h} "
          f"--json results/{w}-{h}.json"),
     ]

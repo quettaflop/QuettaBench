@@ -55,7 +55,7 @@ run() {
 
     echo ""
     echo "=== profile=$PROFILE conc=$CONC nreq=$NREQ extra='$EXTRA' ==="
-    OPENAI_API_KEY="$API_KEY" "$PYTHON" -m src.benchmark.runner \
+    OPENAI_API_KEY="$API_KEY" "$PYTHON" -m quettabench.modes.serve \
         --url        "$URL" \
         --model      "$MODEL" \
         --backend    "$BACKEND" \

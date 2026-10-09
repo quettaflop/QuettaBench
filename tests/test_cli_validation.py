@@ -5,13 +5,13 @@ import sys
 import unittest
 from pathlib import Path
 
-from src.benchmark.runner import per_turn_output_path
-from src.workloads.dataset import _uniform_len_bounds
+from quettabench.modes.serve import per_turn_output_path
+from quettabench.workloads.dataset import _uniform_len_bounds
 
 ROOT = Path(__file__).resolve().parent.parent
 
 BASE = [
-    sys.executable, "-m", "src.benchmark.runner",
+    sys.executable, "-m", "quettabench.modes.serve",
     "--url", "http://127.0.0.1:1", "--model", "m", "--tensor-parallel-size", "1",
 ]
 

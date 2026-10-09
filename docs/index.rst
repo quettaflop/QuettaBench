@@ -29,12 +29,12 @@ What it does
 How a run works
 ---------------
 
-A profile from :mod:`src.workloads.profiles` selects a dataset from
-:mod:`src.workloads.dataset`, which yields one request per record. An
-arrival schedule from :mod:`src.workloads.arrival` decides when each
-request dispatches. The runner, :mod:`src.benchmark.runner`, sends
-them through a backend from :mod:`src.engines` and aggregates per
-request results with :mod:`src.benchmark.metrics` into a results JSON.
+A profile from :mod:`quettabench.workloads.profiles` selects a dataset from
+:mod:`quettabench.workloads.dataset`, which yields one request per record. An
+arrival schedule from :mod:`quettabench.workloads.arrival` decides when each
+request dispatches. The runner, :mod:`quettabench.modes.serve`, sends
+them through a backend from :mod:`quettabench.engines` and aggregates per
+request results with :mod:`quettabench.metrics.core` into a results JSON.
 
 Quickstart
 ----------
@@ -47,7 +47,7 @@ Quickstart
    vllm serve meta-llama/Llama-3.1-8B --enable-prefix-caching
 
    # client side: 100 chat requests, 10 in flight
-   python -m src.benchmark.runner \
+   python -m quettabench.modes.serve \
        --url http://localhost:8000/v1/chat/completions \
        --model meta-llama/Llama-3.1-8B \
        --profile chat-singleturn \

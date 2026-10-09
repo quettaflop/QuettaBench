@@ -1,4 +1,4 @@
-"""Golden: scripts/crossval/cache.py packing a vmin_fit log into a baseline.
+"""Golden: quettabench/crossval/cache.py packing a vmin_fit log into a baseline.
 
 No real vmin_fit log exists in the repo or in the 2026-09-28 bench backup, so
 fixtures/vmin_fit_llama.log is what vmin_fit.py itself prints for the llama
@@ -36,7 +36,7 @@ def pack_baseline(log_path, out_path):
     fake_git = types.SimpleNamespace(stdout=FAKE_BENCH_SHA + "\n")
     stdout = io.StringIO()
     with crossval_path(), mock.patch.dict(os.environ, {}, clear=True):
-        cache = fresh_import("cache")
+        cache = fresh_import("quettabench.crossval.cache")
         with mock.patch.object(cache.subprocess, "run", return_value=fake_git), \
                 mock.patch.object(cache.time, "gmtime",
                                   return_value=time.gmtime(RECORDED_EPOCH)), \

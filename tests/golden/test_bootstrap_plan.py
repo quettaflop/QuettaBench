@@ -14,17 +14,24 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tests.golden._harness import CROSSVAL, check_json
+from tests.golden._harness import CROSSVAL, REPO, check_json
 
-COPIED = ("bootstrap.sh", "xval_config.py", "workloads.json", "xval.yaml")
+# Scratch tree mirrors the repo layout: bootstrap.sh finds xval_config.py and
+# configs/ relative to itself.
+COPIED = (
+    (CROSSVAL / "bootstrap.sh", "scripts/crossval/bootstrap.sh"),
+    (REPO / "quettabench/config/xval_config.py", "quettabench/config/xval_config.py"),
+    (REPO / "configs/workloads.json", "configs/workloads.json"),
+    (REPO / "configs/xval.yaml", "configs/xval.yaml"),
+)
 
 
 def run_dry_bootstrap(workloads, extra_env):
     with tempfile.TemporaryDirectory() as tmp:
-        here = Path(tmp, "crossval")
-        here.mkdir()
-        for name in COPIED:
-            shutil.copy2(CROSSVAL / name, here / name)
+        here = Path(tmp, "scripts", "crossval")
+        for src, dst in COPIED:
+            Path(tmp, dst).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, Path(tmp, dst))
         fake_py = Path(tmp, "vllm-python")
         fake_py.write_text("#!/bin/sh\nexit 0\n")
         fake_py.chmod(0o755)
@@ -33,7 +40,7 @@ def run_dry_bootstrap(workloads, extra_env):
         env.update({k: v.replace("<TMP>", tmp) for k, v in extra_env.items()})
         proc = subprocess.run(["bash", str(here / "bootstrap.sh"), *workloads],
                               capture_output=True, text=True, env=env, check=False)
-        leftovers = sorted(p.name for p in here.iterdir() if p.name not in COPIED)
+        leftovers = sorted(p.name for p in here.iterdir() if p.name != "bootstrap.sh")
 
     def scrub(text):
         return text.replace(str(here), "<HERE>").replace(tmp, "<TMP>")

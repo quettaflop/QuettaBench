@@ -8,8 +8,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-_HERE = Path(__file__).parent
-_YAML_PATH = _HERE / "xval.yaml"
+_CONFIGS = Path(__file__).resolve().parents[2] / "configs"
+_YAML_PATH = _CONFIGS / "xval.yaml"
 
 # Defaults mirror what was hardcoded before xval.yaml existed.
 _DEFAULTS = {
@@ -112,7 +112,7 @@ def run_params(cfg=None):
     }
 
 
-_WL_JSON = _HERE / "workloads.json"
+_WL_JSON = _CONFIGS / "workloads.json"
 
 
 def _load_json():
@@ -238,7 +238,7 @@ def check_ep_legal(ep, num_experts):
 
 # Serving engines the benchmark can launch. All expose an OpenAI-compatible API,
 # so the client metric path is shared; only the launch differs. trtllm needs a
-# prebuilt engine dir (the build is manual, see src/engines/trtllm.py).
+# prebuilt engine dir (the build is manual, see quettabench/engines/trtllm.py).
 ENGINES = {
     "vllm": {"serve": "vllm serve", "health": "/health", "engine_dir": False},
     "trtllm": {"serve": "trtllm-serve", "health": "/health", "engine_dir": True},

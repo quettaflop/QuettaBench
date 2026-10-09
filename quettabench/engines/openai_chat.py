@@ -1,8 +1,8 @@
-"""OpenAI-compatible legacy completions backend.
+"""
+OpenAI-compatible chat completions backend.
 
-Posts to /v1/completions. The prompt is a token id list when provided
-(trace replay needs exact tokens, no chat template), else the last user
-message as raw text. Streaming and errors mirror openai_chat.
+Works with: vLLM, SGLang, lmdeploy, and any server exposing
+/v1/chat/completions with SSE streaming.
 """
 
 import asyncio
@@ -12,17 +12,7 @@ from typing import Optional
 
 import aiohttp
 
-from ..benchmark.metrics import RequestResult
-
-
-def resolve_prompt(prompt_token_ids, messages):
-    """Token ids when present, else the last user message text."""
-    if prompt_token_ids:
-        return prompt_token_ids
-    for m in reversed(messages or []):
-        if m.get("role") == "user" and m.get("content"):
-            return m["content"]
-    return None
+from ..metrics.core import RequestResult
 
 
 async def send_request(
@@ -38,18 +28,23 @@ async def send_request(
     request_id: Optional[str] = None,
     seed: Optional[int] = None,
     min_tokens: int = 0,
-    prompt_token_ids: Optional[list[int]] = None,
+    capture_text: bool = False,
 ) -> RequestResult:
-    """Send one streaming completion from token ids or raw text."""
-    prompt = resolve_prompt(prompt_token_ids, messages)
-    if prompt is None:
-        return RequestResult(
-            success=False,
-            e2el=0.0,
-            error="completions backend needs prompt_token_ids or a user message",
-            error_kind="client_error",
-        )
+    """
+    Send a single streaming chat completion request and record metrics.
 
+    Parses SSE stream: each `data: {...}` line whose choices[0].delta carries a
+    generated payload (content, reasoning_content/reasoning, or tool_calls) is
+    one token. First = TTFT. Subsequent = ITL entries.
+
+    Sampling is caller-controlled: `temperature` defaults to greedy and `seed`
+    is forwarded, so re-running the same workload produces the same output
+    lengths. `min_tokens` (with ignore_eos) pins the generated length exactly.
+
+    On failure the partial timings collected before the stream died are kept on
+    the result rather than discarded -- a timeout on the slowest request is
+    exactly the datapoint you need to see.
+    """
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}",
@@ -61,7 +56,7 @@ async def send_request(
 
     payload = {
         "model": model,
-        "prompt": prompt,
+        "messages": messages,
         "max_tokens": max_tokens,
         "temperature": temperature,
         "stream": True,
@@ -83,6 +78,7 @@ async def send_request(
     input_tokens = 0
     output_tokens = 0
     usage_reported = False
+    text_parts: list[str] = []
 
     try:
         async with session.post(url, headers=headers, json=payload) as resp:
@@ -113,6 +109,7 @@ async def send_request(
 
                 now = time.perf_counter()
 
+                # Token counts from final chunk (stream_options: include_usage)
                 if chunk.get("usage"):
                     usage = chunk["usage"]
                     input_tokens = usage.get("prompt_tokens", 0)
@@ -123,14 +120,37 @@ async def send_request(
                 if not choices:
                     continue
 
-                # A chunk with empty text is not a token event.
-                if choices[0].get("text"):
-                    if ttft is None:
-                        ttft = now - start_time
-                        last_token_time = now
-                    else:
-                        itl.append(now - last_token_time)
-                        last_token_time = now
+                delta = choices[0].get("delta", {})
+                # A chunk is a token event if it carries ANY generated payload,
+                # not just `content`. Reasoning models (e.g. gpt-oss harmony on
+                # vLLM) stream analysis-channel tokens as `reasoning_content`
+                # (older) / `reasoning` (newer) with content=None, and tool-call
+                # argument deltas arrive under `tool_calls` with content=None.
+                # Skipping those coalesced whole reasoning phases into single
+                # ITL gaps and inflated tpot up to ~13x (see QuettaSim
+                # tools/GT_QUALITY_FLAGS.md, Finding 1).
+                has_payload = (
+                    delta.get("content") is not None
+                    or delta.get("reasoning_content") is not None
+                    or delta.get("reasoning") is not None
+                    or bool(delta.get("tool_calls"))
+                )
+                if not has_payload:
+                    continue
+
+                if capture_text:
+                    # Transcript is content only; reasoning/tool_calls are not sent back.
+                    piece = delta.get("content")
+                    if piece:
+                        text_parts.append(piece)
+
+                # Real token received
+                if ttft is None:
+                    ttft = now - start_time
+                    last_token_time = now
+                else:
+                    itl.append(now - last_token_time)
+                    last_token_time = now
 
         e2el = time.perf_counter() - start_time
         return RequestResult(
@@ -141,12 +161,15 @@ async def send_request(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             usage_reported=usage_reported,
+            generated_text="".join(text_parts) if capture_text else None,
         )
 
     except asyncio.CancelledError:
         raise
     except Exception as e:
-        # Keep partial timings, a truncated tail is still evidence.
+        # Keep whatever the stream already delivered. A timeout truncates the
+        # slowest requests, so discarding their partial TTFT/ITL would erase
+        # the only evidence that the tail was cut off.
         is_timeout = isinstance(e, asyncio.TimeoutError)
         return RequestResult(
             success=False,
@@ -159,3 +182,8 @@ async def send_request(
             error=f"timeout after {time.perf_counter() - start_time:.1f}s" if is_timeout else str(e),
             error_kind="timeout" if is_timeout else "client_error",
         )
+
+
+# Warmup lives in the runner (_warmup_with_profile): it needs the dataset and
+# the benchmark's own ClientSession to warm the shapes and connections that are
+# actually measured. A backend-local "Hello" warmup warmed neither.

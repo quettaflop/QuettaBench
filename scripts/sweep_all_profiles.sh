@@ -199,7 +199,7 @@ for PROFILE in $PROFILES; do
         [[ "$local_warmup" -gt 16 ]] && local_warmup=16
         echo ""
         echo "=== profile=$PROFILE conc=$CONC nreq=$local_nreq warmup=$local_warmup ==="
-        OPENAI_API_KEY="$API_KEY" "$PY" -m src.benchmark.runner \
+        OPENAI_API_KEY="$API_KEY" "$PY" -m quettabench.modes.serve \
             --url        "http://localhost:$PORT/v1/chat/completions" \
             --model      "$MODEL_PATH" \
             --backend    "$BACKEND" \

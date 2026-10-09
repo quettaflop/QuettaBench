@@ -7,10 +7,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from src.workloads.dataset import TrajectoryMultiTurnDataset
+from quettabench.workloads.dataset import TrajectoryMultiTurnDataset
 
-from src.benchmark.runner import get_args, inter_turn_wait_s
-from src.workloads.dataset import session_arrival_ms, turn_wait_metadata
+from quettabench.modes.serve import get_args, inter_turn_wait_s
+from quettabench.workloads.dataset import session_arrival_ms, turn_wait_metadata
 
 
 class TestInterTurnWait(unittest.TestCase):

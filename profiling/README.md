@@ -2,7 +2,7 @@
 
 Measurement code for QuettaBench: GPU kernel probes, live-server probes, and the
 emitters that turn raw probe output into curated tables. Peer of the runner
-(`src/`). The runner stays GPU-free; `profiling/probes/` needs torch and vLLM
+(`quettabench/`). The runner stays GPU-free; `profiling/probes/` needs torch and vLLM
 (opt-in via requirements-probe.txt).
 
 ## Layout

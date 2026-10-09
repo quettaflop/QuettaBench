@@ -15,7 +15,7 @@ Four independent ways a run could previously look clean while being wrong:
 
 import unittest
 
-from src.benchmark.metrics import RequestResult, _busy_time_and_load, aggregate
+from quettabench.metrics.core import RequestResult, _busy_time_and_load, aggregate
 
 
 def _req(start, end, *, success=True, error_kind=None, ttft=0.01,

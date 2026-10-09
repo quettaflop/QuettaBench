@@ -18,7 +18,7 @@ Start any OpenAI compatible server with prefix caching enabled, then:
 
 .. code-block:: bash
 
-   python -m src.benchmark.runner \
+   python -m quettabench.modes.serve \
        --url http://localhost:8000/v1/chat/completions \
        --model meta-llama/Llama-3.1-8B \
        --profile chat-singleturn \
@@ -32,7 +32,7 @@ on a clock instead, which exposes saturation:
 
 .. code-block:: bash
 
-   python -m src.benchmark.runner ... \
+   python -m quettabench.modes.serve ... \
        --open-loop --arrival poisson --target-rate 2.0
 
 Mooncake trace replay
@@ -43,7 +43,7 @@ vllm-completions backend accepts:
 
 .. code-block:: bash
 
-   python -m src.benchmark.runner \
+   python -m quettabench.modes.serve \
        --url http://localhost:8000/v1/completions \
        --model meta-llama/Llama-3.1-8B \
        --backend vllm-completions \

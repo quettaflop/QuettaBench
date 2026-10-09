@@ -113,14 +113,14 @@ an engine adapter emitting the same SERVE/SERVESUM lines drops in then.
 
 ## Cross-engine (TRT-LLM)
 
-The benchmark client is engine-agnostic: `src/engines/openai_*` drive any
+The benchmark client is engine-agnostic: `quettabench/engines/openai_*` drive any
 OpenAI-compatible server, so a `trtllm-serve` endpoint is measured through the
 same TTFT/TPOT path as vLLM, and the workload-identity gate holds across engines.
 `xval_config.py engine trtllm` gives the serve command, health path, and the
-engine-dir convention; `src/engines/trtllm.py` builds the launch and health URL.
+engine-dir convention; `quettabench/engines/trtllm.py` builds the launch and health URL.
 
 The one-time TensorRT engine build is multi-hour and GPU-specific, so it is not
-automated. Build it by hand first (`src/engines/trtllm.py build_command` prints
+automated. Build it by hand first (`quettabench/engines/trtllm.py build_command` prints
 the exact `trtllm-build` invocation), then serve. `amd`/`rocm` is a stub that
 fails with "no ROCm host provisioned" until hardware exists; backend detection
 stays vendor-neutral.

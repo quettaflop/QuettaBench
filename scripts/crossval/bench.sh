@@ -8,7 +8,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WL="${1:?workload (a workloads.json entry with a bench section)}"
 OUT="${2:-$WL-bench.log}"
 
-mapfile -t _B < <(python3 "$HERE/xval_config.py" bench "$WL")
+mapfile -t _B < <(python3 "$HERE/../../quettabench/config/xval_config.py" bench "$WL")
 [ "${#_B[@]}" -eq 6 ] || exit 1
 CRATE="${_B[0]}"; TEST="${_B[1]}"; P="${_B[2]}"; FAMILY="${_B[3]}"; OK="${_B[4]}"; TP="${_B[5]}"
 
@@ -28,21 +28,21 @@ if [ -z "$BIN" ] && [ ! -f "$QS/$CRATE/Cargo.toml" ]; then
   exit 1
 fi
 
-export XVAL_LINK_PROFILE="${XVAL_LINK_PROFILE:-$(python3 "$HERE/xval_config.py" link-profile)}"
+export XVAL_LINK_PROFILE="${XVAL_LINK_PROFILE:-$(python3 "$HERE/../../quettabench/config/xval_config.py" link-profile)}"
 
-read -r _STEPS _HEADROOM < <(python3 "$HERE/xval_config.py" run-params)
+read -r _STEPS _HEADROOM < <(python3 "$HERE/../../quettabench/config/xval_config.py" run-params)
 _V="${P}_TIMING_STEPS"; STEPS="${!_V:-$_STEPS}"
 _V="${P}_MAX_SEQ_HEADROOM"; HEADROOM="${!_V:-$_HEADROOM}"
 _V="${P}_WORLD"; WORLD="${!_V:-$TP}"
 
-CELLS="$(python3 "$HERE/xval_config.py" cells "$WL")"
+CELLS="$(python3 "$HERE/../../quettabench/config/xval_config.py" cells "$WL")"
 [ -n "$CELLS" ] || { echo "no cells for workload $WL" >&2; exit 1; }
 
 # Collective env: caller env wins over yaml; empty values are never exported.
 while IFS='=' read -r _k _v; do
   if [ -n "${!_k:-}" ]; then _v="${!_k}"; fi
   if [ -n "$_v" ]; then export "$_k=$_v"; fi
-done < <(python3 "$HERE/xval_config.py" collective)
+done < <(python3 "$HERE/../../quettabench/config/xval_config.py" collective)
 
 MODE=""
 if [ "$FAMILY" = gdn ]; then

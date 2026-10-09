@@ -1,4 +1,4 @@
-"""Golden: scripts/crossval/table.py stdout, exact text.
+"""Golden: quettabench/crossval/table.py stdout, exact text.
 
 Baseline is fixtures/baseline_llama.json (cache.py output, see
 test_cache_packing). No real bench log exists in the repo or the 2026-09-28
@@ -32,7 +32,7 @@ def run_table(bench_log, baseline):
     """table.main() stdout, plus the SystemExit message when it exits."""
     out = io.StringIO()
     with crossval_path(), mock.patch.dict(os.environ, {}, clear=True):
-        table = fresh_import("table")
+        table = fresh_import("quettabench.crossval.table")
         with mock.patch.object(table.time, "time", return_value=NOW), \
                 mock.patch("sys.argv", ["table.py", str(bench_log), str(baseline)]), \
                 contextlib.redirect_stdout(out):

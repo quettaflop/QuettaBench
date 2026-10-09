@@ -926,7 +926,7 @@ def classify_process(proc: GpuProcess, snapshot: HostSnapshot, sweep_jobs: list[
         "/data48/tmp/inference-benchmark",
         "sweep_all_profiles",
         "sweep_multiturn_profiles",
-        "src.benchmark.runner",
+        "quettabench.modes.serve",
         "/tmp/results/synthetic_distributional",
         "/tmp/results/trace_replay",
         "/tmp/results/archived",

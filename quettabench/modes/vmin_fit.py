@@ -12,11 +12,11 @@ import vllm
 from vllm import LLM, SamplingParams
 
 # CFG comes from xval_config: xval.yaml when present, workloads.json fallback.
-sys.path.insert(0, str(Path(__file__).parent))
-from xval_config import collective as _xval_collective, workloads as _xval_workloads
-from xval_config import grids as _xval_grids, step_points as _xval_step_points
-from xval_config import link_profile as _xval_link_profile
-from xval_config import run_params as _xval_run_params
+sys.path.insert(0, str(Path(__file__).parents[2]))
+from quettabench.config.xval_config import collective as _xval_collective, workloads as _xval_workloads
+from quettabench.config.xval_config import grids as _xval_grids, step_points as _xval_step_points
+from quettabench.config.xval_config import link_profile as _xval_link_profile
+from quettabench.config.xval_config import run_params as _xval_run_params
 CFG = {
     "workloads": _xval_workloads(),
     "grids": _xval_grids(),
@@ -133,7 +133,7 @@ def main():
     # synth = distinct streams (synth_bench); trace = replay XVAL_TRACE (e.g. Mooncake).
     trace_reqs = None
     if prompt_mode == "trace":
-        import synth_bench
+        from quettabench.workloads import synth_bench
         trace_reqs = synth_bench.load_trace(os.environ["XVAL_TRACE"])
         print(f"META trace={os.environ['XVAL_TRACE']} reqs={len(trace_reqs)} "
               f"workload_hash={synth_bench.workload_hash(trace_reqs)}", flush=True)
@@ -232,7 +232,7 @@ def main():
                 for j in range(bs)
             ]
         elif prompt_mode == "synth":
-            import synth_bench
+            from quettabench.workloads import synth_bench
             prompts = [{"prompt_token_ids": ids}
                        for ids in synth_bench.take(
                            synth_bench.synth_requests(bs, ctx, seed=ctx), bs, ctx)[0]]

@@ -26,7 +26,7 @@ try:
 except ModuleNotFoundError:
     HAVE_AIOHTTP = False
 
-from src.benchmark.metrics import RequestResult
+from quettabench.metrics.core import RequestResult
 
 
 class TestTpotCoverageGuard(unittest.TestCase):
@@ -78,7 +78,7 @@ def _chunk(delta, finish_reason=None):
 async def _serve_and_request(chunks):
     """Stream the given SSE chunk payloads from a local server through
     send_request and return the RequestResult."""
-    from src.engines.openai_chat import send_request
+    from quettabench.engines.openai_chat import send_request
 
     async def handler(request):
         resp = web.StreamResponse(

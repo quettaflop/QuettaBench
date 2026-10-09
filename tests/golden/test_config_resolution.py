@@ -16,11 +16,11 @@ import unittest
 from unittest import mock
 
 from tests.golden._harness import (
-    CROSSVAL, ENV_OVERRIDE, check_json, crossval_path, fresh_import, run_vmin_fit,
+    ENV_OVERRIDE, REPO, check_json, crossval_path, fresh_import, run_vmin_fit,
 )
 
 SCENARIOS = {"cleared": {}, "override": ENV_OVERRIDE}
-WORKLOAD_NAMES = sorted(json.loads((CROSSVAL / "workloads.json").read_text())["workloads"])
+WORKLOAD_NAMES = sorted(json.loads((REPO / "configs" / "workloads.json").read_text())["workloads"])
 
 # An MLA stack (DeepSeek-V3 shaped config) declared without kv_bytes.
 MLA_CONFIG = {
@@ -62,7 +62,7 @@ def resolve_xval(name, env):
     """What xval_config.py resolves for one workload under exactly `env`."""
     with crossval_path(), mock.patch.dict(os.environ, env, clear=True), \
             mock.patch("shutil.which", return_value=None):
-        xc = fresh_import("xval_config")
+        xc = fresh_import("quettabench.config.xval_config")
         wl = xc.workloads()[name]
         return {
             "workload": wl,
@@ -76,7 +76,7 @@ def resolve_global(env):
     """Workload-independent resolution under exactly `env`."""
     with crossval_path(), mock.patch.dict(os.environ, env, clear=True), \
             mock.patch("shutil.which", return_value=None):
-        xc = fresh_import("xval_config")
+        xc = fresh_import("quettabench.config.xval_config")
         return {
             "grids": xc.grids(),
             "step_points": xc.step_points(),
@@ -114,7 +114,7 @@ class ConfigResolutionGolden(unittest.TestCase):
 class ParseTimeFailuresGolden(unittest.TestCase):
     def test_failures_keep_type_and_message(self):
         with crossval_path(), mock.patch.dict(os.environ, {}, clear=True):
-            xc = fresh_import("xval_config")
+            xc = fresh_import("quettabench.config.xval_config")
             failures = {
                 "serving_style": {spec: _error(xc.parse_serving_style, spec) for spec in
                                   ("disagg:0p1d", "disagg:2p", "ep4", "aggregate",
@@ -148,7 +148,7 @@ class ParseTimeFailuresGolden(unittest.TestCase):
 
     def test_trace_serve_rejects_malformed_serving_style_before_loading(self):
         with crossval_path(), mock.patch.dict(os.environ, {}, clear=True):
-            trace_serve = fresh_import("trace_serve")
+            trace_serve = fresh_import("legacy.trace_serve")
             argv = ["trace_serve.py", "/nonexistent.jsonl", "--model", "m",
                     "--serving-style", "disagg:2p"]
             with mock.patch("sys.argv", argv):

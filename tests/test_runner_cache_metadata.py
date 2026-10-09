@@ -5,22 +5,22 @@ import json
 import tempfile
 from pathlib import Path
 
-from src.benchmark.metrics import (
+from quettabench.metrics.core import (
     BenchmarkSummary,
     RequestResult,
     aggregate_per_turn,
     annotate_multi_turn_cache_estimate,
     annotate_request_observability,
 )
-from src.benchmark.runner import (
+from quettabench.modes.serve import (
     BENCHMARK_SCHEMA_VERSION,
     _resolve_cache_state,
     _resolve_tri_state,
     resolve_multi_turn_num_sessions,
     save_results,
 )
-from src.workloads.dataset import BenchmarkRequest
-from src.workloads.profiles import get_profile
+from quettabench.workloads.dataset import BenchmarkRequest
+from quettabench.workloads.profiles import get_profile
 
 
 class RunnerCacheMetadataTests(unittest.TestCase):

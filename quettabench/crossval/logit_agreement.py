@@ -20,12 +20,12 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from vllm import LLM, SamplingParams
 
-sys.path.insert(0, str(Path(__file__).parent))
-import xval_config as _xval_config
+sys.path.insert(0, str(Path(__file__).parents[2]))
+from quettabench.config import xval_config as _xval_config
 
 TEXTS = [
     line.strip()
-    for line in Path(__file__).with_name("texts.txt").read_text().splitlines()
+    for line in (Path(__file__).parents[2] / "scripts" / "crossval" / "texts.txt").read_text().splitlines()
     if line.strip()
 ]
 

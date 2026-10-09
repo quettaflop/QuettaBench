@@ -14,8 +14,8 @@ MDIR="${2:?weights dir}"
 BENCH_LOG="${3:-}"
 PY="${PY:-${XVAL_PY:-python3}}"
 
-TP="$(python3 "$HERE/xval_config.py" tp "$CRATE")"
-N_DEV="$(python3 "$HERE/xval_config.py" devices "$CRATE")"  # tp * pp
+TP="$(python3 "$HERE/../../quettabench/config/xval_config.py" tp "$CRATE")"
+N_DEV="$(python3 "$HERE/../../quettabench/config/xval_config.py" devices "$CRATE")"  # tp * pp
 GPUS="${CUDA_VISIBLE_DEVICES:-$("$HERE/free_gpu.sh" "$N_DEV")}"
 export CUDA_VISIBLE_DEVICES="$GPUS"
 ONE="${GPUS%%,*}"
@@ -31,7 +31,7 @@ _HAS_REFERENCE=1
 LOGIT_LOG="$HERE/baselines/logit-$CRATE.log"
 if [ "$_HAS_REFERENCE" = 1 ] && [ "${LOGIT:-}" != 0 ] && \
    { [ "${LOGIT:-}" = 1 ] || [ ! -f "$LOGIT_LOG" ]; }; then
-    CUDA_VISIBLE_DEVICES="$ONE" "$PY" "$HERE/logit_agreement.py" \
+    CUDA_VISIBLE_DEVICES="$ONE" "$PY" "$HERE/../../quettabench/crossval/logit_agreement.py" \
         --model "$MDIR" --crate "$CRATE" > "$LOGIT_LOG.tmp"
     mv "$LOGIT_LOG.tmp" "$LOGIT_LOG"
 fi
@@ -47,12 +47,12 @@ fi
 
 # greedy_agreement uses the llama/transformers reference binary; skip for deepseek.
 if [ "$_HAS_REFERENCE" = 1 ] && [ -n "${QS_BIN:-}" ]; then
-    CUDA_VISIBLE_DEVICES="$ONE" "$PY" "$HERE/greedy_agreement.py" \
+    CUDA_VISIBLE_DEVICES="$ONE" "$PY" "$HERE/../../quettabench/crossval/greedy_agreement.py" \
         --qs-bin "$QS_BIN" --model "$MDIR" | grep -E "^AGREE|^SUMMARY"
 fi
 
 if [ -n "$BENCH_LOG" ]; then
-    "$PY" "$HERE/table.py" "$BENCH_LOG" "$BASELINE"
+    "$PY" "$HERE/../../quettabench/crossval/table.py" "$BENCH_LOG" "$BASELINE"
 else
     echo "no bench log given; baseline and checks only (table: xval.sh $CRATE <weights> <bench-log>)"
 fi
@@ -60,7 +60,7 @@ fi
 if [ "${PROF:-0}" = 1 ]; then
     # Use the workload's tp for device selection; prof grid comes from merged grids().
     CUDA_VISIBLE_DEVICES="$GPUS" "$HERE/prof.sh" "vllm-$CRATE" \
-        "$PY" "$HERE/vmin_fit.py" "$CRATE" prof --model "$MDIR"
+        "$PY" "$HERE/../../quettabench/modes/vmin_fit.py" "$CRATE" prof --model "$MDIR"
     if [ -n "${QS_BENCH_BIN:-}" ]; then
         MODEL="$MDIR" CUDA_VISIBLE_DEVICES="$GPUS" "$HERE/prof.sh" "qserve-$CRATE" \
             "$QS_BENCH_BIN" decode_loop --bench
@@ -70,8 +70,8 @@ fi
 # Serving replay with the workload-identity gate; XVAL_SERVE_ARGS passes extra
 # trace_serve flags (--prefix-caching, --speed, --ep, ...).
 if [ -n "${XVAL_SERVE_TRACE:-}" ]; then
-    echo "workload_hash=$("$PY" "$HERE/synth_bench.py" hash "$XVAL_SERVE_TRACE")"
-    CUDA_VISIBLE_DEVICES="$GPUS" "$PY" "$HERE/trace_serve.py" "$XVAL_SERVE_TRACE" \
+    echo "workload_hash=$("$PY" "$HERE/../../quettabench/workloads/synth_bench.py" hash "$XVAL_SERVE_TRACE")"
+    CUDA_VISIBLE_DEVICES="$GPUS" "$PY" "$HERE/../../legacy/trace_serve.py" "$XVAL_SERVE_TRACE" \
         --model "$MDIR" --tp "$TP" ${XVAL_SERVE_ARGS:-} \
         | grep -E "^META|^WORKLOADSUM|^WORKLOADVOID|^SERVESUM|^SLASUM"
 fi

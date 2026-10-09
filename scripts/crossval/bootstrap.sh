@@ -5,7 +5,7 @@
 # prints the plan and writes nothing.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cfg() { python3 "$HERE/xval_config.py" "$@"; }
+cfg() { python3 "$HERE/../../quettabench/config/xval_config.py" "$@"; }
 ENVFILE="$HERE/.xval_env"
 DRY="${XVAL_DRYRUN:-0}"
 MISSING=0

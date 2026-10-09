@@ -8,7 +8,7 @@ a plain timeout, and a request held out by --discard-first.
 
 import unittest
 
-from src.benchmark.metrics import RequestResult, aggregate
+from quettabench.metrics.core import RequestResult, aggregate
 from tests.golden._harness import check_json
 
 

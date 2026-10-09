@@ -13,7 +13,7 @@ MDIR="${3:?model dir}"
 PY="${4:-python3}"
 BASELINE_DIR="$HERE/baselines"
 
-N_DEV="$(python3 "$HERE/xval_config.py" devices "$CRATE")"  # tp * pp
+N_DEV="$(python3 "$HERE/../../quettabench/config/xval_config.py" devices "$CRATE")"  # tp * pp
 G="${CUDA_VISIBLE_DEVICES:-$("$HERE/free_gpu.sh" "$N_DEV")}"
 echo "GPU=$G"
 
@@ -31,14 +31,14 @@ EXTRA=()
 
 # Same link profile and collective env as bench.sh: caller env wins over yaml;
 # empty values are never exported.
-export XVAL_LINK_PROFILE="${XVAL_LINK_PROFILE:-$(python3 "$HERE/xval_config.py" link-profile)}"
+export XVAL_LINK_PROFILE="${XVAL_LINK_PROFILE:-$(python3 "$HERE/../../quettabench/config/xval_config.py" link-profile)}"
 while IFS='=' read -r _k _v; do
   if [ -n "${!_k:-}" ]; then _v="${!_k}"; fi
   if [ -n "$_v" ]; then export "$_k=$_v"; fi
-done < <(python3 "$HERE/xval_config.py" collective)
+done < <(python3 "$HERE/../../quettabench/config/xval_config.py" collective)
 
-CUDA_VISIBLE_DEVICES="$G" "$PY" "$HERE/vmin_fit.py" "$CRATE" "$GRID" --model "$MDIR" \
+CUDA_VISIBLE_DEVICES="$G" "$PY" "$HERE/../../quettabench/modes/vmin_fit.py" "$CRATE" "$GRID" --model "$MDIR" \
   ${EXTRA[@]+"${EXTRA[@]}"} \
   | grep -E "^META|^RESULT|^SKIP|^CAPACITY" | tee "$RAW"
 
-python3 "$HERE/cache.py" "$RAW" "$OUT"
+python3 "$HERE/../../quettabench/crossval/cache.py" "$RAW" "$OUT"

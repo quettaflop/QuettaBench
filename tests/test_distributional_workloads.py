@@ -8,10 +8,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from src.workloads.distributional import DistributionalSampler
-from src.workloads.dataset import DistributionalMultiTurnDataset, make_dataset
-from src.workloads.profiles import WorkloadProfile
-from src.workloads.trace_distributions import (
+from quettabench.workloads.distributional import DistributionalSampler
+from quettabench.workloads.dataset import DistributionalMultiTurnDataset, make_dataset
+from quettabench.workloads.profiles import WorkloadProfile
+from quettabench.workloads.trace_distributions import (
     TraceDistributionError,
     parse_trace_distribution,
 )
@@ -168,7 +168,7 @@ class DistributionalSamplerTests(unittest.TestCase):
         import json
         import tempfile
 
-        from src.workloads.dataset import DistributionalMultiTurnDataset
+        from quettabench.workloads.dataset import DistributionalMultiTurnDataset
 
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
             json.dump(fixture_payload(), fh)
@@ -351,7 +351,7 @@ class DistributionalSamplerTests(unittest.TestCase):
     def test_stable_text_seed_ignores_python_hash_seed(self):
         script = textwrap.dedent(
             """
-            from src.workloads.distributional import _stable_text_seed
+            from quettabench.workloads.distributional import _stable_text_seed
             print(_stable_text_seed("s0_t0_user_0"))
             """
         )
@@ -613,11 +613,11 @@ class CacheEstimateTests(unittest.TestCase):
     """Reusable prefix includes the previous reply only when it is the engine's output."""
 
     def _result(self, input_tokens=1000):
-        from src.benchmark.metrics import RequestResult
+        from quettabench.metrics.core import RequestResult
         return RequestResult(success=True, input_tokens=input_tokens, output_tokens=200)
 
     def test_synthetic_reply_is_not_reusable(self):
-        from src.benchmark.metrics import annotate_multi_turn_cache_estimate
+        from quettabench.metrics.core import annotate_multi_turn_cache_estimate
         r = annotate_multi_turn_cache_estimate(
             self._result(1000), session_id=0, turn_index=1,
             previous_context_tokens=770, previous_output_tokens=200,
@@ -627,7 +627,7 @@ class CacheEstimateTests(unittest.TestCase):
         self.assertEqual(r.cache_estimate_source, "previous_prompt_tokens")
 
     def test_the_engines_own_reply_is_reusable(self):
-        from src.benchmark.metrics import annotate_multi_turn_cache_estimate
+        from quettabench.metrics.core import annotate_multi_turn_cache_estimate
         r = annotate_multi_turn_cache_estimate(
             self._result(1000), session_id=0, turn_index=1,
             previous_context_tokens=770, previous_output_tokens=200,
@@ -637,7 +637,7 @@ class CacheEstimateTests(unittest.TestCase):
         self.assertEqual(r.cache_estimate_source, "previous_prompt_and_reply_tokens")
 
     def test_reusable_prefix_cannot_exceed_the_prompt(self):
-        from src.benchmark.metrics import annotate_multi_turn_cache_estimate
+        from quettabench.metrics.core import annotate_multi_turn_cache_estimate
         r = annotate_multi_turn_cache_estimate(
             self._result(800), session_id=0, turn_index=1,
             previous_context_tokens=770, previous_output_tokens=200,
