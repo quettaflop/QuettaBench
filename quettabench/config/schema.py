@@ -31,7 +31,9 @@ DICT_KEYS = {
     "engine.extra": None,
     "hardware.collective": ("NCCL_ALGO", "NCCL_PROTO", "NCCL_P2P_LEVEL", "NCCL_IB_DISABLE",
                             "NCCL_SOCKET_IFNAME", "LLMSRV_NO_NVLS", "LLMSRV_TWOSHOT_MIN_BYTES"),
-    "hardware.provision": ("cache_root", "py", "vllm_spec", "qs_repo", "qs_commit", "nccl_lib"),
+    # provision.py's inputs; the last six are usually per run (`--set <run>:...`)
+    "hardware.provision": ("cache_root", "py", "vllm_spec", "qs_repo", "qs_commit", "nccl_lib",
+                           "qs_dir", "bench_bin", "qs_ckpt", "qs_cfg", "weights", "hf_id"),
     "provenance": ("engine_sha", "engine_commit", "checkpoint"),
     "crossval": ("comm_bound_bs", "allow_method_mismatch"),
 }

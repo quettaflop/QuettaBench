@@ -3,10 +3,10 @@
   "files_left_behind": [],
   "rc": 0,
   "stderr": [
-   "[bootstrap] would: mkdir -p '<TMP>/cache'/vllm '<TMP>/cache'/torch '<TMP>/cache'/hf '<TMP>/cache'/tmp '<TMP>/cache'/models",
-   "[bootstrap] vllm python ok: <TMP>/vllm-python",
-   "[bootstrap] qwen3: bench bin <TMP>/vllm-python",
-   "[bootstrap] dry run: plan only, no .xval_env written"
+   "[provision] would: mkdir -p <TMP>/cache/vllm <TMP>/cache/torch <TMP>/cache/hf <TMP>/cache/tmp <TMP>/cache/models",
+   "[provision] vllm python ok: <TMP>/vllm-python",
+   "[provision] qwen3: bench bin <TMP>/vllm-python",
+   "[provision] dry run: plan only, nothing written"
   ],
   "stdout": ""
  },
@@ -14,16 +14,15 @@
   "files_left_behind": [],
   "rc": 1,
   "stderr": [
-   "[bootstrap] would: mkdir -p '<TMP>/cache'/vllm '<TMP>/cache'/torch '<TMP>/cache'/hf '<TMP>/cache'/tmp '<TMP>/cache'/models",
-   "[bootstrap] vllm python ok: <TMP>/vllm-python",
-   "workload llama has no bench config",
-   "[bootstrap] MISSING: workload llama has no bench section",
-   "[bootstrap] would: build qwen/decode_loop in <HERE>/QuettaServe",
-   "[bootstrap] MISSING: qwen3 engine checkpoint: set XVAL_CKPT_qwen3",
-   "[bootstrap] would: build deepseek/batch_bench in <HERE>/QuettaServe",
-   "[bootstrap] MISSING: deepseek moe config: set XVAL_CFG_deepseek",
-   "[bootstrap] would: '<TMP>/vllm-python' -m huggingface_hub.commands.huggingface_cli download 'deepseek-ai/DeepSeek-V4-Flash' --local-dir '<TMP>/cache/models/deepseek'",
-   "[bootstrap] provisioning incomplete; resolve the MISSING items above"
+   "[provision] would: mkdir -p <TMP>/cache/vllm <TMP>/cache/torch <TMP>/cache/hf <TMP>/cache/tmp <TMP>/cache/models",
+   "[provision] vllm python ok: <TMP>/vllm-python",
+   "[provision] MISSING: llama has no quettaserve: block in its model yaml",
+   "[provision] would: build qwen/decode_loop in <TMP>/cache/QuettaServe",
+   "[provision] MISSING: qwen3 engine checkpoint: set qwen3:hardware.provision.qs_ckpt",
+   "[provision] would: build deepseek/batch_bench in <TMP>/cache/QuettaServe",
+   "[provision] MISSING: deepseek moe config: set deepseek:hardware.provision.qs_cfg",
+   "[provision] would: <TMP>/vllm-python -m huggingface_hub.commands.huggingface_cli download deepseek-ai/DeepSeek-V4-Flash --local-dir <TMP>/cache/models/deepseek",
+   "[provision] provisioning incomplete; resolve the MISSING items above"
   ],
   "stdout": ""
  }

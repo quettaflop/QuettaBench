@@ -120,18 +120,6 @@ class CrossvalScripts(unittest.TestCase):
         ).stdout.strip()
         self.assertEqual(out, "/workspace/.xval-cache")
 
-    def test_bootstrap_dry_run_plans_without_writing(self):
-        # XVAL_DRYRUN prints the plan and must not create .xval_env.
-        envfile = CROSSVAL / ".xval_env"
-        self.assertFalse(envfile.exists(), "stale .xval_env in the tree")
-        out = subprocess.run(
-            ["bash", str(CROSSVAL / "bootstrap.sh"), "qwen3"],
-            capture_output=True, text=True,
-            env={**os.environ, "XVAL_DRYRUN": "1"},
-        )
-        self.assertRegex(out.stderr, r"would:|MISSING:")
-        self.assertFalse(envfile.exists(), "dry run must not write .xval_env")
-
     def test_lss_export_covers_or_fails_loudly(self):
         # Full probe coverage reproduces the reference key set; one missing cell
         # must exit 2 with a MISSING line, never an interpolated row.
