@@ -16,7 +16,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt -r docs/requirements.txt
-      - run: sphinx-apidoc -f --separate --module-first -o docs/api src
+      - run: sphinx-apidoc -f --separate --module-first -o docs/api quettabench
       - run: sphinx-build -b html docs docs/_build/html
       - id: deploy_token
         env:
