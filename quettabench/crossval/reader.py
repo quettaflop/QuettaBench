@@ -151,6 +151,17 @@ def measured_row(key, ms, group, kv):
                mode="eager" if group == "decode_loop_eager" else "graph")
 
 
+# Config path -> header key for the engine facts a bench log does not state.
+ENGINE_FACTS = {"engine.quant": "quant", "engine.serving_style": "serving_style",
+                "hardware.collective.NCCL_ALGO": "nccl_algo",
+                "hardware.collective.NCCL_PROTO": "nccl_proto"}
+
+
+def engine_facts(values):
+    """Header facts from flat {Config path: value} (env_map.read_env's shape)."""
+    return {key: values[path] for path, key in ENGINE_FACTS.items() if path in values}
+
+
 def read_bench_log(path, engine_facts=None):
     """The engine side from a bench log. The log states no NCCL, quant or
     serving topology, so those come from engine_facts (the Config values the

@@ -1,13 +1,11 @@
 """crossval/reader.py: each input kind read into a Side, on the golden data."""
 
-import contextlib
-import io
 import math
 import tempfile
 import unittest
 from pathlib import Path
 
-from quettabench.crossval import reader, table
+from quettabench.crossval import reader
 from tests.crossval._rundirs import bench_run_dir, grid_run_dir
 from tests.golden._harness import FIXTURES
 
@@ -39,15 +37,6 @@ class BenchLog(unittest.TestCase):
         self.assertEqual(cells[(100, 1, 1)]["group"], "decode_graph")
         self.assertEqual(cells[(1024, 1, 2)]["group"], "decode_tp2")
         self.assertIsNone(cells[(1024, 1, 1)]["kv"])
-
-    def test_parse_is_table_py_parse(self):
-        for log, method in (("bench_loop.log", "loop"), ("bench_criterion.log", "step")):
-            with self.subTest(log=log):
-                with contextlib.redirect_stdout(io.StringIO()) as printed:
-                    old = table.ours_points(FIXTURES / log)
-                points, _, notes = reader.bench_log_points(FIXTURES / log)
-                self.assertEqual(old, (points, method))
-                self.assertEqual(printed.getvalue(), "".join(n + "\n" for n in notes))
 
     def test_engine_facts_fill_the_header(self):
         side = reader.read_bench_log(FIXTURES / "bench_loop.log",

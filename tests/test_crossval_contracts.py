@@ -759,7 +759,7 @@ class TableParity(unittest.TestCase):
     def test_cache_records_prompt_mode(self):
         # A baseline without its routing regime is not comparable later.
         self.assertIn("prompt_mode", (QB / "crossval" / "cache.py").read_text())
-        self.assertIn("prompt_mode", (QB / "crossval" / "table.py").read_text())
+        self.assertIn("prompt_mode", (QB / "crossval" / "compare.py").read_text())
 
     def test_corpus_mode_requires_an_explicit_corpus(self):
         # No experimental text ships in the repo; corpus mode takes XVAL_CORPUS.

@@ -19,8 +19,6 @@ OWNER = "quettabench/config/env_map.py"
 ALLOWLIST = {
     # removed in Phase 3: crossval.py reads results files; cache.py is deleted
     "quettabench/crossval/cache.py",
-    # removed in Phase 3: table logic moves to crossval.py and reads Config
-    "quettabench/crossval/table.py",
     # removed in Phase 3: agreement becomes a report row (copies env for a subprocess)
     "quettabench/crossval/greedy_agreement.py",
     # kernel probes: torchrun's RANK/WORLD_SIZE/LOCAL_RANK are the launcher protocol, NCU_BIN names the profiler binary
