@@ -4,6 +4,9 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
+# scripts/crossval/prof.sh:16; {out} is the report path without extension.
+NSYS = ("nsys", "profile", "-t", "cuda,nvtx", "-o", "{out}", "--force-overwrite=true")
+
 
 class UnsupportedField(ValueError):
     """A Config value the engine has no flag for in any launch run today."""

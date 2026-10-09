@@ -27,6 +27,7 @@ the kwargs get disable_log_stats and trust_remote_code as vmin_fit passes them.
 
 from quettabench.config.schema import ConfigError
 from quettabench.engines.base import (
+    NSYS,
     EngineAdapter,
     LaunchSpec,
     UnsupportedField,
@@ -40,7 +41,6 @@ SERVER_ENV = {
     "VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS": "1",  # sizes KV after graph capture
 }
 KWARGS = {"disable_log_stats": True, "trust_remote_code": True}
-NSYS = ("nsys", "profile", "-t", "cuda,nvtx", "-o", "{out}", "--force-overwrite=true")
 
 
 def flag(name):
