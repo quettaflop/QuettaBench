@@ -352,3 +352,42 @@ WORKLOADVOID; such a run is `partial` again, and below
 requests sent differ from the trace: a request changed after hashing, or a
 multi-turn session whose failed turn left its later turns unsent. Chat
 requests without token ids still hash their messages (4318bf0).
+
+2026-10-11: no fixture changed; the workload_hash pins in
+`tests/test_profile_hashes.py` did. Since 4318bf0 a chat request without
+token ids hashes a canonical-JSON digest of its messages (assistant content
+left out); before, it hashed only seed, order, arrival, lengths, session and
+turn, so different chat profiles could share a hash (`chat-medium`,
+`chat-singleturn` and `chat-singleturn-synth` all hashed
+`2c2c330fe937283f`). Token-id requests hash as before (the `mooncake-trace`
+pin did not move), and the content digests did not move. A run recorded
+before 4318bf0 does not join on workload_hash with one recorded after it
+for these profiles (`cut` is the test's own truncated trajectory):
+
+| profile | before 4318bf0 | after |
+|---|---|---|
+| `chat-medium` | `2c2c330fe937283f` | `1b84966cb9c4facc` |
+| `chat-multiturn-long` | `274162becf17c102` | `3101d70c80d8606c` |
+| `chat-multiturn-medium` | `489bcc4b486495ac` | `26a991f2b7529daf` |
+| `chat-multiturn-short` | `57c82245406bcdf1` | `c51f134d3946f53d` |
+| `chat-short` | `e0b677fed285920c` | `3d6dd927203af7fa` |
+| `chat-singleturn` | `2c2c330fe937283f` | `1b84966cb9c4facc` |
+| `chat-singleturn-synth` | `2c2c330fe937283f` | `1b84966cb9c4facc` |
+| `coding-singleturn` | `03481570266bb2d4` | `15384d696a4d7a1b` |
+| `decode-heavy` | `f0719d3492f4fd06` | `adc88f3eae2adc96` |
+| `fixed-seq128` | `05a41401be097be3` | `3439077f38252544` |
+| `osworld-multiturn-long` | `f741501038aeb62c` | `762312f6b602cb88` |
+| `osworld-multiturn-medium` | `5af8ab8b94a75466` | `29482f55adf89f20` |
+| `osworld-multiturn-short` | `5fa7da0de14a64fb` | `ab09ce8e07b841c8` |
+| `prefill-heavy` | `8c28ae1fb55fecea` | `0964edcd447c2121` |
+| `random-1k` | `fdaa0aa7451df053` | `00740b698acbf0f7` |
+| `random-1k-random-doublewrap` | `fdaa0aa7451df053` | `633909c6f1f06765` |
+| `random-1k-random-legacy` | `fdaa0aa7451df053` | `1635e8cfbd8dcba8` |
+| `swebench-multiturn-long` | `b94b837574393d16` | `60b6ad3b16fac67e` |
+| `swebench-multiturn-medium` | `8cb100a908e8d018` | `f02e03a9e1282fc2` |
+| `swebench-multiturn-short` | `d4dca931e18de175` | `9f0aa9d6f98e5bd3` |
+| `terminalbench-multiturn-long` | `0c2fa9aec3717f8c` | `716641f80b9ffb4e` |
+| `terminalbench-multiturn-medium` | `80bf8305e3891345` | `6bc7cd20245181c3` |
+| `terminalbench-multiturn-short` | `a28027e756a8a273` | `2ab1e354437af5f0` |
+| `test` | `c19e2bb3db6d4434` | `7ae706bdf8eeae1d` |
+| `cut` | `c769b8ce9e3a8fe2` | `a7ffbc60a718ff0d` |
