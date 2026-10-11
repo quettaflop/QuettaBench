@@ -31,6 +31,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from quettabench.metrics.results import write_atomic
 from quettabench.profiling import native, wrapped
 
 SOURCES = ("metrics", "energy", "cost", "gsm8k", "frontend", "pd_host", "kv_transfer", "kernels")
@@ -155,7 +156,7 @@ def profile(results_dir, sources, **source_args):
     out["sources_run"] = sorted(set(out.get("sources_run", [])) | (set(sources) - set(errors)))
     out["errors"] = errors
     out["profiled_at"] = datetime.now(timezone.utc).isoformat()
-    (results_dir / "profile.json").write_text(json.dumps(out, indent=2, sort_keys=True) + "\n")
+    write_atomic(results_dir / "profile.json", json.dumps(out, indent=2, sort_keys=True) + "\n")
     return out
 
 

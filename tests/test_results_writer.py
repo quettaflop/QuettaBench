@@ -32,6 +32,26 @@ def result(i, **kw):
                          output_tokens=4, request_index=i, **kw)
 
 
+class AtomicWrite(unittest.TestCase):
+    def test_run_json_goes_through_a_replace(self):
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td) / "run1"
+            writer = results.RunWriter(out, config())
+            with mock.patch.object(results.os, "replace", wraps=results.os.replace) as replace:
+                writer.finish({"n": 0})
+            self.assertEqual(replace.call_args.args, (out / "run.json.tmp", out / "run.json"))
+            self.assertEqual(sorted(p.name for p in out.iterdir()), ["requests.jsonl", "run.json"])
+
+    def test_a_failed_write_leaves_the_old_file(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "run.json"
+            path.write_text("old\n")
+            with mock.patch.object(results.os, "replace", side_effect=OSError("disk")), \
+                    self.assertRaises(OSError):
+                results.write_atomic(path, "new\n")
+            self.assertEqual(path.read_text(), "old\n")
+
+
 class RoundTrip(unittest.TestCase):
     def test_rows_and_run_json(self):
         with tempfile.TemporaryDirectory() as td:

@@ -21,6 +21,7 @@ baselines through its compat reader.
 """
 
 import json
+import os
 import re
 import subprocess
 from datetime import datetime, timezone
@@ -46,6 +47,14 @@ def exit_status(exc):
         return "ok", None
     status = "aborted" if isinstance(exc, KeyboardInterrupt) else "failed"
     return status, f"{type(exc).__name__}: {exc}"
+
+
+def write_atomic(path, text):
+    """Write path through <path>.tmp and os.replace, so a reader polling for
+    it (the profiler waits on run.json) sees the old file or the whole new one."""
+    tmp = Path(f"{path}.tmp")
+    tmp.write_text(text)
+    os.replace(tmp, path)
 
 
 def bench_sha(repo=REPO, short=False):
@@ -204,7 +213,7 @@ class RunWriter:
         if self._fh is not None:
             self._fh.close()
             self._fh = None
-            (self.dir / "run.json").write_text(json.dumps(run, indent=2, default=str) + "\n")
+            write_atomic(self.dir / "run.json", json.dumps(run, indent=2, default=str) + "\n")
         return run
 
 
