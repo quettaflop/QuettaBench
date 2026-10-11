@@ -39,9 +39,10 @@ def skipped_runs(root: Path) -> dict[Path, str]:
 
 
 def owner(path: Path, root: Path, runs: dict[Path, str | None]) -> Path | None:
-    """The run dir path belongs to: its nearest ancestor (up to root) that is
-    a run dir, None when it sits in none (a table without a run.json)."""
-    for d in path.parents:
+    """The run dir path belongs to: path itself when it is a run dir, else its
+    nearest ancestor (up to root) that is one, None when it sits in none (a
+    table without a run.json)."""
+    for d in (path, *path.parents):
         if d in runs:
             return d
         if d == root:
@@ -76,7 +77,8 @@ def find(results_dirs: Iterable[Path], name: str) -> Path | None:
 
 
 def find_dir(results_dirs: Iterable[Path], name: str) -> Path | None:
-    """First directory called `name` under the results dirs, searched in list order."""
+    """First directory called `name` under the results dirs, searched in list
+    order, without one that is itself, or sits in, a run export leaves out."""
     for root in results_dirs:
         hit = next((p for p in files(root, name) if p.is_dir()), None)
         if hit is not None:

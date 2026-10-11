@@ -154,3 +154,18 @@ def test_a_file_belongs_to_its_nearest_run_dir(tmp_path: Path) -> None:
     _inputs.run_dirs.cache_clear()
     kept = [p.relative_to(tmp_path).as_posix() for p in _inputs.files(tmp_path, "*.csv")]
     assert kept == ["H100/gemm/ncu/gemm/H100.csv"]
+
+
+def test_find_dir_skips_a_dir_that_is_itself_a_failed_run(tmp_path: Path) -> None:
+    """A bench dir that is a run dir is judged by its own run.json, not only
+    by its ancestors'."""
+    for root, status in (("a", "failed"), ("b", "ok")):
+        run = tmp_path / root / "bench"
+        run.mkdir(parents=True)
+        (run / "run.json").write_text(json.dumps({"run_status": {"status": status}}))
+    (tmp_path / "c" / "bench").mkdir(parents=True)
+    (tmp_path / "c" / "bench" / "requests.jsonl").write_text("")
+    _inputs.run_dirs.cache_clear()
+    roots = [tmp_path / "a", tmp_path / "c", tmp_path / "b"]
+    assert _inputs.find_dir(roots, "bench") == tmp_path / "b" / "bench"
+    assert _inputs.find_dir(roots[:2], "bench") is None
