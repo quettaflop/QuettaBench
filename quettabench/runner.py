@@ -80,8 +80,10 @@ def run_one(cfg, out):
     spec = adapter.translate(cfg)
     gpus = cfg.hardware.visible_devices or launcher.idle_gpus(device_count(cfg.engine),
                                                               cfg.hardware.backend)
+    backend = "docker" if in_docker(cfg, adapter) else "local"
     env_map.export({**cfg.hardware.collective, "CUDA_VISIBLE_DEVICES": gpus})
-    handle = (launcher.start(spec, out, timeout_s=cfg.hardware.ready_timeout_s)
+    handle = (launcher.start(spec, out, backend=backend, cfg=cfg, gpus=gpus,
+                             timeout_s=cfg.hardware.ready_timeout_s)
               if adapter.needs_server(cfg) else launcher.NoServer(out))
     try:
         driver = adapter.driver(spec, handle)

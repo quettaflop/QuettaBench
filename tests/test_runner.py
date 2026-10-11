@@ -113,7 +113,8 @@ class ReadyTimeout(unittest.TestCase):
                 mock.patch.object(runner, "RunWriter"), mock.patch.object(runner.serve, "run"), \
                 tempfile.TemporaryDirectory() as td:
             runner.run_one(cfg, Path(td))
-        self.assertEqual(start.call_args.kwargs, {"timeout_s": 10800})
+        self.assertEqual(start.call_args.kwargs["timeout_s"], 10800)
+        self.assertEqual(start.call_args.kwargs["backend"], "local")
 
     def test_dry_run_shows_it(self):
         out, _ = qbench("run", str(RUNS[0].with_name("llama.yaml")), "--dry-run",
@@ -136,6 +137,18 @@ class DockerDryRun(unittest.TestCase):
                                       "9216 --gpu-memory-utilization 0.9 "
                                       "--no-enable-prefix-caching --enable-chunked-prefill "
                                       "--trust-remote-code"))
+
+    def test_run_hands_the_launcher_docker_and_the_gpus(self):
+        (cfg,) = loader.load(RUNS[0].with_name("llama-tp1-docker.yaml"),
+                             ["engine.model=/w", "hardware.visible_devices=3,5"], env={})
+        with mock.patch.object(runner.launcher, "start") as start, \
+                mock.patch.object(runner.env_map, "export"), \
+                mock.patch.object(runner.workloads, "build"), \
+                mock.patch.object(runner, "RunWriter"), mock.patch.object(runner.serve, "run"), \
+                tempfile.TemporaryDirectory() as td:
+            runner.run_one(cfg, Path(td))
+        kw = start.call_args.kwargs
+        self.assertEqual((kw["backend"], kw["cfg"], kw["gpus"]), ("docker", cfg, "3,5"))
 
     def test_docker_without_an_image_is_refused(self):
         _, exit_msg = qbench("run", str(RUNS[0].with_name("llama-tp1-docker.yaml")),
