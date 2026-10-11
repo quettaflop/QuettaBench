@@ -137,7 +137,7 @@ def annotate_request_observability(
     """Attach client-side request shape and scheduling metadata."""
     result.request_index = request_index
     result.max_tokens_requested = int(getattr(request, "max_tokens", 0) or 0)
-    messages = list(getattr(request, "messages", []) or [])
+    messages = getattr(request, "messages", None) or ()
     result.message_count = len(messages)
     result.prompt_chars = sum(len(str(m.get("content", ""))) for m in messages)
     result.scheduled_at_s = scheduled_at_s
