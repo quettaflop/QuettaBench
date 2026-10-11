@@ -6,6 +6,7 @@ on it.
 """
 
 import hashlib
+import json
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass, replace
 
@@ -38,7 +39,7 @@ class Request:
     source: str | None = None
     # A workload profile's chat request: its messages and metadata objects,
     # shared with its session so a later turn sees replies written into them.
-    # Not part of the replay schema, never hashed.
+    # Not part of the replay schema; hashed only when there are no token ids.
     messages: list | None = None
     metadata: dict | None = None
 
@@ -52,10 +53,21 @@ class Request:
         return {k: v for k, v in asdict(plain).items() if v is not None}
 
 
+def messages_digest(messages):
+    """sha256 of the messages as canonical JSON, assistant content left out:
+    in a live session serve writes the engine's reply there during the run."""
+    plain = [{k: v for k, v in m.items() if not (m.get("role") == "assistant" and k == "content")}
+             for m in messages]
+    return hashlib.sha256(json.dumps(plain, sort_keys=True, separators=(",", ":"))
+                          .encode()).hexdigest()
+
+
 def request_digest(r):
     """Identity of one request over deterministic inputs only (seed, order, arrival,
     prompt content, requested output), never generated tokens or timings, so two
-    engines doing identical work hash the same."""
+    engines doing identical work hash the same. A chat request without token ids
+    adds its messages' digest; a token-id request hashes as it always has."""
+    messages = r.messages if isinstance(r, Request) else r.get("messages")
     if isinstance(r, Request):
         r = r.to_dict()
     ids = r.get("prompt_token_ids") or []
@@ -69,6 +81,8 @@ def request_digest(r):
         str(r.get("session_id", "")),
         str(r.get("turn", "")),
     ]
+    if not ids and messages:
+        parts.append(messages_digest(messages))
     return hashlib.sha256("|".join(parts).encode()).hexdigest()
 
 

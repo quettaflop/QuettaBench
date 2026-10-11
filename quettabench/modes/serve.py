@@ -426,7 +426,10 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
     enforce(success_rate_gate(core, mode.min_success_rate), writer, summary)
     enforce(usage_gate(core, mode.allow_missing_usage), writer, summary)
 
-    ident = summary.sections["workload"] = identity(trace, [q for q, _ in pairs])
+    # Single-turn: only requests that got a result count as served, so a
+    # dropped request moves the hash.
+    served = [q for q, r in pairs if by_turn is not None or r.success]
+    ident = summary.sections["workload"] = identity(trace, served)
     summary.sections.update({"goodput": goodput} if goodput else
                             crossval_sections(pairs, duration, mode, server_spec))
     print_legacy_lines(summary.sections)

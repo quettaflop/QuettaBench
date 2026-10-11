@@ -812,6 +812,18 @@ class TableParity(unittest.TestCase):
         finally:
             sys.path.pop(0)
 
+    def test_chat_requests_hash_their_messages(self):
+        from quettabench.workloads.base import Request, workload_hash
+        def chat(text, reply="r"):
+            return [Request([], 0, output_length=8, messages=[
+                {"role": "user", "content": text}, {"role": "assistant", "content": reply}])]
+        self.assertNotEqual(workload_hash(chat("a")), workload_hash(chat("b")))
+        # assistant content is the engine's reply in a live session, so it does not count
+        self.assertEqual(workload_hash(chat("a", "x")), workload_hash(chat("a", "y")))
+        ids = [Request([1, 2, 3], 3, output_length=8)]
+        with_messages = [Request([1, 2, 3], 3, output_length=8, messages=chat("a")[0].messages)]
+        self.assertEqual(workload_hash(ids), workload_hash(with_messages))
+
     def test_seed_deterministic_and_labeled(self):
         # Same seed + profile is byte-identical, labeled SYNTHETIC, carries the
         # seed; a different seed or arrival time changes the workload hash.

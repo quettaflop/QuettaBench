@@ -114,10 +114,15 @@ class SingleTurn(unittest.TestCase):
         self.assertNotEqual(trace.workload_hash(), before)
         self.assertEqual(summary.core.target_rate, 500.0)
 
-    def test_failures_mark_the_run_partial(self):
-        summary, _ = run(single_trace(8), FakeDriver(fail=lambda r: r.order == 0),
-                         ModeCfg(concurrency=2, warmup=0, min_success_rate=0.5))
-        self.assertEqual((summary.status, summary.reason), ("partial", "1 of 8 requests failed"))
+    def test_a_failed_request_fails_the_identity_gate(self):
+        with tempfile.TemporaryDirectory() as td:
+            code, _ = run(single_trace(8), FakeDriver(fail=lambda r: r.order == 0),
+                          ModeCfg(concurrency=2, warmup=0, min_success_rate=0.5), results_dir=td)
+            run_json = json.loads((Path(td) / "run.json").read_text())
+        self.assertEqual(code, 3)
+        self.assertEqual(run_json["run_status"], {"status": "failed", "reason": "workload identity"})
+        self.assertEqual((run_json["summary"]["workload"]["n"],
+                          run_json["summary"]["workload"]["of"]), (7, 8))
 
     def test_mostly_failed_run_aborts(self):
         with tempfile.TemporaryDirectory() as td:
