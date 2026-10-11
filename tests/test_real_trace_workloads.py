@@ -7,7 +7,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from quettabench.modes.serve import make_trace_request_id
-from quettabench.workloads.dataset import ShareGPTDataset, TrajectoryMultiTurnDataset, make_dataset
+from quettabench.workloads.dataset import TrajectoryMultiTurnDataset, make_dataset
+from quettabench.workloads.live import ShareGPTTrace
 from quettabench.workloads.profiles import WorkloadProfile
 
 
@@ -50,7 +51,7 @@ class RealTraceWorkloadTests(unittest.TestCase):
         )
 
         with patch.dict(sys.modules, {"datasets": fake_datasets_module}):
-            dataset = ShareGPTDataset(
+            trace = ShareGPTTrace(
                 num_prompts=10,
                 system_prompt="",
                 max_isl_tokens=4096,
@@ -60,7 +61,7 @@ class RealTraceWorkloadTests(unittest.TestCase):
                 context_safety_margin_tokens=10,
             )
 
-            request = dataset.get_next_request()
+            request = trace.get_next_request()
 
         self.assertEqual(request.max_tokens, int(30 * 1.35))
         self.assertLessEqual(
@@ -102,7 +103,7 @@ class RealTraceWorkloadTests(unittest.TestCase):
             "datasets": fake_datasets_module,
             "transformers": fake_transformers_module,
         }):
-            dataset = ShareGPTDataset(
+            trace = ShareGPTTrace(
                 num_prompts=10,
                 system_prompt="",
                 max_isl_tokens=4096,
@@ -112,10 +113,9 @@ class RealTraceWorkloadTests(unittest.TestCase):
                 context_safety_margin_tokens=10,
                 tokenizer_name="fake-tokenizer",
             )
-            dataset._load()
 
-            self.assertEqual(len(dataset._samples), 1)
-            request = dataset.get_next_request()
+            self.assertEqual(len(trace.samples), 1)
+            request = trace.get_next_request()
 
         self.assertEqual(request.max_tokens, int(30 * 1.35))
 

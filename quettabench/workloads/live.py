@@ -1,6 +1,7 @@
-"""Recorded traces: the replay JSONL schema and the Mooncake production trace.
+"""Recorded traces: the replay JSONL schema, the Mooncake production trace,
+and the real-text profile sources (prompt JSONL, ShareGPT, a smoke prompt).
 
-One reader for both. A line carries prompt_token_ids, or prompt_len, or the
+One reader for the replay schema and Mooncake. A line carries prompt_token_ids, or prompt_len, or the
 Mooncake fields (input_length, output_length, timestamp in ms, hash_ids).
 Mooncake hash_ids name 512-token prefix blocks; each id expands to the same
 seeded block every time, so requests that share a hash id share those tokens
@@ -14,7 +15,7 @@ import json
 import random
 from dataclasses import dataclass
 
-from .base import Request, Trace, synth_ids
+from .base import DrawnTrace, Request, Trace, synth_ids
 
 BLOCK_SIZE = 512
 
@@ -183,3 +184,156 @@ class RealTrace(Trace):
             "sources": sorted({"?" if r.source is None else str(r.source) for r in self._requests}),
             "text_mode": "real" if self.supports_spec else "synthetic",
         }
+
+
+class MooncakeTrace(DrawnTrace):
+    """Mooncake records in file order with expanded token ids, wrapping at
+    the end and rewinding after warmup. Requests carry prompt_token_ids, so
+    no chat template can disturb block boundaries; metadata names the record
+    (request_index) and its block count (num_hash_blocks)."""
+
+    rewinds = True
+
+    def __init__(self, path, seed=42, limit=0):
+        super().__init__()
+        self.records = parse_mooncake_trace(path, limit)
+        self.seed = seed
+        self._cursor = 0
+        self._block_cache = {}
+
+    def reset(self):
+        self._cursor = 0
+
+    def get_next_request(self):
+        record = self.records[self._cursor % len(self.records)]
+        self._cursor += 1
+        ids = mooncake_prompt_ids(record, self.seed, self._block_cache)
+        return Request(ids, len(ids), output_length=record.output_length, messages=[], metadata={
+            "prompt_token_ids": ids,
+            "request_index": record.index,
+            "num_hash_blocks": len(record.hash_ids),
+        })
+
+
+def reshuffled(samples, rng):
+    """(messages, max_tokens) samples popped from the end; once used up they
+    are refilled and reshuffled with rng."""
+    available = list(samples)
+    while True:
+        if not available:
+            available = list(samples)
+            rng.shuffle(available)
+        yield available.pop()
+
+
+class SampledChatTrace(DrawnTrace):
+    """Chat prompts sampled from a fixed set: shuffled once with the seed,
+    then drawn by reshuffled() with a second generator on the same seed."""
+
+    def __init__(self, samples, seed):
+        super().__init__()
+        self.samples = samples
+        self._stream = reshuffled(samples, random.Random(seed))
+
+    def get_next_request(self):
+        messages, max_tokens = next(self._stream)
+        return Request([], 0, output_length=max_tokens, messages=messages, metadata={})
+
+
+class PromptJsonlTrace(SampledChatTrace):
+    """Real prompts, one per line: {"system", "user", "osl_tokens"}; max
+    tokens per request from osl_tokens."""
+
+    def __init__(self, path, seed=42):
+        samples = []
+        for _, entry in _rows(path):
+            messages = [{"role": "system", "content": entry["system"]},
+                        {"role": "user", "content": entry["user"]}]
+            samples.append((messages, entry["osl_tokens"]))
+        random.Random(seed).shuffle(samples)
+        super().__init__(samples, seed)
+
+
+def est_tokens(text):
+    """Token estimate for English: 1.35 tokens per word."""
+    return int(len(text.split()) * 1.35)
+
+
+def load_sharegpt():
+    import datasets as hf_datasets  # optional dependency, only ShareGPT profiles need it
+    return hf_datasets.load_dataset("Aeala/ShareGPT_Vicuna_unfiltered", split="train")
+
+
+def prompt_token_count(tokenizer, messages):
+    try:
+        return len(tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=True))
+    except Exception:
+        text = "\n".join(str(message.get("content", "")) for message in messages)
+        return len(tokenizer.encode(text, add_special_tokens=True))
+
+
+def load_chat_tokenizer(name):
+    """The model's tokenizer for prompt counts, or None when it cannot load."""
+    if not name:
+        return None
+    try:
+        from transformers import AutoTokenizer  # optional dependency
+        return AutoTokenizer.from_pretrained(name)
+    except Exception:
+        return None
+
+
+class ShareGPTTrace(SampledChatTrace):
+    """The first user and assistant pair of ShareGPT conversations. max tokens
+    is the estimated length of the recorded reply, so the server sees
+    ShareGPT's own ISL/OSL spread. Pairs outside the ISL/OSL bounds are
+    skipped, and with max_total_tokens so is a pair whose prompt (counted by
+    the tokenizer when one loads), reply and safety margin overflow it. Loads
+    up to 3x num_prompts pairs, shuffles, keeps num_prompts."""
+
+    def __init__(self, num_prompts=1000, seed=42, system_prompt="You are a helpful assistant.",
+                 max_isl_tokens=8192, max_osl_tokens=2048, min_osl_tokens=50,
+                 max_total_tokens=None, context_safety_margin_tokens=0, tokenizer_name=""):
+        ds = load_sharegpt()
+        tokenizer = load_chat_tokenizer(tokenizer_name)
+        samples = []
+        for item in ds:
+            convs = item["conversations"]
+            if len(convs) < 2:
+                continue
+            user_msg = assistant_msg = None
+            for turn in convs:
+                if turn.get("from") == "human" and user_msg is None:
+                    user_msg = turn.get("value", "")
+                elif turn.get("from") == "gpt" and user_msg is not None:
+                    assistant_msg = turn.get("value", "")
+                    break
+            if not user_msg or not assistant_msg:
+                continue
+            isl_est, osl_est = est_tokens(user_msg), est_tokens(assistant_msg)
+            if isl_est > max_isl_tokens or osl_est > max_osl_tokens or osl_est < min_osl_tokens:
+                continue
+            messages = [{"role": "system", "content": system_prompt}] if system_prompt else []
+            messages.append({"role": "user", "content": user_msg})
+            if max_total_tokens is not None:
+                prompt_tokens = (prompt_token_count(tokenizer, messages) if tokenizer is not None
+                                 else isl_est)
+                if prompt_tokens + osl_est + context_safety_margin_tokens > max_total_tokens:
+                    continue
+            samples.append((messages, osl_est))
+            if len(samples) >= num_prompts * 3:
+                break
+        random.Random(seed).shuffle(samples)
+        super().__init__(samples[:num_prompts], seed)
+
+
+class SmokeTrace(DrawnTrace):
+    """One fixed prompt, 20 output tokens: a quick smoke test."""
+
+    def __init__(self, prompt="Say hello in one word."):
+        super().__init__()
+        self.prompt = prompt
+
+    def get_next_request(self):
+        return Request([], 0, output_length=20,
+                       messages=[{"role": "user", "content": self.prompt}], metadata={})
