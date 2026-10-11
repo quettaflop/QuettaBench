@@ -1,5 +1,7 @@
 """Defaults and wait math for multi-turn scheduling."""
 
+import contextlib
+import io
 import json
 import tempfile
 import unittest
@@ -7,12 +9,12 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from quettabench.config.schema import ModeCfg, WorkloadCfg
-from quettabench.workloads.dataset import (
-    TrajectoryMultiTurnDataset,
+from quettabench.workloads.sessions import (
+    TrajectorySessionTrace,
+    inter_turn_wait_s,
     session_arrival_ms,
     turn_wait_metadata,
 )
-from quettabench.workloads.sessions import inter_turn_wait_s
 
 
 class TestInterTurnWait(unittest.TestCase):
@@ -90,13 +92,12 @@ class TestTrajectoryLoadWaits(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "traj.jsonl"
             path.write_text(json.dumps(payload) + "\n")
-            ds = TrajectoryMultiTurnDataset(
-                str(path), min_turns=3, max_turns=10, num_sessions=1
-            )
-            session = ds.sessions[0]
-            self.assertEqual(session.arrival_time_ms, 2500.0)
-            self.assertEqual(session.turns[0].metadata["tool_wait_after_ms"], 40.0)
-            self.assertEqual(session.turns[1].metadata["human_wait_after_ms"], 90.0)
+            with contextlib.redirect_stdout(io.StringIO()):
+                trace = TrajectorySessionTrace(str(path), min_turns=3, max_turns=10, num_sessions=1)
+            session = trace.sessions()[0]
+            self.assertEqual(session[0].arrival_ts, 2.5)
+            self.assertEqual(session[0].metadata["tool_wait_after_ms"], 40.0)
+            self.assertEqual(session[1].metadata["human_wait_after_ms"], 90.0)
 
 
 class TestConfigDefaults(unittest.TestCase):

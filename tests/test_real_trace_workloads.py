@@ -1,3 +1,5 @@
+import contextlib
+import io
 import json
 import sys
 import tempfile
@@ -6,10 +8,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from quettabench import workloads
+from quettabench.config.schema import Config, EngineCfg, HardwareCfg, ModeCfg, WorkloadCfg
 from quettabench.modes.serve import make_trace_request_id
-from quettabench.workloads.dataset import TrajectoryMultiTurnDataset, make_dataset
 from quettabench.workloads.live import ShareGPTTrace
 from quettabench.workloads.profiles import WorkloadProfile
+from quettabench.workloads.sessions import TrajectorySessionTrace
 
 
 def words(n: int) -> str:
@@ -144,18 +148,19 @@ class RealTraceWorkloadTests(unittest.TestCase):
             }
             path.write_text(json.dumps(session) + "\n", encoding="utf-8")
 
-            dataset = TrajectoryMultiTurnDataset(
-                filepath=str(path),
-                min_turns=1,
-                max_turns=2,
-                num_sessions=1,
-                max_isl_tokens=120,
-                max_osl_tokens=50,
-                context_safety_margin_tokens=10,
-            )
+            with contextlib.redirect_stdout(io.StringIO()):
+                trace = TrajectorySessionTrace(
+                    str(path),
+                    min_turns=1,
+                    max_turns=2,
+                    num_sessions=1,
+                    max_isl_tokens=120,
+                    max_osl_tokens=50,
+                    context_safety_margin_tokens=10,
+                )
 
-            self.assertEqual(len(dataset.sessions), 1)
-            turns = dataset.sessions[0].turns
+            self.assertEqual(len(trace.sessions()), 1)
+            turns = trace.sessions()[0]
             self.assertEqual(len(turns), 1)
             meta = turns[0].metadata
             self.assertEqual(meta["source_session_id"], "trace-1")
@@ -166,7 +171,7 @@ class RealTraceWorkloadTests(unittest.TestCase):
                 meta["context_window_tokens"] - meta["context_safety_margin_tokens"],
             )
 
-    def test_make_dataset_applies_context_cap_to_real_trace_profiles(self):
+    def test_build_gives_trajectories_the_profile_window_and_margin(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "trace.jsonl"
             path.write_text(
@@ -199,16 +204,16 @@ class RealTraceWorkloadTests(unittest.TestCase):
                 turn_style="multi-turn",
                 data_source="swebench",
             )
+            cfg = Config(engine=EngineCfg(), workload=WorkloadCfg(kind="sessions", source=profile.name),
+                         mode=ModeCfg(concurrency=1), hardware=HardwareCfg())
 
-            dataset = make_dataset(
-                profile,
-                max_context_tokens=120,
-                context_safety_margin_tokens=10,
-            )
+            with patch.dict(workloads.PROFILES, {profile.name: profile}), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                trace = workloads.build(cfg)
 
-            meta = dataset.sessions[0].turns[0].metadata
-            self.assertEqual(meta["context_window_tokens"], 120)
-            self.assertEqual(meta["context_safety_margin_tokens"], 10)
+            meta = trace.requests()[0].metadata
+            self.assertEqual(meta["context_window_tokens"], 4096)
+            self.assertEqual(meta["context_safety_margin_tokens"], 256)
 
 
 if __name__ == "__main__":

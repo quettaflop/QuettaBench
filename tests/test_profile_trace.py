@@ -1,4 +1,4 @@
-"""Profile datasets drawn into Traces in the order the old runner drew them."""
+"""Profile sources drawn into Traces in the order the old runner drew them."""
 
 import contextlib
 import dataclasses
@@ -8,16 +8,21 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from quettabench import workloads
+from quettabench.config.schema import Config, EngineCfg, HardwareCfg, ModeCfg, WorkloadCfg
 from quettabench.workloads.base import Request, workload_hash
-from quettabench.workloads.dataset import make_dataset
-from quettabench.workloads.profile_trace import ProfileSessionTrace, ProfileTrace
-from quettabench.workloads.profiles import get_profile
-from quettabench.workloads.sessions import TurnPacing
+from quettabench.workloads.live import MooncakeTrace, PromptJsonlTrace
+from quettabench.workloads.sessions import TrajectorySessionTrace, TurnPacing
 
 
 def write_jsonl(path, rows):
     path.write_text("".join(json.dumps(r) + "\n" for r in rows))
     return str(path)
+
+
+def config(source, kind="live"):
+    return Config(engine=EngineCfg(), workload=WorkloadCfg(kind=kind, source=source),
+                  mode=ModeCfg(), hardware=HardwareCfg())
 
 
 class SingleTurn(unittest.TestCase):
@@ -31,24 +36,21 @@ class SingleTurn(unittest.TestCase):
     def test_warmup_draws_come_first_without_a_rewind(self):
         path = write_jsonl(self.dir / "c.jsonl", [
             {"system": "s", "user": f"u{i}", "osl_tokens": 2 + i} for i in range(4)])
-        profile = dataclasses.replace(get_profile("coding-singleturn"), file_path=path)
-        dataset = make_dataset(profile, random_seed=5)
-        drawn = [dataset.get_next_request() for _ in range(9)]
-        trace = ProfileTrace(get_profile("coding-singleturn"), 7, warmup=2, workload_file=path,
-                             random_seed=5)
+        source = PromptJsonlTrace(path, seed=5)
+        drawn = [source.get_next_request() for _ in range(9)]
+        trace = PromptJsonlTrace(path, seed=5).draw(7, warmup=2)
         self.assertEqual([r.messages for r in trace.warmup_requests(2)],
                          [d.messages for d in drawn[:2]])
         self.assertEqual([r.messages for r in trace.requests()], [d.messages for d in drawn[2:]])
         self.assertEqual([r.max_tokens for r in trace.requests()],
                          [d.max_tokens for d in drawn[2:]])
         self.assertEqual([r.order for r in trace.requests()], list(range(7)))
-        self.assertEqual(trace.source_meta()["profile"], "coding-singleturn")
 
     def test_a_rewindable_trace_restarts_after_warmup(self):
         path = write_jsonl(self.dir / "m.jsonl", [
             {"timestamp": i, "input_length": 30 + i, "output_length": 3, "hash_ids": [i]}
             for i in range(5)])
-        trace = ProfileTrace(get_profile("mooncake-trace"), 5, warmup=3, workload_file=path)
+        trace = MooncakeTrace(path).draw(5, warmup=3)
         first = trace.requests()[0]
         self.assertEqual(first.prompt_token_ids, trace.warmup_requests(1)[0].prompt_token_ids)
         self.assertEqual(first.prompt_len, 30)
@@ -59,6 +61,16 @@ class SingleTurn(unittest.TestCase):
         chat = dataclasses.replace(plain, messages=[{"content": "x"}], metadata={"k": 1})
         self.assertEqual(chat.to_dict(), plain.to_dict())
         self.assertEqual(workload_hash([chat]), workload_hash([plain]))
+
+    def test_build_names_the_profile(self):
+        trace = workloads.build(config("test"))
+        self.assertEqual(trace.source_meta(), {"profile": "test", "dataset": "test", "path": "",
+                                               "reqs": 100})
+        self.assertEqual(trace.requests()[0].max_tokens, 20)
+
+    def test_multi_turn_profile_is_refused_single_turn(self):
+        with self.assertRaisesRegex(ValueError, "is multi-turn; run it with workload.kind=sessions"):
+            workloads.build(config("swebench-multiturn-short"))
 
 
 class MultiTurn(unittest.TestCase):
@@ -71,35 +83,38 @@ class MultiTurn(unittest.TestCase):
         td = tempfile.TemporaryDirectory()
         self.addCleanup(td.cleanup)
         path = write_jsonl(Path(td.name) / "t.jsonl", sessions)
-        profile = dataclasses.replace(get_profile("swebench-multiturn-short"), file_path=path)
         with contextlib.redirect_stdout(io.StringIO()) as out:
-            trace = ProfileSessionTrace(profile, num_sessions=3, **kw)
-        return trace, out.getvalue(), make_dataset(profile, num_sessions=3)
+            trace = TrajectorySessionTrace(path, min_turns=13, num_sessions=3, **kw)
+        return trace, out.getvalue()
 
-    def test_sessions_are_the_datasets_turns(self):
-        trace, out, dataset = self.build(warmup=4, pacing=TurnPacing("interleaved"))
+    def test_sessions_carry_turns_arrivals_and_waits(self):
+        trace, out = self.build(warmup=4, pacing=TurnPacing("interleaved"))
         self.assertIn("Loaded 3 sessions, max 15 turns per session", out)
-        by_id = {s.session_id: s for s in dataset.sessions}
         for turns in trace.sessions():
             sid = turns[0].session_id
-            self.assertEqual([r.messages for r in turns], [t.messages for t in by_id[sid].turns])
+            source = int(turns[0].metadata["source_session_id"][1:])
+            self.assertEqual([r.messages[0]["content"] for r in turns],
+                             [f"s{source} t{t}" for t in range(13 + source)])
             self.assertEqual([r.turn for r in turns], list(range(len(turns))))
-            self.assertEqual(turns[0].arrival_ts, by_id[sid].arrival_time_ms / 1000.0)
+            self.assertEqual(turns[0].arrival_ts, source / 10.0)
             self.assertIsNone(turns[1].arrival_ts)
             self.assertEqual(turns[2].metadata["tool_wait_after_ms"], 5.0)
+            self.assertEqual(trace.replies[sid], [])
         self.assertEqual(trace.pacing.pacing, "interleaved")
         self.assertEqual(trace.max_turns, 15)
-        flat = [dataset.get_next_request() for _ in range(4)]
-        self.assertEqual([r.messages for r in trace.warmup_requests(4)], [f.messages for f in flat])
+        firsts = [s[0].messages for s in trace.sessions()]
+        self.assertEqual([r.messages for r in trace.warmup_requests(4)], firsts + [
+            trace.sessions()[0][1].messages])
+        self.assertEqual([r.order for r in trace.warmup_requests(4)], [0, 1, 2, 3])
 
     def test_turns_past_max_turn_index_are_not_in_the_trace(self):
-        trace, _, _ = self.build(max_turn_index=4)
+        trace, _ = self.build(max_turn_index=4)
         self.assertEqual({len(t) for t in trace.sessions()}, {5})
         self.assertEqual(trace.max_turns, 15)
 
     def test_single_turn_profile_is_refused(self):
         with self.assertRaisesRegex(ValueError, "does not use a multi-turn dataset"):
-            ProfileSessionTrace(get_profile("test"))
+            workloads.build(config("test", kind="sessions"))
 
 
 if __name__ == "__main__":

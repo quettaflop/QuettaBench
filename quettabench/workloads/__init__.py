@@ -3,9 +3,13 @@
 from .base import DoubleWrapRandomTokenTrace, LegacyRandomTokenTrace, RandomTokenTrace
 from .grid import GridTrace
 from .live import MooncakeTrace, PromptJsonlTrace, RealTrace, ShareGPTTrace, SmokeTrace
-from .profile_trace import ProfileSessionTrace
 from .profiles import PROFILE_ALIASES, PROFILES, get_profile
-from .sessions import TurnPacing, resolve_multi_turn_num_sessions
+from .sessions import (
+    ShareGPTSessionTrace,
+    TrajectorySessionTrace,
+    TurnPacing,
+    resolve_multi_turn_num_sessions,
+)
 
 TRAJECTORY_DATASETS = ("swebench-multi-turn", "terminalbench-multi-turn", "osworld-multi-turn")
 RANDOM_TRACES = {"random": RandomTokenTrace, "random-legacy": LegacyRandomTokenTrace,
@@ -39,6 +43,22 @@ def single_turn_trace(profile, seed, model):
     raise ValueError(f"Unknown dataset type: {d}")
 
 
+def session_trace(profile, num_sessions, seed, **trace_kw):
+    """A multi-turn profile's sessions as a LoadedSessionTrace."""
+    if profile.dataset == "sharegpt-multi-turn":
+        return ShareGPTSessionTrace(
+            min_turns=profile.min_turns, max_turns=profile.max_turns, num_sessions=num_sessions,
+            seed=seed, system_prompt=profile.system_prompt, max_isl_tokens=profile.isl_tokens,
+            max_osl_tokens=profile.osl_tokens, profile=profile, **trace_kw)
+    if profile.dataset in TRAJECTORY_DATASETS:
+        return TrajectorySessionTrace(
+            profile.file_path, min_turns=profile.min_turns, max_turns=profile.max_turns,
+            num_sessions=num_sessions, seed=seed, max_isl_tokens=profile.isl_tokens,
+            max_osl_tokens=profile.osl_tokens,
+            context_safety_margin_tokens=CONTEXT_SAFETY_MARGIN, profile=profile, **trace_kw)
+    raise ValueError(f"Profile '{profile.name}' does not use a multi-turn dataset")
+
+
 def build(cfg, tokenizer=None):
     """The run's Trace. A grid run (mode.grid) gets the GridTrace of its
     cells; otherwise workload.source is a profile name (configs/workloads/),
@@ -61,10 +81,7 @@ def build(cfg, tokenizer=None):
         pacing = TurnPacing(w.pacing, w.tool_wait_ms, w.human_wait_ms, w.use_recorded_waits,
                             w.use_recorded_arrivals)
         sessions, _ = resolve_multi_turn_num_sessions(profile, cfg.mode.concurrency)
-        if profile.dataset != "sharegpt-multi-turn" and profile.dataset not in TRAJECTORY_DATASETS:
-            raise ValueError(f"Profile '{profile.name}' does not use a multi-turn dataset")
-        return ProfileSessionTrace(profile, warmup=cfg.mode.warmup, pacing=pacing,
-                                   max_turn_index=w.max_turn_index, num_sessions=sessions,
-                                   random_seed=w.seed, tokenizer_name=cfg.engine.model or "")
+        return session_trace(profile, sessions, w.seed, warmup=cfg.mode.warmup, pacing=pacing,
+                             max_turn_index=w.max_turn_index)
     trace = single_turn_trace(profile, w.seed, cfg.engine.model or "")
     return trace.draw(w.num_requests, cfg.mode.warmup, profile)
