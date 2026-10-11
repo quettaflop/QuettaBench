@@ -5,6 +5,7 @@ probe modules (which need QuettaSim) are stood in by fakes in sys.modules."""
 
 import argparse
 import ast
+import sqlite3
 import sys
 import tempfile
 import types
@@ -87,6 +88,73 @@ class Traces(unittest.TestCase):
             (Path(tmp) / "torch_trace.json").write_text("{}")
             self.assertEqual(native.collect_armed_traces(tmp, "torch")["files"],
                              ["torch_trace.json"])
+
+
+def fake_nsys_export(db):
+    """An nsys sqlite export: two decode steps of 1000 ns each on device 0,
+    a 400 ns prefill-only range, and one memcpy."""
+    con = sqlite3.connect(db)
+    con.executescript("""
+        CREATE TABLE StringIds (id INTEGER, value TEXT);
+        CREATE TABLE CUPTI_ACTIVITY_KIND_KERNEL (start INT, end INT, deviceId INT, shortName INT);
+        CREATE TABLE NVTX_EVENTS (start INT, end INT, text TEXT, textId INT);
+        CREATE TABLE CUPTI_ACTIVITY_KIND_MEMCPY (start INT, end INT, deviceId INT);
+        INSERT INTO StringIds VALUES (1, 'nvjet_gemm'), (2, 'one_shot_all_reduce'),
+                                     (3, 'rms_norm_kernel');
+        INSERT INTO NVTX_EVENTS VALUES (0, 400, 'prefill_only', NULL),
+                                       (1000, 4000, 'prefill_decode', NULL);
+        INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL VALUES
+            (100, 300, 0, 1),
+            (1000, 1200, 0, 1), (1500, 2100, 0, 1), (1600, 1800, 0, 2), (2200, 2400, 0, 3),
+            (3000, 3200, 0, 3), (5000, 5100, 1, 1);
+        INSERT INTO CUPTI_ACTIVITY_KIND_MEMCPY VALUES (1300, 1350, 0);
+    """)
+    con.commit()
+    con.close()
+
+
+class Kernels(unittest.TestCase):
+    def test_exports_once_then_tabulates_per_step(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "nsys.nsys-rep").write_bytes(b"")
+            db = Path(tmp) / "nsys.sqlite"
+            with mock.patch.object(native.subprocess, "run",
+                                   side_effect=lambda argv, check: fake_nsys_export(db)) as run:
+                out = native.kernel_summary(tmp, 2, window="prefill_decode")
+                native.kernel_summary(tmp, 2)
+            run.assert_called_once_with(["nsys", "export", "--type", "sqlite", "-o", str(db),
+                                         str(Path(tmp) / "nsys.nsys-rep")], check=True)
+        self.assertEqual(out["launches_per_step"], 2.5)
+        self.assertAlmostEqual(out["kernel_ms_per_step"], 0.0007)
+        self.assertEqual([(f["family"], f["launches_per_step"]) for f in out["families"]],
+                         [("GEMM / GEMV (library)", 1.0), ("act / norm (fused)", 1.0),
+                          ("collective (TP)", 0.5)])
+        self.assertEqual(out["kernels"][0], {"kernel": "nvjet_gemm", "launches_per_step": 1.0,
+                                             "ms_per_step": 0.0004, "us_per_call": 0.4})
+        self.assertEqual(out["memops"], [{"kind": "memcpy", "per_step": 0.5,
+                                          "ms_per_step": 0.000025}])
+        # 1400 ns of kernels covering 1200 ns of wall over a 3000 ns window
+        (dev,) = out["devices"]
+        self.assertAlmostEqual(dev["sum_ms_per_step"], 0.0007)
+        self.assertAlmostEqual(dev["union_ms_per_step"], 0.0006)
+        self.assertAlmostEqual(dev["busy_pct"], 100.0 * 1200 / 3000)
+        self.assertEqual(dev["gaps_per_step"], 0.0)
+
+    def test_subtract_takes_the_prefill_off(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_nsys_export(Path(tmp) / "nsys.sqlite")
+            out = native.kernel_summary(tmp, 1, window="prefill_decode", subtract="prefill_only")
+        gemm = next(k for k in out["kernels"] if k["kernel"] == "nvjet_gemm")
+        self.assertEqual((gemm["launches_per_step"], gemm["ms_per_step"]), (1.0, 0.0006))
+        self.assertIsNone(out["devices"])
+
+    def test_without_a_trace_or_a_window(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(ValueError, "no armed nsys trace"):
+                native.kernel_summary(tmp, 1)
+            fake_nsys_export(Path(tmp) / "nsys.sqlite")
+            with self.assertRaisesRegex(ValueError, "'decode' occurs 0 times"):
+                native.kernel_summary(tmp, 1, window="decode")
 
 
 def fake_probe(result):

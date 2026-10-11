@@ -18,6 +18,7 @@ from pathlib import Path
 
 from quettabench import profiler
 from tests.profiling import fake_endpoint
+from tests.profiling.test_native import fake_nsys_export
 from tests.profiling.test_wrapped import FAKE_SMI, Tokenizer
 
 RUN = {
@@ -121,9 +122,17 @@ class Profile(unittest.TestCase):
         self.assertIn("cost", out)
         self.assertEqual(out["kv_transfer"]["rows"], [{"gpu": "H200", "total_ms": "1.5"}])
 
+    def test_kernels_reads_the_armed_trace(self):
+        write_run(self.dir, "http://127.0.0.1:9")
+        fake_nsys_export(self.dir / "nsys.sqlite")
+        out = profiler.profile(self.dir, ["kernels"], kernel_steps=2,
+                               kernel_window="prefill_decode")
+        self.assertEqual(out["errors"], {})
+        self.assertEqual(out["kernels"]["launches_per_step"], 2.5)
+
     def test_missing_source_args_fail_before_anything_runs(self):
         for sources, args in ((["cost"], {}), (["gsm8k"], {"gsm8k_file": "x"}),
-                              (["kv_transfer"], {}), (["bogus"], {})):
+                              (["kv_transfer"], {}), (["kernels"], {}), (["bogus"], {})):
             with self.subTest(sources), self.assertRaises(ValueError):
                 profiler.profile(self.dir, sources, **args)
         self.assertFalse((self.dir / "profile.json").exists())

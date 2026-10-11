@@ -15,6 +15,8 @@ and the run through run.json {config, summary}; run.json is only read.
   frontend, pd_host
                native: the live-server probes against the endpoint
   kv_transfer  native: the NIXL probe's CSV, written by its own torchrun run
+  kernels      native: per-kernel GPU time per decode step from the armed nsys
+               trace, optionally inside an NVTX window less another
   traces       always: the nsys / torch files instrumentation armed at launch
 
 A source that fails is recorded under `errors` and the others still run.
@@ -31,9 +33,9 @@ from pathlib import Path
 
 from quettabench.profiling import native, wrapped
 
-SOURCES = ("metrics", "energy", "cost", "gsm8k", "frontend", "pd_host", "kv_transfer")
+SOURCES = ("metrics", "energy", "cost", "gsm8k", "frontend", "pd_host", "kv_transfer", "kernels")
 # energy first (it waits for the run to end), sidecar requests next, file reads last
-ORDER = ("energy", "metrics", "gsm8k", "frontend", "pd_host", "cost", "kv_transfer")
+ORDER = ("energy", "metrics", "gsm8k", "frontend", "pd_host", "cost", "kv_transfer", "kernels")
 SECTION = {"gsm8k": "accuracy"}
 
 
@@ -54,7 +56,7 @@ def check_args(sources, args):
     if unknown:
         raise ValueError(f"unknown source(s) {unknown}; known: {', '.join(SOURCES)}")
     needs = {"cost": ("gpu_cost_hr",), "gsm8k": ("gsm8k_file", "gsm8k_n"),
-             "kv_transfer": ("kv_transfer_csv",)}
+             "kv_transfer": ("kv_transfer_csv",), "kernels": ("kernel_steps",)}
     for source in sources:
         missing = [k for k in needs.get(source, ()) if args.get(k) is None]
         if missing:
@@ -116,6 +118,9 @@ def run_source(source, results_dir, engine, args, energy):
         return native.pd_host(_endpoint(engine), model, args.get("pd_host_argv"))
     if source == "kv_transfer":
         return native.kv_transfer(args["kv_transfer_csv"])
+    if source == "kernels":
+        return native.kernel_summary(results_dir, args["kernel_steps"], args.get("kernel_window"),
+                                     args.get("kernel_subtract"))
     raise ValueError(f"unknown source {source}")
 
 
@@ -125,7 +130,8 @@ def profile(results_dir, sources, **source_args):
     source_args: nvidia_smi, interval_s, energy_s (energy); gpu_cost_hr (cost);
     gsm8k_file, gsm8k_n, tokenizer, gsm8k_tokenizer, gsm8k_generate (gsm8k);
     served_model (overrides config engine.model for requests); frontend_argv,
-    pd_host_argv (the probes' own flags); kv_transfer_csv.
+    pd_host_argv (the probes' own flags); kv_transfer_csv; kernel_steps,
+    kernel_window, kernel_subtract (kernels).
     """
     check_args(sources, source_args)
     results_dir = Path(results_dir)
@@ -193,6 +199,9 @@ def get_args(argv=None):
     ap.add_argument("--frontend-args", default="", help='serving_frontend flags, e.g. "--gpu-label H200"')
     ap.add_argument("--pd-host-args", default="", help="pd_host flags")
     ap.add_argument("--kv-transfer-csv", help="the CSV kv_transfer's torchrun run wrote")
+    ap.add_argument("--kernel-steps", type=int, help="decode steps the kernels window holds")
+    ap.add_argument("--kernel-window", help="NVTX range the kernels source reads (default all)")
+    ap.add_argument("--kernel-subtract", help="NVTX range whose kernel totals come off first")
     return ap, ap.parse_args(argv)
 
 
@@ -202,7 +211,9 @@ def main(argv=None):
             "gpu_cost_hr": a.gpu_cost_hr, "gsm8k_file": a.gsm8k_file, "gsm8k_n": a.gsm8k_n,
             "tokenizer": a.tokenizer, "served_model": a.served_model,
             "frontend_argv": shlex.split(a.frontend_args),
-            "pd_host_argv": shlex.split(a.pd_host_args), "kv_transfer_csv": a.kv_transfer_csv}
+            "pd_host_argv": shlex.split(a.pd_host_args), "kv_transfer_csv": a.kv_transfer_csv,
+            "kernel_steps": a.kernel_steps, "kernel_window": a.kernel_window,
+            "kernel_subtract": a.kernel_subtract}
     try:
         out = profile(a.run, a.source, **args)
     except ValueError as e:
