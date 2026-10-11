@@ -97,13 +97,27 @@ def docker_spec(*sets):
     return cfg, vllm.ADAPTER.translate(cfg)
 
 
+NAME = "qbench-llama-tp1-docker-77-abcdef"
+
+
+def fixed_name(case):
+    """Pin container_name's pid and random part for the rest of the test."""
+    for name, value in (("getpid", 77), ("urandom", b"\xab\xcd\xef")):
+        patch = mock.patch.object(launcher.os, name, return_value=value)
+        patch.start()
+        case.addCleanup(patch.stop)
+
+
 class DockerArgv(unittest.TestCase):
+    def setUp(self):
+        fixed_name(self)
+
     def test_example_yaml_argv(self):
         cfg, spec = docker_spec()
         repo = str(launcher.REPO)
         self.assertEqual(launcher.docker_argv(spec, cfg, "2", "/r/run"), [
-            "docker", "run", "-d", "--pull=never", "--init", "--name", "qbench-llama-tp1-docker",
-            "--gpus", '"device=2"', "--ipc=host", "--shm-size=16g", "-p", "8000:8000",
+            "docker", "run", "-d", "--pull=never", "--init", "--name", NAME,
+            "--label", "qbench.run_dir=/r/run", "--gpus", '"device=2"', "--ipc=host", "--shm-size=16g", "-p", "8000:8000",
             "-v", "/hf:/hf:ro", "-v", f"{repo}:{repo}:ro", "-v", "/r/run:/r/run",
             "-e", "VLLM_SERVER_DEV_MODE=1", "-e", "VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1",
             "-e", "NCCL_IB_DISABLE=1", "-e", "HF_HOME=/hf",
@@ -139,11 +153,12 @@ class DockerStart(unittest.TestCase):
 
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp())
+        fixed_name(self)
 
-    def run_mock(self, docker_rc=0):
+    def run_mock(self, docker_rc=0, created="c0ffee\n"):
         def run(argv, **kw):
             if argv[:2] == ["docker", "run"]:
-                return mock.Mock(returncode=docker_rc, stdout="c0ffee\n", stderr="no such image")
+                return mock.Mock(returncode=docker_rc, stdout=created, stderr="no such image")
             return mock.Mock(returncode=0, stdout="", stderr="")
         return mock.patch.object(launcher.subprocess, "run", side_effect=run)
 
@@ -165,20 +180,20 @@ class DockerStart(unittest.TestCase):
             self.assertEqual(run.call_args_list[0].args[0],
                              launcher.docker_argv(spec, cfg, "0", self.dir / "run"))
             self.assertEqual(popen.call_args.args[0],
-                             ["docker", "logs", "-f", "qbench-llama-tp1-docker"])
+                             ["docker", "logs", "-f", NAME])
             self.assertEqual(popen.call_args.kwargs["stdout"].name,
                              str(self.dir / "run" / "server.log"))
             healthy.assert_called_once_with(proc, "http://127.0.0.1:8000/health", 1800, 1.0)
             record = json.loads((self.dir / "run" / "engine.json").read_text())
             self.assertEqual((record["pid"], record["container"], record["container_id"],
                               record["image"]),
-                             (proc.pid, "qbench-llama-tp1-docker", "c0ffee",
+                             (proc.pid, NAME, "c0ffee",
                               "vllm/vllm-openai:v0.30.0"))
             self.assertEqual((handle.pid, handle.container_id), (proc.pid, "c0ffee"))
             handle.stop(grace_s=5)
             self.assertEqual(self.docker_calls(run),
-                             [["docker", "stop", "-t", "5", "qbench-llama-tp1-docker"],
-                              ["docker", "rm", "-f", "qbench-llama-tp1-docker"]])
+                             [["docker", "stop", "-t", "5", NAME],
+                              ["docker", "rm", "-f", NAME]])
             proc.wait.assert_called_once_with(timeout=15)
 
     def test_stop_kills_a_log_stream_that_does_not_end(self):
@@ -190,10 +205,12 @@ class DockerStart(unittest.TestCase):
                 mock.patch.object(launcher, "wait_healthy"):
             self.start(cfg, spec).stop(grace_s=5)
         proc.kill.assert_called_once_with()
-        self.assertEqual(run.call_args.args[0], ["docker", "rm", "-f", "qbench-llama-tp1-docker"])
+        self.assertEqual(run.call_args.args[0], ["docker", "rm", "-f", NAME])
 
-    def test_container_name_is_made_docker_safe(self):
-        self.assertEqual(launcher.container_name("a/b c:d_e.f-g"), "qbench-a-b-c-d_e.f-g")
+    def test_container_name_is_made_docker_safe_and_unique(self):
+        self.assertEqual(launcher.container_name("a/b c:d_e.f-g"), "qbench-a-b-c-d_e.f-g-77-abcdef")
+        mock.patch.stopall()
+        self.assertNotEqual(launcher.container_name("r"), launcher.container_name("r"))
 
     def test_unhealthy_container_is_stopped(self):
         cfg, spec = docker_spec()
@@ -212,10 +229,17 @@ class DockerStart(unittest.TestCase):
                 self.start(cfg, spec)
         popen.assert_not_called()
         self.assertEqual(self.docker_calls(run),
-                         [["docker", "logs", "qbench-llama-tp1-docker"],
-                          ["docker", "rm", "-f", "qbench-llama-tp1-docker"]])
+                         [["docker", "logs", "c0ffee"], ["docker", "rm", "-f", "c0ffee"]])
         self.assertEqual(run.call_args_list[1].kwargs["stdout"].name,
                          str(self.dir / "run" / "server.log"))
+        self.assertEqual((self.dir / "run" / "server.log").read_text(), "no such image")
+
+    def test_a_docker_run_that_created_nothing_removes_nothing(self):
+        cfg, spec = docker_spec()
+        with self.run_mock(docker_rc=125, created="") as run, \
+                self.assertRaisesRegex(RuntimeError, "docker run exited with 125"):
+            self.start(cfg, spec)
+        self.assertEqual(self.docker_calls(run), [])
         cfg, spec = docker_spec("engine.image=null")
         with self.run_mock() as run, self.assertRaisesRegex(ConfigError, "needs engine.image"):
             self.start(cfg, spec)

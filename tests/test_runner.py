@@ -175,8 +175,9 @@ class DockerDryRun(unittest.TestCase):
         self.assertIsNone(exit_msg)
         self.assertIn("hardware.launcher = 'docker'  (run)", out.splitlines())
         (line,) = [x for x in out.splitlines() if x.startswith("docker = ")]
-        self.assertTrue(line.startswith("docker = docker run -d --pull=never --init --name "
-                                        "qbench-llama-tp1-docker --gpus '\"device=0\"' "))
+        self.assertRegex(line, r"^docker = docker run -d --pull=never --init --name "
+                               r"qbench-llama-tp1-docker-\d+-[0-9a-f]{6} --label "
+                               r"qbench\.run_dir=\S+/llama-tp1-docker --gpus '\"device=0\"' ")
         self.assertTrue(line.endswith("vllm/vllm-openai:v0.30.0 serve /w --port 8000 "
                                       "--tensor-parallel-size 1 --dtype float16 --max-model-len "
                                       "9216 --gpu-memory-utilization 0.9 "
