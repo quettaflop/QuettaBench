@@ -10,7 +10,8 @@ MAX_SUBJECT = 72
 SUBJECT = re.compile(r"^[a-z][a-z0-9_./-]*: \S")
 # Messages git writes itself, left as git writes them.
 GIT_SUBJECT = re.compile(r"^(Merge |Revert \"|fixup! |squash! )")
-ATTRIBUTION = re.compile(r"co-authored-by:|generated with|\bclaude\b", re.IGNORECASE)
+# Any "<Word>-by:" trailer or "generated with/by" line: commits carry no authorship beyond the author field.
+ATTRIBUTION = re.compile(r"^\s*[A-Za-z]+(?:-[A-Za-z]+)*-by:|generated (?:with|by)\b", re.IGNORECASE)
 DASHES = ("—", "–")
 
 
@@ -28,7 +29,7 @@ def problems(message: str) -> list[str]:
         found.append("subject is not '<area>: <change>' (lowercase area, colon, space)")
     for n, line in enumerate(lines, 1):
         if ATTRIBUTION.search(line):
-            found.append(f"line {n}: AI attribution: {line.strip()}")
+            found.append(f"line {n}: attribution trailer: {line.strip()}")
         if any(d in line for d in DASHES):
             found.append(f"line {n}: em-dash or en-dash; write --")
     return found

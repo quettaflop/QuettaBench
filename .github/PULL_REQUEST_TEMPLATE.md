@@ -17,6 +17,6 @@
 
 - [ ] **Numbers:** goldens pass unchanged, or the behaviour change has a dated line in `tests/golden/REPORT.md`.
 - [ ] **Commits:** one mechanism each, about 300 changed lines, subject `<area>: <change>` at most 72 chars.
-- [ ] **Attribution:** no AI attribution in code, commits or this PR.
+- [ ] **Attribution:** no attribution trailers in code, commits or this PR.
 - [ ] **Rules:** follows `AGENTS.md`.
 </details>

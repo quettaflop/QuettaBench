@@ -39,7 +39,7 @@ repos:
     files: ^quettabench/
     types: [text]
   - id: check-commit-msg
-    name: "Commit message: '<area>: <change>', <= 72 chars, no AI attribution, no em-dash"
+    name: "Commit message: '<area>: <change>', <= 72 chars, no attribution trailers, no em-dash"
     entry: python tools/pre_commit/check_commit_msg.py
     language: python
     stages: [commit-msg]

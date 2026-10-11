@@ -65,7 +65,7 @@ in one results layer, `results/<run>/`, and leaves the repo by one route,
 - Goldens pass unchanged. A fixture that has to change is a behaviour change
   and gets its line in `tests/golden/REPORT.md`.
 - `just test` and `just lint` are green before every commit.
-- No AI attribution in code, commits or PRs, including commit trailers.
+- No attribution trailers in code, commits or PRs: the author field is the only authorship.
 - No em-dash in prose; write `--`.
 - Imports at the top of the file. No inline python in shell or justfile
   recipes; a recipe is one command line into the package.
