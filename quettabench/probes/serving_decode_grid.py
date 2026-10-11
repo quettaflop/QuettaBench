@@ -37,6 +37,7 @@ for _p in [e for e in sys.path if e == _SCRIPT_DIR]:
     sys.path.remove(_p)
 
 from quettabench.engines import launcher  # noqa: E402
+from quettabench.probes.base import run_recorded  # noqa: E402
 
 # aiohttp is needed only at MEASUREMENT time (on the GPU host). The local builder/test import
 # of this module (for summarize_cell / the lattice) must work without it.
@@ -522,4 +523,4 @@ def main(argv=None) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    run_recorded(main, "serving_decode_grid", file_flag="--out-raw")

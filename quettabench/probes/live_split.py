@@ -20,7 +20,7 @@ import time
 import aiohttp
 import numpy as np
 
-from quettabench.probes.base import add_output_args, out_root
+from quettabench.probes.base import add_output_args, out_root, run_recorded
 
 _VOCAB = ("the of and to in a is that for it as was with on be at by this had not are but from or "
           "have an they which one you were her all she there would their we him been has when who "
@@ -102,4 +102,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    run_recorded(lambda: asyncio.run(main()), "live_split")

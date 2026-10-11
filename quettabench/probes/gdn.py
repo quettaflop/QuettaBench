@@ -31,7 +31,7 @@ from vllm.model_executor.layers.fla.ops import (
 )
 
 from quettabench.probes._ncu import ncu_op_us
-from quettabench.probes.base import add_output_args, out_root
+from quettabench.probes.base import add_output_args, out_root, run_recorded
 
 # chunk_gated_delta_rule's solve_tril merge kernel autotunes on a fresh host (no
 # Triton disk cache) and needs a scratch allocator; vLLM sets one at model init, a
@@ -186,4 +186,4 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    main()
+    run_recorded(main, "gdn")

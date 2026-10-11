@@ -42,7 +42,7 @@ import csv
 import torch
 import torch.distributed as dist
 
-from quettabench.probes.base import add_output_args, out_root
+from quettabench.probes.base import add_output_args, out_root, run_recorded
 
 _DTYPE = torch.bfloat16
 _ITERS, _WARMUP = 50, 10
@@ -155,7 +155,8 @@ def main(argv=None):
         print(f"  link_bw_bytes_per_s: {link_bw_bytes_per_s:.3e}")
         print("  # source: measured   # <- uncomment to make this device use the grid above")
     dist.destroy_process_group()
+    return rank == 0  # run_recorded: only rank 0 records the run
 
 
 if __name__ == "__main__":
-    main()
+    run_recorded(main, "collective")

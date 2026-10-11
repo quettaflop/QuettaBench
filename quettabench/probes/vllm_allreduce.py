@@ -22,7 +22,7 @@ import os
 import torch
 import torch.distributed as dist
 
-from quettabench.probes.base import add_output_args, out_root
+from quettabench.probes.base import add_output_args, out_root, run_recorded
 
 _ITERS, _WARMUP = 50, 10
 # Full logical buffer sizes (bytes): decode payloads (batch x hidden x 2B, a few KB..MB)
@@ -106,7 +106,8 @@ def main(argv=None):
                 w.writerow([r[0], round(r[1], 4), round(r[2], 4)])
     dist.barrier()
     dist.destroy_process_group()
+    return rank == 0  # run_recorded: only rank 0 records the run
 
 
 if __name__ == "__main__":
-    main()
+    run_recorded(main, "vllm_allreduce")

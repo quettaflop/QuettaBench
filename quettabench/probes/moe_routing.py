@@ -34,7 +34,7 @@ import torch
 from safetensors.torch import save_file
 from transformers import AutoConfig, AutoModelForCausalLM
 
-from quettabench.probes.base import add_output_args, out_root
+from quettabench.probes.base import add_output_args, out_root, run_recorded
 
 # ref_full.py's 16 fixed prompt ids (below Kimi-K3's 163840 vocab; no tokenizer).
 PROMPT_IDS = [1, 4321, 100, 65535, 2048, 777, 31415, 9,
@@ -143,4 +143,4 @@ def main(argv=None) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    run_recorded(main, "moe_routing")

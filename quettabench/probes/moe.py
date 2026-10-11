@@ -48,7 +48,7 @@ import statistics as st
 
 import torch
 
-from quettabench.probes.base import add_output_args, out_root
+from quettabench.probes.base import add_output_args, out_root, run_recorded
 
 # Per-expert geometry of every MoE model in engine/device_spec/models/.
 # (n_experts, top_k, intermediate_per_expert, hidden). `intermediate` is sharded
@@ -409,4 +409,4 @@ def main(argv=None) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    run_recorded(main, "moe")

@@ -45,7 +45,7 @@ import numpy as np
 import torch
 import torch.distributed as dist
 
-from quettabench.probes.base import add_output_args, out_root
+from quettabench.probes.base import add_output_args, out_root, run_recorded
 
 KEY = ("gpu", "world", "tp_from", "tp_to", "total_weight_gb")
 COLS = KEY + ("k", "bytes_moved_per_gpu", "comm_ms", "eff_gbps", "pattern",
@@ -104,7 +104,7 @@ def _groups_of(k: int, world: int) -> list[list[int]]:
     return [list(range(g, g + k)) for g in range(0, world, k)]
 
 
-def main(argv=None) -> None:
+def main(argv=None) -> bool:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     add_output_args(ap)
@@ -192,6 +192,7 @@ def main(argv=None) -> None:
         if seen:
             print(f"\n  bw_bytes_per_s (median): {np.median(seen):.3e}")
     dist.destroy_process_group()
+    return rank == 0  # run_recorded: only rank 0 records the run
 
 
 def _measure_tp(a, rank: int, world: int, _get_groups) -> list[dict]:
@@ -637,4 +638,4 @@ def _measure_plan(a, rank: int, world: int) -> list[dict]:
 
 
 if __name__ == "__main__":
-    main()
+    run_recorded(main, "reparallel")

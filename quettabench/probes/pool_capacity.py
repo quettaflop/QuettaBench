@@ -28,7 +28,7 @@ for _p in [e for e in sys.path if e == _SCRIPT_DIR]:
 import aiohttp  # noqa: E402
 
 from quettabench.engines import launcher  # noqa: E402
-from quettabench.probes.base import add_output_args, out_root  # noqa: E402
+from quettabench.probes.base import add_output_args, out_root, run_recorded  # noqa: E402
 
 _VOCAB = ("the of and to in a is that for it as was with on be at by this had not are but from or "
           "have an they which one you were her all she there would their we him been has when who "
@@ -149,4 +149,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    run_recorded(main, "pool_capacity")

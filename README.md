@@ -88,7 +88,9 @@ just run configs/runs/llama-tp1-docker.yaml --set engine.model=/w/llama
 
 Grid runs no longer write `results/baselines/*.json`; `qbench crossval`
 reads the run dir, and still reads old baselines files. Probe recipes write
-`results/probes/<gpu>/`; `just export` is the only route to QuettaSim.
+`results/probes/<gpu>/`, and each probe run records itself in
+`results/probes/<gpu>/<probe>/run.json` (argv, provenance, run_status);
+`just export` is the only route to QuettaSim.
 
 ## Cross-validation
 

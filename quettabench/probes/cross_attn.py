@@ -24,7 +24,7 @@ import statistics as st
 import torch
 from vllm.vllm_flash_attn.flash_attn_interface import flash_attn_varlen_func
 
-from quettabench.probes.base import add_output_args, out_root
+from quettabench.probes.base import add_output_args, out_root, run_recorded
 
 Q_AXIS = [512, 1024, 2048, 4096, 8192]
 CTX_AXIS = [0, 1024, 2048, 4096, 8192, 12288, 16384, 24576, 32768]
@@ -118,4 +118,4 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    main()
+    run_recorded(main, "cross_attn")

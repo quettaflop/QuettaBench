@@ -42,7 +42,7 @@ import torch
 import yaml
 
 from quettabench.probes._graph import graph_time_us
-from quettabench.probes.base import add_output_args, out_root
+from quettabench.probes.base import add_output_args, out_root, run_recorded
 
 DEFAULT_PREFILL = [512, 1024, 2048, 4096, 8192]
 _VLLM_CTX = None      # see main(): must outlive every CustomOp construction
@@ -229,4 +229,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    run_recorded(main, "fused_block")

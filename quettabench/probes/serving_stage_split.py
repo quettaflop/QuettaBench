@@ -34,6 +34,7 @@ for _p in [e for e in sys.path if e == _SCRIPT_DIR]:
 import aiohttp  # noqa: E402  (after the sys.path scrub)
 
 from quettabench.engines import launcher  # noqa: E402
+from quettabench.probes.base import run_recorded  # noqa: E402
 
 # ------------------------------------------------------------------------------------------------
 # Prompt construction -- reused verbatim from live_ttft_probe.py so the wall TTFT reproduces the
@@ -461,4 +462,4 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    main()
+    run_recorded(main, "serving_stage_split", file_flag="--out")

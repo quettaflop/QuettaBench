@@ -16,7 +16,7 @@ import statistics as st
 import torch
 import torch.nn.functional as F
 
-from quettabench.probes.base import add_output_args, out_root
+from quettabench.probes.base import add_output_args, out_root, run_recorded
 
 # (reads, writes) per kernel -- MUST match kernel_composed/elementwise.py::_IO
 IO = {"rmsnorm": (1, 1), "silu_mul": (2, 1), "rotary_emb": (1, 1), "residual_add": (2, 1)}
@@ -177,4 +177,4 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    main()
+    run_recorded(main, "elementwise")

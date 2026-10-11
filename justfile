@@ -83,7 +83,8 @@ gpu-info:
 probe name *args:
     CUDA_VISIBLE_DEVICES={{gpu_id}} {{py}} -m quettabench.probes.{{name}} {{args}}
 
-# Run a probe on REMOTE_HOST: ship the probes package, run it there (NPROC>1 = one rank per
+# Run a probe on REMOTE_HOST: ship the probes package (and the schema and run writer its
+# run.json needs), run it there (NPROC>1 = one rank per
 # GPU in GPU_IDS through torchrun), pull the tables into results/probes/<gpu>/.
 remote-probe name gpu=gpu *args:
     #!/usr/bin/env bash
@@ -91,7 +92,7 @@ remote-probe name gpu=gpu *args:
     : "${REMOTE_HOST:?set REMOTE_HOST to the ssh host or alias}"
     rdir=/tmp/qbench-probes
     ssh -o BatchMode=yes "$REMOTE_HOST" "mkdir -p $rdir/out"
-    rsync -a --relative -e 'ssh -o BatchMode=yes' quettabench/__init__.py quettabench/probes/ "$REMOTE_HOST:$rdir/"
+    rsync -a --relative -e 'ssh -o BatchMode=yes' quettabench/__init__.py quettabench/probes/ quettabench/config/__init__.py quettabench/config/schema.py quettabench/metrics/__init__.py quettabench/metrics/results.py "$REMOTE_HOST:$rdir/"
     if [ "${NPROC:-1}" -gt 1 ]; then
         launch="CUDA_VISIBLE_DEVICES=${GPU_IDS:-{{gpu_id}}} {{py}} -m torch.distributed.run --nproc_per_node=$NPROC -m quettabench.probes.{{name}}"
     else
