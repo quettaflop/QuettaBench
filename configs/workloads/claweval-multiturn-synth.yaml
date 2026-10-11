@@ -18,5 +18,5 @@ agent_type: computer-use
 turn_style: multi-turn
 serving_style: not-disaggregated
 data_source: distributional
-active: true
+active: false
 sampler: analysis.synthetic
