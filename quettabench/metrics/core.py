@@ -302,13 +302,13 @@ class BenchmarkSummary:
     p90_ttft_ms: float = 0.0
     p99_ttft_ms: float = 0.0
 
-    # TPOT / mean ITL (ms) — time per output token excluding first
+    # TPOT / mean ITL (ms) -- time per output token excluding first
     mean_tpot_ms: float = 0.0
     median_tpot_ms: float = 0.0
     p90_tpot_ms: float = 0.0
     p99_tpot_ms: float = 0.0
 
-    # ITL (ms) — individual inter-token latencies (all tokens pooled)
+    # ITL (ms) -- individual inter-token latencies (all tokens pooled)
     mean_itl_ms: float = 0.0
     median_itl_ms: float = 0.0
     p90_itl_ms: float = 0.0

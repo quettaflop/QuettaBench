@@ -1,7 +1,7 @@
-# Serving-level prefill stage-split — design + H100 run recipe
+# Serving-level prefill stage-split -- design + H100 run recipe
 
 **Goal.** A serving-level per-stage cost breakdown of c1 prefill **TTFT** as a function of
-`(new, cached)` prompt tokens, with a **reliable device-vs-host split** — the thing the offline
+`(new, cached)` prompt tokens, with a **reliable device-vs-host split** -- the thing the offline
 attempt (`prefill_stage_split.py`) could not do. Partition the wall TTFT into:
 
 ```
@@ -10,9 +10,9 @@ model-forward (DEVICE) | framework-dispatch | sample | detokenize | response-str
 ```
 
 Artifacts:
-- `quettabench/probes/serving_stage_split.py` — the instrumented live bench.
-- `quettabench/probes/serving_stage_split.py` — regress each stage on `(new,cached)`.
-- this doc — rationale, device-timing method, exact H100 recipe, VERIFY-ON-H100 checklist, feed-back.
+- `quettabench/probes/serving_stage_split.py` -- the instrumented live bench.
+- `quettabench/probes/serving_stage_split.py` -- regress each stage on `(new,cached)`.
+- this doc -- rationale, device-timing method, exact H100 recipe, VERIFY-ON-H100 checklist, feed-back.
 
 ---
 
@@ -50,7 +50,7 @@ The new bench **reuses these as constants** and only resolves the two open resid
    so a main-process `torch.profiler` sees **zero** CUDA kernels. The offline workaround
    `VLLM_ENABLE_V1_MULTIPROCESSING=0` is NOT the serving topology and breaks tp>1.
 
-**Fix — three layered lanes:**
+**Fix -- three layered lanes:**
 
 - **LANE 0 (no patch).** Client `perf_counter` around the aiohttp SSE stream → un-perturbed wall
   TTFT. This is the trustworthy ground truth (== `live_ttft_probe.py`) and the partition target.
@@ -64,7 +64,7 @@ The new bench **reuses these as constants** and only resolves the two open resid
   2). Device time = `Σ(end−start)` over CUPTI kernel rows inside a per-step **NVTX** range emitted
   from a worker monkeypatch. `device = Σ busy` (never `> wall` pathologically; fixes failure 1).
   `framework_dispatch = prefill_span − device_kernel`. Cross-checked by `torch.cuda.Event` brackets
-  (the pattern proven in `cached_prefill_steps_v3.py` — Events time the graph **replay** span, so
+  (the pattern proven in `cached_prefill_steps_v3.py` -- Events time the graph **replay** span, so
   they are immune to all three failures).
 
 Why this beats the offline attempt: neither nsys nor the in-process Event hook needs
@@ -112,7 +112,7 @@ PYTHON=~/miniconda3/envs/vllm/bin/python
 MODEL=/data48/kevinlau/models/Llama-3.1-8B-Instruct
 ```
 
-### 4a. LANE 0 + LANE A (no patch) — the main run
+### 4a. LANE 0 + LANE A (no patch) -- the main run
 
 The script self-launches the OpenAI server (same bench config: prefix-cache + chunked-prefill,
 gpu-mem 0.9, stats ON), health-polls `/health`, then sweeps `(new × cached)` at c1 with a
@@ -133,7 +133,7 @@ ttft_prom_ms, prompt_tokens_actual`.
 `frontend_residual.cached` delta vs `--hash sha256` is the SHA-256 prefix-cache block-hash cost
 (the external-lit lead). Write to a `_builtin` CSV and diff.
 
-### 4b. LANE B (device split) — separate nsys-wrapped run
+### 4b. LANE B (device split) -- separate nsys-wrapped run
 
 Print the exact command + the worker hook, then run it by hand (kept separate so the profiled wall
 does not contaminate the Lane-0/A walls):
@@ -197,7 +197,7 @@ split of the NEW prefill slope.
    TTFT). If a name differs, the matching column is left blank and `frontend_residual` still works
    (it only needs queue + prefill; if those are missing, fall back to the LANE 0 wall + LANE B).
 3. **Each histogram has a `*_sum`** cumulative counter and at c1 it advances by exactly one request
-   between two scrapes (single model label series — one model loaded).
+   between two scrapes (single model label series -- one model loaded).
 4. **Stats ON by default** (server launched WITHOUT `--disable-log-stats`). The launch in this
    script does not pass it; confirm `/metrics` returns the histograms at startup (the script prints
    which are present).
@@ -216,7 +216,7 @@ split of the NEW prefill slope.
 8. **`--prefix-caching-hash-algo`** is still a settable server flag (the offline script guards it
    with try/except). If rejected, drop the block-hash toggle.
 9. **`X-Request-Id`** header is honored by the chat endpoint (propagation key for a future per-request
-   Lane-B join). If unsupported it is ignored — the c1 1:1 step↔request map still holds.
+   Lane-B join). If unsupported it is ignored -- the c1 1:1 step↔request map still holds.
 10. **Reproduce the banked rates** new 29.4 / cached 5.89 ms/1k on `ttft_ms` before trusting any new
     per-stage split (the analyzer prints this gate).
 
@@ -228,7 +228,7 @@ split of the NEW prefill slope.
   LANE B, `prefill_span.new − 25 (roofline)` is an upper bound. Expect ~6 ms/1k.
 - **`PREFILL_HOST_SHARED` / `PREFILL_HOST_PERREQ`** ← `frontend_residual.cached` is the c1 **SUM**
   (~3.7 ms/1k of HTTP-parse + chat-template + IPC + detok). c1 cannot identify the shared/perreq
-  split (the two regressors are the identical `cached` column at 1 req/step) — the split stays at
+  split (the two regressors are the identical `cached` column at 1 req/step) -- the split stays at
   the **50/50** from the live concurrency B-sweep (`quettabench/probes/live_split.py`). This bench measures the
   SUM and attributes it to the frontend host stack (not model physics), confirming the 2.8 HTTP +
   0.7 IPC decomposition.

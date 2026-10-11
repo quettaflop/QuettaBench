@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Live concurrency sweep — measure the cached-host SHARED vs PER-REQ split on the REAL serving stack.
+"""Live concurrency sweep -- measure the cached-host SHARED vs PER-REQ split on the REAL serving stack.
 
 The offline batch CSV gave the wrong split (it lacked the HTTP/IPC stack that dominates the cached rate).
 This fires B CONCURRENT cache-hit requests (shared primed prefix P + a fresh small new tail each) at the live
-vLLM server and measures per-request TTFT, then fits TTFT(B,P) = floor + shared*P + perreq*B*P — the exact
+vLLM server and measures per-request TTFT, then fits TTFT(B,P) = floor + shared*P + perreq*B*P -- the exact
 decomposition the headline applies (shared once/step + perreq per request). Reports the shared/perreq split.
 
   python3 -m quettabench.probes.live_split --gpu-label H100 --url http://localhost:8771/v1/chat/completions

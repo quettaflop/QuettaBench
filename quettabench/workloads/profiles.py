@@ -3,7 +3,7 @@ Workload profile definitions.
 
 Profiles are organized into groups:
   Group 1: Real agent data (SWEBench PLLM, SWEBench trajectories, TerminalBench trajectories)
-  Group 2: Chat — single-turn and multi-turn (ShareGPT)
+  Group 2: Chat -- single-turn and multi-turn (ShareGPT)
   Group 3: Synthetic stress tests (random tokens)
 
 Each profile defines the data source, ISL/OSL bounds, and metadata tags.
@@ -60,7 +60,7 @@ PROFILES: dict[str, WorkloadProfile] = {
     # Group 1: Real Agent Data
     # ===================================================================
 
-    # Single-turn planning-model call — real SWE-Bench prompts. The JSONL
+    # Single-turn planning-model call -- real SWE-Bench prompts. The JSONL
     # drives actual token lengths; isl_tokens/osl_tokens are metadata caps.
     "coding-singleturn": WorkloadProfile(
         name="coding-singleturn",
@@ -248,7 +248,7 @@ PROFILES: dict[str, WorkloadProfile] = {
         data_source="distributional",
     ),
 
-    # Multi-turn SWEBench coding agent — real trajectories from harbor/jobs/
+    # Multi-turn SWEBench coding agent -- real trajectories from harbor/jobs/
     # Note: "turns" here are agent steps (tool calls), not logical conversation rounds.
     # SWEBench sessions have min=13, median=85, max=320 steps.
     # Data uses compressed trajectory.json (summary messages ~100 chars each).
@@ -313,7 +313,7 @@ PROFILES: dict[str, WorkloadProfile] = {
         data_source="swebench",
         active=False,
     ),
-    # Multi-turn TerminalBench CLI agent — real trajectories from harbor/jobs/
+    # Multi-turn TerminalBench CLI agent -- real trajectories from harbor/jobs/
     # Note: "turns" here are agent steps (tool calls), not logical conversation rounds.
     # TerminalBench sessions have min=2, median=61, max=876 steps.
     # Data uses compressed trajectory.json (summary messages ~100 chars each).
@@ -378,7 +378,7 @@ PROFILES: dict[str, WorkloadProfile] = {
         data_source="terminalbench",
         active=False,
     ),
-    # Multi-turn OSWorld computer-use agent — real WebArena trajectories
+    # Multi-turn OSWorld computer-use agent -- real WebArena trajectories
     # Note: "turns" here are agent steps (browser actions).
     # OSWorld sessions have min=1, median=8, max=30 steps.
     # ISL/OSL ratio ~120:1 (massive DOM context, tiny action output).
@@ -444,7 +444,7 @@ PROFILES: dict[str, WorkloadProfile] = {
     ),
 
     # ===================================================================
-    # Group 2: Chat — ShareGPT (single-turn and multi-turn)
+    # Group 2: Chat -- ShareGPT (single-turn and multi-turn)
     # ===================================================================
 
     # --- Single-turn ---
@@ -667,7 +667,7 @@ PROFILES: dict[str, WorkloadProfile] = {
         isl_tokens=128,
         osl_tokens=128,
         isl_stddev=0.0,
-        description="Fixed ISL=128 OSL=128 random tokens — matches ncu prefill_seq128_bs1 for predictor validation.",
+        description="Fixed ISL=128 OSL=128 random tokens -- matches ncu prefill_seq128_bs1 for predictor validation.",
         dataset="random",
         tokenizer_name="meta-llama/Llama-3.1-8B-Instruct",
         mode="stress-test",

@@ -4,7 +4,7 @@ Goal: replace the H100 PLACEHOLDERS in `configs/gpus/A100.json`
 (`util_flops=0.65 / util_bw=0.93 / scheduler_overhead_ms_per_step=5.7`) with values
 measured ON the A100, using the SAME pre-registered recipe that re-derived the H100
 values (`profiling/docs/defit_log_entries/L6-utils.md`,
-`quettabench/export/quettasim/roofline_utils.py`). The recipe is pinned — do NOT tune it on
+`quettabench/export/quettasim/roofline_utils.py`). The recipe is pinned -- do NOT tune it on
 the A100 numbers; if the A100 data violates a recipe assumption, record the deviation in
 the de-fit log and stop.
 
@@ -15,19 +15,19 @@ capture is latency-sensitive (engine step walls in the 6-20 ms range; host/HBM/P
 contention from sibling GPUs moves them), so running now would contaminate BOTH the
 campaign's numbers and ours. Run this when the preflight in step 1 passes.
 
-## Host facts (recorded at launch — verify with preflight, do not assume)
+## Host facts (recorded at launch -- verify with preflight, do not assume)
 
-- ssh alias: `a100` (preflight-verified 2026-06-10: resolves to hostname `gpu-4` — the
+- ssh alias: `a100` (preflight-verified 2026-06-10: resolves to hostname `gpu-4` -- the
   campaign table's `gpu-4` and the launch note's `a100` are the SAME machine; use the
   `a100` alias).
 - Model weights: under `/data/models` (expect `Llama-3.1-8B-Instruct`; **Rule #1: never
-  download** — if missing, STOP and report).
+  download** -- if missing, STOP and report).
 - Python env: `/home/kevinlau/miniconda3/envs/vllm` (use this env's `vllm`/`python`).
-- GPU: A100-SXM4-40GB (1.555 TB/s HBM2e, 312 TFLOPS BF16 dense) — matches
+- GPU: A100-SXM4-40GB (1.555 TB/s HBM2e, 312 TFLOPS BF16 dense) -- matches
   `profile_data/kernels/roofline_params_A100_llama31_8b.json` peaks, which the builder
   reads for `--gpu A100`.
 - Fresh run dir per attempt (mirror the h100_setup.md convention): e.g.
-  `/data/kevinlau/l6_roofline_run_<date>/` — never reuse, never `rm` inside an ssh
+  `/data/kevinlau/l6_roofline_run_<date>/` -- never reuse, never `rm` inside an ssh
   command (deny rule).
 
 ## Capture harness: the honest gap
@@ -36,7 +36,7 @@ The H100 `*_benchmark_serving_wall.jsonl` traces were produced by a live-server
 instrumentation patch that was **never committed** (audit-v2 already flags the sched
 anchor's slice as non-regenerable). Before the A100 run, recover the harness from the
 H100 host (`h100_setup.md` env) or re-implement it. The builder's input contract is
-small — any harness emitting one JSON object per scheduler step with these fields works:
+small -- any harness emitting one JSON object per scheduler step with these fields works:
 
 | field | meaning |
 |---|---|
@@ -64,7 +64,7 @@ engine step, not a replay).
    - `df -BG /data` shows at least 20 GiB free for the run dir and traces
 2. Launch the instrumented vLLM OpenAI server on the ONE free GPU
    (`CUDA_VISIBLE_DEVICES=<idx>`), Llama-3.1-8B-Instruct from `/data/models`, with
-   engine flags matching the deployment config (`configs/deployments/` A100 tp1 entry —
+   engine flags matching the deployment config (`configs/deployments/` A100 tp1 entry --
    note A100 resolves `max_num_batched_tokens=2048`, unlike H100's 8192).
 3. Run the same two workloads that dominate the H100 derivation's step counts
    (`swe c40 t12` and `terminal c80 t16` profiles via inference-benchmark), capturing

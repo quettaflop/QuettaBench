@@ -57,7 +57,7 @@ def test_collect_groups_per_request_by_turn_index(tmp_path: Path) -> None:
 def test_collect_skips_per_turn_aggregates(tmp_path: Path) -> None:
     bench_dir = tmp_path / "bench"
     bench_dir.mkdir()
-    # Aggregate file — should be skipped even if it has a per_request field.
+    # Aggregate file -- should be skipped even if it has a per_request field.
     (bench_dir / "chat_conc1_per_turn.json").write_text(
         json.dumps({"config": {"profile": "x", "concurrency": 1}, "per_request": [
             {"success": True, "turn_index": 0, "output_tokens": 999, "new_prefill_tokens": 0, "cached_context_tokens": 0},

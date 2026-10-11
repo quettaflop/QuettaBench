@@ -5,11 +5,11 @@
 The measurement client (``quettabench/probes/serving_decode_grid.py``) writes an
 APPEND-ONLY raw per-request JSONL.gz per session (wall-anchored SSE event timestamps). This
 builder re-derives every cell row from the raw events with the SAME pre-registered
-post-processing (``summarize_cell``, imported from the client module — single source of truth):
+post-processing (``summarize_cell``, imported from the client module -- single source of truth):
 steady window = [max first-token, min last-token]; per-request p50 mid-stream ITL inside the
 window (>= 64 in-window deltas per request, else ``check``); cell decode_step_ms = median over
 the per-request p50s; effective context_len = prompt + median in-window progress. Where a cell
-appears in several inputs, the LATEST input (list order = chronological) wins — the
+appears in several inputs, the LATEST input (list order = chronological) wins -- the
 ``build_decode_grid.py`` merge rule.
 
 Output CSV columns (L11 pre-registration):
@@ -69,7 +69,7 @@ def build(inputs: list[Path], snap_tolerance: float = 0.02,
     ``snap_tolerance`` (L11 builder amendment, decided PRE-GATE on consumer-structure grounds,
     no validation data consulted): the lattice's ``prompt = T - osl/2`` design targets an
     effective context == nominal T at the steady-window middle, and the measured effectives land
-    within ~1.5% of nominal — but as raw floats they are UNIQUE per (B, T) cell, which makes
+    within ~1.5% of nominal -- but as raw floats they are UNIQUE per (B, T) cell, which makes
     every ``load_grid`` t-axis column single-B (ragged), so the consumer's bilinear corners mix
     measured cells with analytic fills almost everywhere, diluting the measurement. The builder
     therefore SNAPS ``context_len`` to the cell's nominal T when the measured effective is
@@ -78,7 +78,7 @@ def build(inputs: list[Path], snap_tolerance: float = 0.02,
     A deviation beyond the tolerance means the steady window was asymmetric/disturbed: the cell
     keeps its measured effective AND is flagged ``check``.
 
-    ``lag_upgrade`` (L13 builder amendment, DEFAULT OFF — every pre-L13 artifact regenerates
+    ``lag_upgrade`` (L13 builder amendment, DEFAULT OFF -- every pre-L13 artifact regenerates
     byte-identically; decided on consumer-structure grounds before the L13 grid wiring gate):
     the p99-loop-lag ``check`` flag exists to catch CLIENT-side measurement distortion, and the
     L11 pass-2 finding was that cross-topology reproducibility falsifies that distortion
@@ -90,11 +90,11 @@ def build(inputs: list[Path], snap_tolerance: float = 0.02,
     ``ok`` iff ALL deterministic criteria hold:
       * the cell was measured in >= 2 input passes (independent client topologies);
       * EVERY pass is hygiene-clean (no empty-stream drops, in-window deltas >= min_samples,
-        positive steady window) — i.e. the only flag reason anywhere is loop lag;
+        positive steady window) -- i.e. the only flag reason anywhere is loop lag;
       * the final (latest-wins) row's flag is lag-only, with the snap check passing;
       * cross-pass decode_step_ms spread <= 0.5% of the adopted (latest) value;
       * the adopted pass's p99 loop lag is <= 1.5x the flag limit (a genuinely lag-disturbed
-        run cannot be upgraded by an agreeing pair — it must be re-measured clean).
+        run cannot be upgraded by an agreeing pair -- it must be re-measured clean).
     Upgraded rows carry the evidence (pass count, spread, per-pass lags) in the
     ``lag_reproducibility_upgrade`` diagnostic column."""
     import inspect

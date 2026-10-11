@@ -5,7 +5,7 @@ Each multi-turn benchmark JSON under the results dirs has a ``per_request`` list
 top-level views into the same JSON sidecar:
 
 1. Per-(profile, concurrency, turn_index) distributions for the simple
-   uniform-arrival simulator path (legacy keying — back-compat).
+   uniform-arrival simulator path (legacy keying -- back-compat).
 2. Per-(profile, concurrency) **session timelines** for the wall-clock
    multi-turn replay simulator.  Each session is an ordered list of turns
    with arrival/completion offsets relative to cohort start.  This is what
@@ -187,7 +187,7 @@ def collect_per_request_distributions(
 ) -> dict[str, dict]:
     """Walk one or more bench-JSON dirs, group ``per_request`` by turn.
 
-    When multiple roots are passed, **later roots win on key collision** — so
+    When multiple roots are passed, **later roots win on key collision** -- so
     pass the most-trusted source last (e.g. same-run paired traces).
 
     ``profile_alias`` lets capture-time names (``swebench-multiturn``)

@@ -24,7 +24,7 @@ class BaseDataset(ABC):
         pass
 
     def get_next_messages(self) -> list[dict]:
-        """Deprecated shim — returns messages only. Use get_next_request()."""
+        """Deprecated shim -- returns messages only. Use get_next_request()."""
         return self.get_next_request().messages
 
 
@@ -241,7 +241,7 @@ class RandomTokenDataset(BaseDataset):
 
     Purpose: verify inference-benchmark produces the same TTFT/TPOT/E2EL
     as InferenceX when given identical inputs. Not for production benchmarking
-    — random tokens trigger EOS early and give unreliable output lengths.
+    -- random tokens trigger EOS early and give unreliable output lengths.
     """
 
     def __init__(
@@ -521,7 +521,7 @@ class ShareGPTMultiTurnDataset(BaseDataset):
         self.min_osl_tokens = min_osl_tokens
         self._sessions: list[MultiTurnSession] | None = None
         self._lock = threading.Lock()
-        # For get_next_request() fallback — flattened round-robin iterator
+        # For get_next_request() fallback -- flattened round-robin iterator
         self._flat_requests: list[BenchmarkRequest] | None = None
         self._flat_available: list[BenchmarkRequest] | None = None
         self._rng = random.Random(random_seed)
@@ -628,7 +628,7 @@ class ShareGPTMultiTurnDataset(BaseDataset):
         return self._sessions
 
     def get_next_request(self) -> BenchmarkRequest:
-        """Fallback for single-request dispatch — serves from flattened round-robin."""
+        """Fallback for single-request dispatch -- serves from flattened round-robin."""
         self._load()
         with self._lock:
             if not self._flat_available:

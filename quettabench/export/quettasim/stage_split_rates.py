@@ -8,38 +8,38 @@ ground truth shows do NOT transport to the tp4 serving stack (the same class of 
 measured per-config prefill FLOOR 26→18.08 and the measured tp4 comm 9.84→3.96 already
 fixed):
 
-* ``PREFILL_HOST_SHARED/PERREQ_MS_PER_TOKEN`` (sum 5.8872e-3 ms per cached token — the host
+* ``PREFILL_HOST_SHARED/PERREQ_MS_PER_TOKEN`` (sum 5.8872e-3 ms per cached token -- the host
   re-tokenize cost of the re-sent conversation, measured on the tp1 stack via
   ``build_host_split``'s c1 lstsq). The tp4 GT's own c1 turns measure a marginal cached cost
   of ~2.4 ms/1k (osworld@1 turns: TTFT 22.6–22.7 ms at cached≈2k over the measured 18.08
   floor), and the like-for-like pair below measures 3.53 ms/1k.
-* ``PREFILL_FA3_MS_PER_TOKEN2`` (8.31e-7, the tp1 pipeline FA3 kernel) — at tp>1 the
+* ``PREFILL_FA3_MS_PER_TOKEN2`` (8.31e-7, the tp1 pipeline FA3 kernel) -- at tp>1 the
   attention prefill is head-sharded across ranks; charging the tp1 coefficient over-prices
   every big-context (re-)prefill ~3× at tp4.
 
 LIKE-FOR-LIKE METHOD (the G3/build_tp_comm pattern): BOTH legs are the SAME
 ``serving_stage_split.py`` multiprocess api_server sweep over the SAME (new × cached)
 lattice (tp1: ``serving_stage_split_H100.csv`` 2026-06-05; tp4:
-``serving_stage_split_H100_tp4.csv`` 2026-06-11, h100 GPUs 4–7 — the round-1 Phase-B leg,
+``serving_stage_split_H100_tp4.csv`` 2026-06-11, h100 GPUs 4–7 -- the round-1 Phase-B leg,
 whose ``prefill_span_ms`` column already produced the adopted comm term; this builder
 consumes the ``ttft_ms`` and FA3 cross-term information the comm fit did not use).
 
 PRE-REGISTERED ESTIMATORS (defit_log_entries/L11-h100multi.md round-2 entry, committed
 before this builder ran):
 
-* HOST: per leg, 3-param OLS ``ttft_ms ~ floor + a·new + b·cached`` — the SAME model family
+* HOST: per leg, 3-param OLS ``ttft_ms ~ floor + a·new + b·cached`` -- the SAME model family
   as the production estimator (``build_host_split.fit_c1_rate``). VALIDATION (hard-fail):
   b(tp1 leg) must reproduce the production SUM 5.8872e-3 within 5% (measured: 5.9889e-3,
   +1.7%). The per-config value = b(tpN leg), DIRECT (the prefill-floor precedent). The
   shared/per-request PARTITION is NOT re-measured (no tpN B-sweep exists): the consumer
-  keeps the production measured fraction 0.5236 of the per-config SUM — documented caveat.
+  keeps the production measured fraction 0.5236 of the per-config SUM -- documented caveat.
 * FA3: per leg, 4-param OLS ``prefill_span_ms ~ floor + a·new + b·cached +
   c·new·(cached + new/2)`` (the simulator's own FA3 regressor). The per-config value =
-  production 8.31e-7 × c(tpN)/c(tp1) — RATIO TRANSPORT via the tp1 leg, which bridges the
+  production 8.31e-7 × c(tpN)/c(tp1) -- RATIO TRANSPORT via the tp1 leg, which bridges the
   production constant's kernel-grid provenance to this serving-stack instrument (the same
   role the tp1 leg plays in build_tp_comm). The direct c(tpN) is reported as sensitivity.
   VALIDATION (hard-fail): c(tp1) within 50% of the production constant (measured 5.572e-7
-  vs 8.31e-7 — the serving-stack estimator sees a smaller coefficient than the isolated
+  vs 8.31e-7 -- the serving-stack estimator sees a smaller coefficient than the isolated
   kernel grid on BOTH legs, which is exactly why the ratio, not the raw coefficient, is
   transported) and 0 < ratio < 1 (sharding can only help).
 
@@ -95,8 +95,8 @@ def _ols(rows: list[dict], ycol: str, terms: list[str]) -> dict[str, float]:
 def build(tp: int, tp1_csv: Path, tpn_csv: Path, out_json: Path) -> None:
     import simulator.ttft_queue_sim as sim
     assert abs((sim.PREFILL_HOST_SHARED_MS_PER_TOKEN + sim.PREFILL_HOST_PERREQ_MS_PER_TOKEN)
-               - PROD_HOST_SUM) < 1e-15, "production host SUM moved — update this builder's anchor"
-    assert sim.PREFILL_FA3_MS_PER_TOKEN2 == PROD_FA3, "production FA3 moved — update this builder's anchor"
+               - PROD_HOST_SUM) < 1e-15, "production host SUM moved -- update this builder's anchor"
+    assert sim.PREFILL_FA3_MS_PER_TOKEN2 == PROD_FA3, "production FA3 moved -- update this builder's anchor"
     shared_frac = sim.PREFILL_HOST_SHARED_MS_PER_TOKEN / PROD_HOST_SUM
 
     rows1 = list(csv.DictReader(tp1_csv.open()))
@@ -107,17 +107,17 @@ def build(tp: int, tp1_csv: Path, tpn_csv: Path, out_json: Path) -> None:
     drift = abs(host1["cached"] - PROD_HOST_SUM) / PROD_HOST_SUM
     if drift > HOST_TP1_TOLERANCE:
         raise SystemExit(f"tp1-leg host cached rate {host1['cached']:.6e} drifts "
-                         f"{drift*100:.1f}% from the production SUM {PROD_HOST_SUM:.6e} — "
+                         f"{drift*100:.1f}% from the production SUM {PROD_HOST_SUM:.6e} -- "
                          "estimator/instrument no longer like-for-like; refusing to emit")
 
     fa3_1 = _ols(rows1, "prefill_span_ms", ["1", "new", "cached", "fa3"])
     fa3_n = _ols(rowsn, "prefill_span_ms", ["1", "new", "cached", "fa3"])
     if abs(fa3_1["fa3"] - PROD_FA3) / PROD_FA3 > FA3_TP1_TOLERANCE:
         raise SystemExit(f"tp1-leg FA3 coefficient {fa3_1['fa3']:.4e} does not corroborate the "
-                         f"production {PROD_FA3:.4e} within {FA3_TP1_TOLERANCE*100:.0f}% — refusing")
+                         f"production {PROD_FA3:.4e} within {FA3_TP1_TOLERANCE*100:.0f}% -- refusing")
     ratio = fa3_n["fa3"] / fa3_1["fa3"]
     if not (0.0 < ratio < 1.0):
-        raise SystemExit(f"FA3 tp{tp}/tp1 ratio {ratio:.4f} outside (0,1) — not a sharding signal")
+        raise SystemExit(f"FA3 tp{tp}/tp1 ratio {ratio:.4f} outside (0,1) -- not a sharding signal")
     fa3_tpn = PROD_FA3 * ratio
 
     payload = {
@@ -152,7 +152,7 @@ def build(tp: int, tp1_csv: Path, tpn_csv: Path, out_json: Path) -> None:
         "fa3_direct_sensitivity": {
             f"direct_c_tp{tp}": fa3_n["fa3"],
             "note": ("the direct tpN serving-stack coefficient; outcome-equivalent to the "
-                     "transported value in the round-2 preview (e2el 16.21 vs 16.32) — the "
+                     "transported value in the round-2 preview (e2el 16.21 vs 16.32) -- the "
                      "transport choice is provenance-driven, not outcome-driven.")},
         "fallbacks_it_replaces": {
             "host_sum_ms_per_tok": PROD_HOST_SUM,
@@ -202,7 +202,7 @@ def build_consumer(gpu: str, tp: int, tp1_csv: Path, tpn_csv: Path, h100_tp1_csv
     (``build``) byte-untouched."""
     import simulator.ttft_queue_sim as sim
     prod_sum_live = sim.PREFILL_HOST_SHARED_MS_PER_TOKEN + sim.PREFILL_HOST_PERREQ_MS_PER_TOKEN
-    assert abs(prod_sum_live - PROD_HOST_SUM) < 1e-15, "production host SUM moved — update anchor"
+    assert abs(prod_sum_live - PROD_HOST_SUM) < 1e-15, "production host SUM moved -- update anchor"
 
     rows1 = list(csv.DictReader(tp1_csv.open()))
     rowsn = list(csv.DictReader(tpn_csv.open()))
@@ -214,7 +214,7 @@ def build_consumer(gpu: str, tp: int, tp1_csv: Path, tpn_csv: Path, h100_tp1_csv
     if drift > HOST_TP1_TOLERANCE:
         raise SystemExit(f"4-param estimator on the H100 bridge leg gives "
                          f"{host_h100_4p['cached']:.6e}, drifting {drift*100:.1f}% from the "
-                         f"production SUM {PROD_HOST_SUM:.6e} — estimator family no longer "
+                         f"production SUM {PROD_HOST_SUM:.6e} -- estimator family no longer "
                          "validates cross-instrument; refusing to emit")
 
     host1 = _ols(rows1, "ttft_ms", ["1", "new", "cached", "fa3"])
@@ -224,10 +224,10 @@ def build_consumer(gpu: str, tp: int, tp1_csv: Path, tpn_csv: Path, h100_tp1_csv
     host1_3p = _ols(rows1, "ttft_ms", ["1", "new", "cached"])
     hostn_3p = _ols(rowsn, "ttft_ms", ["1", "new", "cached"])
     if fa3_1["fa3"] <= 0:
-        raise SystemExit(f"tp1-leg FA3 coefficient {fa3_1['fa3']:.4e} not positive — refusing")
+        raise SystemExit(f"tp1-leg FA3 coefficient {fa3_1['fa3']:.4e} not positive -- refusing")
     ratio = fa3_n["fa3"] / fa3_1["fa3"]
     if not (0.0 < ratio <= 1.0):
-        raise SystemExit(f"FA3 tp{tp}/tp1 ratio {ratio:.4f} outside (0,1] — not a sharding "
+        raise SystemExit(f"FA3 tp{tp}/tp1 ratio {ratio:.4f} outside (0,1] -- not a sharding "
                          "signal; refusing")
 
     payload = {
@@ -266,7 +266,7 @@ def build_consumer(gpu: str, tp: int, tp1_csv: Path, tpn_csv: Path, h100_tp1_csv
             "host_cached_tp1_3p": host1_3p["cached"],
             f"host_cached_tp{tp}_3p": hostn_3p["cached"],
             "note": ("the original H100 3-param coefficients, contaminated here by the "
-                     "FA3 quadratic projection (see method) — reported, NOT pinned.")},
+                     "FA3 quadratic projection (see method) -- reported, NOT pinned.")},
         "fallbacks_it_replaces": {
             "host_sum_ms_per_tok": PROD_HOST_SUM,
             "PREFILL_FA3_MS_PER_TOKEN2": PROD_FA3},

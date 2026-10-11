@@ -21,7 +21,7 @@ TRACES = [
     "vllm_engine_step_trace_terminal_c80_t16_benchmark_serving_wall.jsonl",
 ]
 
-# Pre-registered thresholds (L6-utils.md). SCHED_PRIOR is an eligibility gate only —
+# Pre-registered thresholds (L6-utils.md). SCHED_PRIOR is an eligibility gate only --
 # it never enters the output arithmetic.
 SCHED_PRIOR_MS = 5.7
 FULL_BATCH_FRAC = 0.9

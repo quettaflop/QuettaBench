@@ -18,10 +18,10 @@ import torch.nn.functional as F
 
 from quettabench.probes.base import add_output_args, out_root
 
-# (reads, writes) per kernel — MUST match kernel_composed/elementwise.py::_IO
+# (reads, writes) per kernel -- MUST match kernel_composed/elementwise.py::_IO
 IO = {"rmsnorm": (1, 1), "silu_mul": (2, 1), "rotary_emb": (1, 1), "residual_add": (2, 1)}
 # --vllm adds the kernels only vLLM ships fused: fused_add_rms_norm (one kernel for
-# the residual-add + rmsnorm pair — the composition prefers it when calibrated) and
+# the residual-add + rmsnorm pair -- the composition prefers it when calibrated) and
 # reshape_and_cache_flash (the real KV-cache write, previously priced by roofline).
 VLLM_IO = {**IO, "fused_add_rmsnorm": (2, 2), "kv_cache_write": (1, 1)}
 ELEMS = [2**e for e in range(18, 30)]   # ~262k .. ~537M elements
@@ -67,7 +67,7 @@ def op_for(kernel, n, dev, dt):
 
 def op_for_vllm(kernel, n, dev, dt):
     """The REAL vLLM kernel for each composition op (vs the torch-chain proxies in
-    ``op_for``, which launch several kernels where vLLM launches one — the H200
+    ``op_for``, which launch several kernels where vLLM launches one -- the H200
     torch-chain fit overpriced fused ops ~2-3 ms/step at 48 layers). ``n`` keeps the
     same meaning as the composition's ``elements`` for that kernel."""
     from vllm import _custom_ops as ops  # noqa: PLC0415

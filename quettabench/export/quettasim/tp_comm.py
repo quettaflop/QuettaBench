@@ -12,7 +12,7 @@ This builder computes it like-for-like: BOTH legs are the SAME `serving_stage_sp
 multiprocess api_server run (tp1: `serving_stage_split_H100.csv`, 2026-06-05; tp2:
 `serving_stage_split_H100_tp2.csv`, 2026-06-10, GPUs 6+7 per `h100_setup.md`). Per leg, OLS
 ``prefill_span_ms ~ FLOOR + a·new + b·cached`` over the c1 cells; the comm term =
-``a(tp2) − a(tp1)/2`` — the per-token cost the tp2 GPU-side prefill window carries ABOVE its
+``a(tp2) − a(tp1)/2`` -- the per-token cost the tp2 GPU-side prefill window carries ABOVE its
 halved GEMM share. The host frontend is excluded by construction (it is a separate stage in
 both legs and is charged separately in the sim, where it does not shard with tp).
 
@@ -56,19 +56,19 @@ def _span_new_rate(path: Path) -> dict:
 
 def build_tpn(n: int, tpn_csv: Path, out_json: Path, tp1_csv: Path, gpu: str = "H100",
               host: str = "h100") -> None:
-    """L11 extension (2026-06-11): the SAME G3 like-for-like method at tp degree ``n`` —
+    """L11 extension (2026-06-11): the SAME G3 like-for-like method at tp degree ``n`` --
     comm_total = prefill_span.new(tpN) − span.new(tp1)/N (the TOTAL per-new-token cost the tpN
     GPU prefill window carries above its 1/N GEMM share). Consumed per-config via the deployment
     JSON key ``prefill_tp_comm_ms_per_token`` -> RooflineParams (None for every other config ->
     the tp2-measured per-extra-rank fallback, byte-identical). The tp2 artifact is untouched.
 
     L13 extension (2026-06-11): ``--gpu RTX3090`` runs the SAME estimator on the RTX3090's
-    OWN stage-split legs (cross-GPU transfer of the H100 tp1 leg is INVALID — L11 proved the
+    OWN stage-split legs (cross-GPU transfer of the H100 tp1 leg is INVALID -- L11 proved the
     per-extra-rank comm extrapolation fails even within one GPU family; the 3090 host is pure
     PCIe, no NVLink). H100 default paths byte-untouched."""
     for p in (tp1_csv, tpn_csv):
         if not p.exists():
-            raise SystemExit(f"missing {p} — pull both stage-split legs first")
+            raise SystemExit(f"missing {p} -- pull both stage-split legs first")
     tp1 = _span_new_rate(tp1_csv)
     tpn = _span_new_rate(tpn_csv)
     comm = tpn["new_ms_per_tok"] - tp1["new_ms_per_tok"] / float(n)

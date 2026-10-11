@@ -1,4 +1,4 @@
-# Kernel probes — tables for QuettaSim
+# Kernel probes -- tables for QuettaSim
 
 Writes the `ncu/` vs `cuda_event/` layout that QuettaSim `kernel_composed`
 interpolates, under `results/probes/<gpu>/`. `just export` routes them to QuettaSim. The
@@ -10,8 +10,8 @@ new GPU, you profile that GPU's kernels once and export the tables into that tre
 This harness automates the collection.
 
 All probes are **CUDA-event timed** against the production kernels (vLLM's
-`flash_attn_varlen_func`, `torch.matmul`, vLLM's vendored Gated-DeltaNet ops) — no
-NCU required — so a user/client can run them with just a torch+vLLM environment.
+`flash_attn_varlen_func`, `torch.matmul`, vLLM's vendored Gated-DeltaNet ops) -- no
+NCU required -- so a user/client can run them with just a torch+vLLM environment.
 
 ```bash
 # from the QuettaBench repo root:
@@ -32,14 +32,14 @@ contract: filenames `{gpu}[_tpN].csv`, method split `ncu/` (graphed decode) vs
 - `just` (recipe runner), and on the GPU box: python with `torch` + `vllm`.
 - The target GPU. Recipes run locally, or over ssh on a fleet host (below).
 - These probes import only `torch` (+ `vllm` for `moe`) and write CSV/JSON
-  with the stdlib — **no pandas**. Worth keeping that way: LLMServingSim's profiler
+  with the stdlib -- **no pandas**. Worth keeping that way: LLMServingSim's profiler
   cannot run in its own documented image (`vllm/vllm-openai:v0.19.0` ships no pandas,
   which its `skew.py` and `meta.yaml` writer both import). Check before booking GPU
   time on a stock vLLM container.
 
-## Quick start — add GPU `X`
+## Quick start -- add GPU `X`
 
-1. **Datasheet peaks** — create `device_spec/X.yaml` (in QuettaSim) with `name: X`,
+1. **Datasheet peaks** -- create `device_spec/X.yaml` (in QuettaSim) with `name: X`,
    `compute.peak_flops_per_s`, `memory.peak_bw_bytes_per_s`, `memory.total_bytes`
    (util_flops/util_bw are set in step 3). The YAML `name` MUST match the
    `--gpu-label` you profile with and the GT dir prefix.
@@ -60,15 +60,15 @@ contract: filenames `{gpu}[_tpN].csv`, method split `ncu/` (graphed decode) vs
    `{ncu,cuda_event}/gdn/X_<geom>_{decode,prefill}.csv`,
    `cuda_event/moe/X.csv` + `cuda_event/moe/X_routing.json`.
 
-3. **Derive `util_flops` / `util_bw`** for `X.yaml` — these anchor the analytic
+3. **Derive `util_flops` / `util_bw`** for `X.yaml` -- these anchor the analytic
    roofline *fallback* (used for off-grid cells). Read them off the collected
    grids: `just -f $QUETTASIM/justfile derive-device gpu=X` prints both (does not
    edit the YAML).
 
-4. **Serving-dynamics blocks** for `X.yaml` (`frontend:` / `tp_comm:` / `serving:`) — the
+4. **Serving-dynamics blocks** for `X.yaml` (`frontend:` / `tp_comm:` / `serving:`) -- the
    API-server host cost, tp>1 all-reduce, and per-step host overhead the kernel tables don't
    capture. Without them a GPU prices serving as a bare compute roofline (no frontend/comm/
-   overhead) — the reason A100 serving lagged H100. If `X` already has GT:
+   overhead) -- the reason A100 serving lagged H100. If `X` already has GT:
    ```
    just -f $QUETTASIM/justfile serving-fit gpu=X model=<Model>   # fits frontend:+serving: FROM GT (no GPU)
    just gpu=X tp-comm tp=2 hidden=<H> layers=<L>                 # measures tp_comm: (needs 2 GPUs, torchrun)
@@ -97,9 +97,9 @@ PYTHON_BIN=/home/<user>/miniconda3/envs/vllm/bin/python \
 |---|---|---|
 | `gemm` | `{method}/gemm/{gpu}.csv` (`--wide` → `{method}/gemm_wide/`; `--ncu` → `ncu/`, else `cuda_event/`) | M × (N,K) |
 | `flash_attn` | decode → `{ncu if --ncu else cuda_event}/flash_attn/{gpu}[_tpN].csv`; prefill → `cuda_event/fa3_prefill/{gpu}[_tpN].csv` (always) | decode (kv×batch), prefill (seq) |
-| `cross_attn` | `cuda_event/fa3_cross/{gpu}.csv` | chunked-prefill attention PER LAYER over (q_len × resident_tokens) — the rectangular shape neither the decode (q=1) nor the full-causal prefill grid covers; on long-ISL traces it dominates prefill attention FLOPs. One run per head config (`--n-heads/--n-kv-heads/--head-dim`), upserts |
+| `cross_attn` | `cuda_event/fa3_cross/{gpu}.csv` | chunked-prefill attention PER LAYER over (q_len × resident_tokens) -- the rectangular shape neither the decode (q=1) nor the full-causal prefill grid covers; on long-ISL traces it dominates prefill attention FLOPs. One run per head config (`--n-heads/--n-kv-heads/--head-dim`), upserts |
 | `collective` | `ncu/collectives/{gpu}_tp{N}.csv` | plain-NCCL collectives over decode-step payloads (torchrun); also prints a legacy `tp_comm:` YAML block |
-| `vllm_allreduce` | `ncu/collectives/{gpu}_tp{N}.csv` (all_reduce rows, `path=vllm`) | torchrun; times TP all-reduce through vLLM's OWN `GroupCoordinator` (custom allreduce on) next to plain NCCL. NOTE: vLLM ≥0.27 fuses allreduce+rmsnorm under torch.compile (`fuse_allreduce_rms`), so this standalone grid over-prices graphed decode — see h200.yaml `tp_comm.source` |
+| `vllm_allreduce` | `ncu/collectives/{gpu}_tp{N}.csv` (all_reduce rows, `path=vllm`) | torchrun; times TP all-reduce through vLLM's OWN `GroupCoordinator` (custom allreduce on) next to plain NCCL. NOTE: vLLM ≥0.27 fuses allreduce+rmsnorm under torch.compile (`fuse_allreduce_rms`), so this standalone grid over-prices graphed decode -- see h200.yaml `tp_comm.source` |
 | `elementwise` | `cuda_event/elementwise/{gpu}.json` | affine `floor_us + bytes/eff_bw` per kernel. **Prefer `--vllm --graph`** (needs a vLLM env): times the REAL fused kernels (`rms_norm`, `fused_add_rms_norm`, `silu_and_mul`, `rotary_embedding`, `reshape_and_cache_flash`) instead of multi-kernel torch-chain proxies, and adds the `fused_add_rmsnorm` + `kv_cache_write` entries the composition prefers when present (each fused entry replaces a two-kernel proxy pair). The torch-chain default overpriced vLLM's fused ops ~2-3 ms/step at 48 layers |
 | `gdn` | decode → `{ncu if --ncu else cuda_event}/gdn/{gpu}_{geom}_decode.csv`; prefill → `cuda_event/gdn/…_prefill.csv` (always) | Gated-DeltaNet; prefill (seq), decode (batch) |
 | `moe` | `cuda_event/moe/{gpu}.csv` + `cuda_event/moe/{gpu}_routing.json` (cuda_event **always**) | tokens × (n_experts, top_k, intermediate, hidden) |
@@ -122,24 +122,24 @@ so run them from a QuettaSim checkout (or with QuettaSim on `PYTHONPATH`).
 ### Why `moe` exists
 Every other kernel family here has a measured table; the grouped MoE FFN did not.
 `sum_kernels._moe_ffn_us` priced it with an analytic roofline over touched
-bytes/FLOPs, scaled by `util_bw`/`util_flops` — scalars fitted on **dense Llama**
+bytes/FLOPs, scaled by `util_bw`/`util_flops` -- scalars fitted on **dense Llama**
 GEMMs. A roofline has no launch cost and no tile quantization, so it is optimistic
 exactly where a grouped kernel is launch-bound (128 experts × ~1 token each).
 Measured against the lss-valid H100 numbers it is **−51%** at a 1-token decode step,
 −14.5% at 8, converging to −4% by 64. That batch-dependent deficit is what the flat
-`_decode_host_floor_us` constant patches today — which is why it cannot be right at
+`_decode_host_floor_us` constant patches today -- which is why it cannot be right at
 more than one operating point. Measure the kernel and the constant can go.
 
-Timing method: the launch-cost rationale above only holds for EAGER execution —
+Timing method: the launch-cost rationale above only holds for EAGER execution --
 vLLM **CUDA-graphs MoE decode**, so the decode-faithful grid is dispatch-free.
 Use `--graph` (CUDA-graph-replay timing -> `ncu/moe/`, preferred by the loader);
 the eager default (`cuda_event/moe/`) overpriced H200 graphed decode 2.3x
 (188us vs 80.8us/layer at 8 tokens). `--graph` works on hosts where NCU counters
-are locked (`RmProfilingAdminOnly: 1`) — see `_graph.py`. Loading a
+are locked (`RmProfilingAdminOnly: 1`) -- see `_graph.py`. Loading a
 measured MoE grid also retires the `_decode_host_floor_us` patch automatically.
 
 **MXFP4-expert models (gpt-oss) are swept for shape coverage but deliberately are not
-priced off this bf16 grid** — only the weight-read term scales with expert dtype, and
+priced off this bf16 grid** -- only the weight-read term scales with expert dtype, and
 a measured latency can't be decomposed after the fact. They keep the roofline until an
 MXFP4 grid exists.
 
@@ -149,25 +149,25 @@ Which timing method is *faithful* depends on how the kernel runs in serving, so
 `kernel_data` is split by method (`ncu/` vs `cuda_event/`) and the loader reads
 each kernel from the right one:
 
-- **Decode is CUDA-graphed** — the graph replays all decode kernels with no
+- **Decode is CUDA-graphed** -- the graph replays all decode kernels with no
   per-launch CPU dispatch, so NCU (pure kernel time) equals the achieved time.
   Decode grids + gemm + elementwise come from `ncu/`. Use `gemm-ncu`, `flash-ncu`,
   `gdn-ncu` (need a real `ncu`: `NCU_BIN=/opt/nvidia/nsight-compute/2024.3.2/ncu`,
   NOT stock `/usr/bin/ncu`).
-- **Prefill is eager** (dynamic shapes, not graphed) — every kernel pays its
+- **Prefill is eager** (dynamic shapes, not graphed) -- every kernel pays its
   dispatch cost, which cuda_event captures and NCU misses. Prefill grids come from
   `cuda_event/`. The `flash`/`gdn` probes always emit prefill via cuda_event (even
   under `--ncu`, which only switches the *decode* grid).
 
 The dispatch overhead is real and host-specific: GDN prefill's 8 tiny Triton
-sub-kernels floor at ~500µs on A100 (~62µs/launch) vs far less on H100 — which is
+sub-kernels floor at ~500µs on A100 (~62µs/launch) vs far less on H100 -- which is
 exactly why NCU alone can't reconstruct prefill. Every table's method is recorded
 in QuettaSim's `data/kernel_data/PROVENANCE.md`; keep a GPU/kernel/phase on ONE
 method and re-collect rather than mix. Note `gemm` (default, no `--ncu`)
-times raw `torch.matmul` cuBLAS, not vLLM's GEMM — prefer `--ncu`.
+times raw `torch.matmul` cuBLAS, not vLLM's GEMM -- prefer `--ncu`.
 
 ## Notes / TODO
-- `flash` and `gdn` grids are **head-config specific** — run them per model head
+- `flash` and `gdn` grids are **head-config specific** -- run them per model head
   config (and per tp shard), not once per GPU.
 - `gdn` is first-cut: decode uses the generic recurrent op (the
   serving-faithful decode is `fused_sigmoid_gating_delta_rule_update`); the batch

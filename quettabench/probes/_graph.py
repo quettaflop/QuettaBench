@@ -1,4 +1,4 @@
-"""Shared CUDA-graph-replay timing — the graphed-decode-faithful method when NCU
+"""Shared CUDA-graph-replay timing -- the graphed-decode-faithful method when NCU
 counters are unavailable (e.g. hosts with RmProfilingAdminOnly=1, where no
 container setting can unlock them).
 
@@ -6,7 +6,7 @@ vLLM's decode is CUDA-graphed: kernels replay with no per-launch CPU dispatch,
 so the faithful decode number is pure kernel time. NCU measures that by
 counter; capturing the op into a torch.cuda.CUDAGraph and timing replay()
 measures the same thing by construction (H200 spot-check, vLLM fused_experts
-at 8 decode tokens: eager cuda_event 182us -> graph replay 78.5us — the 57%
+at 8 decode tokens: eager cuda_event 182us -> graph replay 78.5us -- the 57%
 delta is exactly the dispatch cost graphs eliminate). Replay timing even keeps
 real back-to-back kernel behaviour that per-kernel NCU isolation loses.
 
@@ -29,7 +29,7 @@ def graph_time_us(fn, *, warmup: int = 10, reps: int = 50, reduce=min) -> float:
     Each capture uses its own private memory pool: the pool is retired when the
     graph is deleted at the end, so sweeping thousands of cells does not
     accumulate pools. (Sharing one pool handle across captures looks thriftier
-    but is invalid — the handle dies with the first graph and the next capture
+    but is invalid -- the handle dies with the first graph and the next capture
     trips a CUDACachingAllocator use_count assert.)
     """
     for _ in range(3):

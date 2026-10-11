@@ -47,10 +47,10 @@ XDG_CACHE_HOME=/data48/kevinlau/tmp/.cache \
 ```
 
 Output columns:
-- `attention_ms` — attention kernel time (same in eager and compiled mode)
-- `gemm_ms` — GEMM kernel time (eager mode)
-- `elementwise_ms` — triton pointwise/reduction kernel time (eager mode)
-- `overhead_ms` — wall time not attributed to any bucket
+- `attention_ms` -- attention kernel time (same in eager and compiled mode)
+- `gemm_ms` -- GEMM kernel time (eager mode)
+- `elementwise_ms` -- triton pointwise/reduction kernel time (eager mode)
+- `overhead_ms` -- wall time not attributed to any bucket
 - Compiled prefill times from `prefill_profile_H100.csv` are shown for comparison
 
 Interpretation: `attention_ms` is the cost of flash attention custom ops. In compiled (CUDA graph) mode these run as-is. The non-attention reduction (`compiled_ms - attention_ms` vs `eager_ms - attention_ms`) is the torch.compile + CUDA graph fusion benefit.

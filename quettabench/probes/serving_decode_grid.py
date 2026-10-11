@@ -127,7 +127,7 @@ def prompt_token_ids(cell_b: int, nominal_t: int, req_idx: int, n_tokens: int) -
 
 
 # ------------------------------------------------------------------------------------------------
-# Cell summary — THE pre-registered post-processing (shared with the builder, which imports it).
+# Cell summary -- THE pre-registered post-processing (shared with the builder, which imports it).
 # Records: [{"req", "shard", "prompt_tokens", "osl", "t_first_wall", "deltas_ms": [...],
 #            "lag_p99_ms"}]  (t_first_wall = wall-anchored first-token ts; event k>0 arrives at
 #            t_first_wall + sum(deltas_ms[:k])/1e3).
@@ -342,7 +342,7 @@ def run_cell(cell: dict, port: int, api_key: str, model_name: str, eos_mode: str
 
 
 # ------------------------------------------------------------------------------------------------
-# Server lifecycle — launch/wait reused from serving_stage_split.py, flags per L11.
+# Server lifecycle -- launch/wait reused from serving_stage_split.py, flags per L11.
 # ------------------------------------------------------------------------------------------------
 def wait_health(port, timeout=600):
     t0 = time.time()

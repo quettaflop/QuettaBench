@@ -99,7 +99,7 @@ def _sensitivity_note(turns: list[tuple[float, float, float]],
     """The audit-v2 G9 sensitivity record, with the ACTUAL recomputed numbers.
 
     PRESSURE_THRESHOLD=2.5 is a one-time curve read-off ("saturates by ~2.5"), not
-    a derivation — so the artifact carries what moving the cut to 2.0/3.0 does to
+    a derivation -- so the artifact carries what moving the cut to 2.0/3.0 does to
     its own anchors. CLUSTER_SPLIT_OUTPUT is checked the same way (40/60). The
     production cuts themselves are UNCHANGED."""
     parts: list[str] = []
@@ -132,9 +132,9 @@ def _sensitivity_note(turns: list[tuple[float, float, float]],
                               + f" vs {'/'.join(str(a['plateau_ms']) for a in anchors)}"))
     return (" Sensitivity (audit-v2 G9): PRESSURE_THRESHOLD=2.5 is a one-time "
             "curve read-off ('saturates by ~2.5'), not derived; recomputing this "
-            "artifact's anchors at thresholds 2.0/3.0 gives — "
+            "artifact's anchors at thresholds 2.0/3.0 gives -- "
             + "; ".join(parts)
-            + ". CLUSTER_SPLIT_OUTPUT=50 check — " + "; ".join(split_moves)
+            + ". CLUSTER_SPLIT_OUTPUT=50 check -- " + "; ".join(split_moves)
             + ". Production cuts unchanged (2026-06-10, lane L5).")
 
 
@@ -143,10 +143,10 @@ def build(cfg: CeilingConfig) -> dict | None:
     sat = [(o, m) for o, m, p in turns if p >= PRESSURE_THRESHOLD]
     if not sat:
         # The cell never reaches the saturated regime at its pool (large-pool / multi-GPU MoE
-        # cells) — the ramp never targets the ceiling there, so a measured ceiling is moot.
+        # cells) -- the ramp never targets the ceiling there, so a measured ceiling is moot.
         # Warn + skip rather than crash a batch build; the manifest should keep status=inherited.
         print(f"SKIP {cfg.gpu} {cfg.model}: no saturated turns (pressure>={PRESSURE_THRESHOLD}) "
-              f"at pool {cfg.available_kv_blocks} — keep inherited ceiling")
+              f"at pool {cfg.available_kv_blocks} -- keep inherited ceiling")
         return None
     anchors = _anchors_for(sat)
     all_ms = sorted(m for _, m in sat)
