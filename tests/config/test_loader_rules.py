@@ -250,6 +250,12 @@ class LoaderRules(unittest.TestCase):
                                ("r-tp2-concurrency4", 2, 4), ("r-tp2-concurrency8", 2, 8)])
         self.assertEqual(configs[0].origins["engine.tp"], "run")
 
+    def test_matrix_points_with_one_run_name_are_refused(self):
+        for matrix in ({"engine.tp": [1, 1]}, {"engine.port": [1], "mode.load": ["closed"],
+                                               "hardware.world": [8, "8"]}):
+            with self.subTest(matrix), self.assertRaisesRegex(ConfigError, "points share run_name"):
+                self.load({"matrix": matrix})
+
     def test_matrix_key_is_checked(self):
         with self.assertRaisesRegex(ConfigError, "matrix: unknown key 'engine.tpp'"):
             self.load({"matrix": {"engine.tpp": [1]}})

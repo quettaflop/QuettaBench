@@ -356,4 +356,9 @@ def load(run_yaml, overrides=(), env=None):
         upper = [("model", model), ("run", run_layer), ("env", from_env), ("cli", cli_layer)]
         out.append(_resolve(upper, configs, grids, step_points, detect, allow_unverified,
                             f"{run_path} [{name}]"))
+    names = [cfg.run_name for cfg in out]
+    shared = sorted({n for n in names if names.count(n) > 1})
+    if shared:
+        raise ConfigError(f"{run_path} matrix: points share run_name {shared}; each point "
+                          "needs its own results/<run>/")
     return out
