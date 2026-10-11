@@ -30,6 +30,7 @@ class MooncakeRecord:
     input_length: int
     output_length: int | None
     hash_ids: tuple[int, ...]
+    timestamp: float | None = None  # ms, as the trace writes it
 
 
 def _rows(path):
@@ -42,13 +43,14 @@ def _rows(path):
 
 
 def mooncake_record(row, index):
-    """input_length is required; output_length and hash_ids may be absent."""
-    out = row.get("output_length")
+    """input_length is required; output_length, hash_ids and timestamp may be absent."""
+    out, ts = row.get("output_length"), row.get("timestamp")
     return MooncakeRecord(
         index=index,
         input_length=int(row["input_length"]),
         output_length=None if out is None else int(out),
         hash_ids=tuple(int(h) for h in row.get("hash_ids") or ()),
+        timestamp=None if ts is None else float(ts),
     )
 
 
@@ -190,7 +192,9 @@ class MooncakeTrace(DrawnTrace):
     """Mooncake records in file order with expanded token ids, wrapping at
     the end and rewinding after warmup. Requests carry prompt_token_ids, so
     no chat template can disturb block boundaries; metadata names the record
-    (request_index) and its block count (num_hash_blocks)."""
+    (request_index) and its block count (num_hash_blocks). arrival_ts is the
+    record's timestamp in seconds, so workload.arrival=trace replays it; a
+    wrapped draw repeats the first lap's times."""
 
     rewinds = True
 
@@ -208,11 +212,13 @@ class MooncakeTrace(DrawnTrace):
         record = self.records[self._cursor % len(self.records)]
         self._cursor += 1
         ids = mooncake_prompt_ids(record, self.seed, self._block_cache)
-        return Request(ids, len(ids), output_length=record.output_length, messages=[], metadata={
-            "prompt_token_ids": ids,
-            "request_index": record.index,
-            "num_hash_blocks": len(record.hash_ids),
-        })
+        arrival = None if record.timestamp is None else record.timestamp / 1e3
+        return Request(ids, len(ids), output_length=record.output_length, arrival_ts=arrival,
+                       messages=[], metadata={
+                           "prompt_token_ids": ids,
+                           "request_index": record.index,
+                           "num_hash_blocks": len(record.hash_ids),
+                       })
 
 
 def reshuffled(samples, rng):
