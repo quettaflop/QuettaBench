@@ -16,5 +16,5 @@ agent_type: coding
 turn_style: multi-turn
 serving_style: not-disaggregated
 data_source: distributional
-active: true
+active: false
 sampler: analysis.synthetic
