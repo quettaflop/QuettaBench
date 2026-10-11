@@ -7,6 +7,7 @@ broken source is recorded without losing the others.
 """
 
 import contextlib
+import functools
 import hashlib
 import io
 import json
@@ -15,8 +16,10 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from quettabench import profiler
+from quettabench.metrics.results import write_atomic
 from tests.profiling import fake_endpoint
 from tests.profiling.test_native import fake_nsys_export
 from tests.profiling.test_wrapped import FAKE_SMI, Tokenizer
@@ -83,10 +86,14 @@ class Profile(unittest.TestCase):
 
         def finish_run():
             time.sleep(0.3)
-            run_json.write_text(body)
+            write_atomic(run_json, body)  # as RunWriter does, so no half file is read
 
-        threading.Thread(target=finish_run).start()
-        out = profiler.profile(self.dir, ["energy"], nvidia_smi=FAKE_SMI, interval_s=0.05)
+        writer = threading.Thread(target=finish_run)
+        writer.start()
+        fast = functools.partial(profiler.measure_energy, poll_s=0.01)
+        with mock.patch.object(profiler, "measure_energy", fast):
+            out = profiler.profile(self.dir, ["energy"], nvidia_smi=FAKE_SMI, interval_s=0.05)
+        writer.join()
         e = out["energy"]
         self.assertEqual(e["window"], "run")
         self.assertEqual(e["devices"], 2)          # engine.json's 0,2, not the Config's four

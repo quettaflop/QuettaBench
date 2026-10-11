@@ -2,9 +2,12 @@
 as a tensor-parallel server keeps its workers.
 
 usage: fake_server.py <port> <state.json>; with --child it only sleeps.
-state.json gets {pid, child_pid, mark} once the child is up (mark is FAKE_MARK).
+It binds first (port 0 takes a free one; a taken port exits 98), then
+state.json gets {pid, child_pid, mark, port}: mark is FAKE_MARK, port the
+one it bound, so a test can check it reached this server and no other.
 """
 
+import errno
 import http.server
 import json
 import os
@@ -17,10 +20,6 @@ if sys.argv[1] == "--child":
     sys.exit(0)
 
 port, state = int(sys.argv[1]), sys.argv[2]
-child = subprocess.Popen([sys.executable, __file__, "--child"])
-with open(state, "w") as fh:
-    json.dump({"pid": os.getpid(), "child_pid": child.pid,
-               "mark": os.environ.get("FAKE_MARK")}, fh)
 
 
 class Health(http.server.BaseHTTPRequestHandler):
@@ -32,4 +31,16 @@ class Health(http.server.BaseHTTPRequestHandler):
         pass
 
 
-http.server.HTTPServer(("127.0.0.1", port), Health).serve_forever()
+try:
+    server = http.server.HTTPServer(("127.0.0.1", port), Health)
+except OSError as e:
+    if e.errno == errno.EADDRINUSE:
+        sys.exit(98)
+    raise
+child = subprocess.Popen([sys.executable, __file__, "--child"])
+tmp = state + ".tmp"
+with open(tmp, "w") as fh:
+    json.dump({"pid": os.getpid(), "child_pid": child.pid,
+               "mark": os.environ.get("FAKE_MARK"), "port": server.server_port}, fh)
+os.replace(tmp, state)
+server.serve_forever()

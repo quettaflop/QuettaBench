@@ -9,7 +9,9 @@ rule, :66-69 max_seq and the `>>>` header, :75-79 per-cell exports and argv.
 import contextlib
 import io
 import json
+import os
 import unittest
+from unittest import mock
 
 from quettabench import cli
 from quettabench.config import loader
@@ -96,7 +98,7 @@ class DeepseekMoe(unittest.TestCase):
         self.assertTrue(spec_for("deepseek", (1024, 1), sets=DS).bench_argv)
 
     def test_cli_refuses_pp_on_quettaserve(self):
-        with self.assertRaises(SystemExit) as e, \
+        with self.assertRaises(SystemExit) as e, mock.patch.dict(os.environ, {}, clear=True), \
                 contextlib.redirect_stdout(io.StringIO()):
             cli.main(["run", str(RUNS / "deepseek.yaml"), "--dry-run", "--allow-unverified",
                       "--set", "engine.name=quettaserve", "--set", "engine.pp=2",

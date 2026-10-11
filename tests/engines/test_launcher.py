@@ -31,8 +31,11 @@ def alive(pid):
     except ProcessLookupError:
         return False
     # A reparented zombie no longer runs; count it dead.
-    stat = Path(f"/proc/{pid}/stat")
-    return not (stat.exists() and stat.read_text().split(") ")[1].startswith("Z"))
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+    except FileNotFoundError:  # reaped between the kill and the read
+        return False
+    return not stat.split(") ")[1].startswith("Z")
 
 
 class LocalLauncher(unittest.TestCase):
@@ -41,6 +44,22 @@ class LocalLauncher(unittest.TestCase):
         self.state = self.dir / "state.json"
         self.port = free_port()
 
+    def start(self, **kw):
+        """launcher.start of the fake server; a port taken between free_port
+        and the bind (the server exits 98) is retried on a fresh one, and the
+        server that answered must be ours."""
+        for _ in range(5):
+            try:
+                handle = launcher.start(self.spec(**kw), self.dir / "run", timeout_s=30, poll_s=0.1)
+            except RuntimeError as e:
+                if "exited with 98" not in str(e):
+                    raise
+                self.port = free_port()
+                continue
+            self.assertEqual(json.loads(self.state.read_text())["port"], self.port)
+            return handle
+        self.fail("no free port in 5 tries")
+
     def spec(self, **kw):
         return LaunchSpec(adapter="fake", port=self.port, health_path="/health",
                           server_argv=(sys.executable, str(FAKE), str(self.port), str(self.state)),
@@ -48,15 +67,14 @@ class LocalLauncher(unittest.TestCase):
                                "DB_SECRET": "secret"}, **kw)
 
     def test_engine_json_holds_no_engine_kwarg_or_argv_secret(self):
-        handle = launcher.start(self.spec(engine_kwargs={"api_key": "sk-live"}),
-                                self.dir / "run", timeout_s=30, poll_s=0.1)
+        handle = self.start(engine_kwargs={"api_key": "sk-live"})
         handle.stop(grace_s=5)
         record = json.loads((self.dir / "run" / "engine.json").read_text())
         self.assertEqual(record["launch_spec"]["engine_kwargs"], {"api_key": "REDACTED"})
         self.assertNotIn("sk-live", json.dumps(record))
 
     def test_start_health_engine_json_stop(self):
-        handle = launcher.start(self.spec(), self.dir / "run", timeout_s=30, poll_s=0.1)
+        handle = self.start()
         state = json.loads(self.state.read_text())
         self.assertEqual(state["mark"], "from-spec")
         record = json.loads((self.dir / "run" / "engine.json").read_text())

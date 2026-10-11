@@ -26,6 +26,15 @@ from quettabench.workloads.sessions import TrajectorySessionTrace
 from tests.golden._harness import REPO
 from tests.profiling import fake_endpoint
 
+
+def setUpModule():
+    """The loader reads os.environ when no env is given; run on an empty one,
+    so a caller's NCCL_*, GPU_UTIL or CUDA_VISIBLE_DEVICES never moves a result."""
+    patch = mock.patch.dict(os.environ, {}, clear=True)
+    patch.start()
+    unittest.addModuleCleanup(patch.stop)
+
+
 RUNS = sorted((REPO / "configs" / "runs").glob("*.yaml"))
 # Hybrid attention without kv_bytes: the loader refuses on purpose.
 REFUSED = {"qwen": "attention=hybrid needs kv_bytes"}

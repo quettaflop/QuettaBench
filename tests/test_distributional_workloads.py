@@ -357,7 +357,7 @@ class DistributionalSamplerTests(unittest.TestCase):
             "DISTRIBUTIONAL_SHARED_PREFIX_TOKENS": "64",
             "DISTRIBUTIONAL_PREFIX_BLOCK_SIZE": "16",
         }
-        with patch.dict(os.environ, env):
+        with patch.dict(os.environ, env, clear=True):
             sampler = DistributionalSampler(source_session_fixture_distribution(), seed=7)
             sampler._tokenizer = WhitespaceTokenizer()
 

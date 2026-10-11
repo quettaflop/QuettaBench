@@ -95,7 +95,7 @@ class QuettaServeThroughCli(unittest.TestCase):
         args = ["run", str(RUNS / "qwen3.yaml"), *(a for s in self.SETS for a in ("--set", s)),
                 *argv]
         out = io.StringIO()
-        with contextlib.redirect_stdout(out), mock.patch.dict(os.environ), \
+        with contextlib.redirect_stdout(out), mock.patch.dict(os.environ, {}, clear=True), \
                 mock.patch.object(BenchDriver, "device", return_value=("H200", 141 * 2**30)):
             self.assertEqual(cli.main(args), 0)
         return out.getvalue()
