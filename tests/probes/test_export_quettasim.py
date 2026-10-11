@@ -35,5 +35,19 @@ def test_manifest_names_sources_sha_and_time(tmp_path: Path) -> None:
     export([results], dest, only=["tp_comm"])
     manifest = json.loads((dest / "manifest.json").read_text())
     assert manifest["source_dirs"] == [str(results)]
-    assert set(manifest) == {"source_dirs", "bench_sha", "exported_at"}
+    assert set(manifest) == {"source_dirs", "runs", "bench_sha", "exported_at"}
+    assert manifest["runs"] == []
     assert manifest["exported_at"].endswith("+00:00")
+
+
+def test_manifest_lists_the_runs_in_its_sources(tmp_path: Path) -> None:
+    results, dest = tmp_path / "results", tmp_path / "out"
+    run = results / "H100" / "gemm"
+    run.mkdir(parents=True)
+    (run / "run.json").write_text(json.dumps({
+        "config": {"run_name": "probe-gemm"}, "run_status": {"status": "ok", "reason": None},
+        "provenance": {"started": "2026-10-11T00:00:00+00:00"}}))
+    export([results], dest, only=["tp_comm"])
+    manifest = json.loads((dest / "manifest.json").read_text())
+    assert manifest["runs"] == [{"run": str(run), "run_name": "probe-gemm", "status": "ok",
+                                 "started": "2026-10-11T00:00:00+00:00"}]

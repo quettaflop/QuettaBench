@@ -39,10 +39,24 @@ def bench_sha() -> str:
     return done.stdout.strip()
 
 
+def source_runs(results_dirs: list[Path]) -> list[dict]:
+    """Every run.json under the results dirs: its run dir (the run id), run
+    name, status and start, so an exported table names the runs behind it."""
+    runs = []
+    for root in results_dirs:
+        for path in sorted(root.rglob("run.json")):
+            doc = json.loads(path.read_text())
+            runs.append({"run": str(path.parent), "run_name": doc["config"].get("run_name"),
+                         "status": doc["run_status"]["status"],
+                         "started": doc["provenance"].get("started")})
+    return runs
+
+
 def export(results_dirs: Iterable[Path], dest: Path, only: Iterable[str] | None = None) -> list[Path]:
     """Run the builders (all, or the named ones) over the results dirs; return the files written.
 
-    Also writes dest/manifest.json: where the inputs came from, which bench commit, when.
+    Also writes dest/manifest.json: where the inputs came from, the runs
+    recorded there (run.json), which bench commit, when.
     """
     results_dirs = [Path(d) for d in results_dirs]
     dest = Path(dest)
@@ -56,6 +70,7 @@ def export(results_dirs: Iterable[Path], dest: Path, only: Iterable[str] | None 
     dest.mkdir(parents=True, exist_ok=True)
     manifest = {
         "source_dirs": [str(d) for d in results_dirs],
+        "runs": source_runs(results_dirs),
         "bench_sha": bench_sha(),
         "exported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
