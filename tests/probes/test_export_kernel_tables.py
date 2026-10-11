@@ -15,15 +15,16 @@ from unittest import mock
 import pytest
 
 from quettabench.export.quettasim import export, kernel_tables
-from quettabench.probes.base import add_output_args, out_root, run_recorded
+from quettabench.probes.base import add_output_args, out_root, run_id, run_recorded
 
 T0 = datetime(2026, 10, 11, 12, 0, 0, tzinfo=timezone.utc)
 
 
 def probe_run(results: Path, probe: str, tables: dict[str, str], at: int, fails=False,
-              gpu: str = "H100") -> None:
+              gpu: str = "H100", finished: int | None = None, args=()) -> None:
     """One `python -m quettabench.probes.<probe>` run through run_recorded:
-    writes tables {path under the run dir: text} where the probe would."""
+    writes tables {path under the run dir: text} where the probe would.
+    It starts at T0+at and, given finished, finishes at T0+finished."""
     def main(argv):
         ap = argparse.ArgumentParser()
         add_output_args(ap)
@@ -34,10 +35,15 @@ def probe_run(results: Path, probe: str, tables: dict[str, str], at: int, fails=
         if fails:
             raise RuntimeError("probe died")
 
-    argv = ["probe", "--gpu-label", gpu, "--out", str(results / "probes" / gpu)]
+    argv = ["probe", "--gpu-label", gpu, "--out", str(results / "probes" / gpu), *args]
     with mock.patch.object(sys, "argv", argv), \
             pytest.raises(RuntimeError) if fails else contextlib.nullcontext():
         run_recorded(main, probe, now=T0 + timedelta(seconds=at))
+    if finished is not None:
+        record = results / "probes" / gpu / probe / run_id(T0 + timedelta(seconds=at)) / "run.json"
+        doc = json.loads(record.read_text())
+        doc["provenance"]["finished"] = (T0 + timedelta(seconds=finished)).isoformat()
+        record.write_text(json.dumps(doc))
 
 
 def tree(root: Path) -> dict[str, str]:
@@ -151,3 +157,84 @@ def test_two_probes_writing_one_file_stop_the_export(tmp_path: Path) -> None:
     probe_run(results, "moe", {"ncu/moe/H100.csv": "b\n"}, 1)
     with pytest.raises(SystemExit, match="ncu/moe/H100.csv.*gemm.*moe"):
         kernel_tables.run([results], tmp_path / "out")
+
+
+def rows(path: Path) -> list[list[str]]:
+    with path.open(newline="") as f:
+        return list(csv.reader(f))
+
+
+FA_HEAD = ("n_heads", "n_kv_heads", "head_dim", "q_len", "latency_us")
+
+
+def test_overlapping_runs_union_their_rows(tmp_path: Path) -> None:
+    """Run A starts first and finishes last, run B starts later and finishes
+    first; each measured its own head config, so the export holds both, and
+    the head config both measured comes from A, the run that finished last."""
+    results, dest = tmp_path / "results", tmp_path / "out"
+    a = csv_text([FA_HEAD, (32, 8, 128, 1, 10.0), (32, 8, 128, 2, 11.0), (16, 2, 128, 1, 7.0)])
+    b = csv_text([FA_HEAD, (64, 8, 128, 1, 20.0), (16, 2, 128, 1, 9.0), (16, 2, 128, 2, 9.5)])
+    probe_run(results, "flash_attn", {"ncu/flash_attn/H100.csv": a}, at=0, finished=100)
+    probe_run(results, "flash_attn", {"ncu/flash_attn/H100.csv": b}, at=1, finished=50)
+    export([results], dest, only=["kernel_tables"])
+    assert rows(dest / "kernel_data" / "ncu" / "flash_attn" / "H100.csv") == [
+        list(FA_HEAD), ["64", "8", "128", "1", "20.0"],
+        ["32", "8", "128", "1", "10.0"], ["32", "8", "128", "2", "11.0"],
+        ["16", "2", "128", "1", "7.0"]]
+    runs = json.loads((dest / "manifest.json").read_text())["kernel_tables"]
+    assert [Path(r).name for r in runs["ncu/flash_attn/H100.csv"]] == [
+        "20261011T120001.000000Z", "20261011T120000.000000Z"]
+
+
+GEMM_HEAD = ("M", "N", "K", "dtype_bytes", "latency_us")
+
+
+def test_gemm_rows_union_with_append_and_reset_without(tmp_path: Path) -> None:
+    """A gemm run without --append replaces the table, as it did when it
+    wrote the whole file; a run with --append adds its cells over it."""
+    results, dest = tmp_path / "results", tmp_path / "out"
+    table = "ncu/gemm/H100.csv"
+    probe_run(results, "gemm", {table: csv_text([GEMM_HEAD, (1, 2, 3, 2, 9.0)])}, 0)
+    probe_run(results, "gemm", {table: csv_text([GEMM_HEAD, (1, 4, 4, 2, 5.0), (8, 4, 4, 2, 6.0)])}, 1)
+    probe_run(results, "gemm", {table: csv_text([GEMM_HEAD, (8, 4, 4, 2, 7.0)])}, 2,
+              args=["--append"])
+    export([results], dest, only=["kernel_tables"])
+    assert rows(dest / "kernel_data" / table) == [
+        list(GEMM_HEAD), ["1", "4", "4", "2", "5.0"], ["8", "4", "4", "2", "7.0"]]
+
+
+def test_reparallel_rows_upsert_on_their_key_and_sort(tmp_path: Path) -> None:
+    head = ("gpu", "world", "tp_from", "tp_to", "total_weight_gb", "comm_ms")
+    results, dest = tmp_path / "results", tmp_path / "out"
+    table = "cuda_event/reparallel/H100_reshard.csv"
+    probe_run(results, "reparallel", {table: csv_text([head, ("H100", 8, 4, 2, 16.0, 3.0),
+                                                       ("H100", 8, 2, 1, 16.0, 2.0)])}, 0)
+    probe_run(results, "reparallel", {table: csv_text([head, ("H100", 8, 2, 1, 16.0, 1.5)])}, 1)
+    export([results], dest, only=["kernel_tables"])
+    assert rows(dest / "kernel_data" / table) == [
+        list(head), ["H100", "8", "2", "1", "16.0", "1.5"], ["H100", "8", "4", "2", "16.0", "3.0"]]
+
+
+def test_a_whole_table_comes_from_the_run_that_finished_last(tmp_path: Path) -> None:
+    """gdn writes its whole table each run (no row key): the latest finished
+    run's file, byte for byte, even when it started first."""
+    results, dest = tmp_path / "results", tmp_path / "out"
+    table = "cuda_event/gdn/H100_9b_decode.csv"
+    probe_run(results, "gdn", {table: "batch,us\n1,5\n"}, at=0, finished=100)
+    probe_run(results, "gdn", {table: "batch,us\n2,6\n"}, at=1, finished=50)
+    export([results], dest, only=["kernel_tables"])
+    assert tree(dest / "kernel_data") == {table: "batch,us\n1,5\n"}
+
+
+def test_elementwise_entries_union_with_gemm_fp8_quant(tmp_path: Path) -> None:
+    """The elementwise probe's latest run gives its entries whole; every gemm
+    run's fp8_act_quant goes over them, the later finished run winning a key."""
+    results, dest = tmp_path / "results", tmp_path / "out"
+    table = "ncu/elementwise/H100.json"
+    probe_run(results, "elementwise", {table: '{"rms_norm": 1, "silu": 1}'}, 0)
+    probe_run(results, "gemm", {table: '{"fp8_act_quant": 1}'}, 1)
+    probe_run(results, "elementwise", {table: '{"rms_norm": 2}'}, 2)
+    probe_run(results, "gemm", {table: '{"fp8_act_quant": 3}'}, 3)
+    export([results], dest, only=["kernel_tables"])
+    assert json.loads((dest / "kernel_data" / table).read_text()) == {
+        "rms_norm": 2, "fp8_act_quant": 3}
