@@ -42,6 +42,21 @@ def reads_env(source):
     return False
 
 
+def env_names(path):
+    """The literal names a module reads or sets through os.environ / os.getenv."""
+    names = set()
+    for node in ast.walk(ast.parse(path.read_text())):
+        if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant) \
+                and isinstance(node.value, ast.Attribute) and node.value.attr == "environ":
+            names.add(node.slice.value)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.args \
+                and isinstance(node.args[0], ast.Constant) \
+                and (node.func.attr == "getenv" or (isinstance(node.func.value, ast.Attribute)
+                                                    and node.func.value.attr == "environ")):
+            names.add(node.args[0].value)
+    return names
+
+
 def env_readers():
     found = set()
     for root in ROOTS:
@@ -61,6 +76,14 @@ class NoEnviron(unittest.TestCase):
     def test_allowlist_has_no_stale_entries(self):
         stale = sorted(ALLOWLIST - env_readers())
         self.assertEqual(stale, [], "no longer reads env: drop it from ALLOWLIST")
+
+    def test_agents_law_6_names_every_variable_the_allowlist_reads(self):
+        """AGENTS.md law 6 lists the env vars the allowlisted files read; a
+        new one read without being named there fails."""
+        law = (REPO / "AGENTS.md").read_text().split("6. No module outside", 1)[1].split("\n7. ", 1)[0]
+        for path in sorted(ALLOWLIST):
+            for name in env_names(REPO / path):
+                self.assertIn(f"`{name}`", law, path)
 
     def test_scanner_catches_each_form(self):
         for src in ("import os\nos.environ.get('X')", "import os\nos.getenv('X')",

@@ -47,7 +47,9 @@ in one results layer, `results/<run>/`, and leaves the repo by
   `probes/runbooks/`.
 - Owner decision (2026-10-11): probes and profiler sources may send requests
   to an engine that launcher.py started, to measure engine-level behaviour;
-  they never start a process and never write outside results/. Today that
+  they never start an engine or a server and never write outside results/
+  (`serving_decode_grid`'s request shards are `multiprocessing` children of
+  the probe, listed under "Who writes" below). Today that
   is the probes `serving_decode_grid`, `serving_stage_split`, `live_split`
   and `pool_capacity`, and the profiling sources `serving_frontend`,
   `pd_host` and gsm8k (`wrapped.py`). Their `--out` paths are the caller's;
@@ -119,7 +121,8 @@ Every writer and every process starter, exactly:
    table row, and an `env_map` row only if an env var used to carry it.
 6. No module outside `config/` reads the environment, except the allowlist
    in `tests/config/test_no_environ.py`: the torchrun probes read `RANK`,
-   `WORLD_SIZE` and `LOCAL_RANK` (the launcher's protocol), the `--ncu`
+   `WORLD_SIZE`, `LOCAL_RANK` and `LOCAL_WORLD_SIZE` (the launcher's
+   protocol; reparallel reads GPUs per node from the last), the `--ncu`
    probes read `NCU_BIN`, and `profiling/kv_transfer.py` reads its torchrun
    ranks and sets `UCX_RCACHE_MAX_UNRELEASED` as vLLM does.
 7. Rows are append-only jsonl, so a crash keeps partial data.
@@ -150,4 +153,5 @@ Every writer and every process starter, exactly:
 - `tests/golden/REPORT.md`: every known behaviour difference from the
   pre-refactor code.
 - `QBENCH_STRUCTURE.md`: the design. The owner keeps it outside the repo. When
-  this file and the code disagree, it is the source of truth.
+  QBENCH_STRUCTURE.md and the code disagree, QBENCH_STRUCTURE.md is the source
+  of truth.
