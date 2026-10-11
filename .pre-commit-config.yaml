@@ -30,3 +30,16 @@ repos:
     exclude: ^tests/golden/fixtures/
   - id: trailing-whitespace
     exclude: ^tests/golden/fixtures/
+- repo: local
+  hooks:
+  - id: check-em-dash
+    name: No em-dash under quettabench/ (write --)
+    entry: python tools/pre_commit/check_em_dash.py
+    language: python
+    files: ^quettabench/
+    types: [text]
+  - id: check-commit-msg
+    name: "Commit message: '<area>: <change>', <= 72 chars, no AI attribution, no em-dash"
+    entry: python tools/pre_commit/check_commit_msg.py
+    language: python
+    stages: [commit-msg]
