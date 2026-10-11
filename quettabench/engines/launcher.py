@@ -127,8 +127,10 @@ def docker_argv(spec, cfg, gpus):
 
     The flags follow the H200 campaign notes (no launch script ever used
     docker): detached, --gpus, --ipc=host, --shm-size, the port published,
-    and the repo and the HF cache (hardware.hf_home, when set) mounted
-    read-only at their host paths so model paths resolve unchanged inside.
+    and the repo, the HF cache (hardware.hf_home, when set) and the model
+    dir (when it is an absolute path no other mount covers; provision puts
+    weights under <cache_root>/models/) mounted read-only at their host
+    paths so model paths resolve unchanged inside.
     --entrypoint is the argv's first word, so the image's own ENTRYPOINT does
     not prefix the command. env is spec.env, the non-empty collective pins
     and HF_HOME.
@@ -137,6 +139,10 @@ def docker_argv(spec, cfg, gpus):
     if not spec.image:
         raise ConfigError(f"{cfg.run_name}: hardware.launcher=docker needs engine.image")
     mounts = [hw.hf_home] if hw.hf_home else []
+    model = spec.engine_kwargs.get("model") or cfg.engine.model
+    if model and Path(model).is_absolute() and not any(
+            Path(model).is_relative_to(m) for m in [*mounts, REPO]):
+        mounts.append(model)
     env = {**spec.env, **{k: v for k, v in hw.collective.items() if v},
            **({"HF_HOME": hw.hf_home} if hw.hf_home else {})}
     return ["docker", "run", "-d", "--rm", "--name", f"qbench-{cfg.run_name}",

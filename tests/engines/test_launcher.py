@@ -111,6 +111,15 @@ class DockerArgv(unittest.TestCase):
         self.assertIn('"device=0,1"', argv)
         self.assertIn("NCCL_PROTO=Simple", argv)
 
+    def test_provisioned_model_dir_is_mounted(self):
+        cfg, spec = docker_spec("engine.model=/cache/models/llama")
+        argv = launcher.docker_argv(spec, cfg, "0")
+        self.assertIn("/cache/models/llama:/cache/models/llama:ro",
+                      [argv[i + 1] for i, a in enumerate(argv) if a == "-v"])
+        cfg, spec = docker_spec("engine.model=meta-llama/Llama-3.1-8B")
+        self.assertNotIn("meta-llama/Llama-3.1-8B:meta-llama/Llama-3.1-8B:ro",
+                         launcher.docker_argv(spec, cfg, "0"))
+
     def test_missing_image_is_a_config_error(self):
         cfg, spec = docker_spec("engine.image=null")
         with self.assertRaisesRegex(ConfigError, "needs engine.image"):

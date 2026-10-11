@@ -63,8 +63,8 @@ engines.
 ## Running inside docker
 
 `hardware.launcher: docker` runs the server in `engine.image` (`docker run
--d`, the GPUs, the port, and the repo and `hardware.hf_home` mounted
-read-only at their host paths); `configs/runs/llama-tp1-docker.yaml` is the
+-d`, the GPUs, the port, and the repo, `hardware.hf_home` and an absolute
+`engine.model` dir mounted read-only at their host paths); `configs/runs/llama-tp1-docker.yaml` is the
 example. Provision never pulls; pull the image yourself:
 
 ```bash
