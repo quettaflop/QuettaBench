@@ -30,6 +30,9 @@ from quettabench.engines import base, launcher
 from quettabench.metrics.results import RunWriter
 from quettabench.modes import serve
 
+# What a run writes into results/<run>/ itself; --overwrite removes these.
+RUN_FILES = ("run.json", "requests.jsonl", "engine.json", "server.log")
+
 
 def spec_lines(spec):
     """One `spec.<field> = value` line per LaunchSpec field, then one
@@ -133,12 +136,26 @@ def run_one(cfg, out):
         handle.stop()
 
 
-def main(run_yaml, overrides=(), dry=False, results_dir="results", allow_unverified=False):
+def clear_run_dir(out, overwrite):
+    """Refuse a run dir that already holds files, since requests.jsonl
+    appends; with overwrite, remove the old run's own files instead."""
+    if not out.is_dir() or not any(out.iterdir()):
+        return
+    if not overwrite:
+        raise ConfigError(f"{out} already holds a run; pass --overwrite to replace it")
+    for name in RUN_FILES:
+        (out / name).unlink(missing_ok=True)
+
+
+def main(run_yaml, overrides=(), dry=False, results_dir="results", allow_unverified=False,
+         overwrite=False):
     """Every Config of run_yaml, in matrix order; results/<run_name>/ each."""
     sets = [*overrides, *(["allow_unverified=true"] if allow_unverified else [])]
     cfgs = loader.load(run_yaml, sets)
     if not dry:
         refuse_mixed_in_process(cfgs)
+        for cfg in cfgs:
+            clear_run_dir(Path(results_dir) / cfg.run_name, overwrite)
     for cfg in cfgs:
         out = Path(results_dir) / cfg.run_name
         if dry:

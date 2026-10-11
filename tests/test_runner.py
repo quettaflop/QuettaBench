@@ -257,6 +257,28 @@ class ProbeMode(unittest.TestCase):
         probe.main.assert_called_once_with(argv)
         self.assertEqual(doc["summary"], {"probe": "fake", "argv": argv})
 
+    def test_a_run_dir_with_a_run_is_refused_without_overwrite(self):
+        run = {"mode": {"mode": "probe", "probe": "fake"}}
+        with scratch_configs("p", run) as (path, td), \
+                mock.patch.dict(sys.modules, {"quettabench.probes.fake": mock.Mock()}):
+            out = td / "results" / "p"
+            out.mkdir(parents=True)
+            for name in runner.RUN_FILES:
+                (out / name).write_text("old\n")
+            (out / "notes.txt").write_text("keep\n")
+            argv = ("run", str(path), "--allow-unverified", "--results-dir", str(td / "results"))
+            _, refused = qbench(*argv)
+            self.assertEqual((out / "requests.jsonl").read_text(), "old\n")
+            _, exit_msg = qbench(*argv, "--overwrite")
+            left = sorted(p.name for p in out.iterdir())
+            rows = (out / "requests.jsonl").read_text()
+            doc = json.loads((out / "run.json").read_text())
+        self.assertIn("already holds a run; pass --overwrite", refused)
+        self.assertIsNone(exit_msg)
+        self.assertEqual(left, ["notes.txt", "requests.jsonl", "run.json"])
+        self.assertEqual(rows, "")
+        self.assertEqual(doc["summary"]["probe"], "fake")
+
     def test_probe_mode_needs_a_probe(self):
         with scratch_configs("bare", {"mode": {"mode": "probe"}}) as (path, _):
             _, exit_msg = qbench("run", str(path), "--dry-run", "--allow-unverified")

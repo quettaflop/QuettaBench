@@ -1,6 +1,7 @@
 """qbench: the one command line.
 
   qbench run <run.yaml> [--set k=v ...] [--dry-run] [--results-dir DIR] [--allow-unverified]
+             [--overwrite]
                                                       quettabench.runner
   qbench profile  --run results/<run> --source ...   quettabench.profiler
   qbench crossval ...                                 quettabench.crossval
@@ -49,6 +50,8 @@ def parser():
     run.add_argument("--results-dir", default="results", help="parent of <run>/ (default results)")
     run.add_argument("--allow-unverified", action="store_true",
                      help="run a model whose yaml says verified: false (bring-up only)")
+    run.add_argument("--overwrite", action="store_true",
+                     help="replace the run files of a results/<run>/ that already holds a run")
     for door, module in DOORS.items():
         sub.add_parser(door, help=f"{module}.main", add_help=False)
     return ap
@@ -73,7 +76,7 @@ def main(argv=None):
         return 2
     try:
         return runner.main(a.run_yaml, a.overrides, a.dry_run, a.results_dir,
-                           a.allow_unverified)
+                           a.allow_unverified, a.overwrite)
     except (ConfigError, UnsupportedField) as e:
         sys.exit(str(e))
 
