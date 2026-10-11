@@ -113,12 +113,15 @@ contract: filenames `{gpu}[_tpN].csv`, method split `ncu/` (graphed decode) vs
 
 ## Running on a remote fleet host (ssh)
 
-Set `REMOTE_HOST`, `GPU_ID` and `PYTHON_BIN`; `remote-probe` rsyncs the probes package to
-the host, runs the probe on `GPU_ID` (`NPROC=2 GPU_IDS=0,1` for the torchrun probes), and
-rsyncs the run back into `results/probes/<gpu>/<probe>/<run-id>/`. It empties the remote
-`/tmp/qbench-probes/out` first; no earlier run goes up, since a run writes only its own
-rows. Pick a **free** GPU (`just gpu-info`)
-on shared hosts and clean up `/tmp/qbench-probes` when done.
+Set `REMOTE_HOST`, `GPU_ID` and `PYTHON_BIN`; `remote-probe` (`probes/base.py`
+`remote_probe`) makes its own remote dir with `mktemp -d /tmp/qbench-probes.XXXXXX`, rsyncs
+the probes package into it, runs the probe on `GPU_ID` (`NPROC=2 GPU_IDS=0,1` for the
+torchrun probes, `NCU_BIN` for `--ncu`) with `--run-id` from the local clock, and always
+rsyncs the run back into `results/probes/<gpu>/<probe>/<run-id>/`, a failed run's too,
+never overwriting a local file. It exits with the remote run's exit code and removes that
+remote dir alone once the pull succeeds; a failed pull keeps it and prints where. No
+earlier run goes up, since a run writes only its own rows. Pick a **free** GPU
+(`just gpu-info`) on shared hosts.
 ```
 REMOTE_HOST=a100 GPU_ID=0 \
 PYTHON_BIN=/home/<user>/miniconda3/envs/vllm/bin/python \

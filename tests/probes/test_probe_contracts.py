@@ -18,7 +18,10 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 JUSTFILE = ROOT / "justfile"
@@ -138,20 +141,20 @@ def test_every_moved_probe_takes_out():
             assert "--out" in argparse_flags(probe), f"{probe.name} has no --out"
 
 
-def test_remote_recipe_ships_the_probes_package():
-    text = JUSTFILE.read_text()
-    assert "quettabench/probes/" in text and "rsync" in text, "remote-probe must ship quettabench/probes"
-    assert "quettabench/__init__.py" in text, "remote-probe must ship the package root"
-    assert "--out $rdir/out" in text, "remote-probe must point --out at the pulled directory"
+def test_remote_recipe_is_one_line_into_base():
+    block = next(b for b in recipe_blocks(JUSTFILE) if b.startswith("remote-probe "))
+    body = [ln.strip() for ln in block.splitlines()[1:] if ln.strip() and not ln.strip().startswith("#")]
+    assert len(body) == 1 and "-m quettabench.probes.base remote-probe" in body[0], body
+    assert "rm -rf" not in block and "/tmp/qbench-probes" not in block
 
 
-def test_remote_recipe_ships_what_base_imports():
-    """Exactly the files the remote-probe rsync ships, in a clean dir, import
+def test_remote_probe_ships_what_base_imports():
+    """Exactly the files remote_probe ships, in a clean dir, import
     quettabench.probes.base under an isolated interpreter."""
-    line = next(ln for ln in JUSTFILE.read_text().splitlines() if "rsync -a --relative" in ln)
-    shipped = [t for t in line.split() if t.startswith("quettabench/")]
+    from quettabench.probes.base import SHIPPED
+    assert "quettabench/probes/" in SHIPPED and "quettabench/__init__.py" in SHIPPED
     with tempfile.TemporaryDirectory() as td:
-        for rel in shipped:
+        for rel in SHIPPED:
             src, dst = ROOT / rel, Path(td) / rel
             if src.is_dir():
                 shutil.copytree(src, dst)
@@ -162,6 +165,99 @@ def test_remote_recipe_ships_what_base_imports():
                 "assert b.__file__.startswith(sys.argv[1]), b.__file__")
         proc = subprocess.run([sys.executable, "-I", "-c", code, td], capture_output=True, text=True)
     assert proc.returncode == 0, proc.stderr
+
+
+class FakeHost:
+    """subprocess.run for remote_probe: records each command, answers mktemp
+    with rdir, and fails the remote probe run and the pull as told."""
+
+    def __init__(self, rdir="/tmp/qbench-probes.Ab12Cd", probe_rc=0, pull_rc=0):
+        self.rdir, self.probe_rc, self.pull_rc, self.calls = rdir, probe_rc, pull_rc, []
+
+    def __call__(self, cmd, check=False, **kw):
+        self.calls.append(cmd)
+        rc = 0
+        if cmd[0] == "rsync" and cmd[-2].endswith("/out/"):
+            rc = self.pull_rc
+        elif cmd[0] == "ssh" and "quettabench.probes." in cmd[-1]:
+            rc = self.probe_rc
+        if check and rc:
+            raise subprocess.CalledProcessError(rc, cmd)
+        return subprocess.CompletedProcess(cmd, rc, stdout=self.rdir + "\n" if "mktemp" in cmd[-1] else "")
+
+
+NOW = datetime(2026, 10, 11, 12, 0, 0, 123456, tzinfo=timezone.utc)
+REMOTE = ["--host", "a100", "--py", "/v/bin/python", "--gpu-id", "3"]
+
+
+def remote(argv, host, tmp_path, monkeypatch):
+    from quettabench.probes.base import remote_probe
+    monkeypatch.chdir(tmp_path)
+    return remote_probe([*REMOTE, *argv], run=host, now=NOW)
+
+
+def test_remote_probe_runs_in_its_own_dir_and_always_pulls(tmp_path, monkeypatch):
+    """A failed remote run is still pulled back, then only its own mktemp dir
+    is removed, and the remote run's exit code is returned."""
+    host = FakeHost(probe_rc=3)
+    rc = remote(["gemm", "A100", "--probe-args=--ncu --wide"], host, tmp_path, monkeypatch)
+    rdir = host.rdir
+    assert rc == 3
+    mktemp, ship, probe, pull, rm = host.calls
+    assert mktemp == ["ssh", "-o", "BatchMode=yes", "a100", "mktemp -d /tmp/qbench-probes.XXXXXX"]
+    assert ship[:4] == ["rsync", "-a", "--relative", "-e"] and ship[-1] == f"a100:{rdir}/"
+    assert probe[-1] == (f"cd {rdir} && CUDA_VISIBLE_DEVICES=3 /v/bin/python -m quettabench.probes.gemm "
+                         f"--gpu-label A100 --out {rdir}/out --run-id 20261011T120000.123456Z --ncu --wide")
+    assert pull[-2:] == [f"a100:{rdir}/out/", "results/probes/A100/"] and "--ignore-existing" in pull
+    assert rm == ["ssh", "-o", "BatchMode=yes", "a100", f"rm -rf {rdir}"]
+    assert (tmp_path / "results" / "probes" / "A100").is_dir()
+
+
+def test_remote_probe_under_torchrun_and_ncu(tmp_path, monkeypatch):
+    host = FakeHost()
+    remote(["--nproc", "2", "--gpu-ids", "0,1", "collective", "H100"], host, tmp_path, monkeypatch)
+    assert "CUDA_VISIBLE_DEVICES=0,1 /v/bin/python -m torch.distributed.run --nproc_per_node=2 " \
+        "-m quettabench.probes.collective --gpu-label H100" in host.calls[2][-1]
+    host = FakeHost()
+    remote(["--ncu-bin", "/opt/ncu", "gemm", "H100"], host, tmp_path, monkeypatch)
+    assert "CUDA_VISIBLE_DEVICES=3 NCU_BIN=/opt/ncu /v/bin/python -m quettabench.probes.gemm" \
+        in host.calls[2][-1]
+
+
+def test_a_failed_pull_keeps_the_remote_dir(tmp_path, monkeypatch):
+    host = FakeHost(pull_rc=23)
+    with pytest.raises(SystemExit, match="kept"):
+        remote(["gemm", "A100"], host, tmp_path, monkeypatch)
+    assert not any("rm -rf" in c[-1] for c in host.calls)
+
+
+def test_a_failed_ship_removes_the_remote_dir(tmp_path, monkeypatch):
+    class ShipFails(FakeHost):
+        def __call__(self, cmd, check=False, **kw):
+            if cmd[:3] == ["rsync", "-a", "--relative"]:
+                self.calls.append(cmd)
+                raise subprocess.CalledProcessError(12, cmd)
+            return super().__call__(cmd, check=check, **kw)
+    host = ShipFails()
+    with pytest.raises(subprocess.CalledProcessError):
+        remote(["gemm", "A100"], host, tmp_path, monkeypatch)
+    assert host.calls[-1][-1] == f"rm -rf {host.rdir}"
+
+
+@pytest.mark.parametrize("rdir", ["", "/tmp", "/tmp/qbench-probes", "/tmp/qbench-probes.x y", "/"])
+def test_an_odd_mktemp_answer_is_never_removed(rdir, tmp_path, monkeypatch):
+    host = FakeHost(rdir=rdir)
+    with pytest.raises(SystemExit, match="mktemp"):
+        remote(["gemm", "A100"], host, tmp_path, monkeypatch)
+    assert len(host.calls) == 1
+
+
+@pytest.mark.parametrize("argv", [["../x", "A100"], ["gemm", "A 100"], ["gemm", "A100", "--host", ""]])
+def test_remote_probe_refuses_odd_names(argv, tmp_path, monkeypatch):
+    host = FakeHost()
+    with pytest.raises(SystemExit):
+        remote(argv, host, tmp_path, monkeypatch)
+    assert host.calls == []
 
 
 def test_the_r2_mirror_has_its_own_prefix_and_never_deletes():

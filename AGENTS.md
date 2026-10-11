@@ -84,9 +84,11 @@ Every writer and every process starter, exactly:
   (default `results/probes/<gpu>/<probe>/<run-id>/`); `serving_decode_grid` also starts its request
   shards as `multiprocessing` processes, and `probes/_ncu.py` (gemm, flash_attn,
   gdn `--ncu`) starts `ncu` with a `python -c` child per timed point.
-- `justfile` `remote-probe`: on `REMOTE_HOST`, empties and writes
-  `/tmp/qbench-probes/` (the shipped package and `out/`) and runs the probe
-  there; locally, adds the pulled run under `results/probes/<gpu>/`.
+- `justfile` `remote-probe` (`probes/base.py` `remote_probe`): starts `ssh`
+  and `rsync`; on `REMOTE_HOST`, makes its own `mktemp -d
+  /tmp/qbench-probes.XXXXXX`, writes the shipped package and `out/` there,
+  runs the probe, and removes that dir once its run is pulled; locally, adds
+  the pulled run under `results/probes/<gpu>/`.
 - `profiler.py`: `profile.json` (and the nsys export) in the run dir.
 - `profiling/kv_transfer.py`: its CSV under `--out-dir`, run under its own
   torchrun ranks.
@@ -133,9 +135,9 @@ Every writer and every process starter, exactly:
 - No attribution trailers in code, commits or PRs: the author field is the only authorship.
 - No em-dash in prose; write `--`.
 - Imports at the top of the file. No inline python in shell or justfile
-  recipes; a recipe is one command line into the package. `gpu-info` and
-  `remote-probe` are the exceptions: host-shell glue (ssh, rsync,
-  nvidia-smi) that runs where the package may not be installed.
+  recipes; a recipe is one command line into the package. `gpu-info` is the
+  exception: host-shell glue (ssh, nvidia-smi) that runs where the package
+  may not be installed.
 - Measured before kept: an optimization lands with the measurement that
   justifies it, and a feature lands with its measurement.
 - Report every number, including the ones that weaken a claim.

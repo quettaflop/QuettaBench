@@ -1,5 +1,6 @@
 """Output arguments every kernel probe shares, the run record each writes,
-and the one way a live-server probe starts vLLM (launch_vllm)."""
+the one way a live-server probe starts vLLM (launch_vllm), and the
+remote-probe recipe's ssh and rsync (remote_probe)."""
 from __future__ import annotations
 
 import argparse
@@ -7,6 +8,7 @@ import contextlib
 import dataclasses
 import re
 import shlex
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -139,3 +141,84 @@ def launch_vllm(run_dir: Path, model: str, *, port: int, max_model_len: int, pre
     cfg = Config(engine, WorkloadCfg(), ModeCfg(), hardware, run_name=Path(run_dir).name)
     spec = vllm.ADAPTER.translate(cfg, run_dir)
     return launcher.start(spec, run_dir, timeout_s=timeout_s)
+
+
+# What remote_probe ships: the probes and what base.py imports for run.json.
+SHIPPED = ("quettabench/__init__.py", "quettabench/probes/", "quettabench/config/__init__.py",
+           "quettabench/config/schema.py", "quettabench/config/env_map.py",
+           "quettabench/metrics/__init__.py", "quettabench/metrics/results.py")
+REMOTE_DIR = re.compile(r"/tmp/qbench-probes\.[A-Za-z0-9]{6,}")
+NAME = re.compile(r"[a-z][a-z0-9_]*")
+GPU = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+
+
+def _remote_args(argv):
+    ap = argparse.ArgumentParser(prog="just remote-probe")
+    ap.add_argument("--host", required=True, help="ssh host or alias (REMOTE_HOST)")
+    ap.add_argument("--py", default="python3", help="the remote python (PYTHON_BIN)")
+    ap.add_argument("--gpu-id", default="0", help="the remote GPU (GPU_ID)")
+    ap.add_argument("--gpu-ids", default="", help="the remote GPUs under torchrun (GPU_IDS)")
+    ap.add_argument("--nproc", type=int, default=1, help="ranks; above 1 runs torchrun (NPROC)")
+    ap.add_argument("--ncu-bin", default="", help="the remote ncu (NCU_BIN)")
+    ap.add_argument("--probe-args", default="", help="the probe's own flags, one string")
+    ap.add_argument("name")
+    ap.add_argument("gpu")
+    a = ap.parse_args(argv)
+    if not a.host or not NAME.fullmatch(a.name) or not GPU.fullmatch(a.gpu):
+        ap.error("needs --host (set REMOTE_HOST), a probe module name and a GPU label")
+    return a
+
+
+def _remote_python(py):
+    """py quoted for the remote shell, a leading ~/ left for it to expand."""
+    return "~/" + shlex.quote(py[2:]) if py.startswith("~/") else shlex.quote(py)
+
+
+def remote_probe(argv=None, run=subprocess.run, now=None) -> int:
+    """Run a probe on a remote host in its own `mktemp -d` dir: ship SHIPPED,
+    run it with --run-id from this machine's clock, always pull its out/
+    into results/probes/<gpu>/ (never overwriting a local file), then remove
+    that dir alone. Returns the remote run's exit code; a failed pull keeps
+    the remote dir and says where it is."""
+    a = _remote_args(argv)
+    ssh = ["ssh", "-o", "BatchMode=yes", a.host]
+    rsh = "ssh -o BatchMode=yes"
+    rdir = run([*ssh, "mktemp -d /tmp/qbench-probes.XXXXXX"], check=True,
+               capture_output=True, text=True).stdout.strip()
+    if not REMOTE_DIR.fullmatch(rdir):
+        raise SystemExit(f"remote mktemp gave {rdir!r}, not a /tmp/qbench-probes.XXXXXX dir")
+    py = _remote_python(a.py)
+    if a.nproc > 1:
+        launch = (f"CUDA_VISIBLE_DEVICES={shlex.quote(a.gpu_ids or a.gpu_id)} {py} "
+                  f"-m torch.distributed.run --nproc_per_node={a.nproc} -m quettabench.probes.{a.name}")
+    else:
+        ncu = f"NCU_BIN={shlex.quote(a.ncu_bin)} " if a.ncu_bin else ""
+        launch = f"CUDA_VISIBLE_DEVICES={shlex.quote(a.gpu_id)} {ncu}{py} -m quettabench.probes.{a.name}"
+    rid = run_id(now or datetime.now(timezone.utc))
+    command = (f"cd {rdir} && {launch} --gpu-label {a.gpu} --out {rdir}/out --run-id {rid} "
+               f"{shlex.join(shlex.split(a.probe_args))}").rstrip()
+    started, pulled = False, None
+    try:
+        run(["rsync", "-a", "--relative", "-e", rsh, *SHIPPED, f"{a.host}:{rdir}/"], check=True)
+        started = True
+        status = run([*ssh, command]).returncode
+    finally:
+        # Pulled even when the run failed or was interrupted; removed only once pulled.
+        if started:
+            local = Path("results") / "probes" / a.gpu
+            local.mkdir(parents=True, exist_ok=True)
+            pulled = run(["rsync", "-a", "--ignore-existing", "-e", rsh, f"{a.host}:{rdir}/out/",
+                          f"{local}/"]).returncode
+        if pulled:
+            print(f"pulling {a.host}:{rdir}/out/ failed ({pulled}); the remote dir is kept",
+                  file=sys.stderr)
+        else:
+            run([*ssh, f"rm -rf {rdir}"])
+    if pulled:
+        raise SystemExit(f"remote dir kept: {a.host}:{rdir}")
+    return status
+
+if __name__ == "__main__":
+    if sys.argv[1:2] != ["remote-probe"]:
+        raise SystemExit("usage: python -m quettabench.probes.base remote-probe ...")
+    raise SystemExit(remote_probe(sys.argv[2:]))

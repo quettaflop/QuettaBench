@@ -26,6 +26,10 @@ gpu := "A100"
 gpu_id := env_var_or_default("GPU_ID", "0")
 py := env_var_or_default("PYTHON_BIN", "python3")
 sim_root := env_var_or_default("QUETTASIM", "../QuettaSim")
+remote_host := env_var_or_default("REMOTE_HOST", "")
+gpu_ids := env_var_or_default("GPU_IDS", "")
+nproc := env_var_or_default("NPROC", "1")
+ncu_bin := env_var_or_default("NCU_BIN", "")
 kdata := "results/probes"
 
 r2_endpoint := env_var_or_default("R2_ENDPOINT", "")
@@ -85,25 +89,12 @@ gpu-info:
 probe name *args:
     CUDA_VISIBLE_DEVICES={{gpu_id}} {{py}} -m quettabench.probes.{{name}} {{args}}
 
-# Run a probe on REMOTE_HOST: ship the probes package (and the schema, env_map and run
-# writer its run.json needs), run it there (NPROC>1 = one rank per
-# GPU in GPU_IDS through torchrun), pull the run into results/probes/<gpu>/<probe>/<run-id>/.
-# The remote out dir is emptied first; a run writes only its own rows, so no earlier run goes up.
+# Run a probe on REMOTE_HOST in its own mktemp dir (probes/base.py remote_probe): ship the
+# probes package and what its run.json needs, run it (NPROC>1 = one rank per GPU in GPU_IDS
+# through torchrun) with --run-id from this machine's clock, always pull the run into
+# results/probes/<gpu>/<probe>/<run-id>/, then remove that remote dir.
 remote-probe name gpu=gpu *args:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    : "${REMOTE_HOST:?set REMOTE_HOST to the ssh host or alias}"
-    rdir=/tmp/qbench-probes
-    ssh -o BatchMode=yes "$REMOTE_HOST" "rm -rf $rdir/out && mkdir -p $rdir/out/{{name}}"
-    rsync -a --relative -e 'ssh -o BatchMode=yes' quettabench/__init__.py quettabench/probes/ quettabench/config/__init__.py quettabench/config/schema.py quettabench/config/env_map.py quettabench/metrics/__init__.py quettabench/metrics/results.py "$REMOTE_HOST:$rdir/"
-    if [ "${NPROC:-1}" -gt 1 ]; then
-        launch="CUDA_VISIBLE_DEVICES=${GPU_IDS:-{{gpu_id}}} {{py}} -m torch.distributed.run --nproc_per_node=$NPROC -m quettabench.probes.{{name}}"
-    else
-        launch="CUDA_VISIBLE_DEVICES={{gpu_id}} ${NCU_BIN:+NCU_BIN=$NCU_BIN} {{py}} -m quettabench.probes.{{name}}"
-    fi
-    ssh -o BatchMode=yes "$REMOTE_HOST" "cd $rdir && $launch --gpu-label {{gpu}} --out $rdir/out {{args}}"
-    mkdir -p results/probes/{{gpu}}
-    rsync -a --ignore-existing -e 'ssh -o BatchMode=yes' "$REMOTE_HOST:$rdir/out/" results/probes/{{gpu}}/
+    python3 -m quettabench.probes.base remote-probe --host "{{remote_host}}" --py "{{py}}" --gpu-id "{{gpu_id}}" --gpu-ids "{{gpu_ids}}" --nproc "{{nproc}}" --ncu-bin "{{ncu_bin}}" --probe-args="{{args}}" {{name}} {{gpu}}
 
 # QuettaSim tables from results dirs: just export --results results/<run> --dest <dir>
 export *args:

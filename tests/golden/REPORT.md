@@ -521,3 +521,12 @@ did. A table with no row key comes from the run with the latest
 `provenance.finished`, where before it came from the newest run by start.
 Results dirs given to export are pooled by that rule; before, an earlier
 dir won over a later one.
+
+2026-10-11: no fixture changed. `just remote-probe` runs
+`probes/base.py` `remote_probe`: each invocation makes its own remote
+`mktemp -d /tmp/qbench-probes.XXXXXX`, passes `--run-id` from the local
+clock, always pulls the run back (a failed run's too) and exits with the
+remote run's exit code, then removes only that dir; a failed pull keeps
+it. Before, every invocation emptied and reused `/tmp/qbench-probes/`, so
+two concurrent invocations deleted each other's runs, a failed remote run
+was never pulled, and the run id came from the remote clock.
