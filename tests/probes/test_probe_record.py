@@ -7,6 +7,7 @@ import argparse
 import ast
 import contextlib
 import dataclasses
+import io
 import json
 import os
 import sys
@@ -290,3 +291,40 @@ class LaunchVllm(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StageSplitKey(unittest.TestCase):
+    """serving_stage_split sends its --api-key and never prints it."""
+
+    def test_requests_carry_the_api_key(self):
+        from quettabench.probes import serving_stage_split as sss
+
+        class Stop(Exception):
+            pass
+
+        made = []
+
+        class Session:
+            def __init__(self, **kw):
+                made.append(kw)
+
+            async def __aenter__(self):
+                raise Stop
+
+            async def __aexit__(self, *exc):
+                return False
+
+        with mock.patch.object(sss.aiohttp, "ClientSession", Session), \
+                self.assertRaises(Stop):
+            sss.asyncio.run(sss.run_sweep("http://h:1", "llama", [8], [0], 1, "/dev/null",
+                                          api_key="sk-live"))
+        self.assertEqual(made[0]["headers"], {"Authorization": "Bearer sk-live"})
+        self.assertNotIn("Bearer test", (PROBES / "serving_stage_split.py").read_text())
+
+    def test_the_nsys_command_takes_the_key_from_the_env(self):
+        from quettabench.probes import serving_stage_split as sss
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            sss.main(["--model", "/w", "--emit-nsys-cmd", "--api-key", "sk-live"])
+        self.assertNotIn("sk-live", out.getvalue())
+        self.assertIn("VLLM_API_KEY", out.getvalue())

@@ -146,7 +146,7 @@ async def ttft_once(session, url, model, content, request_id=None):
     payload = {"model": model, "messages": [{"role": "user", "content": content}],
                "max_tokens": 1, "temperature": 0.0, "stream": True,
                "stream_options": {"include_usage": True}}
-    headers = {"Authorization": "Bearer test", "Content-Type": "application/json"}
+    headers = {"Content-Type": "application/json"}  # the session sends Authorization
     if request_id is not None:
         # runner.py sends a stable id via X-Request-Id (--trace-request-ids) but never reads it
         # back. We propagate it so a future Lane-B per-request join key exists.
@@ -296,7 +296,9 @@ _WORKER_EXT_HINT = r'''
 '''
 
 
-def emit_nsys_cmd(model, port, gpu_mem, max_model_len, api_key, out_sqlite):
+def emit_nsys_cmd(model, port, gpu_mem, max_model_len, out_sqlite):
+    """Print the LANE B nsys-wrapped server command; it takes the API key from
+    VLLM_API_KEY in the operator's shell, so the key is never printed."""
     py = sys.executable
     nsys_cmd = (
         f"nsys profile -t cuda,nvtx,cublas --cuda-graph-trace=node \\\n"
@@ -306,12 +308,13 @@ def emit_nsys_cmd(model, port, gpu_mem, max_model_len, api_key, out_sqlite):
         f"    --model {model} --served-model-name llama --host 127.0.0.1 --port {port} \\\n"
         f"    --dtype bfloat16 --gpu-memory-utilization {gpu_mem} "
         f"--max-model-len {max_model_len} \\\n"
-        f"    --enable-prefix-caching --enable-chunked-prefill --api-key {api_key} \\\n"
+        f"    --enable-prefix-caching --enable-chunked-prefill \\\n"
         f"    --no-enable-log-requests --worker-extension-cls my_ext.NvtxForwardTimer"
     )
     print("\n" + "=" * 96)
     print("LANE B (DEVICE split) -- run this SEPARATELY (nsys-wrapped server), then drive it with")
-    print("this same script (--no-launch, pointing at the nsys server).")
+    print("this same script (--no-launch, pointing at the nsys server). Export VLLM_API_KEY")
+    print("first, set to the --api-key you pass this script.")
     print("restricting Sigma(end-start) to the per-step prefill NVTX range:")
     print("=" * 96)
     print(nsys_cmd)
@@ -337,10 +340,11 @@ _CSV_FIELDS = [
 ]
 
 
-async def run_sweep(base_url, model, news, cacheds, trials, out_path):
+async def run_sweep(base_url, model, news, cacheds, trials, out_path, api_key):
     rows = []
     timeout = aiohttp.ClientTimeout(total=300)
-    async with aiohttp.ClientSession(timeout=timeout) as s:
+    auth = {"Authorization": f"Bearer {api_key}"}
+    async with aiohttp.ClientSession(timeout=timeout, headers=auth) as s:
         # Sanity: confirm /metrics is reachable and at least one target histogram is present.
         probe = await scrape_metrics(s, base_url)
         present = [k for k, v in probe.items() if v is not None]
@@ -411,7 +415,7 @@ def main(argv=None):
     base_url = f"http://127.0.0.1:{a.port}"
 
     if a.emit_nsys_cmd:
-        emit_nsys_cmd(a.model, a.port, a.gpu_mem, a.max_model_len, a.api_key,
+        emit_nsys_cmd(a.model, a.port, a.gpu_mem, a.max_model_len,
                       out_sqlite="serving_stage_split_nsys")
         return
 
@@ -425,9 +429,10 @@ def main(argv=None):
                                tp=a.tensor_parallel_size)
     try:
         print("server healthy; starting c1 stage-split sweep", flush=True)
-        asyncio.run(run_sweep(base_url, a.served_model_name, news, cacheds, a.trials, a.out))
+        asyncio.run(run_sweep(base_url, a.served_model_name, news, cacheds, a.trials, a.out,
+                              api_key=a.api_key))
         # Always remind the operator how to get the DEVICE split (LANE B is a separate run).
-        emit_nsys_cmd(a.model, a.port, a.gpu_mem, a.max_model_len, a.api_key,
+        emit_nsys_cmd(a.model, a.port, a.gpu_mem, a.max_model_len,
                       out_sqlite="serving_stage_split_nsys")
         print("Next: parse the nsys sqlite (CUPTI kernels inside the vllm_prefill_step NVTX range).", flush=True)
     finally:
