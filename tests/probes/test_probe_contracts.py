@@ -14,6 +14,10 @@ from __future__ import annotations
 
 import ast
 import re
+import shutil
+import subprocess
+import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -139,3 +143,22 @@ def test_remote_recipe_ships_the_probes_package():
     assert "quettabench/probes/" in text and "rsync" in text, "remote-probe must ship quettabench/probes"
     assert "quettabench/__init__.py" in text, "remote-probe must ship the package root"
     assert "--out $rdir/out" in text, "remote-probe must point --out at the pulled directory"
+
+
+def test_remote_recipe_ships_what_base_imports():
+    """Exactly the files the remote-probe rsync ships, in a clean dir, import
+    quettabench.probes.base under an isolated interpreter."""
+    line = next(ln for ln in JUSTFILE.read_text().splitlines() if "rsync -a --relative" in ln)
+    shipped = [t for t in line.split() if t.startswith("quettabench/")]
+    with tempfile.TemporaryDirectory() as td:
+        for rel in shipped:
+            src, dst = ROOT / rel, Path(td) / rel
+            if src.is_dir():
+                shutil.copytree(src, dst)
+            else:
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
+        code = ("import sys; sys.path.insert(0, sys.argv[1]); import quettabench.probes.base as b; "
+                "assert b.__file__.startswith(sys.argv[1]), b.__file__")
+        proc = subprocess.run([sys.executable, "-I", "-c", code, td], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
