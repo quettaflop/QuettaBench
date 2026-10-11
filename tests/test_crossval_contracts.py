@@ -16,6 +16,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from quettabench.config import loader
@@ -262,8 +263,10 @@ class CrossvalScripts(unittest.TestCase):
                              {"mode": "disagg", "prefill": 2, "decode": 2})
             self.assertEqual(validate.parse_serving_style("ep8dp2"),
                              {"mode": "ep_dp", "ep": 8, "dp": 2})
+            self.assertEqual(validate.parse_serving_style("afd:2a6f"),
+                             {"mode": "afd", "attn": 2, "ffn": 6})
             for bad in ("disagg:0p1d", "disagg:2p", "ep8", "wideEP", "disagg:xp1d",
-                        "ep0dp2", "ep8dp0"):
+                        "ep0dp2", "ep8dp0", "afd:0a1f", "afd:2a", "afd:2f6a"):
                 with self.assertRaises(ValueError):
                     validate.parse_serving_style(bad)
             pre, dec = validate.disagg_gpu_sets(
@@ -277,6 +280,15 @@ class CrossvalScripts(unittest.TestCase):
             with self.assertRaises(ValueError):
                 validate.check_ep_legal(7, 256)
             self.assertFalse(validate.serving_style_compatible("disagg:1p1d", "aggregated"))
+            self.assertFalse(validate.serving_style_compatible("afd:1a1f", "aggregated"))
+            self.assertFalse(validate.serving_style_compatible("afd:1a1f", "disagg:1p1d"))
+            # Pools are sized in GPUs: afd needs attn + ffn, not tp * pp.
+            engine = SimpleNamespace(serving_style="afd:2a6f", tp=4, pp=1)
+            self.assertEqual(validate.device_count(engine), 8)
+            engine = SimpleNamespace(serving_style="disagg:2p2d", tp=8, pp=1)
+            self.assertEqual(validate.device_count(engine), 4)
+            engine = SimpleNamespace(serving_style="aggregated", tp=4, pp=2)
+            self.assertEqual(validate.device_count(engine), 8)
             self.assertTrue(validate.serving_style_compatible("aggregated", "aggregated"))
             # disagg KV config: prefill producer and decode consumer share the port
             # and pool size, take distinct ranks; a wrong role raises.

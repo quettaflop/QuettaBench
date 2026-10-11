@@ -117,6 +117,10 @@ class ServerArgv(unittest.TestCase):
         with self.assertRaises(base.UnsupportedField):
             spec_for("llama", sets=["engine.serving_style=disagg:1p1d"])
 
+    def test_afd_is_unsupported(self):
+        with self.assertRaisesRegex(base.UnsupportedField, "serving_style=afd:2a6f"):
+            spec_for("llama", sets=["engine.serving_style=afd:2a6f"])
+
 
 class Extra(unittest.TestCase):
     def test_scalar_extra_appended_last_on_both_sides(self):

@@ -2,7 +2,7 @@
 
 load the yaml (+ --set, + env through env_map) into one Config per matrix
 point, then per Config: translate it to a LaunchSpec, put the collective
-env and the GPUs (hardware.visible_devices, else the first idle tp * pp)
+env and the GPUs (hardware.visible_devices, else the first idle device_count)
 into this process for the engine to inherit, launch the server unless the
 adapter drives the engine itself (in-process grid, cargo bench), get the
 driver, build the Trace, and let modes/serve.py run trace
@@ -20,6 +20,7 @@ from pathlib import Path
 
 from quettabench import workloads
 from quettabench.config import env_map, loader
+from quettabench.config.validate import device_count
 from quettabench.engines import base, launcher
 from quettabench.metrics.results import RunWriter
 from quettabench.modes import serve
@@ -57,7 +58,7 @@ def run_one(cfg, out):
         return run_probe(cfg, out)
     adapter = base.get(cfg.engine.name)
     spec = adapter.translate(cfg)
-    gpus = cfg.hardware.visible_devices or launcher.idle_gpus(cfg.engine.tp * cfg.engine.pp,
+    gpus = cfg.hardware.visible_devices or launcher.idle_gpus(device_count(cfg.engine),
                                                               cfg.hardware.backend)
     env_map.export({**cfg.hardware.collective, "CUDA_VISIBLE_DEVICES": gpus})
     handle = (launcher.start(spec, out, timeout_s=cfg.hardware.ready_timeout_s)

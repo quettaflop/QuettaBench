@@ -51,6 +51,11 @@ class TestFlagValidation(unittest.TestCase):
         self.assert_rejected("engine.serving_style=disagg:2p", "unknown serving_style 'disagg:2p'")
         self.assertNotIn("Traceback", run_cli("engine.serving_style=disagg:2p").stderr)
 
+    def test_afd_on_vllm_is_one_line_exit_1(self):
+        # The old harness printed AFDVOID and exited 4; every config error now exits 1.
+        self.assert_rejected("engine.serving_style=afd:1a1f",
+                             "vllm: serving_style=afd:1a1f has no launch flag in use today")
+
 
 class TestUniformLenBounds(unittest.TestCase):
     def test_default_ratio_is_exact(self):

@@ -17,6 +17,20 @@ def _nonempty(raw):
     return bool(raw)
 
 
+def _attn_ffn(raw):
+    """xval_config.afd's XVAL_AFD='attn=N,ffn=M' as the serving style afd:<N>a<M>f.
+    A missing or extra key raises instead of being ignored."""
+    pools = dict(part.split("=", 1) for part in raw.split(","))
+    if set(pools) != {"attn", "ffn"}:
+        raise ValueError(raw)
+    return f"afd:{int(pools['attn'])}a{int(pools['ffn'])}f"
+
+
+# A second var that names the same field as an earlier one is refused when
+# their values differ, instead of the first silently winning.
+CLASHES = {"XVAL_TRACE": "XVAL_CORPUS", "XVAL_AFD": "XVAL_SERVING_STYLE"}
+
+
 # env var -> (Config path, converter, old reader). The old reader is where
 # the pre-refactor code read the var, as file:line at 0b38cbc; every one of
 # those files has since retired.
@@ -29,6 +43,7 @@ ENV_MAP = {
     "XVAL_TRACE": ("workload.source", str, "vmin_fit.py:137, prompt_mode trace"),
     "XVAL_QUANT": ("engine.quant", str, "table.py:137"),
     "XVAL_SERVING_STYLE": ("engine.serving_style", str, "table.py:129"),
+    "XVAL_AFD": ("engine.serving_style", _attn_ffn, "xval_config.py:271 at fa2eebc"),
     "XVAL_ALLOW_METHOD_MISMATCH": ("crossval.allow_method_mismatch", _nonempty, "table.py:152"),
     "VMIN_ATTEMPTS": ("mode.vmin_attempts", int, "vmin_fit.py:256"),
     "PROMPT_MODE": ("workload.prompt_mode", str, "vmin_fit.py:130"),
@@ -59,8 +74,10 @@ def read_env(env=None, only=None):
     env=None reads the process environment; only, when given, limits the
     read to those var names. Where two vars feed one field the
     first in ENV_MAP order wins (QS_SHA over DS_ENGINE_SHA, as cache.py did),
-    except XVAL_CORPUS and XVAL_TRACE: both set to different files is refused,
-    since the source a grid run reads would depend on prompt_mode silently.
+    except the pairs in CLASHES: XVAL_CORPUS and XVAL_TRACE both set to
+    different files is refused, since the source a grid run reads would
+    depend on prompt_mode silently, and so is XVAL_AFD beside a different
+    XVAL_SERVING_STYLE.
     """
     if env is None:
         env = os.environ
@@ -76,8 +93,8 @@ def read_env(env=None, only=None):
         except ValueError:
             raise ConfigError(f"env {var}={raw!r}: not a valid {convert.__name__}") from None
         if path in out:
-            if var == "XVAL_TRACE" and out[path] != value:
-                raise ConfigError("env XVAL_CORPUS and XVAL_TRACE are both set; unset one")
+            if var in CLASHES and out[path] != value:
+                raise ConfigError(f"env {CLASHES[var]} and {var} are both set; unset one")
             continue
         out[path] = value
     return out

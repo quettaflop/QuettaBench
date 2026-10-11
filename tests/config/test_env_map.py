@@ -44,6 +44,17 @@ class ReadEnv(unittest.TestCase):
             read_env({"XVAL_CORPUS": "a.txt", "XVAL_TRACE": "b.jsonl"})
         self.assertEqual(read_env({"XVAL_TRACE": "b.jsonl"}), {"workload.source": "b.jsonl"})
 
+    def test_afd_pools_become_a_serving_style(self):
+        self.assertEqual(read_env({"XVAL_AFD": "attn=2,ffn=6"}),
+                         {"engine.serving_style": "afd:2a6f"})
+        for bad in ("attn=2", "attn=2,ffn=6,moe=1", "attn=x,ffn=1", "2,6"):
+            with self.subTest(bad), self.assertRaisesRegex(ConfigError, "XVAL_AFD"):
+                read_env({"XVAL_AFD": bad})
+
+    def test_afd_beside_another_serving_style_is_refused(self):
+        with self.assertRaisesRegex(ConfigError, "XVAL_SERVING_STYLE and XVAL_AFD"):
+            read_env({"XVAL_SERVING_STYLE": "aggregated", "XVAL_AFD": "attn=1,ffn=1"})
+
 
 if __name__ == "__main__":
     unittest.main()

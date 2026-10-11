@@ -87,6 +87,9 @@ class QuettaServeAdapter(EngineAdapter):
             raise ConfigError(f"quettaserve: engine.model is required ({bench['env_prefix']}_CKPT)")
         if engine.instrumentation == "torch":
             raise UnsupportedField("quettaserve", "instrumentation=torch", "no torch in the bench")
+        if engine.serving_style != "aggregated":
+            raise UnsupportedField("quettaserve", f"serving_style={engine.serving_style}",
+                                   "the bench runs one aggregated world")
         if bench["family"] not in FAMILY_RULES:
             raise ConfigError(f"quettaserve: unknown family {bench['family']!r}")
         p, world, steps = bench["env_prefix"], engine.tp, hw.timing_steps

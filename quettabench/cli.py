@@ -7,8 +7,10 @@
   qbench export   --results ... --dest DIR            quettabench.export.quettasim
 
 run is parsed here: --set is repeatable and its values are yaml scalars,
---results-dir is the parent of results/<run>/. A config the loader refuses
-exits 1 with the loader's message. Every other door hands the rest of argv
+--results-dir is the parent of results/<run>/. A config the loader refuses,
+or a value the engine adapter has no flag for (UnsupportedField, such as an
+afd serving_style, which no adapter launches), exits 1 with that one-line
+message; every config error shares exit 1. Every other door hands the rest of argv
 unchanged to its module's main(argv); the module owns its own flags and
 --help, and is imported only when chosen, so `qbench export` never imports
 the profiler. `python3 -m quettabench.cli` works from a checkout without

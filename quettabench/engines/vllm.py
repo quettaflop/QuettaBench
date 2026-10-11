@@ -89,7 +89,7 @@ def nothing(v):
 
 def aggregated_only(v):
     if v != "aggregated":
-        raise UnsupportedField("vllm", f"serving_style={v}", "no launch splits prefill and decode")
+        raise UnsupportedField("vllm", f"serving_style={v}", "no launch splits the GPUs into pools")
     return {}
 
 

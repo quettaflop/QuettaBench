@@ -12,6 +12,8 @@ def parse_serving_style(spec):
     over tp*pp GPUs. 'disagg:<P>p<D>d' splits prefill and decode onto disjoint
     GPU pools with a KV-transfer connector between them (vLLM PD). 'ep<N>dp<M>'
     is wide expert parallelism (N-way experts across M data-parallel replicas).
+    'afd:<A>a<F>f' puts attention and FFN/MoE layers on disjoint pools of A
+    and F GPUs (attention-FFN disaggregation).
     Returns {mode, ...degrees}; raises ValueError on a malformed spec so a
     fat-fingered topology fails at parse rather than silently running aggregated."""
     if spec in (None, "", "aggregated"):
@@ -22,6 +24,12 @@ def parse_serving_style(spec):
         if p < 1 or d < 1:
             raise ValueError(f"disagg needs >=1 prefill and >=1 decode: {spec!r}")
         return {"mode": "disagg", "prefill": p, "decode": d}
+    m = re.fullmatch(r"afd:(\d+)a(\d+)f", spec)
+    if m:
+        a, f = int(m.group(1)), int(m.group(2))
+        if a < 1 or f < 1:
+            raise ValueError(f"afd needs >=1 attention and >=1 FFN GPU: {spec!r}")
+        return {"mode": "afd", "attn": a, "ffn": f}
     m = re.fullmatch(r"ep(\d+)dp(\d+)", spec)
     if m:
         ep, dp = int(m.group(1)), int(m.group(2))
@@ -30,6 +38,16 @@ def parse_serving_style(spec):
         return {"mode": "ep_dp", "ep": ep, "dp": dp}
     raise ValueError(f"unknown serving_style {spec!r}; use aggregated, "
                      "disagg:<P>p<D>d, or ep<N>dp<M>")
+
+
+def device_count(engine):
+    """GPUs one run needs: the two pools for a disaggregated style, else tp * pp."""
+    style = parse_serving_style(engine.serving_style)
+    if style["mode"] == "afd":
+        return style["attn"] + style["ffn"]
+    if style["mode"] == "disagg":
+        return style["prefill"] + style["decode"]
+    return engine.tp * engine.pp
 
 
 def disagg_gpu_sets(style, available):

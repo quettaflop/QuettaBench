@@ -11,7 +11,7 @@ import unittest
 
 from quettabench.config import loader
 from quettabench.config.schema import ConfigError
-from quettabench.engines import quettaserve
+from quettabench.engines import base, quettaserve
 from tests.golden._harness import FIXTURES, REPO
 
 RUNS = REPO / "configs" / "runs"
@@ -60,6 +60,10 @@ class DeepseekMoe(unittest.TestCase):
     def test_moe_without_cfg_is_refused(self):
         with self.assertRaisesRegex(ConfigError, "DS_CFG"):
             spec_for("deepseek", (1024, 1), sets=["engine.model=/ckpt/ds"])
+
+    def test_afd_is_unsupported(self):
+        with self.assertRaisesRegex(base.UnsupportedField, "serving_style=afd:2a6f"):
+            spec_for("deepseek", (1024, 1), sets=[*DS, "engine.serving_style=afd:2a6f"])
 
     def test_prebuilt_binary_and_qs_dir(self):
         spec = spec_for("deepseek", None, sets=[*DS, "engine.extra.bench_bin=/b/batch_bench",
