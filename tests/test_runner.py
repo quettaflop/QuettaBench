@@ -121,6 +121,33 @@ class ReadyTimeout(unittest.TestCase):
         self.assertIn("hardware.ready_timeout_s = 3600  (cli)", out.splitlines())
 
 
+class DockerDryRun(unittest.TestCase):
+    def test_dry_run_prints_the_docker_command(self):
+        out, exit_msg = qbench("run", str(RUNS[0].with_name("llama-tp1-docker.yaml")),
+                               "--dry-run", "--set", "engine.model=/w",
+                               "--set", "hardware.hf_home=/hf")
+        self.assertIsNone(exit_msg)
+        self.assertIn("hardware.launcher = 'docker'  (run)", out.splitlines())
+        (line,) = [x for x in out.splitlines() if x.startswith("docker = ")]
+        self.assertTrue(line.startswith("docker = docker run -d --rm --name "
+                                        "qbench-llama-tp1-docker --gpus '\"device=0\"' "))
+        self.assertTrue(line.endswith("vllm/vllm-openai:v0.30.0 serve /w --port 8000 "
+                                      "--tensor-parallel-size 1 --dtype float16 --max-model-len "
+                                      "9216 --gpu-memory-utilization 0.9 "
+                                      "--no-enable-prefix-caching --enable-chunked-prefill "
+                                      "--trust-remote-code"))
+
+    def test_docker_without_an_image_is_refused(self):
+        _, exit_msg = qbench("run", str(RUNS[0].with_name("llama-tp1-docker.yaml")),
+                             "--dry-run", "--set", "engine.model=/w", "--set", "engine.image=null")
+        self.assertIn("hardware.launcher=docker needs engine.image", exit_msg)
+
+    def test_docker_needs_a_launched_server(self):
+        _, exit_msg = qbench("run", str(RUNS[0].with_name("llama-tp1.yaml")), "--dry-run",
+                             "--set", "engine.model=/w", "--set", "hardware.launcher=docker")
+        self.assertIn("needs a launched server", exit_msg)
+
+
 class ProbeMode(unittest.TestCase):
     def test_probe_gets_its_flags_and_the_run_dir(self):
         run = {"mode": {"mode": "probe", "probe": "fake", "probe_args": "--gpu-label A100 --wide"}}

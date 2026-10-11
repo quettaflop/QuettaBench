@@ -25,6 +25,7 @@ CHOICES = {
     "mode.returns": ("none", "text", "logits"),
     "hardware.backend": ("auto", "cuda", "rocm", "neuron", "tpu", "cpu"),
     "hardware.link_profile": ("auto", "pcie", "nvlink"),
+    "hardware.launcher": ("local", "docker"),
 }
 
 # Keys each dict-valued field accepts; None means free-form.
@@ -59,6 +60,7 @@ class EngineCfg:
     port: int = 8000                  # launch_server.sh default
     instrumentation: str = "none"     # armed at launch: none | nsys | torch
     driver: str = "in-process"        # grid runs: in-process vllm.LLM | http (a launched server)
+    image: str | None = None          # the server's docker image; required by hardware.launcher=docker
     extra: Mapping[str, Any] = field(default_factory=dict)  # quettaserve bench block lives here
     # Facts the capacity gate needs (grid CAPACITY line).
     kv_bytes: int | None = None    # per token; None allowed only for dense
@@ -140,6 +142,9 @@ class HardwareCfg:
     provision: Mapping[str, str] = field(default_factory=dict)
     visible_devices: str | None = None  # CUDA_VISIBLE_DEVICES: trace_serve power sampler
     ready_timeout_s: int = 1800         # seconds the launcher waits for the server health check
+    launcher: str = "local"             # local: a host process | docker: engine.image in a container
+    shm_size: str = "16g"               # docker --shm-size
+    hf_home: str | None = None          # HF cache; docker mounts it at the same path
 
 
 @dataclass(frozen=True)

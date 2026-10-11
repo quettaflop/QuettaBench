@@ -47,7 +47,7 @@ from tests.golden._harness import (
 SCENARIOS = {"cleared": {}, "override": ENV_OVERRIDE}
 # Run yamls and grids written after the capture have no old xval_config to
 # match; their own tests pin them (test_crossval_contracts ConfigTree).
-ADDED_RUNS = {"decode_batch_llama"}
+ADDED_RUNS = {"decode_batch_llama", "llama-tp1-docker"}
 ADDED_GRIDS = {"decode_batch"}
 WORKLOAD_NAMES = sorted(p.stem for p in RUNS.glob("*.yaml") if p.stem not in ADDED_RUNS)
 WORKLOADS = json.loads((FIXTURES / "config_workloads.json").read_text())

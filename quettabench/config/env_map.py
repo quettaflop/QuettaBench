@@ -63,6 +63,7 @@ ENV_MAP = {
     "QS_SHA": ("provenance.engine_sha", str, "cache.py:46"),
     "DS_ENGINE_SHA": ("provenance.engine_sha", str, "cache.py:46, used when QS_SHA is unset"),
     "CUDA_VISIBLE_DEVICES": ("hardware.visible_devices", str, "trace_serve.py:111,491"),
+    "HF_HOME": ("hardware.hf_home", str, "provision.py writes it to .env; just loads it"),
     # Not a field: an input to backend auto-detection (xval_config.py:191).
     "TPU_NAME": ("detect.tpu_name", str, "xval_config.py:191"),
 }

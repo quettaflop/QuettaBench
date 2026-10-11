@@ -1,0 +1,14 @@
+# llama-tp1 with the server in a container: the RTX PRO 6000 nodes have vLLM
+# only as docker images (hwn-z1-gpu06 holds vllm/vllm-openai:v0.30.0).
+model: llama31_8b
+engine:
+  tp: 1
+  driver: http
+  image: vllm/vllm-openai:v0.30.0
+workload:
+  kind: grid
+mode:
+  mode: serve
+  grid: llama_single
+hardware:
+  launcher: docker

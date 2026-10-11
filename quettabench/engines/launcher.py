@@ -18,8 +18,11 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from quettabench.config.schema import ConfigError
 from quettabench.engines.base import UnsupportedField
 from quettabench.metrics.results import redact
+
+REPO = Path(__file__).resolve().parents[2]
 
 # Engine endpoints are local or on cluster-private addresses; an http_proxy in
 # the environment would send those requests through the proxy, which answers 403.
@@ -109,6 +112,31 @@ def wait_healthy(proc, url, timeout_s, poll_s):
             pass
         time.sleep(poll_s)
     raise TimeoutError(f"{url} not healthy after {timeout_s}s")
+
+
+def docker_argv(spec, cfg, gpus):
+    """`docker run -d` of spec.server_argv in spec.image on the given GPUs.
+
+    The flags follow the H200 campaign notes (no launch script ever used
+    docker): detached, --gpus, --ipc=host, --shm-size, the port published,
+    and the repo and the HF cache (hardware.hf_home, when set) mounted
+    read-only at their host paths so model paths resolve unchanged inside.
+    --entrypoint is the argv's first word, so the image's own ENTRYPOINT does
+    not prefix the command. env is spec.env, the non-empty collective pins
+    and HF_HOME.
+    """
+    hw = cfg.hardware
+    if not spec.image:
+        raise ConfigError(f"{cfg.run_name}: hardware.launcher=docker needs engine.image")
+    mounts = [hw.hf_home] if hw.hf_home else []
+    env = {**spec.env, **{k: v for k, v in hw.collective.items() if v},
+           **({"HF_HOME": hw.hf_home} if hw.hf_home else {})}
+    return ["docker", "run", "-d", "--rm", "--name", f"qbench-{cfg.run_name}",
+            "--gpus", f'"device={gpus}"', "--ipc=host", f"--shm-size={hw.shm_size}",
+            "-p", f"{spec.port}:{spec.port}",
+            *(a for path in [*mounts, REPO] for a in ("-v", f"{path}:{path}:ro")),
+            *(a for k, v in env.items() for a in ("-e", f"{k}={v}")),
+            "--entrypoint", spec.server_argv[0], spec.image, *spec.server_argv[1:]]
 
 
 def start(spec, results_dir, *, backend="local", timeout_s=1800, poll_s=1.0):

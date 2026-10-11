@@ -10,7 +10,9 @@ through driver into a RunWriter; the server is stopped whatever happens.
 mode: probe runs quettabench.probes.<name> with --out results/<run>/
 instead and records it in the same run.json. --dry-run prints each Config
 with its origins and its LaunchSpec (a bench run: each cell's env and
-bench_argv as one shell line), and starts nothing.
+bench_argv as one shell line), and starts nothing. hardware.launcher=docker
+runs the server in engine.image and needs a launched server (a grid run sets
+engine.driver=http); --dry-run then also prints the docker command.
 """
 
 import dataclasses
@@ -20,6 +22,7 @@ from pathlib import Path
 
 from quettabench import workloads
 from quettabench.config import env_map, loader
+from quettabench.config.schema import ConfigError
 from quettabench.config.validate import device_count
 from quettabench.engines import base, launcher
 from quettabench.metrics.results import RunWriter
@@ -35,13 +38,30 @@ def spec_lines(spec):
                     for ctx, bs, cell in spec.cells]
 
 
+def in_docker(cfg, adapter):
+    """Whether the server runs in docker; refused when nothing is launched,
+    since the driver would then run the engine on the host."""
+    if cfg.hardware.launcher != "docker":
+        return False
+    if not adapter.needs_server(cfg):
+        raise ConfigError(f"{cfg.run_name}: hardware.launcher=docker needs a launched server; "
+                          "a grid run sets engine.driver=http")
+    return True
+
+
 def dry_run(cfg):
     print(f"== {cfg.run_name}")
     print(cfg.dump(origins=True))
     if cfg.mode.mode != "probe":
         adapter = base.get(cfg.engine.name)
-        print("\n".join(spec_lines(adapter.translate(cfg))))
+        spec = adapter.translate(cfg)
+        print("\n".join(spec_lines(spec)))
         print(f"launch = {'server' if adapter.needs_server(cfg) else 'none, the driver runs it'}")
+        if in_docker(cfg, adapter) and spec.server_argv:
+            # the run takes idle GPUs; the dry run shows 0..n-1 unless visible_devices is set
+            gpus = cfg.hardware.visible_devices or ",".join(
+                str(i) for i in range(device_count(cfg.engine)))
+            print(f"docker = {shlex.join(launcher.docker_argv(spec, cfg, gpus))}")
 
 
 def run_probe(cfg, out):

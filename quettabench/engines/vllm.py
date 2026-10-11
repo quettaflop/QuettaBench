@@ -133,7 +133,7 @@ def extra_fragments(extra, taken):
 
 class VllmAdapter(EngineAdapter):
     name = "vllm"
-    supports = frozenset(FIELDS) | {"extra", "instrumentation"}
+    supports = frozenset(FIELDS) | {"extra", "instrumentation", "image"}
 
     def translate(self, cfg):
         engine = cfg.engine
@@ -169,6 +169,7 @@ class VllmAdapter(EngineAdapter):
             env=dict(SERVER_ENV),
             health_path="/health",
             port=engine.port,
+            image=engine.image,
             instrumentation=engine.instrumentation,
             timeout_s=cfg.mode.timeout,
         )

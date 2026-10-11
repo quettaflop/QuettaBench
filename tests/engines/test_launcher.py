@@ -9,7 +9,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from quettabench.engines import launcher
+from quettabench.config import loader
+from quettabench.config.schema import ConfigError
+from quettabench.engines import launcher, vllm
 from quettabench.engines.base import LaunchSpec, UnsupportedField
 from quettabench.profiling import native
 from tests.profiling import fake_endpoint
@@ -76,6 +78,45 @@ class LocalLauncher(unittest.TestCase):
             launcher.start(LaunchSpec(adapter="vllm", server_unsupported=("pp=2",)), self.dir)
         with self.assertRaisesRegex(ValueError, "no server"):
             launcher.start(LaunchSpec(adapter="quettaserve"), self.dir)
+
+
+DOCKER_YAML = launcher.REPO / "configs" / "runs" / "llama-tp1-docker.yaml"
+
+
+def docker_spec(*sets):
+    """(cfg, spec) for the example docker run yaml on a pinned host."""
+    (cfg,) = loader.load(DOCKER_YAML, ["engine.model=/hf/llama", "hardware.backend=cuda",
+                                       "hardware.link_profile=nvlink", *sets],
+                         env={"HF_HOME": "/hf"})
+    return cfg, vllm.ADAPTER.translate(cfg)
+
+
+class DockerArgv(unittest.TestCase):
+    def test_example_yaml_argv(self):
+        cfg, spec = docker_spec()
+        repo = str(launcher.REPO)
+        self.assertEqual(launcher.docker_argv(spec, cfg, "2"), [
+            "docker", "run", "-d", "--rm", "--name", "qbench-llama-tp1-docker",
+            "--gpus", '"device=2"', "--ipc=host", "--shm-size=16g", "-p", "8000:8000",
+            "-v", "/hf:/hf:ro", "-v", f"{repo}:{repo}:ro",
+            "-e", "VLLM_SERVER_DEV_MODE=1", "-e", "VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1",
+            "-e", "NCCL_IB_DISABLE=1", "-e", "HF_HOME=/hf",
+            "--entrypoint", "vllm", "vllm/vllm-openai:v0.30.0",
+            "serve", "/hf/llama", "--port", "8000", "--tensor-parallel-size", "1",
+            "--dtype", "float16", "--max-model-len", "9216", "--gpu-memory-utilization", "0.9",
+            "--no-enable-prefix-caching", "--enable-chunked-prefill", "--trust-remote-code"])
+
+    def test_shm_size_and_collective_pins_come_from_hardware(self):
+        cfg, spec = docker_spec("hardware.shm_size=64g", "hardware.link_profile=pcie")
+        argv = launcher.docker_argv(spec, cfg, "0,1")
+        self.assertIn("--shm-size=64g", argv)
+        self.assertIn('"device=0,1"', argv)
+        self.assertIn("NCCL_PROTO=Simple", argv)
+
+    def test_missing_image_is_a_config_error(self):
+        cfg, spec = docker_spec("engine.image=null")
+        with self.assertRaisesRegex(ConfigError, "needs engine.image"):
+            launcher.docker_argv(spec, cfg, "0")
 
 
 class NoProxy(unittest.TestCase):
