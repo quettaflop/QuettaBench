@@ -538,3 +538,10 @@ destination as its own `--kernel-dest` (QuettaSim's data root), and the
 the one `--dest`, so a default export put `kernel_data/` beside `kernels/`
 and `results/`, and the examples named `../QuettaSim/engine/data`, a dir
 QuettaSim does not have.
+
+2026-10-11: no fixture changed. QuettaSim's justfile recipes `collectives`,
+`cross-attn`, `vllm-allreduce`, `reparallel-probe` and `reparallel-probe-val`
+call `QuettaBench/profiling/kernel_composed/...` paths this refactor deleted
+and fail as they stand. README.md "QuettaSim recipes that call the old probe
+paths" gives each one's replacement here plus the `kernel_tables` export;
+QuettaSim itself is unchanged.

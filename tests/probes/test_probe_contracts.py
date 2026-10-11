@@ -280,3 +280,31 @@ def test_probes_import_their_siblings_at_the_top():
                 inner = [n.module for n in ast.walk(node) if isinstance(n, ast.ImportFrom)]
                 assert not any(m and m.startswith("quettabench.probes._") for m in inner), \
                     f"{probe.name}:{node.name}"
+
+
+QUETTASIM_RECIPES = ("collectives", "cross-attn", "vllm-allreduce", "reparallel-probe",
+                     "reparallel-probe-val")
+
+
+def readme_section(title: str) -> str:
+    text = (ROOT / "README.md").read_text()
+    assert f"## {title}\n" in text, title
+    return text.split(f"## {title}\n", 1)[1].split("\n## ", 1)[0]
+
+
+def test_readme_maps_each_old_quettasim_probe_recipe_to_a_working_command():
+    """QuettaSim's justfile still calls QuettaBench/profiling/kernel_composed/...;
+    each such recipe has a replacement whose recipe and flags exist here."""
+    section = readme_section("QuettaSim recipes that call the old probe paths")
+    recipes = {b.split()[0].rstrip(":") for b in recipe_blocks(JUSTFILE)}
+    for name in QUETTASIM_RECIPES:
+        assert f"`{name}`" in section, name
+    lines = [ln for ln in section.replace("\\\n", " ").splitlines() if "just " in ln or "-m quettabench." in ln]
+    assert lines
+    for line in lines:
+        for recipe in re.findall(r"\bjust (?:gpu=\S+ )?([a-z][a-z0-9-]*)", line):
+            assert recipe in recipes, (recipe, line)
+        for probe in re.findall(r"-m quettabench\.probes\.([a-z0-9_]+)", line):
+            flags = {t for t in line.split() if t.startswith("--") and "=" not in t}
+            missing = flags - argparse_flags(PROBES_DIR / f"{probe}.py") - {"--only", "--results", "--kernel-dest"}
+            assert not missing, (probe, missing)

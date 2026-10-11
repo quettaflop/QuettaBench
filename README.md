@@ -251,6 +251,40 @@ are withheld. glm53 and glm53flash have no engine bench yet: vLLM side only.
 | `slice_tf/moe_routing_probe.py <out>` | `just moe-routing <model> <gpu> 1 "--layers 13 --kda-mode fused_recurrent"` |
 | `xval.yaml`, `workloads.json` | `configs/models/`, `configs/runs/`, `configs/grids.yaml`, `configs/hardware/` |
 
+## QuettaSim recipes that call the old probe paths
+
+QuettaSim's `justfile` still runs five probe recipes from paths this
+refactor deleted (`QuettaBench/profiling/kernel_composed/...`, with
+`--out-dir data/kernel_data`, so each run upserted QuettaSim's tables in
+place). Until QuettaSim changes them, run the replacement from this repo's
+root and route the tables with one export; a probe run now writes its own
+`results/probes/<gpu>/<probe>/<run-id>/`, and `kernel_tables` unions the
+runs into QuettaSim's `data/kernel_data/`. Do not pass `--out data/kernel_data`
+(it is the parent of `<probe>/<run-id>/`, not QuettaSim's table dir).
+`PYTHON_BIN` is the vLLM env's python (QuettaSim's `vllm_py`).
+
+| QuettaSim recipe | old path it calls | replacement here |
+|---|---|---|
+| `collectives` | `cd QuettaBench/profiling/kernel_composed && just collectives ...` | `just gpu=<GPU> collectives world=2 hidden=4096 layers=32 gpu_ids=0,1` |
+| `cross-attn` | `.../probes/cross_attn_probe.py` | `just gpu=<GPU> cross-attn nh=16 nkv=2 hd=128` (GPU `GPU_ID`, default 0) |
+| `vllm-allreduce` | `.../probes/vllm_allreduce_probe.py` | `just gpu=<GPU> vllm-allreduce world=2 gpu_ids=0,1` |
+| `reparallel-probe` | `.../probes/reparallel_probe.py --mode <mode>` | `just gpu=<GPU> reparallel world=8 mode=tp gpu_ids=0,1,2,3,4,5,6,7` |
+| `reparallel-probe-val` | `.../probes/reparallel_probe.py --out-name <GPU>_reshard_<mode>_val ...` | the torchrun line below, one per mode |
+
+```bash
+# reparallel-probe-val mode=tp (pp, kv, plan: the same line with that mode's flags,
+# as QuettaSim's recipe lists them; quote --plans, its values hold '>')
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 $PYTHON_BIN -m torch.distributed.run --nproc_per_node=8 \
+  -m quettabench.probes.reparallel --gpu-label H200 --out-name H200_reshard_val \
+  --switches 4:2 2:1 8:4 4:1 8:2 --weights-gb 3 6 12 24 48
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 $PYTHON_BIN -m torch.distributed.run --nproc_per_node=8 \
+  -m quettabench.probes.reparallel --gpu-label H200 --mode kv --out-name H200_reshard_kv_val \
+  --kv-tokens 2048 8192 32768 98304 196608
+
+# then, for any of the five: the tables into QuettaSim's data root
+just export --only kernel_tables --results results/probes --kernel-dest ../QuettaSim/data
+```
+
 ## Layout
 
 ```
