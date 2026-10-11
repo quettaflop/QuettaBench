@@ -88,8 +88,7 @@ probe name *args:
 # Run a probe on REMOTE_HOST: ship the probes package (and the schema, env_map and run
 # writer its run.json needs), run it there (NPROC>1 = one rank per
 # GPU in GPU_IDS through torchrun), pull the run into results/probes/<gpu>/<probe>/<run-id>/.
-# The remote out dir is emptied first, then given this probe's earlier runs, which an
-# upserting probe merges into (probes/base.py prior_table).
+# The remote out dir is emptied first; a run writes only its own rows, so no earlier run goes up.
 remote-probe name gpu=gpu *args:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -97,9 +96,6 @@ remote-probe name gpu=gpu *args:
     rdir=/tmp/qbench-probes
     ssh -o BatchMode=yes "$REMOTE_HOST" "rm -rf $rdir/out && mkdir -p $rdir/out/{{name}}"
     rsync -a --relative -e 'ssh -o BatchMode=yes' quettabench/__init__.py quettabench/probes/ quettabench/config/__init__.py quettabench/config/schema.py quettabench/config/env_map.py quettabench/metrics/__init__.py quettabench/metrics/results.py "$REMOTE_HOST:$rdir/"
-    if [ -d results/probes/{{gpu}}/{{name}} ]; then
-        rsync -a -e 'ssh -o BatchMode=yes' results/probes/{{gpu}}/{{name}}/ "$REMOTE_HOST:$rdir/out/{{name}}/"
-    fi
     if [ "${NPROC:-1}" -gt 1 ]; then
         launch="CUDA_VISIBLE_DEVICES=${GPU_IDS:-{{gpu_id}}} {{py}} -m torch.distributed.run --nproc_per_node=$NPROC -m quettabench.probes.{{name}}"
     else

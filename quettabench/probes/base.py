@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import contextlib
 import dataclasses
-import json
 import re
 import shlex
 import sys
@@ -62,28 +61,6 @@ def out_root(args: argparse.Namespace, name: str) -> Path:
     if not RUN_ID.fullmatch(run):
         raise SystemExit(f"--run-id {run!r} is not a run id like 20261011T120000.000000Z")
     return root / run
-
-
-def run_ok(run_dir: Path) -> bool:
-    """Whether run_dir/run.json records an ok run."""
-    try:
-        return json.loads((run_dir / "run.json").read_text())["run_status"]["status"] == "ok"
-    except (OSError, ValueError, KeyError, TypeError):
-        return False
-
-
-def prior_table(args: argparse.Namespace, name: str, path: Path) -> Path | None:
-    """The table a probe that upserts merges its new rows into: path itself
-    when there is no run id, else the same file in this probe's newest
-    earlier run dir whose run.json is ok, so a failed or unfinished run's
-    rows never carry forward. None when there is none."""
-    root = out_root(args, name)
-    if getattr(args, "run_id", None) is None:
-        return path if path.exists() else None
-    rel = Path(path).relative_to(root)
-    earlier = sorted((d for d in root.parent.glob("*") if RUN_ID.fullmatch(d.name)
-                      and d.name < args.run_id), reverse=True)
-    return next((d / rel for d in earlier if (d / rel).is_file() and run_ok(d)), None)
 
 
 def record_dir(name: str, argv: list[str], file_flag: str | None = None) -> Path | None:

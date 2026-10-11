@@ -49,7 +49,7 @@ import statistics as st
 import torch
 
 from quettabench.probes._graph import graph_time_us
-from quettabench.probes.base import add_output_args, out_root, prior_table, run_recorded
+from quettabench.probes.base import add_output_args, out_root, run_recorded
 
 # Per-expert geometry of every MoE model in engine/device_spec/models/.
 # (n_experts, top_k, intermediate_per_expert, hidden). `intermediate` is sharded
@@ -320,8 +320,8 @@ def main(argv=None) -> None:
                          "blocks), i.e. what a `quant_method: fp8` checkpoint runs. "
                          "Writes {gpu}_fp8.csv with dtype_bytes=1.")
     ap.add_argument("--append", action="store_true",
-                    help="keep the rows of the newest earlier ok run's table (prior_table) "
-                         "that this run did not re-measure")
+                    help="at export, add this run's rows over earlier ok runs' tables; "
+                         "without it the export drops the rows of runs that finished before it")
     ap.add_argument("--graph", action="store_true",
                     help="CUDA-graph-replay timing -> ncu/moe/. Faithful for vLLM's "
                          "CUDA-graphed MoE DECODE (the eager rationale below only "
@@ -383,22 +383,12 @@ def main(argv=None) -> None:
     dst = out_root(a, "moe") / ("ncu" if _GRAPH else "cuda_event") / "moe"
     dst.mkdir(parents=True, exist_ok=True)
     path = dst / f"{a.gpu_label}{'' if a.dtype == 'bf16' else '_' + a.dtype}.csv"
-    n_new = len(rows)
-    prior = prior_table(a, "moe", path) if a.append else None
-    if prior is not None:
-        key = lambda r: (int(r["tokens"]), int(r["n_experts"]), int(r["top_k"]),  # noqa: E731
-                         int(r["intermediate"]), int(r["hidden"]))
-        fresh = {key(r) for r in rows}
-        with prior.open() as f:
-            kept = [r for r in csv.DictReader(f) if key(r) not in fresh]
-        rows = kept + rows
-        print(f"[moe] append: {len(kept)} prior rows kept, {n_new} re-measured", flush=True)
     with path.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=["tokens", "n_experts", "top_k", "intermediate",
                                           "hidden", "dtype_bytes", "latency_us"])
         w.writeheader()
         w.writerows(rows)
-    print(f"[moe] wrote {path} ({len(rows)} rows, {n_new} new)", flush=True)
+    print(f"[moe] wrote {path} ({len(rows)} rows{', --append' if a.append else ''})", flush=True)
 
     if not a.skip_routing and a.dtype == "bf16":
         # Routing (topk / permute / align) is dtype-agnostic -- it moves indices and

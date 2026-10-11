@@ -505,3 +505,19 @@ prefix, is gone.
 an adapter (`vllm`, `quettaserve`, `reference`); `sglang` and `trtllm`,
 which the schema listed but no adapter served, are refused at load with
 the list of those three, where before they failed later in the runner.
+
+2026-10-11: no fixture changed. A probe run writes only the rows it
+measured; `probes/base.py` `prior_table`, which seeded an upserting probe's
+table from its newest earlier ok run, is gone, and `remote-probe` no longer
+sends earlier runs up. Two runs that overlapped in time lost the rows of
+the one that had not seeded from the other. The `kernel_tables` export now
+unions the rows of every ok run of a probe per table, keyed as the old
+upsert was (flash_attn and cross_attn on the head config, gemm on M, N, K,
+moe on its five geometry columns, reparallel on its five key columns,
+gemm's `fp8_act_quant` on its JSON key), and on a key conflict the run with
+the latest `provenance.finished` wins; a gemm or moe run without `--append`
+drops the rows of runs that finished before it, as its whole-file write
+did. A table with no row key comes from the run with the latest
+`provenance.finished`, where before it came from the newest run by start.
+Results dirs given to export are pooled by that rule; before, an earlier
+dir won over a later one.

@@ -27,24 +27,32 @@ Each probe run writes its own `results/probes/<gpu>/<probe>/<run-id>/` (`--out` 
 the `results/probes/<gpu>/` part; the run id is the run's UTC start, e.g.
 `20261011T120000.000000Z`): its tables and its `run.json` sit in that one dir, so
 `just export` drops the tables of a run whose `run.json` is not ok, and a later run never
-overwrites an earlier one. A probe that upserts (gemm and moe `--append`, flash_attn,
-cross_attn, reparallel) starts from the same table of its newest earlier run whose
-`run.json` is ok (`probes/base.py` `prior_table`). A probe that names its output file
+overwrites an earlier one. A run writes only the rows it measured, never an earlier
+run's. The export unions them (`kernel_tables`): a table with a row key is the union of
+the rows of every ok run of its probe, keyed as the probe's old upsert was (flash_attn
+and cross_attn on the head config `n_heads, n_kv_heads, head_dim`; gemm on `M, N, K`;
+moe on `tokens, n_experts, top_k, intermediate, hidden`; reparallel on
+`gpu, world, tp_from, tp_to, total_weight_gb`; gemm's `fp8_act_quant` on its JSON key),
+and on a key conflict the run with the latest `provenance.finished` wins. A gemm or moe
+run without `--append` drops the rows of runs that finished before it. A table with no
+row key (one table per run: collective, vllm_allreduce, elementwise, gdn, moe routing)
+comes from the run with the latest `provenance.finished`; collective and vllm_allreduce
+then merge as below. A probe that names its output file
 (`serving_stage_split --out`, `serving_decode_grid --out-raw`) writes its `run.json`
-beside that file and refuses a dir that already records a run, so give each run a file
+beside that file and refuses a dir that already exists, so give each run a file
 in a new dir. Every probe run opens its `requests.jsonl` before it starts, so a run killed
 before it finishes leaves no `run.json` and export skips its tables. The table paths below are relative to the run's dir.
 
 The one route to QuettaSim is the `kernel_tables` export builder:
 `just export --only kernel_tables --results results/probes --dest <QuettaSim data root>`
-(`$QUETTASIM_DATA`, or `../QuettaSim/data` for the in-repo tree) copies every
-`<method>/<kind>/<file>` table of the newest ok run of each probe into
+(`$QUETTASIM_DATA`, or `../QuettaSim/data` for the in-repo tree) builds every
+`<method>/<kind>/<file>` table from the ok runs of its probe by the rule above into
 `<dest>/kernel_data/<method>/<kind>/<file>`, the paths `kernel_artifact_paths` in
 QuettaSim's `engine/backends/kernel_composed_cost.py` reads. Two merges: the collective
 probe's and vllm_allreduce's `ncu/collectives/{gpu}_tp{N}.csv` become one table,
 vllm_allreduce's `all_reduce` rows over the collective probe's; gemm's `fp8_act_quant`
-joins the elementwise probe's `elementwise/{gpu}.json`. `manifest.json` names the run
-behind each table. The R2 mirror (`just mirror-up`, `mirror-down`) is a backup of
+joins the elementwise probe's `elementwise/{gpu}.json`. `manifest.json` names the runs
+with rows in each table. The R2 mirror (`just mirror-up`, `mirror-down`) is a backup of
 `results/probes/` under `profiling/qbench_probes/`, in the same `<gpu>/<probe>/<run-id>/`
 layout; QuettaSim never reads it. Schema
 contract: filenames `{gpu}[_tpN].csv`, method split `ncu/` (graphed decode) vs
@@ -108,8 +116,8 @@ contract: filenames `{gpu}[_tpN].csv`, method split `ncu/` (graphed decode) vs
 Set `REMOTE_HOST`, `GPU_ID` and `PYTHON_BIN`; `remote-probe` rsyncs the probes package to
 the host, runs the probe on `GPU_ID` (`NPROC=2 GPU_IDS=0,1` for the torchrun probes), and
 rsyncs the run back into `results/probes/<gpu>/<probe>/<run-id>/`. It empties the remote
-`/tmp/qbench-probes/out` first and sends this probe's local runs up, so an upserting probe
-merges into the same earlier run it would locally. Pick a **free** GPU (`just gpu-info`)
+`/tmp/qbench-probes/out` first; no earlier run goes up, since a run writes only its own
+rows. Pick a **free** GPU (`just gpu-info`)
 on shared hosts and clean up `/tmp/qbench-probes` when done.
 ```
 REMOTE_HOST=a100 GPU_ID=0 \
@@ -122,7 +130,7 @@ PYTHON_BIN=/home/<user>/miniconda3/envs/vllm/bin/python \
 |---|---|---|
 | `gemm` | `{method}/gemm/{gpu}.csv` (`--wide` → `{method}/gemm_wide/`; `--ncu` → `ncu/`, else `cuda_event/`) | M × (N,K) |
 | `flash_attn` | decode → `{ncu if --ncu else cuda_event}/flash_attn/{gpu}[_tpN].csv`; prefill → `cuda_event/fa3_prefill/{gpu}[_tpN].csv` (always) | decode (kv×batch), prefill (seq) |
-| `cross_attn` | `cuda_event/fa3_cross/{gpu}.csv` | chunked-prefill attention PER LAYER over (q_len × resident_tokens) -- the rectangular shape neither the decode (q=1) nor the full-causal prefill grid covers; on long-ISL traces it dominates prefill attention FLOPs. One run per head config (`--n-heads/--n-kv-heads/--head-dim`), upserts |
+| `cross_attn` | `cuda_event/fa3_cross/{gpu}.csv` | chunked-prefill attention PER LAYER over (q_len × resident_tokens) -- the rectangular shape neither the decode (q=1) nor the full-causal prefill grid covers; on long-ISL traces it dominates prefill attention FLOPs. One run per head config (`--n-heads/--n-kv-heads/--head-dim`); the export unions runs on the head config |
 | `collective` | `ncu/collectives/{gpu}_tp{N}.csv` | plain-NCCL collectives over decode-step payloads (torchrun); also prints a legacy `tp_comm:` YAML block |
 | `vllm_allreduce` | `ncu/collectives/{gpu}_tp{N}.csv` (all_reduce rows, `path=vllm`; its own dir, so the other ops' rows stay in `collective/`; `kernel_tables` merges the two) | torchrun; times TP all-reduce through vLLM's OWN `GroupCoordinator` (custom allreduce on) next to plain NCCL. NOTE: vLLM ≥0.27 fuses allreduce+rmsnorm under torch.compile (`fuse_allreduce_rms`), so this standalone grid over-prices graphed decode -- see h200.yaml `tp_comm.source` |
 | `elementwise` | `cuda_event/elementwise/{gpu}.json` | affine `floor_us + bytes/eff_bw` per kernel. **Prefer `--vllm --graph`** (needs a vLLM env): times the REAL fused kernels (`rms_norm`, `fused_add_rms_norm`, `silu_and_mul`, `rotary_embedding`, `reshape_and_cache_flash`) instead of multi-kernel torch-chain proxies, and adds the `fused_add_rmsnorm` + `kv_cache_write` entries the composition prefers when present (each fused entry replaces a two-kernel proxy pair). The torch-chain default overpriced vLLM's fused ops ~2-3 ms/step at 48 layers |

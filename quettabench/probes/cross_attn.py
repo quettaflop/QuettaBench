@@ -24,7 +24,7 @@ import statistics as st
 import torch
 from vllm.vllm_flash_attn.flash_attn_interface import flash_attn_varlen_func
 
-from quettabench.probes.base import add_output_args, out_root, prior_table, run_recorded
+from quettabench.probes.base import add_output_args, out_root, run_recorded
 
 Q_AXIS = [512, 1024, 2048, 4096, 8192]
 CTX_AXIS = [0, 1024, 2048, 4096, 8192, 12288, 16384, 24576, 32768]
@@ -104,18 +104,12 @@ def main(argv=None):
     out = out_root(a, "cross_attn") / "cuda_event" / "fa3_cross"
     out.mkdir(parents=True, exist_ok=True)
     path = out / f"{a.gpu_label}.csv"
-    geom = (str(a.n_heads), str(a.n_kv_heads), str(a.head_dim))
-    kept = []
-    prior = prior_table(a, "cross_attn", path)
-    if prior is not None:
-        with prior.open(newline="") as fh:
-            kept = [r for r in csv.DictReader(fh)
-                    if (r["n_heads"], r["n_kv_heads"], r["head_dim"]) != geom]
+    # This head config's rows only; kernel_tables unions every ok run on the head config.
     with path.open("w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=list(rows[0].keys()))
         w.writeheader()
-        w.writerows(kept + rows)
-    print(f"[cross] wrote {path} ({len(rows)} new rows, {len(kept)} kept)", flush=True)
+        w.writerows(rows)
+    print(f"[cross] wrote {path} ({len(rows)} rows)", flush=True)
 
 
 if __name__ == "__main__":

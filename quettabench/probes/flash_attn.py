@@ -20,7 +20,7 @@ from vllm.vllm_flash_attn.flash_attn_interface import flash_attn_varlen_func
 
 from quettabench.probes._graph import graph_median_us
 from quettabench.probes._ncu import ncu_op_us
-from quettabench.probes.base import add_output_args, out_root, prior_table, run_recorded
+from quettabench.probes.base import add_output_args, out_root, run_recorded
 
 KV_AXIS = [128, 256, 512, 1024, 2048, 4096, 8192, 16384]
 BATCH_AXIS = [1, 2, 4, 8, 16, 32, 40, 64, 80, 120, 160, 200, 256, 320]
@@ -161,40 +161,24 @@ def main(argv=None):
     # Method-explicit kernel_data layout the loader resolves: decode grids read
     # from ncu/ (CUDA-graphed decode -> NCU faithful), prefill from cuda_event/
     # (eager prefill -> dispatch real). Decode's method follows --ncu; prefill is
-    # always cuda_event. Grids are CONSOLIDATED per (method, kind, GPU): one
-    # {gpu_label}.csv holds every measured head config (rows carry the geometry;
-    # the loader selects by (n_heads, n_kv_heads, head_dim)), so a probe run
-    # UPSERTS: it replaces rows at the head config it just measured and keeps
-    # every other head config's rows of the newest earlier ok run (prior_table).
-    def _upsert(path, rows):
-        geom_cols = ("n_heads", "n_kv_heads", "head_dim")
-        geom = tuple(str(rows[0][c]) for c in geom_cols)
-        fields = list(rows[0].keys())
-        kept = []
-        prior = prior_table(a, "flash_attn", path)
-        if prior is not None:
-            with prior.open(newline="") as fh:
-                r = csv.DictReader(fh)
-                kept = [row for row in r
-                        if tuple(str(row.get(c)) for c in geom_cols) != geom]
-                for c in (r.fieldnames or []):
-                    if c not in fields:
-                        fields.append(c)
+    # always cuda_event. Grids are CONSOLIDATED per (method, kind, GPU) at export:
+    # this run writes the rows of the head config it measured, and kernel_tables
+    # unions every ok run's rows on (n_heads, n_kv_heads, head_dim), the run that
+    # finished last winning a head config (the loader selects by those columns).
+    def _write(path, rows):
         with path.open("w", newline="") as fh:
-            w = csv.DictWriter(fh, fieldnames=fields, restval="")
+            w = csv.DictWriter(fh, fieldnames=list(rows[0].keys()))
             w.writeheader()
-            w.writerows(kept + rows)
-        return len(kept)
+            w.writerows(rows)
 
     dec_method = "ncu" if (a.ncu or a.graph) else "cuda_event"
     (out / dec_method / "flash_attn").mkdir(parents=True, exist_ok=True)
     dec_path = out / dec_method / "flash_attn" / f"{a.gpu_label}.csv"
-    dec_kept = _upsert(dec_path, dec_rows)
+    _write(dec_path, dec_rows)
     (out / "cuda_event" / "fa3_prefill").mkdir(parents=True, exist_ok=True)
     pf_path = out / "cuda_event" / "fa3_prefill" / f"{a.gpu_label}.csv"
-    pf_kept = _upsert(pf_path, pf_rows)
-    print(f"upserted {dec_path} ({len(dec_rows)} new cells, {dec_kept} kept) and "
-          f"{pf_path} ({len(pf_rows)} new rows, {pf_kept} kept)")
+    _write(pf_path, pf_rows)
+    print(f"wrote {dec_path} ({len(dec_rows)} cells) and {pf_path} ({len(pf_rows)} rows)")
 
 
 if __name__ == "__main__":

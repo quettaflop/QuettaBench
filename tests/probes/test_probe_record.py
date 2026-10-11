@@ -25,7 +25,7 @@ from quettabench import runner
 from quettabench.config.schema import Config, ConfigError, EngineCfg, HardwareCfg, ModeCfg, WorkloadCfg
 from quettabench.metrics.results import RunWriter
 from quettabench.probes import base as probes_base
-from quettabench.probes.base import launch_vllm, out_root, prior_table, run_id, run_recorded
+from quettabench.probes.base import launch_vllm, out_root, run_id, run_recorded
 
 PROBES = Path(__file__).resolve().parents[2] / "quettabench" / "probes"
 NOW = datetime(2026, 10, 11, 12, 0, 0, 123456, tzinfo=timezone.utc)
@@ -151,52 +151,14 @@ class RunRecorded(unittest.TestCase):
                 out_root(a, "gemm")
 
 
-class PriorTable(unittest.TestCase):
-    """An upserting probe merges into the newest earlier ok run's table only."""
-
-    def run_dir(self, root, when, status, table=True):
-        d = root / "gemm" / run_id(when)
-        (d / "ncu" / "gemm").mkdir(parents=True)
-        if table:
-            (d / "ncu" / "gemm" / "H100.csv").write_text(f"{when.second}\n")
-        if status:
-            (d / "run.json").write_text(json.dumps({"run_status": {"status": status}}))
-        return d
-
-    def test_newest_earlier_ok_run(self):
-        with tempfile.TemporaryDirectory() as td:
-            root = Path(td)
-            at = [NOW + timedelta(seconds=s) for s in range(6)]
-            self.run_dir(root, at[0], "ok")
-            self.run_dir(root, at[1], "ok")
-            self.run_dir(root, at[2], "failed")
-            self.run_dir(root, at[3], None)        # unfinished: no run.json
-            self.run_dir(root, at[4], "ok", table=False)
-            self.run_dir(root, at[5], "ok")        # later than this run: not prior
-            (root / "gemm" / "notes").mkdir()
-            a = argparse.Namespace(out_dir=td, gpu_label="H100", run_id=run_id(NOW + timedelta(seconds=4, microseconds=1)))
-            path = out_root(a, "gemm") / "ncu" / "gemm" / "H100.csv"
-            self.assertEqual(prior_table(a, "gemm", path).read_text(), "1\n")
-            a.run_id = run_id(at[0])
-            self.assertIsNone(prior_table(a, "gemm", out_root(a, "gemm") / "ncu" / "gemm" / "H100.csv"))
-
-    def test_without_a_run_id_the_table_itself(self):
-        with tempfile.TemporaryDirectory() as td:
-            a = argparse.Namespace(out_dir=td, gpu_label="H100", run_id=None)
-            path = out_root(a, "gemm") / "t.csv"
-            self.assertIsNone(prior_table(a, "gemm", path))
-            path.parent.mkdir(parents=True)
-            path.write_text("x\n")
-            self.assertEqual(prior_table(a, "gemm", path), path)
-
-
 @pytest.mark.parametrize("name", ["cross_attn", "flash_attn", "gemm", "moe", "reparallel"])
-def test_upserting_probes_read_only_through_prior_table(name):
-    """A probe that merges an earlier table reads it through prior_table, never
-    its own output path, so a failed run's rows do not carry forward."""
+def test_a_probe_run_writes_only_the_rows_it_measured(name):
+    """Earlier runs' rows reach the export through kernel_tables' union, never
+    through a probe run seeding its table from another run dir."""
     source = (PROBES / f"{name}.py").read_text()
-    assert "prior_table(a, " in source, name
-    assert ".exists()" not in source, name
+    assert "prior_table" not in source, name
+    assert "prior" not in ast.dump(ast.parse(source)).lower(), name
+    assert not hasattr(probes_base, "prior_table")
 
 
 def probe_modules():

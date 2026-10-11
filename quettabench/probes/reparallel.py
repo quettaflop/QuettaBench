@@ -30,8 +30,8 @@ Run (all 8 GPUs of the node, over NVLink):
     python3 -m torch.distributed.run --nproc_per_node=8 \
         -m quettabench.probes.reparallel --gpu-label H200 --out <dir>
 
-Writes cuda_event/reparallel/<gpu>_reshard.csv (upsert on the key columns over the
-newest earlier ok run's table, base.prior_table) and prints,
+Writes cuda_event/reparallel/<gpu>_reshard.csv (this run's rows; the export unions
+every ok run's rows on the key columns) and prints,
 per (tp_from, tp_to), the floor + per-byte fit to paste into a device YAML's
 ``reshard:`` block (see engine/reparallel.py::ReshardLink).
 """
@@ -46,7 +46,7 @@ import numpy as np
 import torch
 import torch.distributed as dist
 
-from quettabench.probes.base import add_output_args, out_root, prior_table, run_recorded
+from quettabench.probes.base import add_output_args, out_root, run_recorded
 
 KEY = ("gpu", "world", "tp_from", "tp_to", "total_weight_gb")
 COLS = KEY + ("k", "bytes_moved_per_gpu", "comm_ms", "eff_gbps", "pattern",
@@ -67,22 +67,16 @@ def _fit(rows: list[dict]) -> tuple[float, float]:
     return b0, bw
 
 
-def _upsert(path: Path, rows: list[dict], prior: Path | None) -> None:
-    """Write rows to path over the rows of prior (an earlier table), keyed on KEY."""
-    old: dict[tuple, dict] = {}
-    if prior is not None:
-        with prior.open() as fh:
-            for r in csv.DictReader(fh):
-                old[tuple(r[k] for k in KEY)] = r
-    for r in rows:
-        old[tuple(str(r[k]) for k in KEY)] = {k: str(r.get(k, 0)) for k in COLS}
+def _write(path: Path, rows: list[dict]) -> None:
+    """Write this run's rows to path, sorted on KEY."""
+    table = {tuple(str(r[k]) for k in KEY): {k: str(r.get(k, 0)) for k in COLS} for r in rows}
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=list(COLS), restval="0")
         w.writeheader()
-        for k in sorted(old, key=lambda t: (t[0], int(t[1]), int(t[2]), int(t[3]),
-                                            float(t[4]))):
-            w.writerow(old[k])
+        for k in sorted(table, key=lambda t: (t[0], int(t[1]), int(t[2]), int(t[3]),
+                                              float(t[4]))):
+            w.writerow(table[k])
 
 
 def _time_ms(fn, iters: int) -> float:
@@ -179,7 +173,7 @@ def main(argv=None) -> bool:
                         "plan": "reshard_plan", "xnode": "reshard_xnode"}[a.mode]
         stem = a.out_name or f"{a.gpu_label}_{default_stem}"
         path = out_root(a, "reparallel") / "cuda_event" / "reparallel" / f"{stem}.csv"
-        _upsert(path, out_rows, prior_table(a, "reparallel", path))
+        _write(path, out_rows)
         print(f"\nwrote {path}")
         print(f"\nfit comm_ms = floor + bytes/bw   (mode={a.mode}, per GPU)")
         seen = []
