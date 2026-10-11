@@ -148,6 +148,16 @@ class ReadyTimeout(unittest.TestCase):
         self.assertEqual(start.call_args.kwargs["timeout_s"], 10800)
         self.assertEqual(start.call_args.kwargs["backend"], "local")
 
+    def test_trace_is_built_before_the_server_launches(self):
+        (cfg,) = loader.load(RUNS[0].with_name("llama.yaml"),
+                             ["engine.model=/w", "hardware.visible_devices=0",
+                              "mode.grid=null"], env={})
+        with mock.patch.object(runner.launcher, "start") as start, \
+                mock.patch.object(runner.workloads, "build", side_effect=ValueError("bad")), \
+                tempfile.TemporaryDirectory() as td, self.assertRaisesRegex(ValueError, "bad"):
+            runner.run_one(cfg, Path(td))
+        start.assert_not_called()
+
     def test_dry_run_shows_it(self):
         out, _ = qbench("run", str(RUNS[0].with_name("llama.yaml")), "--dry-run",
                         "--set", "engine.model=/w", "--set", "hardware.ready_timeout_s=3600")

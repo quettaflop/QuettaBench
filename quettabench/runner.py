@@ -6,7 +6,8 @@ pins and the GPUs (hardware.visible_devices, else the first idle
 device_count) to the child env of the server or each bench cell (docker
 gets the GPUs through --gpus instead), launch the server unless the
 adapter drives the engine itself (in-process grid, cargo bench), get the
-driver, build the Trace, and let modes/serve.py run trace
+driver, build the Trace (before the launch when a server is launched, since
+its driver has no tokenizer), and let modes/serve.py run trace
 through driver into a RunWriter; the server is stopped whatever happens.
 mode: probe runs quettabench.probes.<name> with --out results/<run>/
 instead and records it in the same run.json. --dry-run prints each Config
@@ -116,12 +117,16 @@ def run_one(cfg, out):
     if in_process(cfg, adapter, spec):
         env_map.export(pins)
     spec = with_child_env(spec, pins)
+    # A launched server's driver has no tokenizer, so its trace is built
+    # first: a bad workload fails before a long model load, not after.
+    trace = workloads.build(cfg) if adapter.needs_server(cfg) else None
     handle = (launcher.start(spec, out, backend=backend, cfg=cfg, gpus=gpus,
                              timeout_s=cfg.hardware.ready_timeout_s)
               if adapter.needs_server(cfg) else launcher.NoServer(out))
     try:
         driver = adapter.driver(spec, handle)
-        trace = workloads.build(cfg, tokenizer=getattr(driver, "tokenizer", None))
+        if trace is None:
+            trace = workloads.build(cfg, tokenizer=getattr(driver, "tokenizer", None))
         writer = RunWriter(out, cfg, handle=handle, driver=driver, launch_env=spec.env)
         serve.run(trace, driver, cfg.mode, writer, cfg.workload)
     finally:
