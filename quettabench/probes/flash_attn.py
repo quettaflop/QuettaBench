@@ -18,7 +18,7 @@ import statistics as st
 import torch
 from vllm.vllm_flash_attn.flash_attn_interface import flash_attn_varlen_func
 
-from quettabench.probes.base import add_output_args, out_root, run_recorded
+from quettabench.probes.base import add_output_args, out_root, prior_table, run_recorded
 
 KV_AXIS = [128, 256, 512, 1024, 2048, 4096, 8192, 16384]
 BATCH_AXIS = [1, 2, 4, 8, 16, 32, 40, 64, 80, 120, 160, 200, 256, 320]
@@ -170,14 +170,15 @@ def main(argv=None):
     # {gpu_label}.csv holds every measured head config (rows carry the geometry;
     # the loader selects by (n_heads, n_kv_heads, head_dim)), so a probe run
     # UPSERTS: it replaces rows at the head config it just measured and keeps
-    # every other head config's rows.
+    # every other head config's rows of the newest earlier ok run (prior_table).
     def _upsert(path, rows):
         geom_cols = ("n_heads", "n_kv_heads", "head_dim")
         geom = tuple(str(rows[0][c]) for c in geom_cols)
         fields = list(rows[0].keys())
         kept = []
-        if path.exists():
-            with path.open(newline="") as fh:
+        prior = prior_table(a, "flash_attn", path)
+        if prior is not None:
+            with prior.open(newline="") as fh:
                 r = csv.DictReader(fh)
                 kept = [row for row in r
                         if tuple(str(row.get(c)) for c in geom_cols) != geom]

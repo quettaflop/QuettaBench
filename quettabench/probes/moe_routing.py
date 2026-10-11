@@ -23,7 +23,7 @@ transformers decompresses those experts to bf16 at load (about 709 GiB for
       --gpu-label H100 --model <dir> --layers 13 --layer 1 --dtype float32 \\
       --kda-mode fused_recurrent
 
-writes results/probes/<gpu>/moe_routing/<model>_layer<L>.safetensors.
+writes results/probes/<gpu>/moe_routing/<run-id>/<model>_layer<L>.safetensors.
 """
 from __future__ import annotations
 

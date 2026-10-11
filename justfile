@@ -7,8 +7,8 @@
 #   just crossval ...
 #   just export --results results/<run> --dest ../QuettaSim/engine/data
 #
-# .env (written by `just provision`) sets PYTHON_BIN and the cache dirs. Probes write
-# under results/probes/<gpu>/<probe>/ (pass --out through `just probe` to change the parent).
+# .env (written by `just provision`) sets PYTHON_BIN and the cache dirs. Each probe run writes
+# results/probes/<gpu>/<probe>/<run-id>/ (pass --out through `just probe` to change the parent).
 # `just export` is the only route from results/ to QuettaSim.
 #
 #   REMOTE_HOST=a100  GPU_ID=0  PYTHON_BIN=~/miniconda3/envs/vllm/bin/python
@@ -85,14 +85,19 @@ probe name *args:
 
 # Run a probe on REMOTE_HOST: ship the probes package (and the schema, env_map and run
 # writer its run.json needs), run it there (NPROC>1 = one rank per
-# GPU in GPU_IDS through torchrun), pull the tables into results/probes/<gpu>/<probe>/.
+# GPU in GPU_IDS through torchrun), pull the run into results/probes/<gpu>/<probe>/<run-id>/.
+# The remote out dir is emptied first, then given this probe's earlier runs, which an
+# upserting probe merges into (probes/base.py prior_table).
 remote-probe name gpu=gpu *args:
     #!/usr/bin/env bash
     set -euo pipefail
     : "${REMOTE_HOST:?set REMOTE_HOST to the ssh host or alias}"
     rdir=/tmp/qbench-probes
-    ssh -o BatchMode=yes "$REMOTE_HOST" "mkdir -p $rdir/out"
+    ssh -o BatchMode=yes "$REMOTE_HOST" "rm -rf $rdir/out && mkdir -p $rdir/out/{{name}}"
     rsync -a --relative -e 'ssh -o BatchMode=yes' quettabench/__init__.py quettabench/probes/ quettabench/config/__init__.py quettabench/config/schema.py quettabench/config/env_map.py quettabench/metrics/__init__.py quettabench/metrics/results.py "$REMOTE_HOST:$rdir/"
+    if [ -d results/probes/{{gpu}}/{{name}} ]; then
+        rsync -a -e 'ssh -o BatchMode=yes' results/probes/{{gpu}}/{{name}}/ "$REMOTE_HOST:$rdir/out/{{name}}/"
+    fi
     if [ "${NPROC:-1}" -gt 1 ]; then
         launch="CUDA_VISIBLE_DEVICES=${GPU_IDS:-{{gpu_id}}} {{py}} -m torch.distributed.run --nproc_per_node=$NPROC -m quettabench.probes.{{name}}"
     else
@@ -100,7 +105,7 @@ remote-probe name gpu=gpu *args:
     fi
     ssh -o BatchMode=yes "$REMOTE_HOST" "cd $rdir && $launch --gpu-label {{gpu}} --out $rdir/out {{args}}"
     mkdir -p results/probes/{{gpu}}
-    rsync -a -e 'ssh -o BatchMode=yes' "$REMOTE_HOST:$rdir/out/" results/probes/{{gpu}}/
+    rsync -a --ignore-existing -e 'ssh -o BatchMode=yes' "$REMOTE_HOST:$rdir/out/" results/probes/{{gpu}}/
 
 # QuettaSim tables from results dirs: just export --results results/<run> --dest <dir>
 export *args:
@@ -135,7 +140,7 @@ flash-ncu gpu=gpu tag="tp1" nh="32" nkv="8" hd="128" layers="32":
 moe gpu=gpu geoms="qwen3-30b-a3b,mixtral-8x7b,gpt-oss-20b,gpt-oss-120b" tp="1,2,4":
     CUDA_VISIBLE_DEVICES={{gpu_id}} {{py}} -m quettabench.probes.moe --gpu-label {{gpu}} --geometries {{geoms}} --tp {{tp}}
 
-# One MoE block's input, output and routing decision -> results/probes/<gpu>/moe_routing/ (slice verification)
+# One MoE block's input, output and routing decision -> results/probes/<gpu>/moe_routing/<run-id>/ (slice verification)
 moe-routing model gpu=gpu layer="1" *args:
     CUDA_VISIBLE_DEVICES={{gpu_id}} {{py}} -m quettabench.probes.moe_routing --gpu-label {{gpu}} --model {{model}} --layer {{layer}} {{args}}
 
@@ -145,7 +150,7 @@ gdn gpu=gpu geom="9b" hv="32" dk="128" dv="128" nlin="24" mode="full":
 gdn-ncu gpu=gpu geom="9b" hv="32" dk="128" dv="128" nlin="24":
     CUDA_VISIBLE_DEVICES={{gpu_id}} {{py}} -m quettabench.probes.gdn --gpu-label {{gpu}} --geometry-tag {{geom}} --hv {{hv}} --dk {{dk}} --dv {{dv}} --n-linear {{nlin}} --ncu
 
-# NCCL grid -> results/probes/<gpu>/collective/ncu/collectives/. Also prints a legacy tp_comm: YAML block.
+# NCCL grid -> results/probes/<gpu>/collective/<run-id>/ncu/collectives/. Also prints a legacy tp_comm: YAML block.
 collectives gpu=gpu world="2" hidden="4096" layers="32" ops="all_reduce,all_gather,reduce_scatter,all_to_all" gpu_ids="0,1":
     CUDA_VISIBLE_DEVICES={{gpu_ids}} {{py}} -m torch.distributed.run --nproc_per_node={{world}} -m quettabench.probes.collective --gpu-label {{gpu}} --hidden {{hidden}} --layers {{layers}} --ops {{ops}}
 

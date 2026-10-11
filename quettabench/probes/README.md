@@ -22,12 +22,16 @@ just gpu=A100 flash tag=tp1 nh=32 nkv=8 hd=128
 just probe gemm "--gpu-label A100 --ncu"
 ```
 
-Each probe writes under its own `results/probes/<gpu>/<probe>/` (`--out` changes the
-`results/probes/<gpu>/` part): its tables and its `run.json` sit in that one dir, so
-`just export` drops the tables of a run whose `run.json` is not ok. A probe that names its
-output file (`serving_stage_split --out`, `serving_decode_grid --out-raw`) writes its
-`run.json` beside that file. The table paths below are relative to the probe's dir, and
-the R2 mirror (`just mirror-up`) carries the same `<gpu>/<probe>/` layout. Nothing writes into the
+Each probe run writes its own `results/probes/<gpu>/<probe>/<run-id>/` (`--out` changes
+the `results/probes/<gpu>/` part; the run id is the run's UTC start, e.g.
+`20261011T120000.000000Z`): its tables and its `run.json` sit in that one dir, so
+`just export` drops the tables of a run whose `run.json` is not ok, and a later run never
+overwrites an earlier one. A probe that upserts (gemm and moe `--append`, flash_attn,
+cross_attn, reparallel) starts from the same table of its newest earlier run whose
+`run.json` is ok (`probes/base.py` `prior_table`). A probe that names its output file
+(`serving_stage_split --out`, `serving_decode_grid --out-raw`) writes its `run.json`
+beside that file. The table paths below are relative to the run's dir, and the R2 mirror
+(`just mirror-up`) carries the same `<gpu>/<probe>/<run-id>/` layout. Nothing writes into the
 QuettaSim checkout: `just export --results results/probes/A100 --dest <dir>` is the one
 route out. Schema
 contract: filenames `{gpu}[_tpN].csv`, method split `ncu/` (graphed decode) vs
@@ -57,7 +61,7 @@ contract: filenames `{gpu}[_tpN].csv`, method split `ncu/` (graphed decode) vs
    just gpu=X gdn geom=9b                         # ONLY for Qwen3.5-style hybrids
    just gpu=X moe                                 # ONLY if you serve MoE models
    ```
-   Tables land in the method-explicit layout under `results/probes/X/<probe>/`
+   Tables land in the method-explicit layout under `results/probes/X/<probe>/<run-id>/`
    (`ncu/` = graphed-decode-faithful, `cuda_event/` = eager-prefill-faithful):
    `ncu/gemm/X.csv`, `cuda_event/elementwise/X.json`,
    `{ncu,cuda_event}/flash_attn/X[_tpN].csv` (decode; ncu with `flash-ncu`),
@@ -90,7 +94,9 @@ contract: filenames `{gpu}[_tpN].csv`, method split `ncu/` (graphed decode) vs
 
 Set `REMOTE_HOST`, `GPU_ID` and `PYTHON_BIN`; `remote-probe` rsyncs the probes package to
 the host, runs the probe on `GPU_ID` (`NPROC=2 GPU_IDS=0,1` for the torchrun probes), and
-rsyncs the tables back into `results/probes/<gpu>/<probe>/`. Pick a **free** GPU (`just gpu-info`)
+rsyncs the run back into `results/probes/<gpu>/<probe>/<run-id>/`. It empties the remote
+`/tmp/qbench-probes/out` first and sends this probe's local runs up, so an upserting probe
+merges into the same earlier run it would locally. Pick a **free** GPU (`just gpu-info`)
 on shared hosts and clean up `/tmp/qbench-probes` when done.
 ```
 REMOTE_HOST=a100 GPU_ID=0 \

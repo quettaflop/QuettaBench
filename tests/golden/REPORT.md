@@ -457,3 +457,16 @@ by `_` (`engine.model: /w/llama` gives `-model_w_llama`, before
 `-model/w/llama`). `--overwrite` now empties only a real dir directly under
 the results dir that holds `run.json`, `requests.jsonl` or `engine.json`,
 and a run dir whose `run.json` says failed is replaced without it.
+
+2026-10-11: no fixture changed. Each probe run started from its CLI
+(`run_recorded`) writes its tables and `run.json` into its own
+`results/probes/<gpu>/<probe>/<run-id>/`, the run id being its UTC start
+(`20261011T120000.000000Z`); before, every run of a probe shared
+`results/probes/<gpu>/<probe>/`, so one `run.json` stood for tables of
+several runs. A probe that upserts (gemm and moe `--append`, flash_attn,
+cross_attn, reparallel, and gemm's `fp8_act_quant` entry) now starts from
+the same table of its newest earlier run whose `run.json` is ok, where
+before it started from whatever the last run, ok or not, left. A
+`qbench run` probe (`mode: probe`) still writes `results/<run>/<probe>/`.
+`remote-probe` empties the remote out dir, sends the probe's local runs up,
+and pulls back without overwriting local files.

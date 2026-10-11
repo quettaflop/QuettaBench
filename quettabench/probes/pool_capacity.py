@@ -6,10 +6,10 @@ pool in tokens -- watermark/rounding/transients included. Also prints the server
 startup KV-block lines for the static number.
 
 Run (starts the server through probes.base.launch_vllm, which writes its
-engine.json and server.log in results/probes/<gpu>/pool_capacity/server/):
+engine.json and server.log in results/probes/<gpu>/pool_capacity/<run-id>/server/):
   CUDA_VISIBLE_DEVICES=3 python3 -m quettabench.probes.pool_capacity --gpu-label H100 \
       --model <model-dir> --port 8794 --tokens 4096 --count 120
-writes results/probes/<gpu>/pool_capacity/pool_capacity_<gpu>.txt (--out changes the directory).
+writes results/probes/<gpu>/pool_capacity/<run-id>/pool_capacity_<gpu>.txt (--out changes the directory).
 """
 from __future__ import annotations
 

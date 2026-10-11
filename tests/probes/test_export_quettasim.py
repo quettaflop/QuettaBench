@@ -90,7 +90,7 @@ def test_a_failed_probe_run_keeps_its_tables_out(tmp_path: Path, fails: bool) ->
     results = tmp_path / "results"
     leg = results / "H100" / "serving_stage_split" / "serving_stage_split_H100.csv"
 
-    def main():
+    def main(argv):
         leg.parent.mkdir(parents=True)
         write_leg(leg, 1.0)
         write_leg(leg.with_name("serving_stage_split_H100_tp2.csv"), 0.6)

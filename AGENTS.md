@@ -78,7 +78,7 @@ Every writer and every process starter, exactly:
   process; starts no process.
 - `metrics/results.py` `RunWriter`: `run.json` and `requests.jsonl`.
 - probes: their tables and their `run.json` in one dir under `results/`
-  (default `results/probes/<gpu>/<probe>/`); `serving_decode_grid` also starts its request
+  (default `results/probes/<gpu>/<probe>/<run-id>/`); `serving_decode_grid` also starts its request
   shards as `multiprocessing` processes.
 - `profiler.py`: `profile.json` (and the nsys export) in the run dir.
 - `profiling/kv_transfer.py`: its CSV under `--out-dir`, run under its own

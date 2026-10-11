@@ -24,7 +24,7 @@ import statistics as st
 import torch
 from vllm.vllm_flash_attn.flash_attn_interface import flash_attn_varlen_func
 
-from quettabench.probes.base import add_output_args, out_root, run_recorded
+from quettabench.probes.base import add_output_args, out_root, prior_table, run_recorded
 
 Q_AXIS = [512, 1024, 2048, 4096, 8192]
 CTX_AXIS = [0, 1024, 2048, 4096, 8192, 12288, 16384, 24576, 32768]
@@ -106,8 +106,9 @@ def main(argv=None):
     path = out / f"{a.gpu_label}.csv"
     geom = (str(a.n_heads), str(a.n_kv_heads), str(a.head_dim))
     kept = []
-    if path.exists():
-        with path.open(newline="") as fh:
+    prior = prior_table(a, "cross_attn", path)
+    if prior is not None:
+        with prior.open(newline="") as fh:
             kept = [r for r in csv.DictReader(fh)
                     if (r["n_heads"], r["n_kv_heads"], r["head_dim"]) != geom]
     with path.open("w", newline="") as fh:

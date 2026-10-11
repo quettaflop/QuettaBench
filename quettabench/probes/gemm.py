@@ -41,7 +41,7 @@ import sys
 
 import torch
 
-from quettabench.probes.base import add_output_args, out_root, run_recorded
+from quettabench.probes.base import add_output_args, out_root, prior_table, run_recorded
 
 M_AXIS = [1, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
 # out/in feature dims covering Llama-3.1-8B/70B, Qwen2.5-72B, Qwen3.5-9B/27B
@@ -263,8 +263,8 @@ def main(argv=None):
                          "prefill_chunk + decode_batch tokens, so m exceeds the budget and "
                          "walks off the grid; sweep past it (e.g. 8448 = 8192 + 256 seqs)")
     ap.add_argument("--append", action="store_true",
-                    help="merge into the target CSV instead of truncating it "
-                         "(duplicate (M,N,K) rows collapse by min on load)")
+                    help="keep the rows of the newest earlier ok run's table (prior_table) "
+                         "that this run did not re-measure")
     a = ap.parse_args(argv)
     dev = torch.device("cuda")
     dt = torch.bfloat16
@@ -343,19 +343,21 @@ def main(argv=None):
         floor, bw = fp8_op.quant_fit()
         ej = out / method / "elementwise" / f"{a.gpu_label}.json"
         ej.parent.mkdir(parents=True, exist_ok=True)
-        table = json.loads(ej.read_text()) if ej.exists() else {}
+        prior = prior_table(a, "gemm", ej)
+        table = json.loads(prior.read_text()) if prior is not None else {}
         table["fp8_act_quant"] = {"floor_us": round(floor, 3), "eff_bw_gb_s": round(bw, 1)}
         ej.write_text(json.dumps(table, indent=2) + "\n")
         print(f"[gemm/fp8] quant kernel: floor {floor:.2f} us, eff_bw {bw:.0f} GB/s "
               f"({len(fp8_op.quant_pts)} (M,K) points) -> {ej} [fp8_act_quant]", flush=True)
     n_new = len(rows)
-    if a.append and path.exists():
+    prior = prior_table(a, "gemm", path) if a.append else None
+    if prior is not None:
         keep = {(int(r["M"]), int(r["N"]), int(r["K"])) for r in rows}
-        with path.open() as f:
-            prior = [r for r in csv.DictReader(f)
-                     if (int(r["M"]), int(r["N"]), int(r["K"])) not in keep]
-        rows = prior + rows
-        print(f"[gemm] append: {len(prior)} prior rows kept, {n_new} re-measured", flush=True)
+        with prior.open() as f:
+            kept = [r for r in csv.DictReader(f)
+                    if (int(r["M"]), int(r["N"]), int(r["K"])) not in keep]
+        rows = kept + rows
+        print(f"[gemm] append: {len(kept)} prior rows kept, {n_new} re-measured", flush=True)
     with path.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=["M", "N", "K", "dtype_bytes", "latency_us"])
         w.writeheader()

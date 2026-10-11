@@ -102,10 +102,13 @@ refused. `run_name` (the yaml stem or `--set run_name=`) matches
 matrix suffixes are cut to that charset.
 
 Grid runs no longer write `results/baselines/*.json`; `qbench crossval`
-reads the run dir, and still reads old baselines files. Probe recipes write
-`results/probes/<gpu>/<probe>/`, and each probe run records itself beside its
-tables in `results/probes/<gpu>/<probe>/run.json` (argv, provenance, run_status);
-`just export` is the only route to QuettaSim.
+reads the run dir, and still reads old baselines files. Each probe run writes
+its own `results/probes/<gpu>/<probe>/<run-id>/` (the run id is its UTC start,
+e.g. `20261011T120000.000000Z`) and records itself beside its tables in
+`run.json` there (argv, provenance, run_status). A probe that upserts (gemm and
+moe `--append`, flash_attn, cross_attn, reparallel) merges into the table of
+its newest earlier run whose `run.json` is ok. `just export` is the only route
+to QuettaSim.
 
 ## Cross-validation
 
