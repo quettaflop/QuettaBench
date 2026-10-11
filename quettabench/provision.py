@@ -2,7 +2,7 @@
 and oneshot.sh, retired in e34d433.
 
   python3 -m quettabench.provision <run.yaml>... [--set [<run>:]k=v ...]
-                                   [--dry-run] [--env-file FILE]
+                                   [--backend local|docker] [--dry-run] [--env-file FILE]
 
 Inputs are the hardware yaml's provision: block and --set; a `<run>:`
 prefix scopes a --set to the run yaml of that stem. Every step checks
@@ -20,6 +20,12 @@ before it acts, so a second pass changes nothing:
      and the vLLM weights (weights, else hf_id downloaded to
      <cache_root>/models/<run>)
 
+--backend docker (hardware.launcher=docker) replaces steps 2 and 3, since
+vLLM and its NCCL live in the image: docker must be on PATH and each run's
+engine.image must exist locally (`docker image inspect`). A missing image
+prints `MISSING: docker image <image>; pull it with: docker pull <image>`;
+pulling is the user's action, never provision's.
+
 What it cannot resolve prints `MISSING: <what>`; after listing them all
 the pass exits 1, nothing guessed. --dry-run prints the plan and writes
 nothing. A complete pass writes the env file (the justfile loads it as
@@ -29,6 +35,7 @@ nothing. A complete pass writes the env file (the justfile loads it as
 import argparse
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -87,8 +94,24 @@ def nccl_version(py):
     return tuple(int(p) for p in out.split(".")[:2]) if out else None
 
 
-def machine(plan, prov):
-    """Steps 1-4; returns (python, QuettaServe checkout)."""
+def docker_images(plan, configs):
+    """Docker on PATH and every run's engine.image present locally; nothing pulled."""
+    if not shutil.which("docker"):
+        return plan.need("docker is not on PATH; hardware.launcher=docker runs the server with it")
+    for name, cfg in configs.items():
+        image = cfg.engine.image
+        if not image:
+            plan.need(f"{name}: hardware.launcher=docker needs engine.image")
+        elif plan.dry:
+            plan.log(f"would: docker image inspect {image}")
+        elif succeeds(["docker", "image", "inspect", image]):
+            plan.log(f"{name}: docker image ok: {image}")
+        else:
+            plan.need(f"docker image {image}; pull it with: docker pull {image}")
+
+
+def machine(plan, prov, docker=False):
+    """Steps 1-4 (2 and 3 skipped for docker); returns (python, QuettaServe checkout)."""
     cache = Path(prov["cache_root"])
     if plan.dry:
         plan.log("would: mkdir -p " + " ".join(str(cache / d) for d in CACHE_DIRS))
@@ -100,7 +123,10 @@ def machine(plan, prov):
                      "TMPDIR": cache / "tmp"})
 
     py = prov.get("py") or "python3"
-    if succeeds([py, "-m", "pip", "show", "vllm"]):
+    plan.env["PYTHON_BIN"] = py
+    if docker:
+        plan.log("vllm: in the docker image")
+    elif succeeds([py, "-m", "pip", "show", "vllm"]):
         plan.log(f"vllm python ok: {py}")
     elif prov.get("vllm_spec"):
         plan.act([py, "-m", "pip", "install", *shlex.split(prov["vllm_spec"])],
@@ -108,10 +134,11 @@ def machine(plan, prov):
     else:
         plan.need(f"no vllm in {py!r}; set hardware.provision.py to a vllm python or "
                   "hardware.provision.vllm_spec to install one")
-    plan.env["PYTHON_BIN"] = py
 
     lib = prov.get("nccl_lib")
-    if lib:
+    if docker:
+        plan.log("nccl: in the docker image")
+    elif lib:
         if not Path(lib).is_dir():
             plan.need(f"hardware.provision.nccl_lib {lib!r} does not exist")
         plan.env["LD_LIBRARY_PATH"] = lib
@@ -199,10 +226,14 @@ def main(argv=None):
     ap.add_argument("run_yaml", nargs="+", help="configs/runs/<name>.yaml to provision for")
     ap.add_argument("--set", dest="overrides", action="append", default=[],
                     metavar="[RUN:]K=V")
+    ap.add_argument("--backend", choices=("local", "docker"),
+                    help="sets hardware.launcher for every run")
     ap.add_argument("--dry-run", action="store_true", help="print the plan; write nothing")
     ap.add_argument("--env-file", default=str(REPO / ".env"))
     a = ap.parse_args(argv)
     common, scoped = split_sets(a.overrides)
+    if a.backend:
+        common.append(f"hardware.launcher={a.backend}")
     plan = Plan(a.dry_run)
     configs = {}
     for path in a.run_yaml:
@@ -214,7 +245,11 @@ def main(argv=None):
             plan.need(str(e))
     if not configs:
         return 1
-    py, qs = machine(plan, next(iter(configs.values())).hardware.provision)
+    docker = {n: c for n, c in configs.items() if c.hardware.launcher == "docker"}
+    if docker:
+        docker_images(plan, docker)
+    py, qs = machine(plan, next(iter(configs.values())).hardware.provision,
+                     len(docker) == len(configs))
     lines = [line for name, cfg in configs.items() for line in run(plan, name, cfg, py, qs) or ()]
     if plan.missing:
         plan.log("provisioning incomplete; resolve the MISSING items above")

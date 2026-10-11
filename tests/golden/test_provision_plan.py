@@ -67,3 +67,53 @@ class ProvisionPlanGolden(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DockerCheck(unittest.TestCase):
+    """--backend docker: docker on PATH and the image present; never pulled."""
+
+    def provision(self, run, *extra, docker="/usr/bin/docker", inspect_ok=False):
+        calls = []
+
+        def succeeds(argv):
+            calls.append(argv)
+            return inspect_ok if argv[:3] == ["docker", "image", "inspect"] else True
+
+        err = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(provision.shutil, "which", return_value=docker), \
+                mock.patch.object(provision, "succeeds", side_effect=succeeds), \
+                mock.patch.object(provision.subprocess, "run") as run_cmd, \
+                mock.patch.object(provision, "compute_capability", return_value=None), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            provision.main([str(RUNS / f"{run}.yaml"), "--env-file", f"{tmp}/qbench.env",
+                            "--set", f"hardware.provision.cache_root={tmp}/cache",
+                            "--set", "hardware.backend=cuda", "--set", "hardware.link_profile=nvlink",
+                            *extra])
+        self.assertFalse(any("pull" in c.args[0] for c in run_cmd.call_args_list))
+        return err.getvalue().splitlines(), calls
+
+    def test_missing_image_prints_the_pull_command(self):
+        lines, calls = self.provision("llama-tp1-docker")
+        self.assertIn("[provision] MISSING: docker image vllm/vllm-openai:v0.30.0; "
+                      "pull it with: docker pull vllm/vllm-openai:v0.30.0", lines)
+        self.assertIn(["docker", "image", "inspect", "vllm/vllm-openai:v0.30.0"], calls)
+        self.assertEqual([c for c in calls if "pip" in c], [])  # vllm lives in the image
+        self.assertIn("[provision] vllm: in the docker image", lines)
+
+    def test_present_image_and_no_docker(self):
+        lines, _ = self.provision("llama-tp1-docker", inspect_ok=True)
+        self.assertIn("[provision] llama-tp1-docker: docker image ok: vllm/vllm-openai:v0.30.0",
+                      lines)
+        lines, calls = self.provision("llama-tp1-docker", docker=None)
+        self.assertIn("[provision] MISSING: docker is not on PATH; hardware.launcher=docker "
+                      "runs the server with it", lines)
+        self.assertEqual([c for c in calls if c[0] == "docker"], [])
+
+    def test_dry_run_plans_only_and_backend_flag_sets_the_launcher(self):
+        lines, calls = self.provision("llama-tp1-docker", "--dry-run")
+        self.assertIn("[provision] would: docker image inspect vllm/vllm-openai:v0.30.0", lines)
+        self.assertEqual([c for c in calls if c[0] == "docker"], [])
+        lines, _ = self.provision("llama-tp1", "--backend", "docker", "--dry-run")
+        self.assertIn("[provision] MISSING: llama-tp1: hardware.launcher=docker needs "
+                      "engine.image", lines)
