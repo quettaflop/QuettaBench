@@ -30,8 +30,13 @@ from pathlib import Path
 
 RUN_SCHEMA_VERSION = 1
 RUN_STATUSES = ("ok", "partial", "aborted", "failed")
-# A name whose value is a secret: a token/key/secret/password word, or an HF_ name.
-SECRET_NAME = re.compile(r"(?:^|[_.-])(?:token|key|apikey|secret|password|passwd)(?:$|[_.-])|^hf_",
+# A name whose value is a secret: one of these words anywhere in it, between
+# _ . - or the ends ...
+SECRET_WORD = r"secrets?|password|passwd|credentials?|bearer|auth"
+# ... or one of these as its last word, so num_key_value_heads and
+# prompt_token_ids are not secrets while OPENAI_API_KEY and HF_TOKEN are.
+SECRET_LAST = r"token|key|apikey|pat"
+SECRET_NAME = re.compile(rf"(?:^|[_.-])(?:{SECRET_WORD})(?:$|[_.-])|(?:^|[_.-])(?:{SECRET_LAST})$",
                          re.IGNORECASE)
 REPO = Path(__file__).resolve().parents[2]
 
@@ -42,19 +47,25 @@ def secret(name):
 
 def redact_argv(argv):
     """argv with the value of every secret-named flag replaced by REDACTED,
-    in both `--api-key X` and `--api-key=X` forms."""
+    in the `--api-key X`, `--api-key=X` and `NAME=X` (docker -e) forms.
+    Items need not be strings; a dict or list item goes through redact."""
     out, hide = [], False
     for arg in argv:
-        if hide and not arg.startswith("--"):
+        if isinstance(arg, (dict, list, tuple)):
+            out.append(redact(arg))
+            hide = False
+            continue
+        text = str(arg)
+        if hide and not text.startswith("--"):
             out.append("REDACTED")
             hide = False
             continue
         hide = False
-        name, eq, _ = arg.partition("=")
-        if arg.startswith("-") and secret(name):
+        name, eq, _ = text.partition("=")
+        if secret(name):
             if eq:
                 arg = f"{name}=REDACTED"
-            else:
+            elif text.startswith("-"):
                 hide = True
         out.append(arg)
     return out
@@ -62,24 +73,25 @@ def redact_argv(argv):
 
 def redact(obj):
     """obj with every secret replaced by REDACTED: the one rule for results/.
-    In a mapping (an env, engine kwargs, a config) the scalar value of every
-    secret-named key; in a list of strings (an argv) the value of every
-    secret-named flag; probe_args, an argv as one shell string, likewise.
+    In a mapping (an env, engine kwargs, a config) the value of every
+    secret-named key, each item of it when it is a list; in a list (an argv)
+    the value of every secret-named flag or NAME=; probe_args, an argv as
+    one shell string, likewise.
     run.json's provenance and config, the probe argv and the launcher's
     engine.json all go through it."""
     if isinstance(obj, dict):
         out = {}
         for k, v in obj.items():
-            if secret(k) and not isinstance(v, (dict, list, tuple)):
-                v = "REDACTED"
+            if secret(k) and not isinstance(v, dict):
+                out[k] = (["REDACTED" if not isinstance(x, dict) else redact(x) for x in v]
+                          if isinstance(v, (list, tuple)) else "REDACTED")
             elif k == "probe_args" and isinstance(v, str):
-                v = shlex.join(redact_argv(shlex.split(v)))
-            out[k] = redact(v)
+                out[k] = shlex.join(redact_argv(shlex.split(v)))
+            else:
+                out[k] = redact(v)
         return out
     if isinstance(obj, (list, tuple)):
-        if obj and all(isinstance(x, str) for x in obj):
-            return redact_argv(obj)
-        return [redact(x) for x in obj]
+        return redact_argv(obj)
     return obj
 
 

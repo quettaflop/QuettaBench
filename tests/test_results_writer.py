@@ -106,7 +106,7 @@ class Redaction(unittest.TestCase):
         env = {"HF_TOKEN": "t", "HF_HOME": "/h", "OPENAI_API_KEY": "k", "AWS_SECRET": "s",
                "NCCL_ALGO": "Ring", "CUDA_VISIBLE_DEVICES": "0,1"}
         self.assertEqual(results.redact(env), {
-            "HF_TOKEN": "REDACTED", "HF_HOME": "REDACTED", "OPENAI_API_KEY": "REDACTED",
+            "HF_TOKEN": "REDACTED", "HF_HOME": "/h", "OPENAI_API_KEY": "REDACTED",
             "AWS_SECRET": "REDACTED", "NCCL_ALGO": "Ring", "CUDA_VISIBLE_DEVICES": "0,1"})
 
     def test_names_match_without_case_and_only_as_words(self):
@@ -115,6 +115,30 @@ class Redaction(unittest.TestCase):
         self.assertEqual(results.redact(kwargs), {
             "api_key": "REDACTED", "hf_token": "REDACTED", "Password": "REDACTED",
             "max_num_batched_tokens": 4096, "kv_cache_dtype": "fp8", "keyless": 1})
+
+    def test_word_rules(self):
+        """token/key/apikey/pat only as the last word; secret, password,
+        credential, bearer and auth anywhere as a word."""
+        names = {"num_key_value_heads": False, "prompt_token_ids": False, "HF_HOME": False,
+                 "hf_home": False, "path": False, "author": False, "GITHUB_PAT": True,
+                 "auth_header": True, "GOOGLE_CREDENTIALS_FILE": True, "bearer": True,
+                 "x-credential": True, "apiKey": True, "AWS_SECRET_ACCESS_KEY": True}
+        self.assertEqual({n: results.secret(n) for n in names}, names)
+
+    def test_a_secret_named_list_is_redacted_item_by_item(self):
+        self.assertEqual(results.redact({"api_key": ["k1", 2, {"token": "t", "n": 1}]}),
+                         {"api_key": ["REDACTED", "REDACTED", {"token": "REDACTED", "n": 1}]})
+
+    def test_an_argv_with_non_string_items(self):
+        self.assertEqual(results.redact(["--port", 8000, "--api-key", 123, "--tp", 2]),
+                         ["--port", 8000, "--api-key", "REDACTED", "--tp", 2])
+
+    def test_name_equals_value_items(self):
+        argv = ["docker", "run", "-e", "HF_TOKEN=hf_x", "-e", "HF_HOME=/h", "-e", "HF_TOKEN",
+                "engine.extra.vllm.api_key=sk"]
+        self.assertEqual(results.redact(argv), [
+            "docker", "run", "-e", "HF_TOKEN=REDACTED", "-e", "HF_HOME=/h", "-e", "HF_TOKEN",
+            "engine.extra.vllm.api_key=REDACTED"])
 
     def test_argv_values_are_redacted_in_both_forms(self):
         argv = ["vllm", "serve", "/w", "--api-key", "k1", "--hf-token", "t1", "--x-token=t2",
