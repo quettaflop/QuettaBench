@@ -32,24 +32,32 @@ RUN_SCHEMA_VERSION = 1
 RUN_STATUSES = ("ok", "partial", "aborted", "failed")
 # Files only a run dir holds; a dir with one of them is a run dir.
 RUN_MARKERS = ("run.json", "requests.jsonl", "engine.json")
-# A name whose value is a secret: one of these words anywhere in it, between
-# _ . - or the ends ...
-SECRET_WORD = r"secrets?|password|passwd|credentials?|bearer|auth"
+# A name whose value is a secret, read after camelCase is split into words
+# (authToken as auth_Token): one of these words anywhere in it, between _ . -
+# or the ends ...
+SECRET_WORD = r"secrets?|password|passwd|credentials?|bearer|auth|oauth|authorization"
 # ... or one of these as its last word, so num_key_value_heads and
-# prompt_token_ids are not secrets while OPENAI_API_KEY and HF_TOKEN are.
-SECRET_LAST = r"token|key|apikey|pat"
+# prompt_token_ids are not secrets while OPENAI_API_KEY and HF_TOKEN are ...
+SECRET_LAST = r"token|keys?|apikey|pat"
 SECRET_NAME = re.compile(rf"(?:^|[_.-])(?:{SECRET_WORD})(?:$|[_.-])|(?:^|[_.-])(?:{SECRET_LAST})$",
                          re.IGNORECASE)
+# ... except a tokenizer's special tokens, which name a vocabulary entry.
+SPECIAL_TOKEN = re.compile(r"(?:eos|bos|pad|unk|sep|cls|mask)[_.-]token", re.IGNORECASE)
+CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
+# One `Name: value` HTTP header as an argv item (curl -H).
+HEADER = re.compile(r"\s*(?P<name>[A-Za-z0-9_.-]+)\s*:\s*\S.*", re.DOTALL)
 REPO = Path(__file__).resolve().parents[2]
 
 
 def secret(name):
-    return bool(SECRET_NAME.search(str(name).lstrip("-")))
+    words = CAMEL.sub("_", str(name).lstrip("-"))
+    return not SPECIAL_TOKEN.fullmatch(words) and bool(SECRET_NAME.search(words))
 
 
 def redact_argv(argv):
     """argv with the value of every secret-named flag replaced by REDACTED,
-    in the `--api-key X`, `--api-key=X` and `NAME=X` (docker -e) forms.
+    in the `--api-key X`, `--api-key=X`, `NAME=X` (docker -e) and
+    `Authorization: Bearer X` (an HTTP header) forms.
     Items need not be strings; a dict or list item goes through redact."""
     out, hide = [], False
     for arg in argv:
@@ -63,6 +71,10 @@ def redact_argv(argv):
             hide = False
             continue
         hide = False
+        header = HEADER.fullmatch(text)
+        if header and secret(header["name"]):
+            out.append(f"{header['name']}: REDACTED")
+            continue
         name, eq, _ = text.partition("=")
         if secret(name):
             if eq:

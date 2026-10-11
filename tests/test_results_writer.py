@@ -125,6 +125,34 @@ class Redaction(unittest.TestCase):
                  "x-credential": True, "apiKey": True, "AWS_SECRET_ACCESS_KEY": True}
         self.assertEqual({n: results.secret(n) for n in names}, names)
 
+    def test_each_listed_name_is_pinned(self):
+        """camelCase splits into words; authorization and oauth are secret
+        words; a tokenizer's special-token names are not secrets; any other
+        name whose last word is key or keys is, cache_key and routing_key
+        included, since nothing qbench records carries one."""
+        names = {"api_key": True, "hf_token": True, "HF_HOME": False,
+                 "num_key_value_heads": False, "prompt_token_ids": False,
+                 "authorization": True, "Authorization": True, "bearer_token": True,
+                 "my_pat": True, "PATH": False, "patch_size": False, "authToken": True,
+                 "hfToken": True, "HFToken": True, "OAUTH": True, "api-keys": True,
+                 "eos_token": False, "pad_token": False, "--pad-token": False, "eosToken": False,
+                 "bos_token": False, "unk_token": False, "sep_token": False, "cls_token": False,
+                 "mask_token": False, "cache_key": True, "routing_key": True,
+                 "maxTokens": False, "max_num_batched_tokens": False}
+        self.assertEqual({n: results.secret(n) for n in names}, names)
+
+    def test_authorization_header_values_are_redacted(self):
+        argv = ["curl", "-H", "Authorization: Bearer sk-live", "--header",
+                "authorization:Bearer sk-2", "-H", "Content-Type: application/json",
+                "http://h:8000/v1"]
+        self.assertEqual(results.redact(argv), [
+            "curl", "-H", "Authorization: REDACTED", "--header", "authorization: REDACTED",
+            "-H", "Content-Type: application/json", "http://h:8000/v1"])
+        self.assertEqual(results.redact({"headers": {"Authorization": "Bearer sk-live",
+                                                     "Content-Type": "application/json"}}),
+                         {"headers": {"Authorization": "REDACTED",
+                                      "Content-Type": "application/json"}})
+
     def test_a_secret_named_list_is_redacted_item_by_item(self):
         self.assertEqual(results.redact({"api_key": ["k1", 2, {"token": "t", "n": 1}]}),
                          {"api_key": ["REDACTED", "REDACTED", {"token": "REDACTED", "n": 1}]})
