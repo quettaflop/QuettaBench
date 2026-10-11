@@ -107,6 +107,12 @@ def torchrun_rank():
     return int(rank) if rank not in (None, "") else None
 
 
+def with_env(values):
+    """This process's environment with values added: the env of a child that
+    must get a secret through its environment rather than its argv."""
+    return {**os.environ, **{k: str(v) for k, v in values.items()}}
+
+
 def export(values):
     """Put each non-empty value into the process environment, replacing what
     is there: the Config already resolved env against yaml and --set, so its

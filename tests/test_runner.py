@@ -283,7 +283,8 @@ class DockerDryRun(unittest.TestCase):
         self.assertIsNone(exit_msg)
         self.assertNotIn("sk-live", out)
         self.assertIn("engine.extra.vllm = {'api_key': 'REDACTED'}  (run)", out.splitlines())
-        self.assertIn("-e VLLM_API_KEY=REDACTED", out)
+        docker = next(ln for ln in out.splitlines() if ln.startswith("docker = ")).split()
+        self.assertEqual(docker[docker.index("VLLM_API_KEY") - 1], "-e")
 
     def test_docker_without_an_image_is_refused(self):
         _, exit_msg = qbench("run", str(RUNS[0].with_name("llama-tp1-docker.yaml")),

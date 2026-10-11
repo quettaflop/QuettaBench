@@ -23,9 +23,10 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from quettabench.config import env_map
 from quettabench.config.schema import ConfigError
 from quettabench.engines.base import UnsupportedField
-from quettabench.metrics.results import redact
+from quettabench.metrics.results import redact, secret
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -161,7 +162,8 @@ def docker_argv(spec, cfg, gpus, results_dir):
     output (nsys) lands there and outlives the container.
     --entrypoint is the argv's first word, so the image's own ENTRYPOINT does
     not prefix the command. env is spec.env, the non-empty collective pins
-    and HF_HOME.
+    and HF_HOME; a secret-named one (docker_secrets) is passed as `-e NAME`
+    alone, so docker takes its value from the env start() gives docker run.
     """
     hw, run_dir = cfg.hardware, Path(results_dir).resolve()
     if not spec.image:
@@ -173,14 +175,21 @@ def docker_argv(spec, cfg, gpus, results_dir):
         mounts.append(model)
     env = {**spec.env, **{k: v for k, v in hw.collective.items() if v},
            **({"HF_HOME": hw.hf_home} if hw.hf_home else {})}
+    hidden = docker_secrets(spec)
     return ["docker", "run", "-d", "--pull=never", "--init",
             "--name", container_name(cfg.run_name),
             "--gpus", f'"device={gpus}"', "--ipc=host", f"--shm-size={hw.shm_size}",
             "-p", f"{spec.port}:{spec.port}",
             *(a for path in [*mounts, REPO] for a in ("-v", f"{path}:{path}:ro")),
             "-v", f"{run_dir}:{run_dir}",
-            *(a for k, v in env.items() for a in ("-e", f"{k}={v}")),
+            *(a for k, v in env.items() for a in ("-e", k if k in hidden else f"{k}={v}")),
             "--entrypoint", spec.server_argv[0], spec.image, *spec.server_argv[1:]]
+
+
+def docker_secrets(spec):
+    """The secret-named env of a docker launch (VLLM_API_KEY): docker_argv
+    names them only, and start() hands their values to docker run's env."""
+    return {k: v for k, v in spec.env.items() if secret(k)}
 
 
 def start(spec, results_dir, *, backend="local", cfg=None, gpus="", timeout_s=1800,
@@ -197,7 +206,9 @@ def start(spec, results_dir, *, backend="local", cfg=None, gpus="", timeout_s=18
     if backend == "docker":
         argv = docker_argv(spec, cfg, gpus, results_dir)
         container = argv[argv.index("--name") + 1]
-        run = subprocess.run(argv, capture_output=True, text=True, check=False)
+        secrets = docker_secrets(spec)
+        run = subprocess.run(argv, capture_output=True, text=True, check=False,
+                             env=env_map.with_env(secrets) if secrets else None)
         if run.returncode != 0:
             # The name is this run's own (container_name), so whatever docker
             # left under it is logged and removed.

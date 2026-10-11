@@ -1,5 +1,6 @@
 """start/health/engine.json/stop on a fake server, and no child survives stop."""
 
+import dataclasses
 import json
 import os
 import socket
@@ -115,6 +116,14 @@ def docker_spec(*sets):
     return cfg, vllm.ADAPTER.translate(cfg)
 
 
+def keyed_docker_spec(key):
+    """docker_spec with engine.extra.vllm.api_key set."""
+    cfg, _ = docker_spec()
+    extra = {**cfg.engine.extra, "vllm": {**cfg.engine.extra.get("vllm", {}), "api_key": key}}
+    cfg = dataclasses.replace(cfg, engine=dataclasses.replace(cfg.engine, extra=extra))
+    return cfg, vllm.ADAPTER.translate(cfg)
+
+
 NAME = "qbench-llama-tp1-docker-77-abcdef"
 
 
@@ -159,6 +168,15 @@ class DockerArgv(unittest.TestCase):
         cfg, spec = docker_spec("engine.model=meta-llama/Llama-3.1-8B")
         self.assertNotIn("meta-llama/Llama-3.1-8B:meta-llama/Llama-3.1-8B:ro",
                          launcher.docker_argv(spec, cfg, "0", "/r/run"))
+
+    def test_a_secret_env_goes_by_name_only(self):
+        """docker run -e NAME (no value) takes NAME from the docker client's
+        env, so the key is never in an argv that ps or the dry run shows."""
+        cfg, spec = keyed_docker_spec("sk-live")
+        argv = launcher.docker_argv(spec, cfg, "0", "/r/run")
+        self.assertEqual(argv[argv.index("VLLM_API_KEY") - 1], "-e")
+        self.assertNotIn("sk-live", " ".join(argv))
+        self.assertEqual(launcher.docker_secrets(spec), {"VLLM_API_KEY": "sk-live"})
 
     def test_missing_image_is_a_config_error(self):
         cfg, spec = docker_spec("engine.image=null")
@@ -213,6 +231,18 @@ class DockerStart(unittest.TestCase):
                              [["docker", "stop", "-t", "5", NAME],
                               ["docker", "rm", "-f", NAME]])
             proc.wait.assert_called_once_with(timeout=15)
+
+    def test_docker_run_gets_the_secret_in_its_env(self):
+        cfg, spec = keyed_docker_spec("sk-live")
+        proc = mock.Mock(pid=4242, **{"poll.return_value": None})
+        with self.run_mock() as run, mock.patch.object(launcher.subprocess, "Popen",
+                                                       return_value=proc), \
+                mock.patch.object(launcher, "wait_healthy"):
+            self.start(cfg, spec)
+        docker_run = run.call_args_list[0]
+        self.assertEqual(docker_run.kwargs["env"]["VLLM_API_KEY"], "sk-live")
+        self.assertNotIn("sk-live", " ".join(docker_run.args[0]))
+        self.assertNotIn("sk-live", (self.dir / "run" / "engine.json").read_text())
 
     def test_stop_kills_a_log_stream_that_does_not_end(self):
         cfg, spec = docker_spec()
