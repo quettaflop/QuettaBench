@@ -102,9 +102,13 @@ def read_env(env=None, only=None):
 
 
 def export(values):
-    """Put each non-empty value into the process environment unless the
-    variable is already set, so the caller's env wins. An in-process engine
-    reads its NCCL settings there; vmin_fit did the same setdefault at import."""
+    """Put each non-empty value into the process environment, replacing what
+    is there: the Config already resolved env against yaml and --set, so its
+    value is the one that holds. An in-process engine reads its NCCL settings
+    and CUDA_VISIBLE_DEVICES there. Returns the names exported."""
+    names = []
     for var, value in values.items():
         if value:
-            os.environ.setdefault(var, str(value))
+            os.environ[var] = str(value)
+            names.append(var)
+    return names

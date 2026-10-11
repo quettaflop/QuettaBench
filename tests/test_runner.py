@@ -4,8 +4,10 @@ the engine gets the caller's GPUs or the first idle tp * pp, and mode:
 probe hands the probe its flags plus --out results/<run>/."""
 
 import contextlib
+import functools
 import io
 import json
+import os
 import shutil
 import sys
 import tempfile
@@ -135,6 +137,46 @@ class MatrixEnv(unittest.TestCase):
         with scratch_configs("sweep", run) as (path, td), \
                 self.assertRaisesRegex(ConfigError, "one process cannot change them"):
             runner.main(path, ["engine.model=/w"], results_dir=td, allow_unverified=True)
+
+
+class InProcessEnv(unittest.TestCase):
+    def test_export_replaces_what_the_process_holds(self):
+        with mock.patch.dict(os.environ, {"NCCL_PROTO": "LL"}, clear=True):
+            names = runner.env_map.export({"NCCL_PROTO": "Simple", "NCCL_ALGO": ""})
+            self.assertEqual((os.environ["NCCL_PROTO"], names), ("Simple", ["NCCL_PROTO"]))
+            self.assertNotIn("NCCL_ALGO", os.environ)
+
+    def test_a_server_point_after_an_in_process_one_drops_its_exports(self):
+        load = functools.partial(loader.load, RUNS[0].with_name("llama.yaml"), env={})
+        (grid,) = load(["engine.model=/w", "hardware.visible_devices=0",
+                        "hardware.link_profile=pcie"])
+        (served,) = load(["engine.model=/w", "hardware.visible_devices=1", "mode.grid=null"])
+        exported = set()
+        with tempfile.TemporaryDirectory() as td, mock.patch.dict(os.environ, {}, clear=True), \
+                mock.patch.object(runner.launcher, "start") as start, \
+                mock.patch.object(runner.workloads, "build"), \
+                mock.patch.object(runner, "RunWriter"), mock.patch.object(runner.serve, "run"):
+            runner.run_one(grid, Path(td, "a"), exported)
+            in_process = {k: os.environ[k] for k in exported}
+            runner.run_one(served, Path(td, "b"), exported)
+        spec = start.call_args.args[0]
+        self.assertEqual(in_process["CUDA_VISIBLE_DEVICES"], "0")
+        self.assertEqual(in_process["NCCL_PROTO"], "Simple")
+        self.assertEqual(spec.env["CUDA_VISIBLE_DEVICES"], "1")
+        self.assertEqual(set(spec.env_drop), exported - set(spec.env))
+        self.assertIn("NCCL_PROTO", spec.env_drop)
+        self.assertEqual(spec.child_argv(["x"])[:3], ["env", "-u", spec.env_drop[0]])
+
+    def test_a_multi_point_in_process_matrix_names_its_gpus(self):
+        run = {"model": "llama31_8b", "workload": {"kind": "grid"}, "mode": {"grid": "smoke"},
+               "matrix": {"engine.gpu_util": [0.8, 0.9]}}
+        with scratch_configs("sweep", run) as (path, td):
+            with self.assertRaisesRegex(ConfigError, "set hardware.visible_devices"):
+                runner.main(path, ["engine.model=/w"], results_dir=td, allow_unverified=True)
+            with mock.patch.object(runner, "run_one") as run_one:
+                runner.main(path, ["engine.model=/w", "hardware.visible_devices=0"],
+                            results_dir=td, allow_unverified=True)
+        self.assertEqual(run_one.call_count, 2)
 
 
 class ReadyTimeout(unittest.TestCase):

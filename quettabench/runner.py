@@ -82,10 +82,13 @@ def run_probe(cfg, out):
     writer.finish({"probe": cfg.mode.probe, "argv": redact(argv)})
 
 
-def with_child_env(spec, pins):
-    """spec with pins added to its env and to every bench cell's env."""
-    cells = tuple((ctx, bs, with_child_env(cell, pins)) for ctx, bs, cell in spec.cells)
-    return dataclasses.replace(spec, env={**spec.env, **pins}, cells=cells)
+def with_child_env(spec, pins, drop=()):
+    """spec with pins added to its env and to every bench cell's env, and the
+    names in drop (exported for an earlier in-process point, not pinned
+    here) unset in the child."""
+    cells = tuple((ctx, bs, with_child_env(cell, pins, drop)) for ctx, bs, cell in spec.cells)
+    env_drop = (*spec.env_drop, *sorted(set(drop) - set(pins) - set(spec.env_drop)))
+    return dataclasses.replace(spec, env={**spec.env, **pins}, env_drop=env_drop, cells=cells)
 
 
 def in_process(cfg, adapter, spec):
@@ -95,23 +98,33 @@ def in_process(cfg, adapter, spec):
 
 def refuse_mixed_in_process(cfgs):
     """One process cannot change its CUDA_VISIBLE_DEVICES or collective pins
-    between matrix points, so in-process points must agree on them."""
-    seen = set()
+    between matrix points, so in-process points must agree on them, and with
+    more than one they name their GPUs: idle GPUs picked per point could
+    differ, and CUDA reads the first point's for the whole process."""
+    seen, unnamed, points = set(), False, 0
     for cfg in cfgs:
         if cfg.mode.mode == "probe":
             continue
         adapter = base.get(cfg.engine.name)
         if in_process(cfg, adapter, adapter.translate(cfg)):
             hw = cfg.hardware
+            points += 1
+            unnamed = unnamed or not hw.visible_devices
             seen.add((hw.visible_devices or device_count(cfg.engine),
                       tuple(sorted((k, v) for k, v in hw.collective.items() if v))))
     if len(seen) > 1:
         raise ConfigError("in-process matrix points differ in GPUs or collective pins; "
                           "one process cannot change them, so run each point on its own")
+    if points > 1 and unnamed:
+        raise ConfigError(f"{points} in-process matrix points share this process; "
+                          "set hardware.visible_devices so they run on the same GPUs")
 
 
-def run_one(cfg, out):
-    """One Config through launch, drive, serve and stop."""
+def run_one(cfg, out, exported=None):
+    """One Config through launch, drive, serve and stop. exported collects
+    the env names an in-process point put into this process, across the
+    matrix; a later point's child gets them unset unless it pins them."""
+    exported = set() if exported is None else exported
     if cfg.mode.mode == "probe":
         return run_probe(cfg, out)
     adapter = base.get(cfg.engine.name)
@@ -123,8 +136,8 @@ def run_one(cfg, out):
     if backend == "local":
         pins["CUDA_VISIBLE_DEVICES"] = gpus
     if in_process(cfg, adapter, spec):
-        env_map.export(pins)
-    spec = with_child_env(spec, pins)
+        exported.update(env_map.export(pins))
+    spec = with_child_env(spec, pins, exported)
     # Opened first, so a run that raises anywhere below still leaves run.json.
     writer = RunWriter(out, cfg, launch_env=spec.env)
     try:
@@ -167,10 +180,11 @@ def main(run_yaml, overrides=(), dry=False, results_dir="results", allow_unverif
         refuse_mixed_in_process(cfgs)
         for cfg in cfgs:
             clear_run_dir(Path(results_dir) / cfg.run_name, overwrite)
+    exported = set()
     for cfg in cfgs:
         out = Path(results_dir) / cfg.run_name
         if dry:
             dry_run(cfg, out)
         else:
-            run_one(cfg, out)
+            run_one(cfg, out, exported)
     return 0

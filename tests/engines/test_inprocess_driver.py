@@ -49,9 +49,8 @@ class Builders(unittest.TestCase):
 
             with mock.patch.object(vllm, "LLM", llm):
                 InProcessDriver(LaunchSpec(adapter="vllm", engine_kwargs=KWARGS, env=env)).llm()
-        # the caller's own value wins, as for the collective env
-        self.assertEqual(seen, {"VLLM_SERVER_DEV_MODE": "0",
-                                "VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS": "1"})
+        # the spec's value replaces the inherited one, as a launched server's env does
+        self.assertEqual(seen, env)
 
 
 class GridBatch(unittest.TestCase):

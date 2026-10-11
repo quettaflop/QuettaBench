@@ -678,7 +678,7 @@ class InProcessDriver(Driver):
 
     def llm(self):
         """The grid engine: vllm.LLM(**engine_kwargs), built once, after
-        spec.env is in this process (a variable already set wins), so it
+        spec.env is in this process (replacing an inherited value), so it
         sizes its KV cache under the env the adapter gives a launched server."""
         if self._llm is None:
             env_map.export(self.spec.env)
