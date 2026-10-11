@@ -11,7 +11,7 @@ fixed):
 * ``PREFILL_HOST_SHARED/PERREQ_MS_PER_TOKEN`` (sum 5.8872e-3 ms per cached token -- the host
   re-tokenize cost of the re-sent conversation, measured on the tp1 stack via
   ``build_host_split``'s c1 lstsq). The tp4 GT's own c1 turns measure a marginal cached cost
-  of ~2.4 ms/1k (osworld@1 turns: TTFT 22.6–22.7 ms at cached≈2k over the measured 18.08
+  of ~2.4 ms/1k (osworld@1 turns: TTFT 22.6 to 22.7 ms at cached≈2k over the measured 18.08
   floor), and the like-for-like pair below measures 3.53 ms/1k.
 * ``PREFILL_FA3_MS_PER_TOKEN2`` (8.31e-7, the tp1 pipeline FA3 kernel) -- at tp>1 the
   attention prefill is head-sharded across ranks; charging the tp1 coefficient over-prices
@@ -20,7 +20,7 @@ fixed):
 LIKE-FOR-LIKE METHOD (the G3/build_tp_comm pattern): BOTH legs are the SAME
 ``serving_stage_split.py`` multiprocess api_server sweep over the SAME (new × cached)
 lattice (tp1: ``serving_stage_split_H100.csv`` 2026-06-05; tp4:
-``serving_stage_split_H100_tp4.csv`` 2026-06-11, h100 GPUs 4–7 -- the round-1 Phase-B leg,
+``serving_stage_split_H100_tp4.csv`` 2026-06-11, h100 GPUs 4 to 7 -- the round-1 Phase-B leg,
 whose ``prefill_span_ms`` column already produced the adopted comm term; this builder
 consumes the ``ttft_ms`` and FA3 cross-term information the comm fit did not use).
 

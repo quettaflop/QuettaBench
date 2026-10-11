@@ -1,11 +1,11 @@
-"""Fail on an em-dash in the given files (owner rule: write -- instead).
+"""Fail on an em-dash or en-dash in the given files (owner rule: write -- instead).
 
 Usage: check_em_dash.py <file>...
 """
 
 import sys
 
-EM_DASH = "—"
+DASHES = {"\u2014": "em-dash", "\u2013": "en-dash"}
 
 
 def main() -> int:
@@ -13,9 +13,10 @@ def main() -> int:
     for path in sys.argv[1:]:
         with open(path, encoding="utf-8", errors="replace") as f:
             for n, line in enumerate(f, 1):
-                if EM_DASH in line:
-                    print(f"{path}:{n}: em-dash; write --")
-                    bad += 1
+                for dash, name in DASHES.items():
+                    if dash in line:
+                        print(f"{path}:{n}: {name}; write -- or 'to'")
+                        bad += 1
     return 1 if bad else 0
 
 

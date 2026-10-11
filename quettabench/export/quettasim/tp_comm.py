@@ -6,7 +6,7 @@ G3 de-fit (`ttft_pricing_defit_plan.md` Item 3; audit-v2 G3): `PREFILL_TP_COMM_M
 was a backed-out remainder (tp2 ttft.new 18.5 − GEMM/2 12.65 = 5.85 ms/1k) from an
 instrumentation-INCONSISTENT pair (tp2 multiprocess api_server vs tp1 in-process LLM), which
 physics said over-absorbed ~2.5 ms/1k of host IPC under a comm label (NCCL all-reduce band
-~1–3 ms/1k).
+~1 to 3 ms/1k).
 
 This builder computes it like-for-like: BOTH legs are the SAME `serving_stage_split.py`
 multiprocess api_server run (tp1: `serving_stage_split_H100.csv`, 2026-06-05; tp2:

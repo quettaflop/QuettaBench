@@ -33,7 +33,7 @@ repos:
 - repo: local
   hooks:
   - id: check-em-dash
-    name: No em-dash under quettabench/ (write --)
+    name: No em-dash or en-dash under quettabench/ (write --)
     entry: python tools/pre_commit/check_em_dash.py
     language: python
     files: ^quettabench/

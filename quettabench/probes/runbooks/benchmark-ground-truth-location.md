@@ -24,7 +24,7 @@ ls /mnt/100g/agent-bench/results/synthetic_distributional/<gpu>_<model>_tp<N>_<e
 the A100 *host's* local `~/agentic-serve` / `~/inference-benchmark` checkouts were stale (April,
 pre-synth-profiles, `grep multiturn-synth` = 0). A host checkout's staleness is **irrelevant** to whether
 runs happened -- the data was in `/mnt/100g/.../a100_*` the whole time (31 A100 dirs, ~2,785 synth JSONs,
-full conc sweep 1–500 for `a100_Llama-3.1-8B_tp1_vllm`). Don't conflate "this checkout is old" with "this
+full conc sweep 1 to 500 for `a100_Llama-3.1-8B_tp1_vllm`). Don't conflate "this checkout is old" with "this
 hardware has no data." Check the central store keyed by GPU, not a host checkout.
 
 ## A100×1 outcome
@@ -45,6 +45,6 @@ those on A100 next to bring TTFT/plateau down.
 
 ## Known gap
 
-A100 **sglang** high-concurrency multiturn `tp2`/`tp4` jobs partially FAILED (`low_success_rate`, ~58–75%
-on swebench conc 160–320) -- that narrow slice is genuinely incomplete. The A100×1 **vLLM** config (above)
+A100 **sglang** high-concurrency multiturn `tp2`/`tp4` jobs partially FAILED (`low_success_rate`, ~58 to 75%
+on swebench conc 160 to 320) -- that narrow slice is genuinely incomplete. The A100×1 **vLLM** config (above)
 is unaffected.
