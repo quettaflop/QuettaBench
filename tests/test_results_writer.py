@@ -127,9 +127,9 @@ class Redaction(unittest.TestCase):
 
     def test_each_listed_name_is_pinned(self):
         """camelCase splits into words; authorization and oauth are secret
-        words; a tokenizer's special-token names are not secrets; any other
-        name whose last word is key or keys is, cache_key and routing_key
-        included, since nothing qbench records carries one."""
+        words; a tokenizer's special-token names are not secrets; key or keys
+        as the last word is a secret only after api, secret, private, access
+        or auth, so cache_key and routing_key are not."""
         names = {"api_key": True, "hf_token": True, "HF_HOME": False,
                  "num_key_value_heads": False, "prompt_token_ids": False,
                  "authorization": True, "Authorization": True, "bearer_token": True,
@@ -137,7 +137,7 @@ class Redaction(unittest.TestCase):
                  "hfToken": True, "HFToken": True, "OAUTH": True, "api-keys": True,
                  "eos_token": False, "pad_token": False, "--pad-token": False, "eosToken": False,
                  "bos_token": False, "unk_token": False, "sep_token": False, "cls_token": False,
-                 "mask_token": False, "cache_key": True, "routing_key": True,
+                 "mask_token": False, "cache_key": False, "routing_key": False,
                  "maxTokens": False, "max_num_batched_tokens": False}
         self.assertEqual({n: results.secret(n) for n in names}, names)
 
@@ -162,10 +162,10 @@ class Redaction(unittest.TestCase):
                          ["--port", 8000, "--api-key", "REDACTED", "--tp", 2])
 
     def test_name_equals_value_items(self):
-        argv = ["docker", "run", "-e", "HF_TOKEN=hf_x", "-e", "HF_HOME=/h", "-e", "HF_TOKEN",
+        argv = ["docker", "run", "-e", "HF_TOKEN=hf_x", "-e", "HF_TOKEN", "-e", "HF_HOME=/h",
                 "engine.extra.vllm.api_key=sk"]
         self.assertEqual(results.redact(argv), [
-            "docker", "run", "-e", "HF_TOKEN=REDACTED", "-e", "HF_HOME=/h", "-e", "HF_TOKEN",
+            "docker", "run", "-e", "HF_TOKEN=REDACTED", "-e", "HF_TOKEN", "-e", "HF_HOME=/h",
             "engine.extra.vllm.api_key=REDACTED"])
 
     def test_argv_values_are_redacted_in_both_forms(self):
@@ -176,6 +176,44 @@ class Redaction(unittest.TestCase):
             "--x-token=REDACTED", "--max-num-batched-tokens", "4096", "--trust-remote-code"])
         self.assertEqual(results.redact({"probe_args": "--gpu A100 --api-key k1"}),
                          {"probe_args": "--gpu A100 --api-key REDACTED"})
+
+    def test_key_names_are_secret_only_after_a_secret_word(self):
+        names = {"--num-keys": False, "cache_keys": False, "primary_keys": False,
+                 "api_key": True, "private_key": True, "access_key": True, "secret_keys": True,
+                 "auth-key": True, "OPENAI_API_KEY": True, "key": False}
+        self.assertEqual({n: results.secret(n) for n in names}, names)
+
+    def test_cookie_and_pass_are_secret_words(self):
+        names = {"cookie": True, "Set-Cookie": True, "--pass": True, "db_pass": True,
+                 "dbPass": True, "passes": False, "bypass": False, "compass_dir": False}
+        self.assertEqual({n: results.secret(n) for n in names}, names)
+
+    def test_the_value_after_a_bare_secret_name_is_hidden(self):
+        self.assertEqual(results.redact(["login", "password", "hunter2", "-v"]),
+                         ["login", "password", "REDACTED", "-v"])
+        self.assertEqual(results.redact(["-e", "HF_TOKEN", "-e", "X=1"]),
+                         ["-e", "HF_TOKEN", "-e", "X=1"])
+
+    def test_a_header_after_equals_is_redacted(self):
+        self.assertEqual(results.redact(["curl", "--header=Authorization: Bearer sk-live",
+                                         "-H=Cookie: sid=abc", "--header=Accept: */*"]),
+                         ["curl", "--header=Authorization: REDACTED", "-H=Cookie: REDACTED",
+                          "--header=Accept: */*"])
+
+    def test_header_pairs_as_lists_and_tuples(self):
+        got = results.redact({"headers": [["Authorization", "Bearer sk-live"],
+                                          ("Accept", "*/*"), ("Cookie", "sid=abc")]})
+        self.assertEqual(got, {"headers": [["Authorization", "REDACTED"], ["Accept", "*/*"],
+                                           ["Cookie", "REDACTED"]]})
+
+    def test_a_command_line_in_any_mapping_value_is_redacted(self):
+        doc = {"cmd": "vllm serve /w --api-key sk-live --port 8000",
+               "note": "it's  plain -- text", "launch": {"argv": "x --hf-token=t1"}}
+        self.assertEqual(results.redact(doc), {
+            "cmd": "vllm serve /w --api-key REDACTED --port 8000",
+            "note": "it's  plain -- text", "launch": {"argv": "x --hf-token=REDACTED"}})
+        self.assertEqual(results.redact({"cmd": "x --api-key 'unbalanced"}),
+                         {"cmd": "x --api-key REDACTED"})
 
     def test_extra_vllm_api_key_reaches_no_results_file(self):
         (cfg,) = loader.load(ROOT / "configs" / "runs" / "llama.yaml",

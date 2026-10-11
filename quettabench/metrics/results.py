@@ -35,12 +35,16 @@ RUN_MARKERS = ("run.json", "requests.jsonl", "engine.json")
 # A name whose value is a secret, read after camelCase is split into words
 # (authToken as auth_Token): one of these words anywhere in it, between _ . -
 # or the ends ...
-SECRET_WORD = r"secrets?|password|passwd|credentials?|bearer|auth|oauth|authorization"
+SECRET_WORD = (r"secrets?|password|passwd|pass|credentials?|bearer|auth|oauth|authorization"
+               r"|cookie")
 # ... or one of these as its last word, so num_key_value_heads and
-# prompt_token_ids are not secrets while OPENAI_API_KEY and HF_TOKEN are ...
-SECRET_LAST = r"token|keys?|apikey|pat"
-SECRET_NAME = re.compile(rf"(?:^|[_.-])(?:{SECRET_WORD})(?:$|[_.-])|(?:^|[_.-])(?:{SECRET_LAST})$",
-                         re.IGNORECASE)
+# prompt_token_ids are not secrets while HF_TOKEN is ...
+SECRET_LAST = r"token|apikey|pat"
+# ... or key(s) as its last word after one of these, so OPENAI_API_KEY and
+# private_key are secrets while cache_keys and --num-keys are not.
+KEY_OWNER = r"api|secret|private|access|auth"
+SECRET_NAME = re.compile(rf"(?:^|[_.-])(?:{SECRET_WORD})(?:$|[_.-])|(?:^|[_.-])(?:{SECRET_LAST})$"
+                         rf"|(?:^|[_.-])(?:{KEY_OWNER})[_.-]keys?$", re.IGNORECASE)
 # ... except a tokenizer's special tokens, which name a vocabulary entry.
 SPECIAL_TOKEN = re.compile(r"(?:eos|bos|pad|unk|sep|cls|mask)[_.-]token", re.IGNORECASE)
 CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
@@ -54,11 +58,19 @@ def secret(name):
     return not SPECIAL_TOKEN.fullmatch(words) and bool(SECRET_NAME.search(words))
 
 
+def _secret_header(text):
+    """`Name: REDACTED` when text is one HTTP header with a secret name, else None."""
+    header = HEADER.fullmatch(text)
+    return f"{header['name']}: REDACTED" if header and secret(header["name"]) else None
+
+
 def redact_argv(argv):
-    """argv with the value of every secret-named flag replaced by REDACTED,
-    in the `--api-key X`, `--api-key=X`, `NAME=X` (docker -e) and
-    `Authorization: Bearer X` (an HTTP header) forms.
-    Items need not be strings; a dict or list item goes through redact."""
+    """argv with the value of every secret-named item replaced by REDACTED,
+    in the `--api-key X`, `password X`, `--api-key=X`, `NAME=X` (docker -e),
+    `Authorization: Bearer X` (an HTTP header) and `--header=Name: X` forms;
+    an item starting with '-' after a secret name is the next flag, kept.
+    Items need not be strings; a dict or list item (a header pair) goes
+    through redact."""
     out, hide = [], False
     for arg in argv:
         if isinstance(arg, (dict, list, tuple)):
@@ -66,31 +78,42 @@ def redact_argv(argv):
             hide = False
             continue
         text = str(arg)
-        if hide and not text.startswith("--"):
+        if hide and not text.startswith("-"):
             out.append("REDACTED")
             hide = False
             continue
         hide = False
-        header = HEADER.fullmatch(text)
-        if header and secret(header["name"]):
-            out.append(f"{header['name']}: REDACTED")
+        header = _secret_header(text)
+        if header:
+            out.append(header)
             continue
-        name, eq, _ = text.partition("=")
+        name, eq, value = text.partition("=")
         if secret(name):
-            if eq:
-                arg = f"{name}=REDACTED"
-            elif text.startswith("-"):
-                hide = True
+            arg = f"{name}=REDACTED" if eq else arg
+            hide = not eq
+        elif eq and _secret_header(value):
+            arg = f"{name}={_secret_header(value)}"
         out.append(arg)
     return out
+
+
+def _redact_command(text):
+    """A command line held as one string, redacted as its argv (shlex, else
+    split on spaces); text unchanged when it holds no secret."""
+    try:
+        parts, join = shlex.split(text), shlex.join
+    except ValueError:
+        parts, join = text.split(), " ".join
+    hidden = redact_argv(parts)
+    return text if hidden == parts else join(hidden)
 
 
 def redact(obj):
     """obj with every secret replaced by REDACTED: the one rule for results/.
     In a mapping (an env, engine kwargs, a config) the value of every
     secret-named key, each item of it when it is a list; in a list (an argv)
-    the value of every secret-named flag or NAME=; probe_args, an argv as
-    one shell string, likewise.
+    the value of every secret-named flag or NAME=; a mapping value that is a
+    command line in one string (holds ' --', as probe_args does) likewise.
     run.json's provenance and config, the probe argv and the launcher's
     engine.json all go through it."""
     if isinstance(obj, dict):
@@ -99,8 +122,8 @@ def redact(obj):
             if secret(k) and not isinstance(v, dict):
                 out[k] = (["REDACTED" if not isinstance(x, dict) else redact(x) for x in v]
                           if isinstance(v, (list, tuple)) else "REDACTED")
-            elif k == "probe_args" and isinstance(v, str):
-                out[k] = shlex.join(redact_argv(shlex.split(v)))
+            elif isinstance(v, str) and " --" in v:
+                out[k] = _redact_command(v)
             else:
                 out[k] = redact(v)
         return out
