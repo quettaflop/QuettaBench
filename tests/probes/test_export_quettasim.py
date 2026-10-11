@@ -10,6 +10,7 @@ from unittest import mock
 
 import pytest
 
+from quettabench.export import quettasim
 from quettabench.export.quettasim import _inputs, export
 from quettabench.probes.base import run_recorded
 
@@ -169,3 +170,45 @@ def test_find_dir_skips_a_dir_that_is_itself_a_failed_run(tmp_path: Path) -> Non
     roots = [tmp_path / "a", tmp_path / "c", tmp_path / "b"]
     assert _inputs.find_dir(roots, "bench") == tmp_path / "b" / "bench"
     assert _inputs.find_dir(roots[:2], "bench") is None
+
+
+def test_a_launched_servers_dir_belongs_to_its_run(tmp_path: Path, capsys) -> None:
+    """A live-server probe launches into <run>/server/ (engine.json there):
+    that dir is part of the run, not a run of its own without a run.json."""
+    run = tmp_path / "results" / "H100" / "pool_capacity" / "20261011T120000.000000Z"
+    (run / "server").mkdir(parents=True)
+    (run / "server" / "engine.json").write_text("{}")
+    (run / "run.json").write_text(json.dumps({
+        "config": {"run_name": "probe-pool_capacity"}, "run_status": {"status": "ok"},
+        "provenance": {"started": "2026-10-11T12:00:00+00:00"}}))
+    export([tmp_path / "results"], tmp_path / "out", only=["tp_comm"])
+    assert "skip" not in capsys.readouterr().out
+    assert _inputs.skipped_runs(tmp_path / "results") == {}
+    assert _inputs.owner(run / "server" / "engine.json", tmp_path / "results",
+                         _inputs.run_dirs(tmp_path / "results")) == run
+
+
+def test_each_builder_reads_run_status_fresh(tmp_path: Path, capsys) -> None:
+    """A run whose run.json changes while export runs is judged by what is on
+    disk when each builder (and the manifest) reads it."""
+    results = tmp_path / "results"
+    run = results / "r"
+    run.mkdir(parents=True)
+    (run / "run.json").write_text(json.dumps({
+        "config": {"run_name": "r"}, "run_status": {"status": "ok"}, "provenance": {}}))
+    seen = []
+
+    def first(dirs, dest):
+        seen.append(_inputs.skipped_runs(results))
+        (run / "run.json").write_text(json.dumps({"run_status": {"status": "failed"}}))
+        return []
+
+    def second(dirs, dest):
+        seen.append(_inputs.skipped_runs(results))
+        return []
+
+    with mock.patch.dict(quettasim.BUILDERS, {"first": mock.Mock(run=first),
+                                              "second": mock.Mock(run=second)}):
+        export([results], tmp_path / "out", only=["first", "second"])
+    assert seen == [{}, {run: "run_status failed"}]
+    assert json.loads((tmp_path / "out" / "manifest.json").read_text())["runs"] == []

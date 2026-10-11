@@ -15,11 +15,14 @@ TP_DEGREES = (2, 4)
 def run_dirs(root: Path) -> dict[Path, str | None]:
     """{run dir: why export leaves it out, None when kept} for every run dir
     under root (root included): run.json missing (a run that never finished),
-    unparsable, or a run_status other than ok. Cached per root; export()
-    clears it."""
+    unparsable, or a run_status other than ok. A server/ dir under a run dir
+    (a probe's launched server, engine.json there) is part of that run.
+    Cached per root; export() clears it before each builder."""
     runs = {}
     dirs = sorted({p.parent for marker in RUN_MARKERS for p in Path(root).rglob(marker)})
     for run_dir in dirs:
+        if run_dir.name == "server" and run_dir.parent in dirs:
+            continue
         path = run_dir / "run.json"
         if not path.exists():
             runs[run_dir] = "no run.json"

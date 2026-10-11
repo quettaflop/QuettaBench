@@ -67,7 +67,6 @@ def export(results_dirs: Iterable[Path], dest: Path, only: Iterable[str] | None 
     kernel_tables the run dirs behind each kernel table.
     """
     results_dirs = [Path(d) for d in results_dirs]
-    _inputs.run_dirs.cache_clear()
     dest = Path(dest)
     names = list(only) if only else list(BUILDERS)
     unknown = [n for n in names if n not in BUILDERS]
@@ -75,7 +74,9 @@ def export(results_dirs: Iterable[Path], dest: Path, only: Iterable[str] | None 
         raise SystemExit(f"unknown builder {unknown}; choose from {sorted(BUILDERS)}")
     written: list[Path] = []
     for name in names:
+        _inputs.run_dirs.cache_clear()
         written.extend(BUILDERS[name].run(results_dirs, dest))
+    _inputs.run_dirs.cache_clear()
     dest.mkdir(parents=True, exist_ok=True)
     manifest = {
         "source_dirs": [str(d) for d in results_dirs],
