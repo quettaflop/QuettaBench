@@ -6,9 +6,12 @@ Expected values are read off bench.sh by hand and written as literals:
 rule, :66-69 max_seq and the `>>>` header, :75-79 per-cell exports and argv.
 """
 
+import contextlib
+import io
 import json
 import unittest
 
+from quettabench import cli
 from quettabench.config import loader
 from quettabench.config.schema import ConfigError
 from quettabench.engines import base, quettaserve
@@ -83,6 +86,23 @@ class DeepseekMoe(unittest.TestCase):
     def test_afd_is_unsupported(self):
         with self.assertRaisesRegex(base.UnsupportedField, "serving_style=afd:2a6f"):
             spec_for("deepseek", (1024, 1), sets=[*DS, "engine.serving_style=afd:2a6f"])
+
+    def test_fields_the_bench_cannot_carry_are_refused(self):
+        for field, shown in (("engine.pp=2", "pp=2"), ("engine.cudagraph=false", "cudagraph=False"),
+                             ("engine.gpu_util=0.5", "gpu_util=0.5")):
+            with self.subTest(field), self.assertRaisesRegex(base.UnsupportedField, shown):
+                spec_for("deepseek", (1024, 1), sets=[*DS, field])
+        # model yaml facts (deepseek's dtype, kv_dtype, ep) describe the checkpoint
+        self.assertTrue(spec_for("deepseek", (1024, 1), sets=DS).bench_argv)
+
+    def test_cli_refuses_pp_on_quettaserve(self):
+        with self.assertRaises(SystemExit) as e, \
+                contextlib.redirect_stdout(io.StringIO()):
+            cli.main(["run", str(RUNS / "deepseek.yaml"), "--dry-run", "--allow-unverified",
+                      "--set", "engine.name=quettaserve", "--set", "engine.pp=2",
+                      "--set", "engine.cudagraph=false", "--set", "engine.model=/x",
+                      "--set", "engine.extra.qs_cfg=/c"])
+        self.assertIn("quettaserve: pp=2 has no launch flag", str(e.exception.code))
 
     def test_prebuilt_binary_and_qs_dir(self):
         spec = spec_for("deepseek", None, sets=[*DS, "engine.extra.bench_bin=/b/batch_bench",

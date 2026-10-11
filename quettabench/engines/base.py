@@ -2,8 +2,10 @@
 # the only description of how an engine is started and driven.
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
+
+from quettabench.config.schema import EngineCfg
 
 # From scripts/crossval/prof.sh:16 (retired in af0e9b8); {out} is the report
 # path without extension.
@@ -59,11 +61,34 @@ class LaunchSpec:
         return ["env", *unset, *(f"{k}={v}" for k, v in self.env.items()), *argv]
 
 
+# EngineCfg fields that describe the model or pick the adapter; no adapter carries them.
+FACTS = frozenset({"name", "model_name", "kv_bytes", "weights_gib", "attention", "num_experts",
+                   "verified"})
+# Origins that state what the checkpoint is, not what this launch asks for.
+NOT_ASKED = ("default", "model", "hardware")
+
+
 class EngineAdapter(ABC):
     """One engine: which Config fields it can express, and how."""
     name = ""
     supports: frozenset = frozenset()
     benchmarked = True   # False: a scoring side only (reference), not offered as an engine
+
+    def refuse_unsupported(self, cfg):
+        """UnsupportedField for an engine field the run, env or --set moves off its
+        default when this adapter is not in its supports: no silent drop. A model
+        yaml value describes the checkpoint and is not refused."""
+        defaults = EngineCfg()
+        for f in fields(EngineCfg):
+            value = getattr(cfg.engine, f.name)
+            if f.name in FACTS or f.name in self.supports or value == getattr(defaults, f.name):
+                continue
+            path = f"engine.{f.name}"
+            asked = [o for p, o in cfg.origins.items()
+                     if (p == path or p.startswith(path + ".")) and o not in NOT_ASKED]
+            if asked:
+                raise UnsupportedField(self.name, f"{f.name}={value}",
+                                       f"set by {asked[0]}; this engine has no way to carry it")
 
     @abstractmethod
     def translate(self, cfg, run_dir=None) -> LaunchSpec:

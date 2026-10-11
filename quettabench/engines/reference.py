@@ -15,6 +15,7 @@ class ReferenceAdapter(EngineAdapter):
     benchmarked = False
 
     def translate(self, cfg, run_dir=None):
+        self.refuse_unsupported(cfg)
         engine = cfg.engine
         if engine.model is None:
             raise ConfigError("reference: engine.model is required")

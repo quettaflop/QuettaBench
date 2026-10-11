@@ -80,9 +80,11 @@ FAMILY_RULES = {
 
 class QuettaServeAdapter(EngineAdapter):
     name = "quettaserve"
-    supports = frozenset({"model", "tp", "extra", "instrumentation", "layers"})
+    # max_model_len has no bench flag; the grid loop reads it to SKIP cells past it.
+    supports = frozenset({"model", "tp", "extra", "instrumentation", "layers", "max_model_len"})
 
     def translate(self, cfg, run_dir=None, cell=None):
+        self.refuse_unsupported(cfg)
         engine, hw = cfg.engine, cfg.hardware
         bench = engine.extra.get("quettaserve")
         if not bench:

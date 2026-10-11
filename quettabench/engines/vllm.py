@@ -138,6 +138,7 @@ class VllmAdapter(EngineAdapter):
     supports = frozenset(FIELDS) | {"extra", "instrumentation", "image"}
 
     def translate(self, cfg, run_dir=None):
+        self.refuse_unsupported(cfg)
         engine = cfg.engine
         if engine.model is None:
             raise ConfigError("vllm: engine.model is required to launch")
