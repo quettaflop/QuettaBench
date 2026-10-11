@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
-# From scripts/crossval/prof.sh:16 (retired in 4f954c2); {out} is the report
+# From scripts/crossval/prof.sh:16 (retired in af0e9b8); {out} is the report
 # path without extension.
 NSYS = ("nsys", "profile", "-t", "cuda,nvtx", "-o", "{out}", "--force-overwrite=true")
 

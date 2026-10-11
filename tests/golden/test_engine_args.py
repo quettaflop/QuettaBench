@@ -7,7 +7,7 @@ was captured from, which that run replaced). The serve side is the
 fixture's "trace_serve" key: the engine trace_serve.py built from the run
 yaml with --model and --tp as xval.sh passed them, now
 engines/vllm.py translate() of the same Config (trace_serve.py retired in
-1547230; it built through translate() too). The per-key diff is pinned and should be
+5c67969; it built through translate() too). The per-key diff is pinned and should be
 empty. qwen's serve side is the loader's refusal (hybrid without kv_bytes);
 the fixture holds it with the "trace_serve: " prefix that script put on
 every exit.

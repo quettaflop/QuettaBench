@@ -187,7 +187,7 @@ class RunWriter:
 
 
 # The crossval summary lines, in exactly the formats trace_serve.py printed
-# (retired in 1547230) and xval.sh grepped (retired in 4f954c2).
+# (retired in 5c67969) and xval.sh grepped (retired in af0e9b8).
 PCTS = (50, 90, 95, 99)
 
 
@@ -260,7 +260,7 @@ def print_legacy_lines(summary):
 
 
 # A grid run's stdout, in exactly the formats vmin_fit.py printed (retired
-# in 3b53e6d); vllm.sh grepped META/RESULT/SKIP/CAPACITY until 4f954c2.
+# in 9f9e0ee); vllm.sh grepped META/RESULT/SKIP/CAPACITY until af0e9b8.
 def grid_event_line(run, event):
     """The SKIP, NOTE or RESULT line for one event of a grid run."""
     ctx, bs = event["ctx"], event["bs"]

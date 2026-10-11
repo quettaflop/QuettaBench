@@ -18,7 +18,7 @@ def _nonempty(raw):
 
 
 # env var -> (Config path, converter, old reader). The old reader is where
-# the pre-refactor code read the var, as file:line at 01adc03; every one of
+# the pre-refactor code read the var, as file:line at 0b38cbc; every one of
 # those files has since retired.
 ENV_MAP = {
     "XVAL_LINK_PROFILE": ("hardware.link_profile", str, "xval_config.py:79,283 vmin_fit.py:27,151"),
@@ -37,7 +37,7 @@ ENV_MAP = {
     "NCCL_ALGO": ("hardware.collective.NCCL_ALGO", str, "vmin_fit.py:30,149 table.py:119"),
     "NCCL_PROTO": ("hardware.collective.NCCL_PROTO", str, "vmin_fit.py:30,150 table.py:120"),
     # The other five collective pins: the caller's value beat the hardware
-    # yaml in bench.sh:41-45 and vmin_fit.py:28-30 (as of 01adc03).
+    # yaml in bench.sh:41-45 and vmin_fit.py:28-30 (as of 0b38cbc).
     "NCCL_P2P_LEVEL": ("hardware.collective.NCCL_P2P_LEVEL", str, "bench.sh:42 vmin_fit.py:30"),
     "NCCL_IB_DISABLE": ("hardware.collective.NCCL_IB_DISABLE", str, "bench.sh:42 vmin_fit.py:30"),
     "NCCL_SOCKET_IFNAME": ("hardware.collective.NCCL_SOCKET_IFNAME", str,
