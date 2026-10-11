@@ -227,10 +227,12 @@ class RunWriter:
     """results/<run>/requests.jsonl as rows finish, run.json at finish().
 
     results_dir None writes nothing: the run still goes through one writer
-    whether or not the caller asked for files.
+    whether or not the caller asked for files. exclusive (a probe run) makes
+    the dir itself and raises FileExistsError when it is already there.
     """
 
-    def __init__(self, results_dir, cfg, *, handle=None, driver=None, launch_env=None):
+    def __init__(self, results_dir, cfg, *, handle=None, driver=None, launch_env=None,
+                 exclusive=False):
         self.dir = Path(results_dir) if results_dir else None
         self.cfg = cfg
         self.provenance = provenance(cfg, handle, driver, launch_env)
@@ -239,7 +241,8 @@ class RunWriter:
         self.finished = False
         self._fh = None
         if self.dir is not None:
-            self.dir.mkdir(parents=True, exist_ok=True)
+            self.dir.parent.mkdir(parents=True, exist_ok=True)
+            self.dir.mkdir(exist_ok=not exclusive)
             self._fh = (self.dir / "requests.jsonl").open("a")
 
     def discard(self):

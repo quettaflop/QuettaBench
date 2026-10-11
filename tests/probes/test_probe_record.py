@@ -23,6 +23,7 @@ import pytest
 
 from quettabench import runner
 from quettabench.config.schema import Config, ConfigError, EngineCfg, HardwareCfg, ModeCfg, WorkloadCfg
+from quettabench.metrics.results import RunWriter
 from quettabench.probes import base as probes_base
 from quettabench.probes.base import launch_vllm, out_root, prior_table, run_id, run_recorded
 
@@ -118,6 +119,30 @@ class RunRecorded(unittest.TestCase):
             docs = {p.parent.name: json.loads(p.read_text())["run_status"]["status"]
                     for p in Path(td).rglob("run.json")}
         self.assertEqual(docs, {RUN: "ok", run_id(NOW + timedelta(seconds=1)): "failed"})
+
+    def test_a_run_dir_that_already_exists_is_refused(self):
+        """Two runs started in one microsecond, or a hand-made dir, would share
+        a run dir; the second run is refused before main, files untouched."""
+        for argv, kw, made in (
+                (["--gpu-label", "H100", "--out", "<TD>"], {}, f"gemm/{RUN}"),
+                (["--out-raw", "<TD>/h100/raw.jsonl.gz"],
+                 {"name": "serving_decode_grid", "file_flag": "--out-raw"}, "h100")):
+            with self.subTest(made), tempfile.TemporaryDirectory() as td:
+                (Path(td) / made).mkdir(parents=True)
+                (Path(td) / made / "notes.txt").write_text("mine\n")
+                main = mock.Mock()
+                with mock.patch.object(sys, "argv", ["probe", *(a.replace("<TD>", td) for a in argv)]), \
+                        self.assertRaisesRegex(SystemExit, "already exists"):
+                    run_recorded(main, kw.get("name", "gemm"), now=NOW, file_flag=kw.get("file_flag"))
+                main.assert_not_called()
+                self.assertEqual(sorted(p.name for p in (Path(td) / made).iterdir()), ["notes.txt"])
+
+    def test_the_run_writer_can_refuse_an_existing_dir(self):
+        cfg = Config(EngineCfg(), WorkloadCfg(), ModeCfg(), HardwareCfg(), run_name="x")
+        with tempfile.TemporaryDirectory() as td:
+            with self.assertRaises(FileExistsError):
+                RunWriter(td, cfg, exclusive=True)
+            RunWriter(Path(td, "new"), cfg, exclusive=True).discard()
 
     def test_a_run_id_is_a_timestamp_not_a_path(self):
         for bad in ("../x", "/tmp", "a"):

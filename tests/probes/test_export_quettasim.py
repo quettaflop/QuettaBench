@@ -137,7 +137,7 @@ def test_a_second_run_into_one_dir_is_refused(tmp_path: Path) -> None:
         run_recorded(lambda argv: None, "serving_decode_grid", file_flag="--out-raw")
         first = (out.parent / "run.json").read_text()
         main = mock.Mock()
-        with pytest.raises(SystemExit, match="already records a run"):
+        with pytest.raises(SystemExit, match="already exists"):
             run_recorded(main, "serving_decode_grid", file_flag="--out-raw")
     main.assert_not_called()
     assert (out.parent / "run.json").read_text() == first
