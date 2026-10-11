@@ -62,7 +62,7 @@ verified (V2, V7). Unblock needs an interactive vLLM tp debug or a different
 vLLM build. Evidence: evidence/v5_tp2.log, evidence/v5_tp2_retry.log.
 
 Run 2026-09-13 (GCP hwn-z1-gpu11, 8x RTX PRO 6000 Blackwell sm_120, all idle;
-evidence rsynced to /home/kw/crossval-evidence/blackwell/). Bare node: stood up
+evidence rsynced to <evidence-dir>/blackwell/). Bare node: stood up
 a userspace stack (uv + vLLM 0.29.0 / torch cu130, micromamba cuda-toolkit
 13.4, rustup). Key fix: vLLM's wheel ships no prebuilt sm_120 kernels so it
 JIT-compiles at runtime and needs nvcc; installing the CUDA toolkit is what

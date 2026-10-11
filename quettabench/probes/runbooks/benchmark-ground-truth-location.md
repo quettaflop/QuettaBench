@@ -4,8 +4,10 @@
 compute host's local git checkout.**
 
 ```
-/mnt/100g/agent-bench/results/synthetic_distributional/<gpu>_<model>_tp<N>_<engine>/<profile>_conc<C>.json
+<store>/results/synthetic_distributional/<gpu>_<model>_tp<N>_<engine>/<profile>_conc<C>.json
 ```
+
+`<store>` is the central store's mount on the host that holds it (`BENCH_BASE` below).
 
 Examples: `h100_Llama-3.1-8B_tp1_vllm/`, `a100_Llama-3.1-8B_tp1_vllm/`, plus `tp2`/`tp4`, `sglang`/`vllm`,
 and many models. Each `<profile>_conc<C>.json` carries a `config` block + a `per_request[]` list
@@ -16,14 +18,14 @@ dispatches sweeps and writes results here **regardless of any compute host's loc
 ## Before concluding "no data exists" for a GPU/model/TP -- check the central store
 
 ```bash
-ls /mnt/100g/agent-bench/results/synthetic_distributional/ | grep <gpu>
-ls /mnt/100g/agent-bench/results/synthetic_distributional/<gpu>_<model>_tp<N>_<engine>/
+ls <store>/results/synthetic_distributional/ | grep <gpu>
+ls <store>/results/synthetic_distributional/<gpu>_<model>_tp<N>_<engine>/
 ```
 
 **Wrong-place error to avoid (made 2026-06-02):** concluding "no A100 synth ground truth exists" because
 the A100 *host's* local `~/agentic-serve` / `~/inference-benchmark` checkouts were stale (April,
 pre-synth-profiles, `grep multiturn-synth` = 0). A host checkout's staleness is **irrelevant** to whether
-runs happened -- the data was in `/mnt/100g/.../a100_*` the whole time (31 A100 dirs, ~2,785 synth JSONs,
+runs happened -- the data was in `<store>/.../a100_*` the whole time (31 A100 dirs, ~2,785 synth JSONs,
 full conc sweep 1 to 500 for `a100_Llama-3.1-8B_tp1_vllm`). Don't conflate "this checkout is old" with "this
 hardware has no data." Check the central store keyed by GPU, not a host checkout.
 

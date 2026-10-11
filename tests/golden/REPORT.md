@@ -63,7 +63,7 @@ vllm installed, no pin to check against).
 
 ## Where the logs came from
 
-`/home/kw/v4bench_backup_20260928` was searched read-only. It holds only
+`<backup-dir>/v4bench_backup_20260928` was searched read-only. It holds only
 `vllm bench serve` result JSONs (`*_bench.json`), `sweep_results.jsonl` and
 the sweep harness: no `META`/`RESULT` vmin_fit log and no `LOOP` or
 `[batch_bench]` bench log. Nothing was copied from it.
