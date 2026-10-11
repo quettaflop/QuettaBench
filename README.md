@@ -60,6 +60,19 @@ plan and writes nothing. A complete pass writes `.env` (caches, PYTHON_BIN,
 LD_LIBRARY_PATH; `just` loads it) and prints the `qbench run` lines for both
 engines.
 
+## Running inside docker
+
+`hardware.launcher: docker` runs the server in `engine.image` (`docker run
+-d`, the GPUs, the port, and the repo and `hardware.hf_home` mounted
+read-only at their host paths); `configs/runs/llama-tp1-docker.yaml` is the
+example. Provision never pulls; pull the image yourself:
+
+```bash
+docker pull vllm/vllm-openai:v0.30.0
+just dry configs/runs/llama-tp1-docker.yaml --set engine.model=/w/llama   # prints the docker command
+just run configs/runs/llama-tp1-docker.yaml --set engine.model=/w/llama
+```
+
 ## results/<run>/
 
 | file | written by | holds |
