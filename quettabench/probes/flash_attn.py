@@ -18,6 +18,8 @@ import statistics as st
 import torch
 from vllm.vllm_flash_attn.flash_attn_interface import flash_attn_varlen_func
 
+from quettabench.probes._graph import graph_median_us
+from quettabench.probes._ncu import ncu_op_us
 from quettabench.probes.base import add_output_args, out_root, prior_table, run_recorded
 
 KV_AXIS = [128, 256, 512, 1024, 2048, 4096, 8192, 16384]
@@ -31,13 +33,7 @@ NCU_REPS = 5   # op invocations profiled per point; min = warm steady state
 
 
 def _ncu_us(inner: str, ncu_bin: str) -> float | None:
-    """Per-call pure-kernel us via NCU (sums the flash sub-kernels, drops torch setup).
-
-    ``_ncu`` is imported lazily: it is needed only on the --ncu path, and importing it
-    at module scope made the whole probe unrunnable (including the default cuda_event
-    and --graph paths) once the helper stopped shipping alongside this file.
-    """
-    from quettabench.probes._ncu import ncu_op_us  # noqa: PLC0415
+    """Per-call pure-kernel us via NCU (sums the flash sub-kernels, drops torch setup)."""
     return ncu_op_us(inner, ncu_bin, NCU_REPS)
 
 
@@ -126,7 +122,6 @@ def main(argv=None):
                     q, k, v, 1, cu_q, kv, cu_seqlens_k=cu_k, causal=True,
                     fa_version=a.fa_version)
                 if a.graph:
-                    from quettabench.probes._graph import graph_median_us  # noqa: PLC0415
                     us = graph_median_us(fn)
                 else:
                     us = time_call(fn)

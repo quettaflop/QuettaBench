@@ -16,6 +16,7 @@ import statistics as st
 import torch
 import torch.nn.functional as F
 
+from quettabench.probes._graph import graph_median_us
 from quettabench.probes.base import add_output_args, out_root, run_recorded
 
 # (reads, writes) per kernel -- MUST match kernel_composed/elementwise.py::_IO
@@ -69,8 +70,9 @@ def op_for_vllm(kernel, n, dev, dt):
     """The REAL vLLM kernel for each composition op (vs the torch-chain proxies in
     ``op_for``, which launch several kernels where vLLM launches one -- the H200
     torch-chain fit overpriced fused ops ~2-3 ms/step at 48 layers). ``n`` keeps the
-    same meaning as the composition's ``elements`` for that kernel."""
-    from vllm import _custom_ops as ops  # noqa: PLC0415
+    same meaning as the composition's ``elements`` for that kernel. vllm is
+    imported here: only --vllm needs it, and the torch-chain default runs without it."""
+    from vllm import _custom_ops as ops
     if kernel == "rmsnorm":
         t = max(1, n // HIDDEN)
         x = torch.randn(t, HIDDEN, device=dev, dtype=dt)
@@ -148,8 +150,6 @@ def main(argv=None):
     a = ap.parse_args(argv)
     dev = torch.device("cuda")
     dt = torch.bfloat16
-    if a.graph:
-        from quettabench.probes._graph import graph_median_us  # noqa: PLC0415
     tag = ("/graph" if a.graph else "") + ("/vllm" if a.vllm else "")
     print(f"[elem{tag}] {torch.cuda.get_device_name(0)}", flush=True)
     io_map = VLLM_IO if a.vllm else IO

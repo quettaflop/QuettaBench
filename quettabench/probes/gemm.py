@@ -39,6 +39,7 @@ import os
 import torch
 
 from quettabench.probes import _ncu
+from quettabench.probes._graph import graph_time_us
 from quettabench.probes.base import add_output_args, out_root, prior_table, run_recorded
 
 M_AXIS = [1, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
@@ -119,12 +120,13 @@ class Fp8Op:
     """
 
     def __init__(self) -> None:
-        from vllm.config import VllmConfig, set_current_vllm_config  # noqa: PLC0415
+        """vllm is imported here: only --dtype fp8 needs it; bf16 runs without it."""
+        from vllm.config import VllmConfig, set_current_vllm_config
         ctx = set_current_vllm_config(VllmConfig())
         ctx.__enter__()                  # deliberately never exited; see above
-        from vllm import _custom_ops as ops  # noqa: PLC0415
-        from vllm.model_executor.layers.quantization.input_quant_fp8 import QuantFP8  # noqa: PLC0415
-        from vllm.model_executor.layers.quantization.utils.quant_utils import GroupShape  # noqa: PLC0415
+        from vllm import _custom_ops as ops
+        from vllm.model_executor.layers.quantization.input_quant_fp8 import QuantFP8
+        from vllm.model_executor.layers.quantization.utils.quant_utils import GroupShape
         self.ops = ops
         self.quant = QuantFP8(static=False, group_shape=GroupShape(1, FP8_WEIGHT_BLOCK[1]),
                               column_major_scales=True)
@@ -134,7 +136,6 @@ class Fp8Op:
 
     def _time(self, run, graph: bool) -> float:
         if graph:
-            from quettabench.probes._graph import graph_time_us  # noqa: PLC0415
             return graph_time_us(run)
         for _ in range(WARMUP):
             run()
@@ -201,7 +202,6 @@ def time_matmul(m, n, k, dev, dt, graph: bool = False) -> float:
     a = torch.randn(m, k, device=dev, dtype=dt)
     b = torch.randn(k, n, device=dev, dtype=dt)
     if graph:
-        from quettabench.probes._graph import graph_time_us  # noqa: PLC0415
         us = graph_time_us(lambda: torch.matmul(a, b))
         del a, b
         torch.cuda.empty_cache()

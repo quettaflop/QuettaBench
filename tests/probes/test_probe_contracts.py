@@ -171,3 +171,16 @@ def test_the_r2_mirror_has_its_own_prefix_and_never_deletes():
     assert 'r2_prefix := "profiling/qbench_probes"' in text
     assert "--delete" not in text and "mirror-up-prune" not in text
     assert "kernel_data" not in "".join(ln for ln in text.splitlines() if "r2_" in ln)
+
+
+def test_probes_import_their_siblings_at_the_top():
+    """_graph and _ncu ship with every probe, so no probe imports them inside a
+    function; an inline import names its reason in a docstring, not a noqa."""
+    for probe in sorted(PROBES_DIR.glob("*.py")):
+        text = probe.read_text()
+        assert "noqa: PLC0415" not in text, probe.name
+        for node in ast.walk(ast.parse(text)):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                inner = [n.module for n in ast.walk(node) if isinstance(n, ast.ImportFrom)]
+                assert not any(m and m.startswith("quettabench.probes._") for m in inner), \
+                    f"{probe.name}:{node.name}"

@@ -48,6 +48,7 @@ import statistics as st
 
 import torch
 
+from quettabench.probes._graph import graph_time_us
 from quettabench.probes.base import add_output_args, out_root, prior_table, run_recorded
 
 # Per-expert geometry of every MoE model in engine/device_spec/models/.
@@ -118,7 +119,8 @@ _BACKEND = "triton"
 
 
 def _flashinfer_moe():
-    from flashinfer.fused_moe import cutlass_fused_moe  # noqa: PLC0415
+    """flashinfer is imported here: only --backend cutlass needs it."""
+    from flashinfer.fused_moe import cutlass_fused_moe
     return cutlass_fused_moe
 
 
@@ -126,7 +128,6 @@ def _time(fn) -> float:
     """min-of-REPS CUDA-event time (us). MIN, not mean: it matches GemmTable's
     min-on-load reduce and the warm, back-to-back kernels of a real decode step."""
     if _GRAPH:
-        from quettabench.probes._graph import graph_time_us  # noqa: PLC0415
         return graph_time_us(fn)
     for _ in range(WARMUP):
         fn()
@@ -148,9 +149,10 @@ def _fp8_quant_config(e, inter, hidden, dev):
 
     Scales are positive and O(1e-2) -- the range a real per-block weight scale
     takes. Magnitude cannot change kernel time, but a zero/NaN scale can trip a
-    different code path, so they are not left as raw randn.
+    different code path, so they are not left as raw randn. vllm is imported
+    here: only --dtype fp8 needs it.
     """
-    from vllm.model_executor.layers.fused_moe.config import (  # noqa: PLC0415
+    from vllm.model_executor.layers.fused_moe.config import (
         fp8_w8a8_moe_quant_config,
     )
     bn, bk = FP8_BLOCK
@@ -278,7 +280,8 @@ def sweep_routing(dev, e_default=128, k_default=8):
     # median as a flat per-MoE-layer constant for the device YAML.
     aligns = []
     try:
-        from vllm.model_executor.layers.fused_moe.moe_align_block_size import (  # noqa: PLC0415
+        # Imported here: the module moves between vLLM versions, and a miss only skips this fit.
+        from vllm.model_executor.layers.fused_moe.moe_align_block_size import (
             moe_align_block_size,
         )
         for m in (8, 64, 512):
@@ -335,8 +338,8 @@ def main(argv=None) -> None:
     _BACKEND = a.backend
     if _FP8:
         # fused_experts' FP8 path builds a CustomOp internally, which needs a live
-        # vLLM config (same reason as gemm_probe.fp8_linear_op).
-        from vllm.config import VllmConfig, set_current_vllm_config  # noqa: PLC0415
+        # vLLM config (same reason as gemm's Fp8Op); only --dtype fp8 imports it.
+        from vllm.config import VllmConfig, set_current_vllm_config
         set_current_vllm_config(VllmConfig()).__enter__()
 
     dev = torch.device("cuda")
