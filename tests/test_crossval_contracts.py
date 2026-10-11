@@ -205,7 +205,8 @@ class CrossvalScripts(unittest.TestCase):
         # trace-paced and an injected run can never be conflated.
         sys.path.insert(0, str(REPO))
         try:
-            from quettabench.workloads import arrival, synth_bench
+            from analysis.synthetic import synth_bench
+            from quettabench.workloads import arrival
             importlib.reload(arrival)
             importlib.reload(synth_bench)
             self.assertIsNone(arrival.parse_arrival("trace", 8))
@@ -766,8 +767,7 @@ class TableParity(unittest.TestCase):
         import random
         sys.path.insert(0, str(REPO))
         try:
-            from analysis.synthetic import agentic
-            from quettabench.workloads import synth_bench
+            from analysis.synthetic import agentic, synth_bench
             importlib.reload(synth_bench)
             reqs = agentic.agentic_requests("deep_research", 24, seed=5)
             h = synth_bench.workload_hash(reqs)
@@ -791,7 +791,7 @@ class TableParity(unittest.TestCase):
         # altered request changes it. This is what proves systems saw equal work.
         sys.path.insert(0, str(REPO))
         try:
-            from quettabench.workloads import synth_bench
+            from analysis.synthetic import synth_bench
             importlib.reload(synth_bench)
             reqs = synth_bench.swebench_requests(12, seed=2)
             h = synth_bench.workload_hash(reqs)
@@ -804,9 +804,9 @@ class TableParity(unittest.TestCase):
             self.assertNotEqual(h, synth_bench.workload_hash(altered),
                                 "changing requested output must change the hash")
             out = subprocess.run(
-                [sys.executable, str(QB / "workloads" / "synth_bench.py"), "hash", "/dev/stdin"],
+                [sys.executable, "-m", "analysis.synthetic.synth_bench", "hash", "/dev/stdin"],
                 input="".join(json.dumps(r) + "\n" for r in reqs),
-                capture_output=True, text=True,
+                capture_output=True, text=True, cwd=REPO,
             )
             self.assertEqual(out.stdout.strip(), h, out.stderr)
         finally:
@@ -842,7 +842,7 @@ class TableParity(unittest.TestCase):
         self.assertTrue(all(r["seed"] == 1 for r in rows))
         sys.path.insert(0, str(REPO))
         try:
-            from quettabench.workloads import synth_bench
+            from analysis.synthetic import synth_bench
             importlib.reload(synth_bench)
             self.assertNotEqual(synth_bench.workload_hash(synth_bench.load_trace(a)),
                                 synth_bench.workload_hash(synth_bench.load_trace(c)),
@@ -905,7 +905,8 @@ class TableParity(unittest.TestCase):
         # fire. encode is stubbed so the test needs no tokenizer or GPU.
         sys.path.insert(0, str(REPO))
         try:
-            from quettabench.workloads import synth_bench, tokenize as trace_tokenize
+            from analysis.synthetic import synth_bench
+            from quettabench.workloads import tokenize as trace_tokenize
             importlib.reload(trace_tokenize)
             importlib.reload(synth_bench)
             recs = [{"model": "DS", "session_id": "s0", "turns": [
@@ -930,8 +931,7 @@ class TableParity(unittest.TestCase):
         # in-range, and round-trips through load_trace.
         sys.path.insert(0, str(REPO))
         try:
-            from analysis.synthetic import agentic
-            from quettabench.workloads import synth_bench
+            from analysis.synthetic import agentic, synth_bench
             importlib.reload(synth_bench)
             for name, spec in agentic.AGENTIC.items():
                 a = agentic.agentic_requests(name, 40, seed=3)
@@ -961,7 +961,7 @@ class TableParity(unittest.TestCase):
         # routing spreads, unlike clone) and parse the three trace shapes.
         sys.path.insert(0, str(REPO))
         try:
-            from quettabench.workloads import synth_bench
+            from analysis.synthetic import synth_bench
             importlib.reload(synth_bench)
             reqs = synth_bench.synth_requests(4, 32, seed=3)
             ids = [tuple(r["prompt_token_ids"]) for r in reqs]
@@ -1052,7 +1052,7 @@ class TraceWorkloads(unittest.TestCase):
     def _sb(self):
         sys.path.insert(0, str(REPO))
         try:
-            from quettabench.workloads import synth_bench
+            from analysis.synthetic import synth_bench
             importlib.reload(synth_bench)
             return synth_bench
         finally:

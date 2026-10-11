@@ -1,4 +1,4 @@
-"""Golden: synth_bench.workload_hash on a 3-request fixture trace.
+"""Golden: workload_hash (through analysis/synthetic/synth_bench.py) on a 3-request fixture trace.
 
 Pins the hash values and the identity rules: completion order does not
 matter, any altered request does, and injected arrivals (stamped the way
@@ -22,7 +22,7 @@ TRACE = FIXTURES / "hash_trace.jsonl"
 class WorkloadHashGolden(unittest.TestCase):
     def test_hash_identity_rules(self):
         with crossval_path(), mock.patch.dict(os.environ, {}, clear=True):
-            synth_bench = fresh_import("quettabench.workloads.synth_bench")
+            synth_bench = fresh_import("analysis.synthetic.synth_bench")
             arrival = fresh_import("quettabench.workloads.arrival")
             reqs = synth_bench.load_trace(str(TRACE))
             paced = synth_bench.workload_hash(reqs)

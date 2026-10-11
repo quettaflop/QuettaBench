@@ -6,15 +6,54 @@ over step points is measured on fixed inputs. Five prompt modes:
   distinct  slot j gets seed + j + (i % 1000), per-slot routing
   clone     every slot gets clone_ids(ctx), the engine bench's own prompt
   corpus    sliding windows over a tokenized text file, slots at distinct offsets
-  synth     synth_bench.synth_requests streams (synth_ids)
+  synth     synth_requests streams (synth_ids)
   trace     requests of a given Trace trimmed or padded to ctx, cycled if short
 """
 
-from .base import Request, Trace
+from .base import Request, Trace, synth_ids
 from .live import RealTrace
-from .synth_bench import synth_requests, take
 
 PROMPT_MODES = ("distinct", "clone", "corpus", "synth", "trace")
+
+
+def stamp_synthetic(reqs, seed):
+    """Stamp seed, order and the SYNTHETIC label on generated requests; seed and
+    order are hash inputs, so a stream is self-identifying and reproducible."""
+    for i, r in enumerate(reqs):
+        r["seed"] = seed
+        r["order"] = i
+        r["source"] = "SYNTHETIC"
+    return reqs
+
+
+def synth_requests(count, ctx, seed=0, length_jitter=0.0):
+    """`count` requests of ~`ctx` tokens. length_jitter in [0,1) varies each length
+    deterministically; 0.0 keeps them uniform for a clean grid cell."""
+    reqs = []
+    for j in range(count):
+        s = seed * 1_000_003 + j
+        if length_jitter > 0.0:
+            span = int(ctx * length_jitter)
+            length = max(1, ctx - span + (s * 2654435761) % (2 * span + 1))
+        else:
+            length = ctx
+        reqs.append({"prompt_token_ids": synth_ids(length, s), "prompt_len": length})
+    return stamp_synthetic(reqs, seed)
+
+
+def take(reqs, count, ctx):
+    """Pick `count` requests for a (ctx, bs) cell, trimming/padding ids to ctx and
+    cycling the trace if short. Returns (ids, cycled)."""
+    usable = [r for r in reqs if r["prompt_len"] >= ctx] or reqs
+    out, cycled = [], False
+    for j in range(count):
+        if j >= len(usable):
+            cycled = True
+        r = usable[j % len(usable)]
+        ids = r["prompt_token_ids"]
+        ids = ids[:ctx] if len(ids) >= ctx else ids + synth_ids(ctx - len(ids), j)
+        out.append(list(ids))
+    return out, cycled
 
 
 def distinct_ids(n, seed=10):

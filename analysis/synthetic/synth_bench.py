@@ -1,51 +1,24 @@
-#!/usr/bin/env python3
-"""Synthetic and trace-driven request streams for the cross-validator.
+"""Synthetic and trace request streams for the cross-validator, as JSONL.
 
-Builds distinct length-varied streams (engine benches clone one sequence into
-every slot, the MoE-routing worst case) and loads JSONL traces for replay.
-Profiles: uniform and swebench; the multi-turn agentic set lives in
-analysis/synthetic/agentic.py.
-Token ids and lengths only, no model or GPU.
+gen writes a uniform (grid synth mode) or a SWE-bench-shaped stream, inspect
+summarizes a trace, hash prints its workload hash. Token ids and lengths
+only, no model or GPU. Run from the repo root (or with quettabench
+installed): python3 -m analysis.synthetic.synth_bench gen|inspect|hash ...
 """
 
 import argparse
 import json
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parents[2]))
 from quettabench.workloads.base import synth_ids, workload_hash
+from quettabench.workloads.grid import stamp_synthetic, synth_requests, take
 from quettabench.workloads.live import RealTrace
 
-
-def synth_requests(count, ctx, seed=0, length_jitter=0.0):
-    """`count` requests of ~`ctx` tokens. length_jitter in [0,1) varies each length
-    deterministically; 0.0 keeps them uniform for a clean grid cell."""
-    reqs = []
-    for j in range(count):
-        s = seed * 1_000_003 + j
-        if length_jitter > 0.0:
-            span = int(ctx * length_jitter)
-            length = max(1, ctx - span + (s * 2654435761) % (2 * span + 1))
-        else:
-            length = ctx
-        reqs.append({"prompt_token_ids": synth_ids(length, s), "prompt_len": length})
-    return stamp_synthetic(reqs, seed)
+__all__ = ["lcg", "load_trace", "swebench_requests", "synth_requests", "take", "workload_hash"]
 
 
 def lcg(state):
     """Deterministic 31-bit LCG step, the module's only randomness source."""
     return (1103515245 * state + 12345) % (1 << 31)
-
-
-def stamp_synthetic(reqs, seed):
-    """Stamp seed, order and the SYNTHETIC label on generated requests; seed and
-    order are hash inputs, so a stream is self-identifying and reproducible."""
-    for i, r in enumerate(reqs):
-        r["seed"] = seed
-        r["order"] = i
-        r["source"] = "SYNTHETIC"
-    return reqs
 
 
 def swebench_requests(count, seed=0, groups=8, prefix_frac=0.5,
@@ -82,21 +55,6 @@ def swebench_requests(count, seed=0, groups=8, prefix_frac=0.5,
 def load_trace(path):
     """Read a JSONL trace into the common request dicts (live.RealTrace.from_jsonl)."""
     return [r.to_dict() for r in RealTrace.from_jsonl(path).requests()]
-
-
-def take(reqs, count, ctx):
-    """Pick `count` requests for a (ctx, bs) cell, trimming/padding ids to ctx and
-    cycling the trace if short. Returns (ids, cycled)."""
-    usable = [r for r in reqs if r["prompt_len"] >= ctx] or reqs
-    out, cycled = [], False
-    for j in range(count):
-        if j >= len(usable):
-            cycled = True
-        r = usable[j % len(usable)]
-        ids = r["prompt_token_ids"]
-        ids = ids[:ctx] if len(ids) >= ctx else ids + synth_ids(ctx - len(ids), j)
-        out.append(list(ids))
-    return out, cycled
 
 
 def main():
@@ -151,6 +109,7 @@ def main():
         print(f"{a.path}: {len(reqs)} reqs, len p50 {lens[len(lens)//2]} "
               f"min/max {lens[0]}/{lens[-1]}, "
               f"with-ids {sum(1 for r in reqs if r['prompt_token_ids'])}{extra}")
+
 
 
 if __name__ == "__main__":
