@@ -126,12 +126,13 @@ def parse_set(item):
     return path.strip(), yaml.safe_load(text)
 
 
-def arrival_kind(spec):
-    """The arrival's kind, the spec checked by workloads.arrival.parse_arrival."""
+def arrival_kind(spec, num_requests=0):
+    """The arrival's kind, the spec checked by workloads.arrival.parse_arrival
+    for num_requests requests, so a burst that does not cover them fails here."""
     try:
-        arrival.parse_arrival(str(spec), 0)
-    except ValueError:
-        raise ConfigError(f"arrival {spec!r}: use steady, trace, poisson:<r>, "
+        arrival.parse_arrival(str(spec), num_requests)
+    except ValueError as e:
+        raise ConfigError(f"arrival {spec!r}: {e}; use steady, trace, poisson:<r>, "
                           "ramp:<a>:<b> or burst:<n>x<size>@<gap>, rates > 0") from None
     return str(spec).partition(":")[0]
 
@@ -240,7 +241,12 @@ def _validate(values, origins, allow_unverified, where):
     elif profile in ("single-turn", "multi-turn"):
         _force(values, origins, "engine.prefix_caching", True, by, where)
     _profile_prefix_caching(values, origins, where)
-    arrival = arrival_kind(values["workload.arrival"])
+    # A single-turn profile draws num_requests; other sources set their own count.
+    source = values["workload.source"]
+    drawn = (values["mode.grid"] is None and values["workload.kind"] == "live"
+             and (source in profiles.PROFILES or source in profiles.PROFILE_ALIASES))
+    arrival = arrival_kind(values["workload.arrival"],
+                           values["workload.num_requests"] if drawn else 0)
     if values["mode.load"] == "open" and arrival not in RATE_ARRIVALS + ("trace",):
         raise ConfigError(f"{where}: open load needs a rate-bearing arrival "
                           f"(poisson, ramp, burst) or trace, got {values['workload.arrival']!r}")

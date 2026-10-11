@@ -202,9 +202,18 @@ class LoaderRules(unittest.TestCase):
         self.one({"workload": {"arrival": "trace"}})
 
     def test_malformed_arrival(self):
-        for spec in ("poisson", "poisson:0", "ramp:1", "burst:4x8", "steady:3", "uniform"):
+        for spec in ("poisson", "poisson:0", "ramp:1", "burst:4x8", "steady:3", "uniform",
+                     "poisson:nan", "poisson:inf", "ramp:-1:5", "burst:0x8@0.5", "burst:4x0@0.5",
+                     "burst:4x8@-1", "burst:4x8@nan", "burst:-2x8@0.5"):
             with self.subTest(spec), self.assertRaisesRegex(ConfigError, "arrival"):
                 self.load({"mode": {"load": "open"}, "workload": {"arrival": spec}})
+
+    def test_a_burst_must_cover_the_drawn_requests(self):
+        run = {"mode": {"load": "open"},
+               "workload": {"source": "test", "arrival": "burst:4x8@0.5", "num_requests": 33}}
+        with self.assertRaisesRegex(ConfigError, "covers 32 requests but the trace has 33"):
+            self.load(run)
+        self.one({**run, "workload": {**run["workload"], "num_requests": 32}})
 
     def test_bad_values_are_config_errors(self):
         with self.assertRaisesRegex(ConfigError, "mode.concurrency must be a number, got 'x'"):

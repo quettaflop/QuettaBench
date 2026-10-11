@@ -79,8 +79,9 @@ def burst_arrivals(num_requests: int, n_bursts: int, burst_size: int, gap_s: flo
 
 
 def positive(rate, spec):
-    if rate <= 0:
-        raise ValueError(f"arrival {spec!r}: rate must be > 0")
+    """rate when it is a finite number > 0 (nan, inf and <= 0 are refused)."""
+    if not math.isfinite(rate) or rate <= 0:
+        raise ValueError(f"arrival {spec!r}: rate must be a finite number > 0")
     return rate
 
 
@@ -101,7 +102,10 @@ def parse_arrival(spec: str, n: int, seed: int = 42) -> list[float] | None:
     if kind == "burst":
         nb, rest2 = rest.split("x")
         size, gap = rest2.split("@")
-        return burst_arrivals(n, int(nb), int(size), float(gap))
+        nb, size, gap = int(nb), int(size), float(gap)
+        if nb <= 0 or size <= 0 or not math.isfinite(gap) or gap < 0:
+            raise ValueError(f"arrival {spec!r}: bursts and size must be > 0, gap finite and >= 0")
+        return burst_arrivals(n, nb, size, gap)
     raise ValueError(f"unknown arrival spec {spec!r}")
 
 
