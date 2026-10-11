@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Build a VALID standalone 13-layer HF model dir from the downloaded Kimi-K3 slice.
 
-Ported unchanged in behaviour from scripts/crossval/slice_tf/slice_truncate.py
-on origin/feat/slice-tf-verification. A data tool: quettabench never imports
+Kimi-specific: it knows this one checkpoint (N_LAYERS=13, MLA at layers
+4, 8, 12 1-indexed, MXFP4 experts) and no other model. Ported unchanged in
+behaviour from scripts/crossval/slice_tf/slice_truncate.py on
+origin/feat/slice-tf-verification. A data tool: quettabench never imports
 it. The result is the cut checkpoint dir a vLLM slice run names as
-engine.model. Gate C imports ref_slice.py from that branch's slice_tf/, so
-put it on PYTHONPATH.
+engine.model. Gate C's meta model builder is ported from that branch's
+ref_slice.build_meta_model into this file, so every gate runs from a clean
+clone with torch, transformers and fla installed.
 
 The slice at <src> has 16 of 96 shards (layers 0-12 complete, plus
 embed/norm/lm_head/output_attn_res in shards 94-96) but a full-model
@@ -28,24 +31,29 @@ Sanity gates (all hard failures):
      parses, and the truncated fields read back exactly;
   B. every weight_map entry's shard file exists in <dst> (symlinks resolve);
   C. name-level diff against the actual 13-layer text model: the meta-built
-     KimiLinearForCausalLM (experts as MXFP4Linear, via ref_slice) must
+     KimiLinearForCausalLM (experts as packed MXFP4 buffers, meta_text_model) must
      find every one of its state-dict tensors in the subset weight_map and
      vice versa (language_model.* namespace) -- zero missing, zero extra --
      with shapes checked against the shard headers. Known exception: A_log is
      stored zero-padded to head_dim (128) while the model has 96 heads; shape
-     is allowed to differ there (the loader slices, see ref_slice.py).
+     is allowed to differ there (the loader slices).
 
-    PYTHONPATH=/data35/kevinlau/pylibs/fla \
-    python3 data/slice_checkpoint.py /data35/kevinlau/kimi-slice/model \
-                                     /data35/kevinlau/kimi-slice/truncated
+    PYTHONPATH=<fla-dir> \
+    python3 data/slice_checkpoint.py <slice-dir>/model <slice-dir>/truncated
 """
 
+import importlib
 import json
 import os
+import shutil
 import struct
 import sys
 
 N_LAYERS = 13
+# The checkpoint's own modeling code, copied verbatim into an importable package
+# (the checkpoint dir name is not a Python identifier).
+PKG = "kimi_k3_slice_mod"
+PKG_FILES = ("configuration_kimi_k3.py", "modeling_kimi_linear.py")
 
 
 def shard_headers(path: str) -> dict:
@@ -165,11 +173,60 @@ def gate_b_shards_exist(dst: str) -> dict:
     return wm
 
 
-def gate_c_name_diff(dst: str, wm: dict) -> None:
-    import ref_slice
+def meta_text_model(model_dir: str, tmp_root: str):
+    """(model, config): the 13-layer text model on the meta device, each
+    expert's w1/w2/w3 replaced by the packed MXFP4 buffers the checkpoint
+    stores (weight_packed [out, in/2] and weight_scale [out, in/32], uint8).
+    Ported from ref_slice.build_meta_model for names and shapes only: the
+    OutputRecorder alias is kept (the modeling file imports it), the
+    create_causal_mask adapter is not (nothing here runs a forward)."""
+    import torch
+    import transformers.utils.generic as generic
+    from torch import nn
 
-    model, config, _ = ref_slice.build_meta_model(
-        dst, os.environ.get("TMPDIR", "/tmp"))
+    if not hasattr(generic, "OutputRecorder"):  # moved in transformers 5.x
+        from transformers.utils.output_capturing import OutputRecorder
+        generic.OutputRecorder = OutputRecorder
+
+    pkg_dir = os.path.join(tmp_root, PKG)
+    os.makedirs(pkg_dir, exist_ok=True)
+    open(os.path.join(pkg_dir, "__init__.py"), "w").close()
+    for name in PKG_FILES:
+        shutil.copyfile(os.path.join(model_dir, name), os.path.join(pkg_dir, name))
+    if tmp_root not in sys.path:
+        sys.path.insert(0, tmp_root)
+    cfg_mod = importlib.import_module(f"{PKG}.configuration_kimi_k3")
+    mdl_mod = importlib.import_module(f"{PKG}.modeling_kimi_linear")
+
+    with open(os.path.join(model_dir, "config.json")) as f:
+        text_cfg = dict(json.load(f)["text_config"])
+    text_cfg.pop("auto_map", None)
+    config = cfg_mod.KimiLinearConfig(**text_cfg)
+    config._attn_implementation = "eager"
+
+    class PackedMXFP4(nn.Module):
+        def __init__(self, out_features, in_features):
+            super().__init__()
+            self.register_buffer("weight_packed", torch.empty(
+                out_features, in_features // 2, dtype=torch.uint8))
+            self.register_buffer("weight_scale", torch.empty(
+                out_features, in_features // 32, dtype=torch.uint8))
+
+    with torch.device("meta"):
+        model = mdl_mod.KimiLinearForCausalLM(config)
+        for layer in model.model.layers:
+            moe = getattr(layer, "block_sparse_moe", None)
+            if moe is None:
+                continue
+            for expert in moe.experts:
+                for wn in ("w1", "w2", "w3"):
+                    lin = getattr(expert, wn)
+                    setattr(expert, wn, PackedMXFP4(lin.out_features, lin.in_features))
+    return model, config
+
+
+def gate_c_name_diff(dst: str, wm: dict) -> None:
+    model, config = meta_text_model(dst, os.environ.get("TMPDIR", "/tmp"))
     expected = {"language_model." + k: tuple(v.shape)
                 for k, v in model.state_dict().items()}
     ckpt_text = {k for k in wm if k.startswith("language_model.")}

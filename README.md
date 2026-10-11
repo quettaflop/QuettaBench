@@ -233,7 +233,7 @@ are withheld. glm53 and glm53flash have no engine bench yet: vLLM side only.
 | `xval_config.py collective|link-profile|backend|run-params` | `just dry ...` (`hardware.*` lines) |
 | `xval_config.py provision [key]` | `just provision ... --dry-run`, or the `hardware.provision.*` lines of `just dry` |
 | `slice_tf/tf_verify.py`, `ref_full.py`, `ref_slice.py`, `vllm_tf.py`, `vllm_baseline.py` | logits runs with `engine.layers` and `qbench crossval ... --floor` (Slice verification above) |
-| `slice_tf/slice_truncate.py` | `--set engine.layers=N` (reference, QuettaServe); for vLLM, `python3 data/slice_checkpoint.py <src> <dst>` builds the cut checkpoint dir that `engine.model` names |
+| `slice_tf/slice_truncate.py` | `--set engine.layers=N` (reference, QuettaServe); for vLLM, `python3 data/slice_checkpoint.py <src> <dst>` builds the cut checkpoint dir that `engine.model` names (Kimi-K3 slice only: 13 layers, MLA at 4, 8, 12 1-indexed; all three gates run from this repo) |
 | `slice_tf/vllm_nsys.py`, `nsys_kernels.py <sqlite> --steps N` | `--set engine.instrumentation=nsys`, then `just profile --run results/<run> --source kernels --kernel-steps N` |
 | `slice_tf/moe_routing_probe.py <out>` | `just moe-routing <model> <gpu> 1 "--layers 13 --kda-mode fused_recurrent"` |
 | `xval.yaml`, `workloads.json` | `configs/models/`, `configs/runs/`, `configs/grids.yaml`, `configs/hardware/` |
