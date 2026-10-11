@@ -10,7 +10,8 @@ from quettabench.export.quettasim import BUILDERS, export
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(prog="qbench export", description=__doc__)
     ap.add_argument("--results", type=Path, nargs="+", default=[Path("results")],
-                    help="results dirs the builders read, later dirs searched after earlier ones")
+                    help="results dirs the builders read; a named table comes from the ok run that "
+                         "finished last, a tie from the earlier dir")
     ap.add_argument("--dest", type=Path, required=True,
                     help="where the QuettaSim files land (kernels/, results/, manifest.json)")
     ap.add_argument("--only", nargs="+", choices=sorted(BUILDERS),

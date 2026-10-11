@@ -212,3 +212,35 @@ def test_each_builder_reads_run_status_fresh(tmp_path: Path, capsys) -> None:
         export([results], tmp_path / "out", only=["first", "second"])
     assert seen == [{}, {run: "run_status failed"}]
     assert json.loads((tmp_path / "out" / "manifest.json").read_text())["runs"] == []
+
+
+def stage_split_run(root: Path, run_id: str, finished: str, status: str, scale: float) -> Path:
+    """One serving_stage_split run dir holding both legs and its run.json."""
+    run = root / "H100" / "serving_stage_split" / run_id
+    run.mkdir(parents=True)
+    write_leg(run / "serving_stage_split_H100.csv", scale)
+    write_leg(run / "serving_stage_split_H100_tp2.csv", scale * 0.6)
+    (run / "run.json").write_text(json.dumps({
+        "config": {"run_name": "probe-serving_stage_split"},
+        "run_status": {"status": status, "reason": None},
+        "provenance": {"started": run_id, "finished": finished}}))
+    return run
+
+
+def test_stage_split_legs_come_from_the_latest_finished_ok_run(tmp_path: Path) -> None:
+    """Run dirs sort by start; the run that finished last is read, a newer
+    failed run never is, and both legs follow the one rule."""
+    results = tmp_path / "results"
+    old = stage_split_run(results, "20261001", "2026-10-01T02:00:00+00:00", "ok", 1.0)
+    new = stage_split_run(results, "20261002", "2026-10-02T02:00:00+00:00", "ok", 2.0)
+    stage_split_run(results, "20261003", "2026-10-03T02:00:00+00:00", "failed", 3.0)
+    _inputs.run_dirs.cache_clear()
+    assert _inputs.find([results], "serving_stage_split_H100.csv") == new / "serving_stage_split_H100.csv"
+    assert _inputs.stage_split_legs([results], "H100") == [
+        (2, new / "serving_stage_split_H100.csv", new / "serving_stage_split_H100_tp2.csv")]
+    # A run that started first but finished last wins over one that started later.
+    (old / "run.json").write_text(json.dumps({
+        "config": {}, "run_status": {"status": "ok", "reason": None},
+        "provenance": {"started": "20261001", "finished": "2026-10-09T00:00:00+00:00"}}))
+    _inputs.run_dirs.cache_clear()
+    assert _inputs.find([results], "serving_stage_split_H100_tp2.csv") == old / "serving_stage_split_H100_tp2.csv"

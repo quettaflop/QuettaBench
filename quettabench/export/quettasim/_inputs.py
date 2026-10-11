@@ -70,13 +70,26 @@ def quettasim_symbol_gone(symbol: str) -> None:
                      "this builder needs a new anchor before it can run")
 
 
+def finished(run_dir: Path | None) -> str:
+    """run_dir/run.json's provenance.finished, "" for no run dir or no time."""
+    try:
+        return json.loads((Path(run_dir) / "run.json").read_text())["provenance"]["finished"] or ""
+    except (OSError, ValueError, KeyError, TypeError):
+        return ""
+
+
 def find(results_dirs: Iterable[Path], name: str) -> Path | None:
-    """First file called `name` under the results dirs, searched in list order."""
-    for root in results_dirs:
-        hit = next(iter(files(root, name)), None)
-        if hit is not None:
-            return hit
-    return None
+    """The file called `name` whose ok run finished last (provenance.finished),
+    over every results dir; a file in no run dir counts as finished never.
+    A tie goes to the earlier results dir, then the first path."""
+    best = None
+    for rank, root in enumerate(map(Path, results_dirs)):
+        runs = run_dirs(root)
+        for path in files(root, name):
+            key = (finished(owner(path, root, runs)), -rank)
+            if best is None or key > best[0]:
+                best = (key, path)
+    return best[1] if best else None
 
 
 def find_dir(results_dirs: Iterable[Path], name: str) -> Path | None:
@@ -90,7 +103,8 @@ def find_dir(results_dirs: Iterable[Path], name: str) -> Path | None:
 
 
 def stage_split_legs(results_dirs: Iterable[Path], gpu: str) -> list[tuple[int, Path, Path]]:
-    """(tp, tp1 csv, tpN csv) for every tp degree whose two stage-split legs are present."""
+    """(tp, tp1 csv, tpN csv) for every tp degree whose two stage-split legs
+    are present, each leg the one find picks (its run finished last)."""
     tp1 = find(results_dirs, f"serving_stage_split_{gpu}.csv")
     legs = []
     for tp in TP_DEGREES:
