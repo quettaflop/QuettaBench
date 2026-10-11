@@ -1,6 +1,7 @@
 """InProcessDriver builds vLLM from engine_kwargs only when asked, and
 times a grid batch as one generate() call."""
 
+import os
 import types
 import unittest
 from unittest import mock
@@ -32,6 +33,25 @@ class Builders(unittest.TestCase):
             driver = InProcessDriver(LaunchSpec(adapter="vllm", engine_kwargs=KWARGS))
             self.assertIs(driver.llm(), driver.llm())
             self.assertEqual(vllm.CALLS, [("LLM", KWARGS)])
+
+    def test_spec_env_is_in_the_process_before_llm(self):
+        env = {"VLLM_SERVER_DEV_MODE": "1", "VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS": "1"}
+        seen = {}
+        with crossval_path(stubs=True), \
+                mock.patch.dict(os.environ, {"VLLM_SERVER_DEV_MODE": "0"}, clear=True):
+            vllm = fresh_import("vllm")
+            vllm.reset()
+            real = vllm.LLM
+
+            def llm(**kw):
+                seen.update({k: os.environ.get(k) for k in env})
+                return real(**kw)
+
+            with mock.patch.object(vllm, "LLM", llm):
+                InProcessDriver(LaunchSpec(adapter="vllm", engine_kwargs=KWARGS, env=env)).llm()
+        # the caller's own value wins, as for the collective env
+        self.assertEqual(seen, {"VLLM_SERVER_DEV_MODE": "0",
+                                "VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS": "1"})
 
 
 class GridBatch(unittest.TestCase):

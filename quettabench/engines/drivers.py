@@ -33,6 +33,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 import aiohttp
 
+from quettabench.config import env_map
 from quettabench.crossval import reader
 from quettabench.metrics.core import RequestResult
 from quettabench.workloads.base import Request
@@ -635,7 +636,7 @@ class BenchDriver(Driver):
 
 
 class InProcessDriver(Driver):
-    """vLLM in this process, built from spec.engine_kwargs on first use.
+    """vLLM in this process, built from spec.engine_kwargs and spec.env on first use.
 
     Grid runs only, and only until the HTTP-vs-in-process parity gate
     (QBENCH_STRUCTURE.md section 5) passes; a pass deletes this class.
@@ -658,8 +659,11 @@ class InProcessDriver(Driver):
         return torch.cuda.get_device_name(0), torch.cuda.get_device_properties(0).total_memory
 
     def llm(self):
-        """The grid engine: vllm.LLM(**engine_kwargs), built once."""
+        """The grid engine: vllm.LLM(**engine_kwargs), built once, after
+        spec.env is in this process (a variable already set wins), so it
+        sizes its KV cache under the env the adapter gives a launched server."""
         if self._llm is None:
+            env_map.export(self.spec.env)
             from vllm import LLM
             self._llm = LLM(**self.spec.engine_kwargs)
         return self._llm
