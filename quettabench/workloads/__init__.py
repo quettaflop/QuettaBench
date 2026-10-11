@@ -1,5 +1,7 @@
 """Every Trace a run can replay; build(cfg) picks the one a Config names."""
 
+from quettabench.config.schema import ConfigError
+
 from .base import DoubleWrapRandomTokenTrace, LegacyRandomTokenTrace, RandomTokenTrace
 from .grid import GridTrace
 from .live import MooncakeTrace, PromptJsonlTrace, RealTrace, ShareGPTTrace, SmokeTrace
@@ -83,4 +85,11 @@ def build(cfg, tokenizer=None):
         return session_trace(profile, sessions, w.seed, warmup=cfg.mode.warmup, pacing=pacing,
                              max_turn_index=w.max_turn_index)
     trace = single_turn_trace(profile, w.seed)
+    if (w.arrival == "trace" and isinstance(trace, MooncakeTrace) and trace.lap_ms == 0
+            and w.num_requests > len(trace.records)):
+        # Every lap would land on the first lap's times; a lap length is not invented.
+        raise ConfigError(f"workload.arrival=trace: {profile.name}'s timestamps span 0 ms, so "
+                          f"{w.num_requests} requests over its {len(trace.records)} records "
+                          "wrap with no lap length; lower workload.num_requests or use "
+                          "another arrival")
     return trace.draw(w.num_requests, cfg.mode.warmup, profile)

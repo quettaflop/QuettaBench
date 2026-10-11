@@ -7,9 +7,10 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from quettabench import workloads
-from quettabench.config.schema import Config, EngineCfg, HardwareCfg, ModeCfg, WorkloadCfg
+from quettabench.config.schema import Config, ConfigError, EngineCfg, HardwareCfg, ModeCfg, WorkloadCfg
 from quettabench.workloads.base import Request, workload_hash
 from quettabench.workloads.live import MooncakeTrace, PromptJsonlTrace
 from quettabench.workloads.sessions import TrajectorySessionTrace, TurnPacing
@@ -63,6 +64,23 @@ class SingleTurn(unittest.TestCase):
         trace = MooncakeTrace(path).draw(7, warmup=0)
         self.assertEqual([r.arrival_ts for r in trace.requests()],
                          [1.0, 3.0, 5.0, 7.0, 9.0, 11.0, 13.0])
+
+    def test_a_wrap_over_a_zero_span_trace_is_refused_under_arrival_trace(self):
+        path = write_jsonl(self.dir / "m.jsonl", [
+            {"timestamp": 1000, "input_length": 30, "output_length": 3, "hash_ids": [i]}
+            for i in range(3)])
+        for arrival, n, refused in (("trace", 4, True), ("trace", 3, False), ("steady", 4, False)):
+            cfg = config("mooncake-trace")
+            cfg = dataclasses.replace(cfg, workload=dataclasses.replace(
+                cfg.workload, arrival=arrival, num_requests=n))
+            with self.subTest(arrival=arrival, n=n), \
+                    mock.patch.object(workloads, "single_turn_trace",
+                                      return_value=MooncakeTrace(path)):
+                if refused:
+                    with self.assertRaisesRegex(ConfigError, "span 0 ms"):
+                        workloads.build(cfg)
+                else:
+                    self.assertEqual(len(workloads.build(cfg).requests()), n)
 
     def test_messages_and_metadata_never_reach_the_hash(self):
         plain = Request([1, 2], 2, order=0, output_length=4)

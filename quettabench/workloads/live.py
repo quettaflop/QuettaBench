@@ -195,7 +195,9 @@ class MooncakeTrace(DrawnTrace):
     (request_index) and its block count (num_hash_blocks). arrival_ts is the
     record's timestamp in seconds, so workload.arrival=trace replays it; a
     wrapped draw's lap k is shifted by k * (span + mean gap) of the file's
-    timestamps, so laps follow one another at the trace's own pace."""
+    timestamps, so laps follow one another at the trace's own pace. With a
+    span of 0 there is no pace; workloads.build refuses such a wrap under
+    workload.arrival=trace."""
 
     rewinds = True
 
