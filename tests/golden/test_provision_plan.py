@@ -64,6 +64,12 @@ class ProvisionPlanGolden(unittest.TestCase):
         self.assertIn("attention=hybrid needs kv_bytes", record["stderr"][0])
         self.assertTrue(record["stderr"][0].startswith("[provision] MISSING: "))
 
+    def test_a_matrix_run_yaml_is_missing(self):
+        with mock.patch.object(provision.loader, "load", return_value=[mock.Mock()] * 2):
+            record = run_dry_provision(["llama"], [])
+        self.assertEqual(record["rc"], 1)
+        self.assertIn("a matrix of 2 points", record["stderr"][0])
+
 
 if __name__ == "__main__":
     unittest.main()

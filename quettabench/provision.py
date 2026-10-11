@@ -239,10 +239,15 @@ def main(argv=None):
     for path in a.run_yaml:
         name = Path(path).stem
         try:
-            (configs[name],) = loader.load(path, ["allow_unverified=true", *common,
-                                                  *scoped.get(name, [])])
+            points = loader.load(path, ["allow_unverified=true", *common, *scoped.get(name, [])])
         except (ConfigError, ValueError) as e:
             plan.need(str(e))
+            continue
+        if len(points) > 1:
+            plan.need(f"{path}: a matrix of {len(points)} points; provision a run yaml "
+                      "without matrix: for the same model")
+            continue
+        configs[name] = points[0]
     if not configs:
         return 1
     docker = {n: c for n, c in configs.items() if c.hardware.launcher == "docker"}
