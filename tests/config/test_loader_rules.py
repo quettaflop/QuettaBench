@@ -8,6 +8,7 @@ from unittest import mock
 
 import yaml
 
+from quettabench.config import loader
 from quettabench.config.loader import ConfigError, load, parse_set
 
 MODEL = {"name": "Toy-1B", "dtype": "bfloat16", "weights_gib": 2, "max_model_len": 4096,
@@ -191,6 +192,14 @@ class LoaderRules(unittest.TestCase):
             self.load({"workload": {"source": "chat-short"}}, ["engine.prefix_caching=false"])
         self.assertFalse(self.one({"workload": {"source": "chat-short"},
                                    "mode": {"grid": "toy"}}).engine.prefix_caching)
+        # a false from a level that states the checkpoint or box, not the run, is turned on
+        for origin in ("default", "model", "hardware"):
+            values = {"workload.source": "chat-short", "mode.grid": None,
+                      "engine.prefix_caching": False}
+            origins = {"engine.prefix_caching": origin}
+            loader._profile_prefix_caching(values, origins, "w")
+            self.assertEqual((values["engine.prefix_caching"], origins["engine.prefix_caching"]),
+                             (True, "profile"))
 
     def test_open_loop_needs_rate_arrival_and_closed_loop_forbids_it(self):
         with self.assertRaisesRegex(ConfigError, "open load needs a rate-bearing arrival"):

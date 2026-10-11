@@ -12,6 +12,7 @@ from quettabench.config import env_map
 from quettabench.config.schema import (
     CHOICES,
     DICT_KEYS,
+    NOT_ASKED,
     SECTIONS,
     Config,
     ConfigError,
@@ -183,14 +184,15 @@ def _force(values, origins, path, value, by, where):
 def _profile_prefix_caching(values, origins, where):
     """A serve run on a workload profile with prefix_caching_required gets
     engine.prefix_caching true (origin "profile"), as the old sweeps passed
-    --enable-prefix-caching; an explicit false is refused."""
+    --enable-prefix-caching; a false the run asked for (run yaml, env,
+    --set) is refused, one from a default, model or hardware yaml is not."""
     source = values["workload.source"]
     if values["mode.grid"] is not None or (source not in profiles.PROFILES
                                            and source not in profiles.PROFILE_ALIASES):
         return
     if values["engine.prefix_caching"] or not profiles.get_profile(source).prefix_caching_required:
         return
-    if origins.get("engine.prefix_caching", "default") != "default":
+    if origins.get("engine.prefix_caching", "default") not in NOT_ASKED:
         raise ConfigError(f"{where}: engine.prefix_caching=False contradicts workload profile "
                           f"{source}, which requires prefix caching")
     values["engine.prefix_caching"] = True

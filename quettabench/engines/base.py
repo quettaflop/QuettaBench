@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 
-from quettabench.config.schema import EngineCfg
+from quettabench.config.schema import NOT_ASKED, EngineCfg
 
 # From scripts/crossval/prof.sh:16 (retired in bd9815f); {out} is the report
 # path without extension.
@@ -64,8 +64,6 @@ class LaunchSpec:
 # EngineCfg fields that describe the model or pick the adapter; no adapter carries them.
 FACTS = frozenset({"name", "model_name", "kv_bytes", "weights_gib", "attention", "num_experts",
                    "verified"})
-# Origins that state what the checkpoint is, not what this launch asks for.
-NOT_ASKED = ("default", "model", "hardware")
 
 
 class EngineAdapter(ABC):

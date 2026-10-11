@@ -5,6 +5,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+# Origins that state what the checkpoint or box is, not what this run asks for.
+NOT_ASKED = ("default", "model", "hardware")
+
 
 class ConfigError(ValueError):
     """A config the loader refuses; the message names the file and key."""
