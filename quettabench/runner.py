@@ -20,6 +20,7 @@ engine.driver=http); --dry-run then also prints the docker command.
 import dataclasses
 import importlib
 import shlex
+import shutil
 from pathlib import Path
 
 from quettabench import workloads
@@ -34,9 +35,6 @@ from quettabench.modes import serve
 # output flags name files instead of taking a directory --out.
 TORCHRUN_PROBES = ("collective", "reparallel", "vllm_allreduce")
 FILE_OUT_PROBES = ("serving_decode_grid", "serving_stage_split")
-
-# What a run writes into results/<run>/ itself; --overwrite removes these.
-RUN_FILES = ("run.json", "requests.jsonl", "engine.json", "server.log")
 
 
 def spec_lines(spec):
@@ -180,13 +178,17 @@ def run_one(cfg, out, exported=None):
 
 def clear_run_dir(out, overwrite):
     """Refuse a run dir that already holds files, since requests.jsonl
-    appends; with overwrite, remove the old run's own files instead."""
+    appends; with overwrite, empty it: everything in results/<run>/ belongs
+    to the run, including profile.json and the nsys export."""
     if not out.is_dir() or not any(out.iterdir()):
         return
     if not overwrite:
         raise ConfigError(f"{out} already holds a run; pass --overwrite to replace it")
-    for name in RUN_FILES:
-        (out / name).unlink(missing_ok=True)
+    for path in out.iterdir():
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
 
 
 def main(run_yaml, overrides=(), dry=False, results_dir="results", allow_unverified=False,

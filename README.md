@@ -92,8 +92,8 @@ just run configs/runs/llama-tp1-docker.yaml --set engine.model=/w/llama
 | `nsys.*`, `nsys-<ctx>x<bs>.*` | `engine.instrumentation=nsys` | the capture armed at launch (QuettaServe: one per bench cell) |
 
 `qbench run` refuses a `results/<run>/` that already holds files;
-`--overwrite` removes the old `run.json`, `requests.jsonl`, `engine.json`
-and `server.log` first and leaves anything else there.
+`--overwrite` empties it first: every file and subdirectory there belongs to
+the old run, so `profile.json` and the nsys export go with it.
 
 Grid runs no longer write `results/baselines/*.json`; `qbench crossval`
 reads the run dir, and still reads old baselines files. Probe recipes write

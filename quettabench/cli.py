@@ -51,7 +51,7 @@ def parser():
     run.add_argument("--allow-unverified", action="store_true",
                      help="run a model whose yaml says verified: false (bring-up only)")
     run.add_argument("--overwrite", action="store_true",
-                     help="replace the run files of a results/<run>/ that already holds a run")
+                     help="empty a results/<run>/ that already holds a run before running")
     for door, module in DOORS.items():
         sub.add_parser(door, help=f"{module}.main", add_help=False)
     return ap

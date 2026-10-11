@@ -17,7 +17,7 @@ from unittest import mock
 
 import yaml
 
-from quettabench import cli, runner
+from quettabench import cli, profiler, runner
 from quettabench.config import loader
 from quettabench.config.schema import ConfigError
 from quettabench.engines import launcher
@@ -355,13 +355,16 @@ class ProbeMode(unittest.TestCase):
 
     def test_a_run_dir_with_a_run_is_refused_without_overwrite(self):
         run = {"mode": {"mode": "probe", "probe": "fake"}}
+        old_files = ("run.json", "requests.jsonl", "engine.json", "server.log", "bench.log",
+                     "run.json.tmp", "nsys.sqlite", "nsys-512x8.nsys-rep")
         with scratch_configs("p", run) as (path, td), \
                 mock.patch.dict(sys.modules, {"quettabench.probes.fake": mock.Mock()}):
             out = td / "results" / "p"
-            out.mkdir(parents=True)
-            for name in runner.RUN_FILES:
+            (out / "gemm").mkdir(parents=True)
+            for name in old_files:
                 (out / name).write_text("old\n")
-            (out / "notes.txt").write_text("keep\n")
+            (out / "gemm" / "table.csv").write_text("old\n")
+            (out / "profile.json").write_text(json.dumps({"metrics": {"old": 1}}))
             argv = ("run", str(path), "--allow-unverified", "--results-dir", str(td / "results"))
             _, refused = qbench(*argv)
             self.assertEqual((out / "requests.jsonl").read_text(), "old\n")
@@ -369,11 +372,14 @@ class ProbeMode(unittest.TestCase):
             left = sorted(p.name for p in out.iterdir())
             rows = (out / "requests.jsonl").read_text()
             doc = json.loads((out / "run.json").read_text())
+            prof = profiler.profile(out, ["cost"], gpu_cost_hr=1.0)
         self.assertIn("already holds a run; pass --overwrite", refused)
         self.assertIsNone(exit_msg)
-        self.assertEqual(left, ["notes.txt", "requests.jsonl", "run.json"])
+        self.assertEqual(left, ["requests.jsonl", "run.json"])
         self.assertEqual(rows, "")
         self.assertEqual(doc["summary"]["probe"], "fake")
+        self.assertNotIn("metrics", prof)
+        self.assertEqual(prof["sources_run"], ["cost"])
 
     def test_probe_mode_needs_a_probe(self):
         with scratch_configs("bare", {"mode": {"mode": "probe"}}) as (path, _):
