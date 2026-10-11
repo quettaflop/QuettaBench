@@ -12,16 +12,10 @@ assistant placeholders.
 import dataclasses
 
 from .base import Request, Trace
-from .dataset import (
-    DistributionalMultiTurnDataset,
-    ShareGPTMultiTurnDataset,
-    TrajectoryMultiTurnDataset,
-    make_dataset,
-)
+from .dataset import ShareGPTMultiTurnDataset, TrajectoryMultiTurnDataset, make_dataset
 from .sessions import SessionTrace, TurnPacing
 
-MULTI_TURN_DATASETS = (DistributionalMultiTurnDataset, ShareGPTMultiTurnDataset,
-                       TrajectoryMultiTurnDataset)
+MULTI_TURN_DATASETS = (ShareGPTMultiTurnDataset, TrajectoryMultiTurnDataset)
 
 
 def profile_request(req, order, session_id=None, turn=None, arrival_ts=None):

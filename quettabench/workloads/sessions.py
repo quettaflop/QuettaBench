@@ -6,11 +6,9 @@ later turns stays in modes/serve.py.
 """
 
 import asyncio
-import sys
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import Path
 from types import MappingProxyType
 
 from .live import RealTrace
@@ -82,26 +80,6 @@ async def _sleep_until_elapsed(benchmark_start: float, target_s: float) -> None:
     delay = target_s - (time.perf_counter() - benchmark_start)
     if delay > 0:
         await asyncio.sleep(delay)
-
-
-def _load_source_session_ids(path: str | None) -> list[str] | None:
-    if not path:
-        return None
-    source_path = Path(path)
-    ids = []
-    seen = set()
-    for line in source_path.read_text(encoding="utf-8").splitlines():
-        source_session_id = line.strip()
-        if not source_session_id or source_session_id.startswith("#"):
-            continue
-        if source_session_id in seen:
-            continue
-        ids.append(source_session_id)
-        seen.add(source_session_id)
-    if not ids:
-        print(f"Error: --source-session-ids-file had no usable IDs: {path}")
-        sys.exit(1)
-    return ids
 
 
 def resolve_multi_turn_num_sessions(

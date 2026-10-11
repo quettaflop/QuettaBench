@@ -775,117 +775,6 @@ class TrajectoryMultiTurnDataset(BaseDataset):
             return self._flat_available.pop(0)
 
 
-class DistributionalMultiTurnDataset(BaseDataset):
-    """
-    Builds synthetic growing-history sessions from compact trace distributions.
-
-    This keeps the benchmark runner's existing multi-turn scheduling path while
-    replacing expensive real-trace replay with sampled turn counts, input
-    deltas, and output lengths.
-    """
-
-    def __init__(
-        self,
-        filepath: str,
-        min_turns: int = 1,
-        max_turns: int | None = None,
-        num_sessions: int = 10,
-        random_seed: int = 42,
-        max_context_tokens: int | None = None,
-        context_safety_margin_tokens: int = 256,
-        system_prompt: str = "",
-        tokenizer_name: str = "",
-        source_session_ids: list[str] | None = None,
-    ):
-        self.filepath = filepath
-        self.min_turns = min_turns
-        self.max_turns = max_turns
-        self.num_sessions = num_sessions
-        self.random_seed = random_seed
-        self.max_context_tokens = max_context_tokens
-        self.context_safety_margin_tokens = context_safety_margin_tokens
-        self.system_prompt = system_prompt
-        self.tokenizer_name = tokenizer_name
-        self.source_session_ids = source_session_ids
-        self._sessions: list[MultiTurnSession] | None = None
-        self._session_specs: dict[int, list] | None = None
-        self._flat_requests: list[BenchmarkRequest] | None = None
-        self._flat_available: list[BenchmarkRequest] | None = None
-        self._lock = threading.Lock()
-
-    def _load(self):
-        if self._sessions is not None:
-            return
-        with self._lock:
-            if self._sessions is not None:
-                return
-
-            # Imported here, not at the top: analysis.synthetic.distributional
-            # imports this module for BenchmarkRequest.
-            from analysis.synthetic.distributional import DistributionalSampler
-            from analysis.synthetic.trace_distributions import load_trace_distribution
-
-            distribution = load_trace_distribution(self.filepath)
-            sampler = DistributionalSampler(
-                distribution,
-                seed=self.random_seed,
-                min_turns=self.min_turns,
-                max_turns=self.max_turns,
-                max_context_tokens=self.max_context_tokens,
-                context_safety_margin_tokens=self.context_safety_margin_tokens,
-                system_prompt=self.system_prompt,
-                tokenizer_name=self.tokenizer_name,
-            )
-            if self.source_session_ids:
-                synthetic_sessions = sampler.sample_source_locked_sessions(self.source_session_ids)
-            else:
-                synthetic_sessions = sampler.sample_sessions(self.num_sessions)
-            self._sessions = [
-                MultiTurnSession(session_id=s.session_id, turns=s.turns,
-                                 assistant_messages=s.assistant_messages)
-                for s in synthetic_sessions
-                if s.turns
-            ]
-            self._session_specs = {
-                s.session_id: s.specs
-                for s in synthetic_sessions
-                if s.turns
-            }
-            self._build_flat_requests()
-
-    def _build_flat_requests(self):
-        """Build interleaved round-robin: [A1, B1, C1, A2, B2, C2, ...]"""
-        if not self._sessions:
-            self._flat_requests = []
-            self._flat_available = []
-            return
-        max_num_turns = max(len(s.turns) for s in self._sessions)
-        flat = []
-        for turn_idx in range(max_num_turns):
-            for session in self._sessions:
-                if turn_idx < len(session.turns):
-                    flat.append(session.turns[turn_idx])
-        self._flat_requests = flat
-        self._flat_available = list(flat)
-
-    @property
-    def sessions(self) -> list[MultiTurnSession]:
-        self._load()
-        return self._sessions
-
-    @property
-    def session_specs(self) -> dict[int, list]:
-        self._load()
-        return self._session_specs or {}
-
-    def get_next_request(self) -> BenchmarkRequest:
-        self._load()
-        with self._lock:
-            if not self._flat_available:
-                self._flat_available = list(self._flat_requests)
-            return self._flat_available.pop(0)
-
-
 def make_dataset(
     profile,
     max_context_tokens: int | None = None,
@@ -893,7 +782,6 @@ def make_dataset(
     context_safety_margin_tokens: int = 256,
     num_sessions: int | None = None,
     tokenizer_name: str = "",
-    source_session_ids: list[str] | None = None,
 ) -> BaseDataset:
     """Factory: create the right dataset for a workload profile."""
     effective_num_sessions = profile.num_sessions if num_sessions is None else num_sessions
@@ -963,18 +851,11 @@ def make_dataset(
             context_safety_margin_tokens=context_safety_margin_tokens,
         )
     elif profile.dataset == "distributional-multi-turn":
-        return DistributionalMultiTurnDataset(
-            filepath=profile.file_path,
-            min_turns=profile.min_turns,
-            max_turns=profile.max_turns,
-            num_sessions=effective_num_sessions,
-            random_seed=random_seed,
-            max_context_tokens=max_context_tokens or profile.isl_tokens,
-            context_safety_margin_tokens=context_safety_margin_tokens,
-            system_prompt=profile.system_prompt,
-            tokenizer_name=tokenizer_name or profile.tokenizer_name,
-            source_session_ids=source_session_ids,
-        )
+        raise ValueError(
+            f"profile {profile.name!r} samples synthetic sessions from a trace distribution; "
+            "synthetic traces are not a quettabench workload. The sampler lives in "
+            "analysis/synthetic/ (distributional.py, trace_distributions.py); replay a real "
+            "trace instead (workload.kind=sessions with a trajectory profile, or a jsonl file).")
     elif profile.dataset == "jsonl":
         return JsonlDataset(
             filepath=profile.file_path,

@@ -1,8 +1,6 @@
-import json
 import os
 import subprocess
 import sys
-import tempfile
 import textwrap
 import unittest
 from pathlib import Path
@@ -13,8 +11,8 @@ from analysis.synthetic.trace_distributions import (
     TraceDistributionError,
     parse_trace_distribution,
 )
-from quettabench.workloads.dataset import DistributionalMultiTurnDataset, make_dataset
-from quettabench.workloads.profiles import WorkloadProfile
+from quettabench.workloads.dataset import make_dataset
+from quettabench.workloads.profiles import get_profile
 
 
 class WhitespaceTokenizer:
@@ -162,31 +160,6 @@ class DistributionalSamplerTests(unittest.TestCase):
                          [m.get("content") for m in session.turns[0].messages])
         for turn in session.turns[1:]:
             self.assertIn("SPLICED", [m.get("content") for m in turn.messages])
-
-    def test_dataset_carries_placeholders_into_multiturnsession(self):
-        """The runner reads MultiTurnSession, so placeholders must survive conversion."""
-        import json
-        import tempfile
-
-        from quettabench.workloads.dataset import DistributionalMultiTurnDataset
-
-        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
-            json.dump(fixture_payload(), fh)
-            path = fh.name
-
-        dataset = DistributionalMultiTurnDataset(
-            filepath=path, min_turns=1, num_sessions=2, random_seed=7,
-        )
-        sessions = dataset.sessions
-        self.assertTrue(sessions)
-        for session in sessions:
-            self.assertEqual(len(session.assistant_messages), len(session.turns))
-            if len(session.turns) > 1:
-                session.assistant_messages[0]["content"] = "spliced"
-                self.assertIn(
-                    "spliced",
-                    [m.get("content") for m in session.turns[1].messages],
-                )
 
     def test_request_metadata_matches_synthetic_turn_specs(self):
         sampler = DistributionalSampler(fixture_distribution(), seed=7)
@@ -414,199 +387,11 @@ class DistributionalMultiTurnDatasetTests(unittest.TestCase):
 
         self.assertNotIn("mutated", second.metadata)
 
-    def test_make_dataset_loads_distributional_sessions(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "fixture_multiturn.json"
-            payload = {
-                "schema_version": 1,
-                "name": "fixture_multiturn",
-                "source": {"kind": "unit-test"},
-                "summary": {},
-                "samples": {
-                    "turn_count": [3],
-                    "turns": [
-                        {
-                            "turn_index": 0,
-                            "total_context_tokens": 100,
-                            "new_prefill_tokens": 100,
-                            "output_tokens": 20,
-                            "cache_hit_rate": 0.0,
-                        },
-                        {
-                            "turn_index": 1,
-                            "total_context_tokens": 150,
-                            "new_prefill_tokens": 50,
-                            "output_tokens": 30,
-                            "cache_hit_rate": 100 / 150,
-                        },
-                        {
-                            "turn_index": 2,
-                            "total_context_tokens": 190,
-                            "new_prefill_tokens": 40,
-                            "output_tokens": 10,
-                            "cache_hit_rate": 150 / 190,
-                        },
-                    ],
-                },
-            }
-            path.write_text(json.dumps(payload), encoding="utf-8")
-            profile = WorkloadProfile(
-                name="fixture-multiturn",
-                isl_tokens=512,
-                osl_tokens=64,
-                isl_stddev=0.0,
-                description="fixture",
-                dataset="distributional-multi-turn",
-                file_path=str(path),
-                system_prompt="",
-                mode="multi-turn",
-                max_turns=3,
-                num_sessions=2,
-                agent_type="coding",
-                turn_style="multi-turn",
-                data_source="distributional",
-            )
-
-            dataset = make_dataset(
-                profile,
-                max_context_tokens=170,
-                context_safety_margin_tokens=0,
-            )
-
-            self.assertIsInstance(dataset, DistributionalMultiTurnDataset)
-            self.assertEqual(len(dataset.sessions), 2)
-            self.assertEqual([len(s.turns) for s in dataset.sessions], [2, 2])
-            self.assertEqual(dataset.sessions[0].turns[0].max_tokens, 20)
-            self.assertEqual(
-                dataset.sessions[0].turns[0].metadata["planned_new_prefill_tokens"],
-                100,
-            )
-            self.assertEqual(
-                dataset.sessions[0].turns[1].metadata["planned_total_context_tokens"],
-                140,
-            )
-            self.assertLessEqual(dataset.session_specs[0][-1].total_context_tokens, 140)
-
-    def test_make_dataset_num_sessions_override_controls_distributional_count(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "fixture_multiturn.json"
-            payload = {
-                "schema_version": 1,
-                "name": "fixture_multiturn",
-                "source": {"kind": "unit-test"},
-                "summary": {},
-                "samples": {
-                    "turn_count": [3],
-                    "turns": [
-                        {
-                            "turn_index": 0,
-                            "total_context_tokens": 100,
-                            "new_prefill_tokens": 100,
-                            "output_tokens": 20,
-                            "cache_hit_rate": 0.0,
-                        },
-                        {
-                            "turn_index": 1,
-                            "total_context_tokens": 150,
-                            "new_prefill_tokens": 50,
-                            "output_tokens": 30,
-                            "cache_hit_rate": 100 / 150,
-                        },
-                        {
-                            "turn_index": 2,
-                            "total_context_tokens": 190,
-                            "new_prefill_tokens": 40,
-                            "output_tokens": 10,
-                            "cache_hit_rate": 150 / 190,
-                        },
-                    ],
-                },
-            }
-            path.write_text(json.dumps(payload), encoding="utf-8")
-            profile = WorkloadProfile(
-                name="fixture-multiturn",
-                isl_tokens=512,
-                osl_tokens=64,
-                isl_stddev=0.0,
-                description="fixture",
-                dataset="distributional-multi-turn",
-                file_path=str(path),
-                mode="multi-turn",
-                max_turns=3,
-                num_sessions=2,
-                agent_type="coding",
-                turn_style="multi-turn",
-                data_source="distributional",
-            )
-
-            dataset = make_dataset(
-                profile,
-                max_context_tokens=170,
-                context_safety_margin_tokens=0,
-                num_sessions=4,
-            )
-
-            self.assertEqual(len(dataset.sessions), 4)
-
-    def test_make_dataset_random_seed_controls_distributional_sampling(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "fixture_multiturn.json"
-            payload = {
-                "schema_version": 1,
-                "name": "fixture_multiturn",
-                "source": {"kind": "unit-test"},
-                "summary": {},
-                "samples": {
-                    "turn_count": [1, 2, 3],
-                    "turns": [
-                        {
-                            "turn_index": 0,
-                            "total_context_tokens": 100,
-                            "new_prefill_tokens": 100,
-                            "output_tokens": 20,
-                            "cache_hit_rate": 0.0,
-                        },
-                        {
-                            "turn_index": 1,
-                            "total_context_tokens": 150,
-                            "new_prefill_tokens": 50,
-                            "output_tokens": 30,
-                            "cache_hit_rate": 100 / 150,
-                        },
-                        {
-                            "turn_index": 2,
-                            "total_context_tokens": 190,
-                            "new_prefill_tokens": 40,
-                            "output_tokens": 10,
-                            "cache_hit_rate": 150 / 190,
-                        },
-                    ],
-                },
-            }
-            path.write_text(json.dumps(payload), encoding="utf-8")
-            profile = WorkloadProfile(
-                name="fixture-multiturn",
-                isl_tokens=512,
-                osl_tokens=64,
-                isl_stddev=0.0,
-                description="fixture",
-                dataset="distributional-multi-turn",
-                file_path=str(path),
-                mode="multi-turn",
-                max_turns=3,
-                num_sessions=5,
-                agent_type="coding",
-                turn_style="multi-turn",
-                data_source="distributional",
-            )
-
-            first = make_dataset(profile, random_seed=99)
-            second = make_dataset(profile, random_seed=99)
-
-            self.assertEqual(
-                [[r.max_tokens for r in s.turns] for s in first.sessions],
-                [[r.max_tokens for r in s.turns] for s in second.sessions],
-            )
+    def test_make_dataset_refuses_and_names_analysis(self):
+        for name in ("chat-multiturn", "swebench-multiturn"):
+            with self.subTest(name=name), \
+                    self.assertRaisesRegex(ValueError, f"'{name}'.*analysis/synthetic/"):
+                make_dataset(get_profile(name))
 
 
 class CacheEstimateTests(unittest.TestCase):
