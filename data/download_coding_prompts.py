@@ -79,7 +79,7 @@ def estimate_osl_tokens(content: str) -> int:
         avg_len = sum(len(b) for b in blocks) / len(blocks)
         return max(50, int(avg_len / 3.8))
 
-    # No code blocks found — use a conservative default
+    # No code blocks found -- use a conservative default
     return 200
 
 
@@ -180,9 +180,9 @@ def main():
         osl_vals = [e["osl_tokens"] for e in seen_tasks.values()]
         user_lens = [len(e["user"]) for e in seen_tasks.values()]
         sys_lens = [len(e["system"]) for e in seen_tasks.values()]
-        print(f"OSL tokens  — min: {min(osl_vals)}, max: {max(osl_vals)}, avg: {sum(osl_vals)//len(osl_vals)}")
-        print(f"User chars  — min: {min(user_lens)}, max: {max(user_lens)}, avg: {sum(user_lens)//len(user_lens)}")
-        print(f"System chars— min: {min(sys_lens)}, max: {max(sys_lens)}, avg: {sum(sys_lens)//len(sys_lens)}")
+        print(f"OSL tokens  -- min: {min(osl_vals)}, max: {max(osl_vals)}, avg: {sum(osl_vals)//len(osl_vals)}")
+        print(f"User chars  -- min: {min(user_lens)}, max: {max(user_lens)}, avg: {sum(user_lens)//len(user_lens)}")
+        print(f"System chars -- min: {min(sys_lens)}, max: {max(sys_lens)}, avg: {sum(sys_lens)//len(sys_lens)}")
 
 
 if __name__ == "__main__":
