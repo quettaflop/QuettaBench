@@ -296,10 +296,11 @@ def legacy_lines(summary):
             + f"req_s={s['req_s']:.3f} tok_s={s['tok_s']:.1f}")
     sla = summary.get("sla")
     if sla is not None:
+        tpot = "-" if sla["tpot_p99"] is None else f"{sla['tpot_p99']:.3f}"
         lines.append(
             f"SLASUM verdict={sla['verdict']} bound={','.join(sla['bound']) or 'none'} "
             f"ttft_p99={sla['ttft_p99']:.1f}/{sla['sla_ttft_ms'] or '-'} "
-            f"tpot_p99={sla['tpot_p99']:.3f}/{sla['sla_tpot_ms'] or '-'} "
+            f"tpot_p99={tpot}/{sla['sla_tpot_ms'] or '-'} "
             f"rate_req_s={sla['rate_req_s']:.3f}")
     b = summary.get("burst")
     if b is not None and b["peak_ttft_p99"] is not None:

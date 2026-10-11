@@ -419,3 +419,8 @@ before it, pinned in `tests/probes/test_probe_record.py`:
 - `serving_decode_grid`: also gains `--enable-chunked-prefill`, which it
   did not pass before. Whether that changes its scheduling depends on the
   vLLM build's default for chunked prefill; no run has measured it.
+
+2026-10-11: no fixture changed. A run with an SLA whose requests produced
+no TPOT sample (none decoded 2+ tokens) records `sla.tpot_p99` as null and
+prints `SLASUM ... tpot_p99=-/<sla>`; before, it recorded 0 and printed
+`tpot_p99=0.000`, a number nothing measured.

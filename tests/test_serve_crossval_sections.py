@@ -67,6 +67,17 @@ class LineFormats(unittest.TestCase):
             "SPECSUM spec=measured accept_len=2.00 accept_rate=0.500 n=4",
         ])
 
+    def test_slasum_without_tpot_samples_prints_a_dash(self):
+        sla = {"verdict": "PASS", "bound": [], "ttft_p99": 5.0, "tpot_p99": None,
+               "rate_req_s": 1.0, "sla_ttft_ms": 30.0, "sla_tpot_ms": 10.0}
+        self.assertEqual(legacy_lines({"sla": sla}),
+                         ["SLASUM verdict=PASS bound=none ttft_p99=5.0/30.0 tpot_p99=-/10.0 "
+                          "rate_req_s=1.000"])
+        records = [{"ttft_ms": 5.0, "out_tokens": 1, "arrival_s": 0.0, "tpot_ms": None}]
+        with mock.patch.object(serve, "serve_records", return_value=records):
+            sections = serve.crossval_sections([], 1.0, ModeCfg(sla_ttft_ms=30.0, sla_tpot_ms=10.0))
+        self.assertIsNone(sections["sla"]["tpot_p99"])
+
     def test_off_and_void_and_goodput(self):
         self.assertEqual(legacy_lines({"serve": {"n": 1, "ttft_ms": PCT, "tpot_ms": None,
                                                  "req_s": 1.0, "tok_s": 1.0},

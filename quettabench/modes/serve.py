@@ -294,7 +294,7 @@ def crossval_sections(pairs, duration, mode, server_spec=None):
         bound = sla_verdict(s, mode.sla_ttft_ms, mode.sla_tpot_ms)
         out["sla"] = {"verdict": "FAIL" if bound else "PASS", "bound": bound,
                       "ttft_p99": s["ttft_ms"]["p99"],
-                      "tpot_p99": s["tpot_ms"]["p99"] if s["tpot_ms"] else 0,
+                      "tpot_p99": s["tpot_ms"]["p99"] if s["tpot_ms"] else None,
                       "rate_req_s": s["req_s"], "percentile_method": s["percentile_method"],
                       "sla_ttft_ms": mode.sla_ttft_ms, "sla_tpot_ms": mode.sla_tpot_ms}
     if mode.sla_ttft_ms:
