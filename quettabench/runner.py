@@ -30,6 +30,11 @@ from quettabench.engines import base, launcher
 from quettabench.metrics.results import RunWriter, redact
 from quettabench.modes import serve
 
+# Probes mode: probe refuses (check_probe): torchrun's, and those whose
+# output flags name files instead of taking a directory --out.
+TORCHRUN_PROBES = ("collective", "reparallel", "vllm_allreduce")
+FILE_OUT_PROBES = ("serving_decode_grid", "serving_stage_split")
+
 # What a run writes into results/<run>/ itself; --overwrite removes these.
 RUN_FILES = ("run.json", "requests.jsonl", "engine.json", "server.log")
 
@@ -69,9 +74,22 @@ def dry_run(cfg, out):
             print(f"docker = {shlex.join(launcher.docker_argv(spec, cfg, gpus, out))}")
 
 
+def check_probe(cfg):
+    """Refuse a probe `mode: probe` cannot run: one that needs torchrun ranks,
+    or one whose output flag names a file rather than the run dir."""
+    name = cfg.mode.probe
+    if name in TORCHRUN_PROBES:
+        raise ConfigError(f"{cfg.run_name}: probe {name} runs one process per rank under "
+                          "torchrun; launch it with `just probe` or torchrun, not mode: probe")
+    if name in FILE_OUT_PROBES:
+        raise ConfigError(f"{cfg.run_name}: probe {name} takes output file paths, not a run "
+                          "dir --out; run it with `just probe`")
+
+
 def run_probe(cfg, out):
     """The probe's main with its own flags and --out set to the run dir; a
     probe that raises leaves run.json failed (aborted on Ctrl-C)."""
+    check_probe(cfg)
     argv = [*shlex.split(cfg.mode.probe_args), "--out", str(out)]
     writer = RunWriter(out, cfg)
     try:
@@ -176,6 +194,9 @@ def main(run_yaml, overrides=(), dry=False, results_dir="results", allow_unverif
     """Every Config of run_yaml, in matrix order; results/<run_name>/ each."""
     sets = [*overrides, *(["allow_unverified=true"] if allow_unverified else [])]
     cfgs = loader.load(run_yaml, sets)
+    for cfg in cfgs:
+        if cfg.mode.mode == "probe":
+            check_probe(cfg)
     if not dry:
         refuse_mixed_in_process(cfgs)
         for cfg in cfgs:

@@ -166,7 +166,7 @@ class Block:
         return x + ff
 
 
-def main() -> None:
+def main(argv=None) -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--spec-dir", required=True,
                     help="QuettaSim's model yaml dir, engine/device_spec/models")
@@ -176,7 +176,7 @@ def main() -> None:
     ap.add_argument("--batch", default=",".join(map(str, DEFAULT_BATCH)))
     ap.add_argument("--decode-ctx", type=int, default=32768)
     add_output_args(ap)
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
 
     from vllm.config import VllmConfig, set_current_vllm_config
     # Hold the context manager for the process lifetime. Calling __enter__() on a

@@ -96,7 +96,7 @@ async def run(base_url, model, tokens, count, out_path):
         print(ln, flush=True)
 
 
-def main():
+def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default="/data48/kevinlau/models/Llama-3.1-8B-Instruct")
     ap.add_argument("--served-model-name", default="llama")
@@ -104,7 +104,7 @@ def main():
     ap.add_argument("--tokens", type=int, default=4096)
     ap.add_argument("--count", type=int, default=120)
     add_output_args(ap)
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
     out = out_root(a) / f"pool_capacity_{a.gpu_label}.txt"
 
     server = launch_vllm(out_root(a) / "pool_capacity", a.model, port=a.port,

@@ -68,7 +68,11 @@ def fit(rows):
     return b  # floor, shared(/tok), perreq(/tok)
 
 
-async def main():
+def main(argv=None):
+    asyncio.run(sweep(argv))
+
+
+async def sweep(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", default="http://localhost:8771/v1/chat/completions")
     ap.add_argument("--model", default="llama")
@@ -76,7 +80,7 @@ async def main():
     ap.add_argument("--Ps", default="2000,8000,16000")
     ap.add_argument("--rounds", type=int, default=3)
     add_output_args(ap)
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
     out = out_root(a) / f"live_split_{a.gpu_label}.csv"
     out.parent.mkdir(parents=True, exist_ok=True)
     Bs = [int(x) for x in a.Bs.split(",")]
@@ -102,4 +106,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    run_recorded(lambda: asyncio.run(main()), "live_split")
+    run_recorded(main, "live_split")

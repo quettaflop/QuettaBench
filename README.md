@@ -42,7 +42,10 @@ vLLM in-process, or over HTTP against a launched server
 cache reset per cell), QuettaServe through its cargo bench
 (`--set engine.name=quettaserve`). A serve run (`mode.grid` unset)
 launches the server and replays the workload against it. `mode: probe`
-runs a kernel probe (`mode.probe`, `mode.probe_args`).
+runs a kernel probe (`mode.probe`, `mode.probe_args`) with `--out
+results/<run>/`. It refuses the torchrun probes (`collective`,
+`reparallel`, `vllm_allreduce`) and the probes that name output files
+(`serving_decode_grid`, `serving_stage_split`); run those with `just probe`.
 
 ## Provisioning
 

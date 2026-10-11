@@ -10,6 +10,10 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import pytest
+
+from quettabench import runner
+from quettabench.config.schema import Config, ConfigError, EngineCfg, HardwareCfg, ModeCfg, WorkloadCfg
 from quettabench.probes.base import launch_vllm, run_recorded
 
 PROBES = Path(__file__).resolve().parents[2] / "quettabench" / "probes"
@@ -63,6 +67,44 @@ class RunRecorded(unittest.TestCase):
         _, _, files = recorded(["--out-raw", "<TD>/h100/raw.jsonl.gz"], lambda: None,
                                name="serving_decode_grid", file_flag="--out-raw")
         self.assertEqual(files, ["h100/serving_decode_grid/run.json"])
+
+
+def probe_modules():
+    return sorted(p.stem for p in PROBES.glob("*.py") if not p.stem.startswith("_") and p.stem != "base")
+
+
+def main_def(name):
+    """The probe's module-level `def main` node."""
+    tree = ast.parse((PROBES / f"{name}.py").read_text())
+    return next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main")
+
+
+def probe_cfg(name):
+    return Config(EngineCfg(), WorkloadCfg(), ModeCfg(mode="probe", probe=name, probe_args="--gpu A"),
+                  HardwareCfg(), run_name=f"p-{name}")
+
+
+@pytest.mark.parametrize("name", probe_modules())
+def test_probe_main_takes_argv_and_run_mode_decides(name):
+    fn = main_def(name)
+    assert [a.arg for a in fn.args.args] == ["argv"], name
+    assert len(fn.args.defaults) == 1 and fn.args.defaults[0].value is None, name
+    source = (PROBES / f"{name}.py").read_text()
+    with tempfile.TemporaryDirectory() as td:
+        fake = mock.Mock()
+        with mock.patch.dict(sys.modules, {f"quettabench.probes.{name}": fake}):
+            if "init_process_group" in source or "init_distributed_environment" in source:
+                with pytest.raises(ConfigError, match="torchrun"):
+                    runner.run_probe(probe_cfg(name), Path(td))
+            elif "add_output_args(ap)" not in source:
+                with pytest.raises(ConfigError, match="just probe"):
+                    runner.run_probe(probe_cfg(name), Path(td))
+            else:
+                runner.run_probe(probe_cfg(name), Path(td))
+                fake.main.assert_called_once_with(["--gpu", "A", "--out", td])
+                return
+        fake.main.assert_not_called()
+        assert not (Path(td) / "run.json").exists()
 
 
 class LaunchVllm(unittest.TestCase):
