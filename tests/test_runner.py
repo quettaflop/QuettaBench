@@ -306,18 +306,17 @@ class ChatOverHttp(unittest.TestCase):
 
 
 class FailureRecord(unittest.TestCase):
+    """A run that raises anywhere after its Config resolved leaves run.json."""
+
     def setUp(self):
         """run_probe exports CUDA_VISIBLE_DEVICES into os.environ; undo it per test."""
         patch = mock.patch.dict(os.environ, {}, clear=True)
         patch.start()
         self.addCleanup(patch.stop)
 
-    """A run that raises anywhere after its Config resolved leaves run.json."""
-
-    def run_raising(self, **patches):
+    def run_raising(self, sets=("hardware.visible_devices=0",), **patches):
         (cfg,) = loader.load(RUNS[0].with_name("llama.yaml"),
-                             ["engine.model=/w", "hardware.visible_devices=0", "mode.grid=null"],
-                             env={})
+                             ["engine.model=/w", "mode.grid=null", *sets], env={})
         with tempfile.TemporaryDirectory() as td, \
                 mock.patch.object(runner.workloads, "build"), \
                 mock.patch.object(runner.launcher, "start", **patches.get("start", {})), \
@@ -336,6 +335,17 @@ class FailureRecord(unittest.TestCase):
                                              "reason": "RuntimeError: no health"})
         self.assertEqual(files, ["requests.jsonl", "run.json"])
 
+    def test_translate_gpu_pick_and_env_export_failures_are_recorded(self):
+        targets = {"translate": (runner.base.get("vllm"), "translate", ()),
+                   "idle_gpus": (runner.launcher, "idle_gpus", ("hardware.visible_devices=null",)),
+                   "export": (runner.env_map, "export", ("mode.grid=llama_single",))}
+        for name, (obj, attr, sets) in targets.items():
+            with self.subTest(name), mock.patch.object(obj, attr, side_effect=OSError(name)):
+                exc, doc, files = self.run_raising(sets=("hardware.visible_devices=0", *sets))
+            self.assertIsInstance(exc, OSError)
+            self.assertEqual(doc["run_status"], {"status": "failed", "reason": f"OSError: {name}"})
+            self.assertEqual(files, ["requests.jsonl", "run.json"])
+
     def test_ctrl_c_mid_run_is_aborted_and_the_server_stops(self):
         handle = mock.Mock(gpu="H200", endpoint="http://127.0.0.1:1")
         exc, doc, _ = self.run_raising(start={"return_value": handle},
@@ -344,6 +354,14 @@ class FailureRecord(unittest.TestCase):
         self.assertEqual(doc["run_status"]["status"], "aborted")
         self.assertEqual(doc["provenance"]["gpu"], "H200")
         handle.stop.assert_called_once_with()
+
+    def test_a_probe_whose_gpu_pick_fails_is_recorded(self):
+        with scratch_configs("p", {"mode": {"mode": "probe", "probe": "fake"}}) as (path, td), \
+                mock.patch.object(runner.launcher, "idle_gpus", side_effect=RuntimeError("busy")):
+            with self.assertRaises(RuntimeError):
+                runner.main(path, results_dir=td / "results", allow_unverified=True)
+            doc = json.loads((td / "results" / "p" / "run.json").read_text())
+        self.assertEqual(doc["run_status"], {"status": "failed", "reason": "RuntimeError: busy"})
 
     def test_a_probe_that_raises_is_recorded(self):
         probe = mock.Mock(**{"main.side_effect": ValueError("bad shape")})

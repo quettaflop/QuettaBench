@@ -96,11 +96,12 @@ def run_probe(cfg, out):
     on Ctrl-C)."""
     check_probe(cfg)
     argv = [*shlex.split(cfg.mode.probe_args), "--out", str(out)]
-    gpus = cfg.hardware.visible_devices or launcher.idle_gpus(device_count(cfg.engine),
-                                                              cfg.hardware.backend)
-    env_map.export({"CUDA_VISIBLE_DEVICES": gpus})
-    writer = RunWriter(out, cfg, launch_env={"CUDA_VISIBLE_DEVICES": gpus})
+    writer = RunWriter(out, cfg)
     try:
+        gpus = cfg.hardware.visible_devices or launcher.idle_gpus(device_count(cfg.engine),
+                                                                  cfg.hardware.backend)
+        env_map.export({"CUDA_VISIBLE_DEVICES": gpus})
+        writer.provenance["launch_env"] = {"CUDA_VISIBLE_DEVICES": gpus}
         probe = importlib.import_module(f"quettabench.probes.{cfg.mode.probe}")
         with probes_base.run_config(cfg):
             probe.main(argv)
@@ -155,6 +156,20 @@ def run_one(cfg, out, exported=None):
     exported = set() if exported is None else exported
     if cfg.mode.mode == "probe":
         return run_probe(cfg, out)
+    # Opened first, so a run that raises anywhere below (translate, the GPU
+    # pick and the env export included) still leaves run.json.
+    writer = RunWriter(out, cfg)
+    try:
+        serve_one(cfg, out, exported, writer)
+    except BaseException as e:
+        writer.fail(e)
+        raise
+
+
+def serve_one(cfg, out, exported, writer):
+    """run_one's body: the LaunchSpec, its GPUs and env, then the server,
+    the driver and serve.run into writer; the server is stopped whatever
+    happens."""
     adapter = base.get(cfg.engine.name)
     spec = adapter.translate(cfg, out)
     gpus = cfg.hardware.visible_devices or launcher.idle_gpus(device_count(cfg.engine),
@@ -166,26 +181,21 @@ def run_one(cfg, out, exported=None):
     if in_process(cfg, adapter, spec):
         exported.update(env_map.export(pins))
     spec = with_child_env(spec, pins, exported)
-    # Opened first, so a run that raises anywhere below still leaves run.json.
-    writer = RunWriter(out, cfg, launch_env=spec.env)
+    writer.provenance["launch_env"] = redact(spec.env)
+    # A launched server's driver has no tokenizer, so its trace is built
+    # first: a bad workload fails before a long model load, not after.
+    trace = workloads.build(cfg) if adapter.needs_server(cfg) else None
+    handle = (launcher.start(spec, out, backend=backend, cfg=cfg, gpus=gpus,
+                             timeout_s=cfg.hardware.ready_timeout_s)
+              if adapter.needs_server(cfg) else launcher.NoServer(out))
     try:
-        # A launched server's driver has no tokenizer, so its trace is built
-        # first: a bad workload fails before a long model load, not after.
-        trace = workloads.build(cfg) if adapter.needs_server(cfg) else None
-        handle = (launcher.start(spec, out, backend=backend, cfg=cfg, gpus=gpus,
-                                 timeout_s=cfg.hardware.ready_timeout_s)
-                  if adapter.needs_server(cfg) else launcher.NoServer(out))
-        try:
-            driver = adapter.driver(spec, handle, trace)
-            writer.bind(handle, driver)
-            if trace is None:
-                trace = workloads.build(cfg, tokenizer=getattr(driver, "tokenizer", None))
-            serve.run(trace, driver, cfg.mode, writer, cfg.workload)
-        finally:
-            handle.stop()
-    except BaseException as e:
-        writer.fail(e)
-        raise
+        driver = adapter.driver(spec, handle, trace)
+        writer.bind(handle, driver)
+        if trace is None:
+            trace = workloads.build(cfg, tokenizer=getattr(driver, "tokenizer", None))
+        serve.run(trace, driver, cfg.mode, writer, cfg.workload)
+    finally:
+        handle.stop()
 
 
 def clear_run_dir(out, overwrite):
