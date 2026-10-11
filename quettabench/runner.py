@@ -1,9 +1,10 @@
 """qbench run: a run yaml to results/<run>/, the same sequence every time.
 
 load the yaml (+ --set, + env through env_map) into one Config per matrix
-point, then per Config: translate it to a LaunchSpec, put the collective
-env and the GPUs (hardware.visible_devices, else the first idle device_count)
-into this process for the engine to inherit, launch the server unless the
+point, then per Config: translate it to a LaunchSpec, add the collective
+pins and the GPUs (hardware.visible_devices, else the first idle
+device_count) to the child env of the server or each bench cell (docker
+gets the GPUs through --gpus instead), launch the server unless the
 adapter drives the engine itself (in-process grid, cargo bench), get the
 driver, build the Trace, and let modes/serve.py run trace
 through driver into a RunWriter; the server is stopped whatever happens.
@@ -72,6 +73,34 @@ def run_probe(cfg, out):
     writer.finish({"probe": cfg.mode.probe, "argv": argv})
 
 
+def with_child_env(spec, pins):
+    """spec with pins added to its env and to every bench cell's env."""
+    cells = tuple((ctx, bs, with_child_env(cell, pins)) for ctx, bs, cell in spec.cells)
+    return dataclasses.replace(spec, env={**spec.env, **pins}, cells=cells)
+
+
+def in_process(cfg, adapter, spec):
+    """Whether the driver runs the engine in this process: no server and no bench child."""
+    return not adapter.needs_server(cfg) and not spec.bench_argv
+
+
+def refuse_mixed_in_process(cfgs):
+    """One process cannot change its CUDA_VISIBLE_DEVICES or collective pins
+    between matrix points, so in-process points must agree on them."""
+    seen = set()
+    for cfg in cfgs:
+        if cfg.mode.mode == "probe":
+            continue
+        adapter = base.get(cfg.engine.name)
+        if in_process(cfg, adapter, adapter.translate(cfg)):
+            hw = cfg.hardware
+            seen.add((hw.visible_devices or device_count(cfg.engine),
+                      tuple(sorted((k, v) for k, v in hw.collective.items() if v))))
+    if len(seen) > 1:
+        raise ConfigError("in-process matrix points differ in GPUs or collective pins; "
+                          "one process cannot change them, so run each point on its own")
+
+
 def run_one(cfg, out):
     """One Config through launch, drive, serve and stop."""
     if cfg.mode.mode == "probe":
@@ -81,7 +110,12 @@ def run_one(cfg, out):
     gpus = cfg.hardware.visible_devices or launcher.idle_gpus(device_count(cfg.engine),
                                                               cfg.hardware.backend)
     backend = "docker" if in_docker(cfg, adapter) else "local"
-    env_map.export({**cfg.hardware.collective, "CUDA_VISIBLE_DEVICES": gpus})
+    pins = {k: v for k, v in cfg.hardware.collective.items() if v}
+    if backend == "local":
+        pins["CUDA_VISIBLE_DEVICES"] = gpus
+    if in_process(cfg, adapter, spec):
+        env_map.export(pins)
+    spec = with_child_env(spec, pins)
     handle = (launcher.start(spec, out, backend=backend, cfg=cfg, gpus=gpus,
                              timeout_s=cfg.hardware.ready_timeout_s)
               if adapter.needs_server(cfg) else launcher.NoServer(out))
@@ -97,7 +131,10 @@ def run_one(cfg, out):
 def main(run_yaml, overrides=(), dry=False, results_dir="results", allow_unverified=False):
     """Every Config of run_yaml, in matrix order; results/<run_name>/ each."""
     sets = [*overrides, *(["allow_unverified=true"] if allow_unverified else [])]
-    for cfg in loader.load(run_yaml, sets):
+    cfgs = loader.load(run_yaml, sets)
+    if not dry:
+        refuse_mixed_in_process(cfgs)
+    for cfg in cfgs:
         if dry:
             dry_run(cfg)
         else:

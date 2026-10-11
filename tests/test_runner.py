@@ -17,6 +17,8 @@ import yaml
 
 from quettabench import cli, runner
 from quettabench.config import loader
+from quettabench.config.schema import ConfigError
+from quettabench.engines.base import LaunchSpec
 from tests.golden._harness import REPO
 
 RUNS = sorted((REPO / "configs" / "runs").glob("*.yaml"))
@@ -79,11 +81,13 @@ class DryRun(unittest.TestCase):
 
 
 class GpuPick(unittest.TestCase):
-    def exported(self, *sets):
-        """What run_one puts into the environment, with the engine stubbed out."""
+    def child_env(self, *sets):
+        """The env run_one gives the child, with the engine stubbed out."""
         (cfg,) = loader.load(RUNS[0].with_name("llama-tp2.yaml"),
                              ["engine.model=/w", "hardware.backend=cuda", *sets], env={})
-        adapter = mock.Mock(**{"needs_server.return_value": False})
+        adapter = mock.Mock(**{"needs_server.return_value": False,
+                               "translate.return_value": LaunchSpec(adapter="x",
+                                                                    bench_argv=("b",))})
         with mock.patch.object(runner.base, "get", return_value=adapter), \
                 mock.patch.object(runner.launcher, "idle_gpus", return_value="3,5") as idle, \
                 mock.patch.object(runner.env_map, "export") as export, \
@@ -91,15 +95,43 @@ class GpuPick(unittest.TestCase):
                 mock.patch.object(runner, "RunWriter"), mock.patch.object(runner.serve, "run"), \
                 tempfile.TemporaryDirectory() as td:
             runner.run_one(cfg, Path(td))
-        return export.call_args.args[0]["CUDA_VISIBLE_DEVICES"], idle.call_args
+        export.assert_not_called()  # a bench child gets its env, this process keeps its own
+        return adapter.driver.call_args.args[0].env["CUDA_VISIBLE_DEVICES"], idle.call_args
 
     def test_idle_gpus_for_tp_times_pp(self):
-        gpus, idle = self.exported("engine.pp=2")
+        gpus, idle = self.child_env("engine.pp=2")
         self.assertEqual((gpus, idle.args), ("3,5", (4, "cuda")))
 
     def test_caller_devices_win(self):
-        gpus, idle = self.exported("hardware.visible_devices=6,7")
+        gpus, idle = self.child_env("hardware.visible_devices=6,7")
         self.assertEqual((gpus, idle), ("6,7", None))
+
+
+class MatrixEnv(unittest.TestCase):
+    def test_each_point_gets_its_own_gpus_and_pins(self):
+        run = {"model": "llama31_8b", "mode": {"grid": None},
+               "hardware": {"backend": "cuda", "link_profile": "pcie"},
+               "matrix": {"engine.tp": [1, 2]}}
+        idle = {1: "4", 2: "6,7"}
+        with scratch_configs("sweep", run) as (path, td), \
+                mock.patch.object(runner.launcher, "idle_gpus",
+                                  side_effect=lambda n, backend: idle[n]), \
+                mock.patch.object(runner.launcher, "start") as start, \
+                mock.patch.object(runner.env_map, "export") as export, \
+                mock.patch.object(runner.workloads, "build"), \
+                mock.patch.object(runner, "RunWriter"), mock.patch.object(runner.serve, "run"):
+            runner.main(path, ["engine.model=/w"], results_dir=td, allow_unverified=True)
+        envs = [c.args[0].env for c in start.call_args_list]
+        self.assertEqual([e["CUDA_VISIBLE_DEVICES"] for e in envs], ["4", "6,7"])
+        self.assertEqual([e["NCCL_PROTO"] for e in envs], ["Simple", "Simple"])
+        export.assert_not_called()
+
+    def test_in_process_points_that_differ_are_refused(self):
+        run = {"model": "llama31_8b", "workload": {"kind": "grid"}, "mode": {"grid": "smoke"},
+               "matrix": {"engine.tp": [1, 2]}}
+        with scratch_configs("sweep", run) as (path, td), \
+                self.assertRaisesRegex(ConfigError, "one process cannot change them"):
+            runner.main(path, ["engine.model=/w"], results_dir=td, allow_unverified=True)
 
 
 class ReadyTimeout(unittest.TestCase):
