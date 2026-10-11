@@ -400,3 +400,22 @@ shifted each lap k by k * (span + mean gap) of the file's timestamps;
 before, every lap repeated the first lap's arrival times, so
 `workload.arrival=trace` fired the wrapped requests together with the
 first lap's.
+
+2026-10-11: no fixture changed. Since d7287c5 the live-server probes start
+vLLM through `probes.base.launch_vllm` (the vllm adapter, then
+`launcher.start`), so each launch differs from the probe's own launch
+before it, pinned in `tests/probes/test_probe_record.py`:
+
+- all three: the server is `<python's dir>/vllm serve <model>` instead of
+  `<python> -m vllm.entrypoints.openai.api_server --model <model>`; its env
+  gains `VLLM_SERVER_DEV_MODE=1` (mounts /reset_prefix_cache) and
+  `VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1` (KV is sized after graph
+  capture, so the KV pool the server reports can differ from before); the
+  argv gains `--trust-remote-code`; flags come in the adapter's order.
+- `pool_capacity`: no other flag changed (it already passed
+  `--enable-chunked-prefill`).
+- `serving_stage_split`: no other flag changed (it already passed
+  `--enable-chunked-prefill`).
+- `serving_decode_grid`: also gains `--enable-chunked-prefill`, which it
+  did not pass before. Whether that changes its scheduling depends on the
+  vLLM build's default for chunked prefill; no run has measured it.

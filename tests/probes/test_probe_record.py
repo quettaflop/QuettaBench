@@ -125,6 +125,46 @@ class LaunchVllm(unittest.TestCase):
             self.assertIn(flag, argv)
         self.assertEqual(argv[argv.index("--port") + 1], "8794")
 
+    def test_each_live_probe_launch_is_pinned(self):
+        """argv and env of the three live-server probes' launches; what changed
+        against their own launches before d7287c5 is in tests/golden/REPORT.md."""
+        from quettabench.probes import pool_capacity, serving_decode_grid, serving_stage_split
+
+        def launched(fn):
+            with mock.patch("quettabench.engines.launcher.start") as start:
+                start.return_value = mock.Mock(results_dir=Path(td))
+                fn()
+            spec = start.call_args.args[0]
+            return [Path(spec.server_argv[0]).name, *spec.server_argv[1:]], dict(spec.env)
+
+        common = ["--tensor-parallel-size", "1", "--dtype", "bfloat16", "--max-model-len", "32768",
+                  "--gpu-memory-utilization", "0.9"]
+        tail = ["--enable-chunked-prefill", "--trust-remote-code", "--served-model-name", "llama",
+                "--host", "127.0.0.1"]
+        env = {"VLLM_SERVER_DEV_MODE": "1", "VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS": "1"}
+        with tempfile.TemporaryDirectory() as td:
+            Path(td, "server.log").write_text("")
+            with mock.patch.object(pool_capacity, "run", mock.Mock()), \
+                    mock.patch.object(pool_capacity.asyncio, "run"):
+                pool = launched(lambda: pool_capacity.main(
+                    ["--model", "/w", "--gpu-label", "H100", "--out", td]))
+            split = launched(lambda: serving_stage_split.launch_server(
+                "/w", 8794, 0.9, 32768, "k", "sha256", Path(td)))
+            grid = launched(lambda: serving_decode_grid.launch_server(
+                "/w", 8795, 0.9, 32768, "k", Path(td), 1, 256, 8192))
+        self.assertEqual(pool, (["vllm", "serve", "/w", "--port", "8794", *common,
+                                 "--enable-prefix-caching", *tail, "--api-key", "test",
+                                 "--prefix-caching-hash-algo", "sha256",
+                                 "--no-enable-log-requests"], env))
+        self.assertEqual(split, (["vllm", "serve", "/w", "--port", "8794", *common,
+                                  "--enable-prefix-caching", *tail, "--api-key", "k",
+                                  "--no-enable-log-requests", "--prefix-caching-hash-algo",
+                                  "sha256"], env))
+        self.assertEqual(grid, (["vllm", "serve", "/w", "--port", "8795", *common,
+                                 "--no-enable-prefix-caching", *tail, "--max-num-seqs", "256",
+                                 "--max-num-batched-tokens", "8192", "--api-key", "k",
+                                 "--no-enable-log-requests"], env))
+
     def test_no_probe_starts_a_process(self):
         for path in sorted(PROBES.glob("*.py")):
             calls = {f"{n.func.value.id}.{n.func.attr}" for n in ast.walk(ast.parse(path.read_text()))
