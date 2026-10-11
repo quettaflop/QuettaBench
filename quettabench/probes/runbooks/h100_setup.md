@@ -19,66 +19,40 @@ PYTHON=~/miniconda3/envs/vllm/bin/python
 MODEL=<model-dir>
 ```
 
-## Run a profiling script
+## Run a probe
 
 ```bash
 ssh h100
-cd /root/agentic-serve   # or wherever the repo is checked out
+cd /root/agentic-serve   # or wherever this repo is checked out
 
-CUDA_VISIBLE_DEVICES=6 \
-TMPDIR=<tmp-dir> \
-XDG_CACHE_HOME=<tmp-dir>/.cache \
-~/miniconda3/envs/vllm/bin/python <script-path> <args>
+TMPDIR=<tmp-dir> XDG_CACHE_HOME=<tmp-dir>/.cache \
+GPU_ID=6 PYTHON_BIN=~/miniconda3/envs/vllm/bin/python \
+  just probe <probe> "--gpu-label H100 <args>"
 ```
 
-## Prefill decomposition (experiment.md method)
+Each run writes `results/probes/H100/<probe>/<run-id>/`; from another box,
+`REMOTE_HOST=h100 GPU_ID=6 PYTHON_BIN=... just remote-probe <probe> H100 "<args>"`
+runs it there and pulls the run back (`quettabench/probes/README.md`).
 
-```bash
-ssh h100
-cd /root/agentic-serve
+## The old profiling scripts (historical)
 
-CUDA_VISIBLE_DEVICES=6 \
-TMPDIR=<tmp-dir> \
-XDG_CACHE_HOME=<tmp-dir>/.cache \
-~/miniconda3/envs/vllm/bin/python \
-  profiling/profile/vllm/cuda_events/prefill_decomposition.py \
-  --model <model-dir> \
-  --output profile_data/results/prefill_decomposition_H100.csv
-```
+The scripts below lived under `profiling/profile/` before the refactor and
+are retired; each row gives the current command (historical paths, kept for
+the record of what the H100 numbers came from).
 
-Output columns:
-- `attention_ms` -- attention kernel time (same in eager and compiled mode)
-- `gemm_ms` -- GEMM kernel time (eager mode)
-- `elementwise_ms` -- triton pointwise/reduction kernel time (eager mode)
-- `overhead_ms` -- wall time not attributed to any bucket
-- Compiled prefill times from `prefill_profile_H100.csv` are shown for comparison
-
-Interpretation: `attention_ms` is the cost of flash attention custom ops. In compiled (CUDA graph) mode these run as-is. The non-attention reduction (`compiled_ms - attention_ms` vs `eager_ms - attention_ms`) is the torch.compile + CUDA graph fusion benefit.
-
-## Existing profiling scripts
-
-| Script | What it does |
+| old script (historical, retired) | now |
 |--------|-------------|
-| `profiling/profile/vllm/cuda_events/decode_steps.py` | Decode step wall time via CUDA events |
-| `profiling/profile/vllm/cuda_events/flash_attn.py` | Isolated flash attention sweep |
-| `profiling/profile/vllm/cuda_events/decode_kernel_trace.py` | Decode step kernel bucketing via torch.profiler |
-| `profiling/profile/vllm/cuda_events/prefill_kernel_trace.py` | Prefill step kernel bucketing via torch.profiler (delta method) |
-| `profiling/profile/vllm/cuda_events/prefill_decomposition.py` | Prefill attention vs compiled non-attention decomposition |
-| `profiling/profile/vllm/sweep/prefill_steps.py` | vLLM prefill step time lattice |
-| `profiling/profile/vllm/engine_trace/serving_engine_steps.py` | V1 scheduler step tracing |
+| `profiling/profile/vllm/cuda_events/decode_steps.py` | a grid run: `just run configs/runs/<model>.yaml --set engine.model=<weights>` (ms per step in `results/<run>/run.json` `steps`) |
+| `profiling/profile/vllm/cuda_events/flash_attn.py` | `just gpu=H100 flash tag=tp1 nh=<Hq> nkv=<Hkv> hd=<head_dim>` |
+| `profiling/profile/vllm/cuda_events/decode_kernel_trace.py` | `--set engine.instrumentation=nsys` on the run, then `just profile --run results/<run> --source kernels --kernel-steps N` |
+| `profiling/profile/vllm/cuda_events/prefill_kernel_trace.py` | as decode_kernel_trace, on a run whose grid holds the prefill cells |
+| `profiling/profile/vllm/cuda_events/prefill_decomposition.py` | as decode_kernel_trace (the kernels source buckets attention vs the rest) |
+| `profiling/profile/vllm/sweep/prefill_steps.py` | a grid run as decode_steps, over the prefill cells in `configs/grids.yaml` |
+| `profiling/profile/vllm/engine_trace/serving_engine_steps.py` | `just profile --run results/<run> --source metrics` on a live run |
+| `profiling/profile/scripts/run_vllm_profile.py` (orchestration) | `just run` and `just profile` (README.md "Old command -> new command") |
 
-## Orchestration
-
-Use `profiling/profile/scripts/run_vllm_profile.py` for orchestration:
-
-```bash
-CUDA_VISIBLE_DEVICES=6 \
-TMPDIR=<tmp-dir> \
-XDG_CACHE_HOME=<tmp-dir>/.cache \
-~/miniconda3/envs/vllm/bin/python profiling/profile/scripts/run_vllm_profile.py \
-  --source cuda-events \
-  --target <target> \
-  -- \
-  --model <model-dir> \
-  <target-specific-args>
-```
+The historical prefill decomposition wrote `attention_ms`, `gemm_ms`,
+`elementwise_ms` and `overhead_ms` per prompt length (eager mode), next to
+the compiled prefill times; the non-attention reduction (`compiled_ms -
+attention_ms` vs `eager_ms - attention_ms`) was read as the torch.compile +
+CUDA graph fusion benefit.

@@ -349,3 +349,41 @@ def test_readme_maps_each_old_quettasim_probe_recipe_to_a_working_command():
             flags = {t for t in line.split() if t.startswith("--") and "=" not in t}
             missing = flags - argparse_flags(PROBES_DIR / f"{probe}.py") - {"--only", "--results", "--kernel-dest"}
             assert not missing, (probe, missing)
+
+
+RUNBOOKS = sorted((PROBES_DIR / "runbooks").glob("*.md"))
+
+
+def runbook_drift(path: Path) -> list[str]:
+    """Commands in a runbook that no longer run here: a probe flag it does not
+    define, a just recipe that is gone, a cited script that is not in the
+    repo (unless the line, or its section heading, marks it historical or
+    retired), or --api-key test."""
+    found = []
+    recipes = {b.split()[0].rstrip(":") for b in recipe_blocks(JUSTFILE)}
+    text = path.read_text().replace("\\\n", " ")
+    section, fenced = False, False
+    for n, line in enumerate(text.splitlines(), 1):
+        where = f"{path.name}:{n}"
+        fenced ^= line.startswith("```")
+        if line.startswith("#") and not fenced:
+            section = "historical" in line.lower()
+        if "--api-key test" in line:
+            found.append(f"{where} --api-key test")
+        dated = section or "historical" in line.lower() or "retired" in line.lower()
+        for probe in re.findall(r"-m quettabench\.probes\.([a-z0-9_]+)", line):
+            flags = {t.strip("`") for t in line.split() if t.startswith("--") and "=" not in t}
+            missing = flags - argparse_flags(PROBES_DIR / f"{probe}.py")
+            if missing and not dated:
+                found.append(f"{where} {probe} lacks {sorted(missing)}")
+        for recipe in re.findall(r"`just (?:gpu=\S+ )?([a-z][a-z0-9-]*)", line):
+            if recipe not in recipes and not dated:
+                found.append(f"{where} no recipe {recipe}")
+        for script in re.findall(r"((?:profiling|scripts|slice_tf)/[\w./-]+\.py)", line):
+            if not (ROOT / script).exists() and not dated:
+                found.append(f"{where} no {script}")
+    return found
+
+
+def test_runbook_commands_still_run_here():
+    assert [d for path in RUNBOOKS for d in runbook_drift(path)] == []

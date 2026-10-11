@@ -131,7 +131,9 @@ ttft_prom_ms, prompt_tokens_actual`.
 
 **Block-hash attribution (optional second run):** re-run with `--hash builtin`; the
 `frontend_residual.cached` delta vs `--hash sha256` is the SHA-256 prefix-cache block-hash cost
-(the external-lit lead). Write to a `_builtin` CSV and diff.
+(the external-lit lead). Give that run its own new dir (a probe refuses a run dir that
+exists), e.g. `--out results/probes/H100/serving_stage_split/<date>-builtin/serving_stage_split_H100_builtin.csv`,
+and diff the two CSVs.
 
 ### 4b. LANE B (device split) -- separate nsys-wrapped run
 
@@ -143,7 +145,8 @@ $PYTHON -m quettabench.probes.serving_stage_split --emit-nsys-cmd --port 8771 \
   --out results/probes/H100/serving_stage_split/<date>-nsys/serving_stage_split_H100.csv
 ```
 
-That prints (paths are **VERIFY-ON-H100**):
+That prints (paths are **VERIFY-ON-H100**; the server takes its key from `VLLM_API_KEY`,
+exported first and set to the `--api-key` you pass the bench, so no key is on the command line):
 
 ```bash
 nsys profile -t cuda,nvtx,cublas --cuda-graph-trace=node \
@@ -151,8 +154,8 @@ nsys profile -t cuda,nvtx,cublas --cuda-graph-trace=node \
   -o serving_stage_split_nsys -f true -- \
   $PYTHON -m vllm.entrypoints.openai.api_server \
     --model $MODEL --served-model-name llama --host 127.0.0.1 --port 8771 \
-    --dtype bfloat16 --gpu-memory-utilization 0.90 --max-model-len 32768 \
-    --enable-prefix-caching --enable-chunked-prefill --api-key test \
+    --dtype bfloat16 --gpu-memory-utilization 0.9 --max-model-len 32768 \
+    --enable-prefix-caching --enable-chunked-prefill \
     --no-enable-log-requests --worker-extension-cls my_ext.NvtxForwardTimer
 ```
 
@@ -166,7 +169,7 @@ device_kernel_ms(window) = SUM(k.end - k.start)
   over CUPTI_ACTIVITY_KIND_KERNEL rows whose [start,end] fall inside the 'vllm_prefill_step'
   NVTX range (NVTX_EVENTS table),
   bucketed GEMM/attn/kv_write/elementwise/sampling via the existing classifier
-  (profiling/process/_legacy/extract_nsys_prefill_breakdown.py -- reuse classify() + the
+  (historical, retired: profiling/process/_legacy/extract_nsys_prefill_breakdown.py -- reuse classify() + the
    CUPTI_ACTIVITY_KIND_KERNEL ⋈ StringIds query; ADD the NVTX-range timestamp join).
 ```
 
@@ -174,15 +177,15 @@ Emit a small `serving_stage_device_H100.csv` (`new,cached,device_kernel_ms`) for
 
 ### 4c. Analyze
 
-```bash
-$PYTHON -m quettabench.probes.serving_stage_split \
-  --csv results/probes/H100/serving_stage_split/<date>/serving_stage_split_H100.csv \
-  --device-csv profile_data/results/serving_stage_device_H100.csv   # optional (LANE B)
-```
+Historical: the analyzer this step ran (`serving_stage_split --csv ... --device-csv ...`,
+printing the SERVING-LEVEL COST BREAKDOWN table, the de-fit gates and the
+`device vs framework_dispatch` split) is retired, and no current command prints that table.
+The legs now reach QuettaSim through the export builders that read them:
 
-Prints the SERVING-LEVEL COST BREAKDOWN table (FLOOR + ms/1k-new + ms/1k-cached per stage), the
-de-fit reconciliation gates, and (if the device CSV is present) the `device vs framework_dispatch`
-split of the NEW prefill slope.
+```bash
+just export --only stage_split_rates tp_comm \
+  --results results/probes/H100/serving_stage_split --dest <export dir>
+```
 
 ---
 
