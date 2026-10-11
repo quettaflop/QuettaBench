@@ -464,11 +464,6 @@ def pcts(values, method: str) -> dict:
     return {f"p{q}": percentile(values, q, method) for q in (50, 90, 95, 99)}
 
 
-def _percentile(data: list[float], p: float) -> float:
-    """Linear-interpolation percentile; the runner summaries' method."""
-    return percentile(data, p, "linear")
-
-
 def summarize_serve(records, wall_s: float, method: str) -> dict:
     """Serving summary of replay records ({ttft_ms, tpot_ms, out_tokens}).
 
@@ -483,6 +478,7 @@ def summarize_serve(records, wall_s: float, method: str) -> dict:
     toks = sum(r["out_tokens"] for r in records)
     return {
         "n": len(records),
+        "percentile_method": method,
         "ttft_ms": pcts(ttft, method),
         "tpot_ms": pcts(tpot, method) if tpot else None,
         "req_s": len(records) / wall_s if wall_s > 0 else 0.0,
@@ -660,26 +656,26 @@ def aggregate(
     if ttfts:
         summary.mean_ttft_ms = statistics.mean(ttfts)
         summary.median_ttft_ms = statistics.median(ttfts)
-        summary.p90_ttft_ms = _percentile(ttfts, 90)
-        summary.p99_ttft_ms = _percentile(ttfts, 99)
+        summary.p90_ttft_ms = percentile(ttfts, 90, "linear")
+        summary.p99_ttft_ms = percentile(ttfts, 99, "linear")
 
     if tpots:
         summary.mean_tpot_ms = statistics.mean(tpots)
         summary.median_tpot_ms = statistics.median(tpots)
-        summary.p90_tpot_ms = _percentile(tpots, 90)
-        summary.p99_tpot_ms = _percentile(tpots, 99)
+        summary.p90_tpot_ms = percentile(tpots, 90, "linear")
+        summary.p99_tpot_ms = percentile(tpots, 99, "linear")
 
     if itls:
         summary.mean_itl_ms = statistics.mean(itls)
         summary.median_itl_ms = statistics.median(itls)
-        summary.p90_itl_ms = _percentile(itls, 90)
-        summary.p99_itl_ms = _percentile(itls, 99)
+        summary.p90_itl_ms = percentile(itls, 90, "linear")
+        summary.p99_itl_ms = percentile(itls, 99, "linear")
 
     if e2els:
         summary.mean_e2el_ms = statistics.mean(e2els)
         summary.median_e2el_ms = statistics.median(e2els)
-        summary.p90_e2el_ms = _percentile(e2els, 90)
-        summary.p99_e2el_ms = _percentile(e2els, 99)
+        summary.p90_e2el_ms = percentile(e2els, 90, "linear")
+        summary.p99_e2el_ms = percentile(e2els, 99, "linear")
 
     return summary
 
@@ -778,8 +774,8 @@ def aggregate_per_turn(results_by_turn: dict[int, list]) -> list[TurnSummary]:
         if ttfts:
             ts.mean_ttft_ms = statistics.mean(ttfts)
             ts.median_ttft_ms = statistics.median(ttfts)
-            ts.p90_ttft_ms = _percentile(ttfts, 90)
-            ts.p99_ttft_ms = _percentile(ttfts, 99)
+            ts.p90_ttft_ms = percentile(ttfts, 90, "linear")
+            ts.p99_ttft_ms = percentile(ttfts, 99, "linear")
         if tpots:
             ts.mean_tpot_ms = statistics.mean(tpots)
             ts.median_tpot_ms = statistics.median(tpots)

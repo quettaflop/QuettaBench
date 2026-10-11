@@ -70,9 +70,13 @@ class Summary:
     reason: str | None = None
 
     def to_dict(self):
-        out = {**(self.core.to_dict() if self.core else {}), **self.sections}
+        """run.json's summary; each part with percentiles names their method
+        (aggregate and per_turn are linear, serve/sla/burst nearest)."""
+        core = {**self.core.to_dict(), "percentile_method": "linear"} if self.core else {}
+        out = {**core, **self.sections}
         if self.turns:
-            out["per_turn"] = [t.to_dict() for t in self.turns]
+            out["per_turn"] = [{**t.to_dict(), "percentile_method": "linear"}
+                               for t in self.turns]
         return out
 
 
@@ -290,12 +294,12 @@ def crossval_sections(pairs, duration, mode, server_spec=None):
         out["sla"] = {"verdict": "FAIL" if bound else "PASS", "bound": bound,
                       "ttft_p99": s["ttft_ms"]["p99"],
                       "tpot_p99": s["tpot_ms"]["p99"] if s["tpot_ms"] else 0,
-                      "rate_req_s": s["req_s"],
+                      "rate_req_s": s["req_s"], "percentile_method": s["percentile_method"],
                       "sla_ttft_ms": mode.sla_ttft_ms, "sla_tpot_ms": mode.sla_tpot_ms}
     if mode.sla_ttft_ms:
         recovery, peak = burst_recovery(records, mode.sla_ttft_ms)
         out["burst"] = {"peak_ttft_p99": peak, "recovery_s": recovery,
-                        "target_ms": mode.sla_ttft_ms}
+                        "target_ms": mode.sla_ttft_ms, "percentile_method": "nearest"}
     return out
 
 

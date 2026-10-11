@@ -135,6 +135,10 @@ class Sections(unittest.TestCase):
         self.assertEqual(summary.sections["serve"]["ttft_ms"]["p99"], 1.0)
         self.assertTrue(tail(out, "SLASUM verdict=FAIL bound=ttft_p99 ttft_p99=1.0/0.5"))
         self.assertTrue(tail(out, "BURSTSUM peak_ttft_p99=1.0 recovery_s=na target_ms=0.5"))
+        doc = summary.to_dict()
+        self.assertEqual([doc[k]["percentile_method"] for k in ("serve", "sla", "burst")],
+                         ["nearest"] * 3)
+        self.assertEqual(doc["percentile_method"], "linear")  # the aggregate's p90/p99 fields
         summary, out = run(single_trace(4), FakeDriver(), ModeCfg(warmup=0, concurrency=4))
         self.assertNotIn("sla", summary.sections)
         self.assertFalse(tail(out, "SLASUM") or tail(out, "BURSTSUM"))
