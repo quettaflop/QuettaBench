@@ -6,7 +6,8 @@ Prints the comparison text (crossval/compare.py, the old table.py output)
 and writes the Report as json to results/xval/<ours>_vs_<theirs>.json, or
 to --json OUT. Agreement rows appear when both sides are run dirs whose
 rows returned text or logits; --floor adds the slice BAND verdict
-(crossval/agreement.py).
+(crossval/agreement.py). Exits 1, after the json is written, when the
+FIDELITY or the BAND verdict is FAIL.
 
 The facts a bench log does not state (NCCL pins, quant, serving style) and
 XVAL_ALLOW_METHOD_MISMATCH come from the environment through env_map.
@@ -83,3 +84,6 @@ def main(argv=None):
     out.write_text(json.dumps(report_json(report), indent=2) + "\n")
     if not report.rows and not report.agreement:
         sys.exit("no overlapping (ctx, bs, tp) points")
+    if any(r["kind"] in ("logit_summary", "band") and r["verdict"] == "FAIL"
+           for r in report.agreement):
+        sys.exit(1)

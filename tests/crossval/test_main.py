@@ -58,6 +58,22 @@ class Door(unittest.TestCase):
         self.assertIn("NCCL MISMATCH engine=Ring/None vllm=auto/auto", text)
         self.assertIn("QUANT MISMATCH engine=nvfp4 vllm=float16; ratios withheld", text)
 
+    def test_fidelity_or_band_fail_exits_1_after_the_json(self):
+        for kind in ("logit_summary", "band"):
+            with self.subTest(kind), tempfile.TemporaryDirectory() as td, \
+                    mock.patch.object(crossval, "read_side"), \
+                    mock.patch.object(crossval.reader, "read_rows"), \
+                    mock.patch.object(crossval.compare, "render", return_value=""), \
+                    mock.patch.object(crossval.compare, "pair",
+                                      return_value=mock.Mock(rows=[], agreement=[])), \
+                    mock.patch.object(crossval, "report_json", return_value={}), \
+                    mock.patch.object(crossval.agreement, "compare_runs",
+                                      return_value=[{"kind": kind, "verdict": "FAIL"}]):
+                with self.assertRaises(SystemExit) as e:
+                    run([td, td, "--json", Path(td) / "r.json"])
+                self.assertEqual(e.exception.code, 1)
+                self.assertTrue((Path(td) / "r.json").is_file())
+
     def test_missing_input(self):
         with self.assertRaises(SystemExit) as e:
             run(["/nonexistent/run", BASELINE])
