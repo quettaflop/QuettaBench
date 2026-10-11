@@ -1,4 +1,5 @@
-"""quettabench must not depend on the one-off studies under analysis/."""
+"""quettabench must not depend on the one-off studies under analysis/ or the
+fetch scripts under data/."""
 
 import ast
 from pathlib import Path
@@ -14,11 +15,11 @@ def imported_modules(tree):
             yield node.module
 
 
-def test_package_never_imports_analysis():
+def test_package_never_imports_analysis_or_data():
     offenders = []
     for path in sorted(PACKAGE.rglob("*.py")):
         tree = ast.parse(path.read_text(), filename=str(path))
         for module in imported_modules(tree):
-            if module == "analysis" or module.startswith("analysis."):
+            if module.split(".")[0] in ("analysis", "data"):
                 offenders.append(f"{path.relative_to(PACKAGE.parent)}: {module}")
     assert not offenders, offenders

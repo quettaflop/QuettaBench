@@ -9,8 +9,9 @@ QuettaBench is a measurement harness. It has one command, `qbench`, with four
 doors: `run | profile | crossval | export`, plus `provision` for box setup.
 It has one measurement procedure, `quettabench/modes/serve.py`. Three structs flow one way, `Config ->
 LaunchSpec -> RequestResult`, and nothing flows back. Every measurement lands
-in one results layer, `results/<run>/`, and leaves the repo by one route,
-`quettabench/export/`.
+in one results layer, `results/<run>/`, and leaves the repo by
+`quettabench/export/`; the probes' tables also leave by `just mirror-up`
+(below).
 
 ## Layout
 
@@ -53,7 +54,8 @@ in one results layer, `results/<run>/`, and leaves the repo by one route,
   nothing checks that they stay under results/.
 - `quettabench/crossval/`: reads run files; its only write is the report json
   (default `results/xval/`).
-- `quettabench/export/`: the only code that writes outside the repo.
+- `quettabench/export/`: the only measurement code that writes outside the
+  repo; `provision.py` sets the box up outside it (below).
 - `configs/`: `models/` holds per-model facts, once. `runs/` reference a model
   and never restate its facts. `grids.yaml` holds the grids and step points,
   `hardware/` the link profiles, `workloads/` one yaml per workload profile.
@@ -62,6 +64,31 @@ in one results layer, `results/<run>/`, and leaves the repo by one route,
 - `tests/golden/`: characterization fixtures captured from the pre-refactor
   code. Change a fixture only with a dated line in `tests/golden/REPORT.md`
   saying why.
+
+## Who writes, who starts a process
+
+Every writer and every process starter, exactly:
+
+- `engines/launcher.py`: `engine.json` and `server.log` in the run dir; starts
+  the engine server process (local, or `docker run`), for a run or a probe.
+- `BenchDriver` (`engines/drivers.py`): `bench.log` in the run dir; starts the
+  QuettaServe bench process, once per grid cell.
+- `InProcessDriver` (`engines/drivers.py`): builds the vLLM engine inside this
+  process; starts no process.
+- `metrics/results.py` `RunWriter`: `run.json` and `requests.jsonl`.
+- probes: their tables and their `run.json` under `results/` (default
+  `results/probes/<gpu>/`); `serving_decode_grid` also starts its request
+  shards as `multiprocessing` processes.
+- `profiler.py`: `profile.json` (and the nsys export) in the run dir.
+- `profiling/kv_transfer.py`: its CSV under `--out-dir`, run under its own
+  torchrun ranks.
+- `crossval/`: its report json (default `results/xval/`).
+- `export/`: the QuettaSim tables at `--dest`, outside the repo.
+- `provision.py`: outside the repo, the `cache_root` dirs, the QuettaServe
+  `git clone`, `pip install`, the weights download and `cargo` builds; in the
+  repo, `.env`.
+- `justfile` `mirror-up` (and `mirror-up-prune`): uploads `results/probes/`
+  to R2, the second route out of the repo, for probe tables only.
 
 ## Laws
 
