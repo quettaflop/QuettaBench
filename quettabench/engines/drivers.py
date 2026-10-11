@@ -25,6 +25,7 @@ they are imported inside the methods that use them.
 
 import asyncio
 import contextlib
+import http.client
 import json
 import os
 import re
@@ -506,13 +507,14 @@ class HttpDriver(Driver):
 
     def spec_counters(self):
         """The server's spec-decode counters from one /metrics scrape; None
-        without a bound url or without the counters."""
+        without a bound url, without the counters, or when the scrape fails."""
         if not self.url:
             return None
         try:
             with launcher.urlopen(f"{server_base_url(self.url)}/metrics", timeout=10) as resp:
                 return spec_counts(parse_prometheus(resp.read().decode()))
-        except OSError:
+        except (OSError, http.client.HTTPException, ValueError):
+            # unreachable, a broken HTTP reply, or a body that is not text
             return None
 
     def warmup(self):

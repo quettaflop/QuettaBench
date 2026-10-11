@@ -2,6 +2,7 @@
 summary lines in the exact formats legacy/trace_serve.py printed."""
 
 import contextlib
+import http.client
 import io
 import unittest
 from unittest import mock
@@ -138,6 +139,16 @@ class Sections(unittest.TestCase):
             driver = HttpDriver("completions", url=endpoint + "/v1/completions", model="m")
             summary, _ = run(single_trace(3), driver, ModeCfg(warmup=0, concurrency=3))
         self.assertEqual(summary.sections["spec"], {"spec": "off"})
+
+    def test_a_failed_metrics_scrape_reads_as_no_counters(self):
+        driver = HttpDriver("completions", url="http://127.0.0.1:1/v1/completions", model="m")
+        body = mock.MagicMock(**{"__enter__.return_value.read.return_value": b"\xff\xfe"})
+        for name, effect in (("refused", ConnectionRefusedError()),
+                             ("bad status", http.client.BadStatusLine("x")),
+                             ("not text", None)):
+            with self.subTest(name), mock.patch("quettabench.engines.launcher.urlopen",
+                                                side_effect=effect, return_value=body):
+                self.assertIsNone(driver.spec_counters())
 
     def test_sla_and_burst_follow_the_mode(self):
         summary, out = run(single_trace(4), FakeDriver(),
