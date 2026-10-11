@@ -39,6 +39,7 @@ import aiohttp
 from quettabench.config import env_map
 from quettabench.crossval import reader
 from quettabench.metrics.core import RequestResult
+from quettabench.profiling.native import spec_decode_counters
 from quettabench.workloads.base import Request
 from quettabench.workloads.grid import distinct_ids
 
@@ -499,6 +500,11 @@ class HttpDriver(Driver):
                                                  for r in requests))
                 return time.perf_counter() - t0, results
         return asyncio.run(go())
+
+    def spec_counters(self):
+        """The server's spec-decode counters from one /metrics scrape; None
+        without a bound url or without the counters."""
+        return spec_decode_counters(server_base_url(self.url)) if self.url else None
 
     def warmup(self):
         """One 256-token prompt decoded 20 steps, as InProcessDriver's; the time is discarded."""

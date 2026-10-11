@@ -27,7 +27,7 @@ import time
 from dataclasses import dataclass, field
 
 from ..config.schema import WorkloadCfg
-from ..engines.drivers import PrefixCacheResetError, server_base_url
+from ..engines.drivers import PrefixCacheResetError
 from ..metrics.core import (
     BenchmarkSummary,
     acceptance,
@@ -44,7 +44,6 @@ from ..metrics.core import (
     usage_gate,
 )
 from ..metrics.results import goodprobe_line, print_legacy_lines
-from ..profiling.native import spec_decode_counters
 from ..workloads.arrival import offered_rate, parse_arrival, rebase_arrivals
 from ..workloads.base import workload_hash
 from ..workloads.sessions import SessionTrace
@@ -204,10 +203,10 @@ async def replay(trace, driver, mode, emit, offsets, request_id):
 
 
 def server_counters(driver):
-    """Spec-decode counters of the server an HTTP driver talks to; None for
-    any other driver, or a server without them."""
-    url = getattr(driver, "url", None)
-    return spec_decode_counters(server_base_url(url)) if url else None
+    """Spec-decode counters of the server a driver talks to; None for a
+    driver without spec_counters, or a server without them."""
+    counters = getattr(driver, "spec_counters", None)
+    return counters() if counters else None
 
 
 async def measure(trace, driver, mode, emit, workload, request_id):
