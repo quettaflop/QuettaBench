@@ -130,8 +130,9 @@ The baseline records the mode and the table prints it.
 The model yaml's `quettaserve:` block names the cargo `crate` and `test`, the
 env prefix (`DS_`, `QW_`) and the family:
 
-- `moe` (deepseek): needs `engine.extra.qs_cfg`; `<P>_LAYERS` is removed, since
-  layer truncation would invalidate the run.
+- `moe` (deepseek): needs `engine.extra.qs_cfg`; an inherited `<P>_LAYERS` is
+  removed, since layer truncation would invalidate the run. `engine.layers=N`
+  sets it on purpose for a slice run; crossval ignores the `layers=N` lines.
 - `gdn` (qwen3 and other linear-attention hybrids): exact kernels only when
   `engine.extra.gdn_dir` holds the vLLM GDN cubins (the loader panics
   without them), else the tiled rust suite; custom all-reduce at tp >= 2;

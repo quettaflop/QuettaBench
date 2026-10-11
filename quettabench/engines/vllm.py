@@ -29,7 +29,9 @@ NONE). quant adds no server flag: v4sweep.py launched the GLM fp8 checkpoints
 with no --quantization and the server read the method from the checkpoint
 config; in-process the kwarg is what vmin_fit passed. serving_style other
 than aggregated and instrumentation=torch have no flag or kwarg anywhere and
-raise.
+raise. So does engine.layers: the slice runs (vllm_tf.py, vllm_baseline.py)
+pointed vLLM at a checkpoint dir slice_truncate.py had cut, never a layer
+flag, so a slice is engine.model naming such a dir.
 
 The two sides differ by design in their constants: the server gets
 --enable-chunked-prefill and --trust-remote-code as both scripts passed them;
@@ -141,6 +143,9 @@ class VllmAdapter(EngineAdapter):
             raise ConfigError("vllm: engine.model is required to launch")
         if engine.instrumentation == "torch":
             raise UnsupportedField("vllm", "instrumentation=torch", "no profiler env var in the repo")
+        if engine.layers is not None:
+            raise UnsupportedField("vllm", f"layers={engine.layers}",
+                                   "slice runs load a truncated checkpoint dir as engine.model")
         if self.grid_over_http(cfg) and cfg.mode.returns != "none":
             raise UnsupportedField("vllm", f"driver=http with mode.returns={cfg.mode.returns}",
                                    "the completions stream carries no token ids or logits")

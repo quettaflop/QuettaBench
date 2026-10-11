@@ -53,6 +53,7 @@ class EngineCfg:
     kv_dtype: str = "auto"
     quant: str | None = None
     max_model_len: int | None = None
+    layers: int | None = None         # first N decoder layers only: a slice run (slice_truncate.py)
     gpu_util: float = 0.9
     prefix_caching: bool = False
     serving_style: str = "aggregated"

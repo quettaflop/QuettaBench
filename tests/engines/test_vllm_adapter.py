@@ -113,6 +113,10 @@ class ServerArgv(unittest.TestCase):
         with self.assertRaises(base.UnsupportedField):
             spec_for("llama", sets=["engine.instrumentation=torch"])
 
+    def test_layers_is_unsupported(self):
+        with self.assertRaisesRegex(base.UnsupportedField, "layers=2"):
+            spec_for("llama", sets=["engine.layers=2"])
+
     def test_disagg_is_unsupported(self):
         with self.assertRaises(base.UnsupportedField):
             spec_for("llama", sets=["engine.serving_style=disagg:1p1d"])

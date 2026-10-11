@@ -714,6 +714,22 @@ class InProcessDriver(Driver):
                                 generated_text=getattr(completion, "text", None))
 
 
+def truncated_config(model, layers):
+    """The checkpoint's config cut to its first `layers` decoder layers, the
+    edit slice_truncate.py made to config.json: num_hidden_layers, and the
+    per-layer list (layer_types) cut to match. Weights of deeper layers are
+    left unloaded."""
+    from transformers import AutoConfig
+    config = AutoConfig.from_pretrained(model)
+    if layers > config.num_hidden_layers:
+        raise ValueError(f"reference: engine.layers={layers} exceeds the checkpoint's "
+                         f"{config.num_hidden_layers} layers")
+    config.num_hidden_layers = layers
+    if isinstance(getattr(config, "layer_types", None), list):
+        config.layer_types = config.layer_types[:layers]
+    return config
+
+
 def prompt_logprob_summary(ids, prompt_logprobs):
     """{argmax, top2_gap, logprob} from vLLM's prompt_logprobs, entry i scoring
     ids[i + 1] as the reference's does. argmax is the rank-1 token, as
@@ -751,14 +767,20 @@ class ReferenceDriver(Driver):
         return AutoTokenizer.from_pretrained(self.spec.engine_kwargs["model"])
 
     def model(self):
-        """AutoModelForCausalLM in the run's dtype on cuda:0, eval mode, built once."""
+        """AutoModelForCausalLM in the run's dtype on cuda:0, eval mode, built
+        once; with engine_kwargs layers, only the first that many decoder layers."""
         if self._model is None:
             import torch
             from transformers import AutoModelForCausalLM
             kw = self.spec.engine_kwargs
-            self._model = AutoModelForCausalLM.from_pretrained(
-                kw["model"], torch_dtype=getattr(torch, kw["dtype"])).to("cuda:0")
+            load = {"torch_dtype": getattr(torch, kw["dtype"])}
+            if kw.get("layers"):
+                load["config"] = truncated_config(kw["model"], kw["layers"])
+            self._model = AutoModelForCausalLM.from_pretrained(kw["model"], **load).to("cuda:0")
             self._model.eval()
+            if kw.get("layers") and len(self._model.model.layers) != kw["layers"]:
+                raise RuntimeError(f"reference: built {len(self._model.model.layers)} decoder "
+                                   f"layers, engine.layers asked for {kw['layers']}")
         return self._model
 
     def score(self, ids):

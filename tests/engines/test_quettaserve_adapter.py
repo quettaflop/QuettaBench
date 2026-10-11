@@ -57,6 +57,16 @@ class DeepseekMoe(unittest.TestCase):
             "DS_MAX_SEQ": "8320"})
         self.assertTrue(spec.log_header.endswith("nccl=allreduce:tree;allgather:ring/Simple"))
 
+    def test_layers_sets_ds_layers_and_its_pass_pattern(self):
+        spec = spec_for("deepseek", (1024, 16), sets=[*DS, "engine.layers=6"])
+        self.assertEqual(spec.env["DS_LAYERS"], "6")
+        self.assertEqual(spec.env_drop, ())
+        self.assertEqual(spec.ok_pattern, r"^\[batch_bench\] .*layers=6")
+
+    def test_layers_without_batch_bench_is_unsupported(self):
+        with self.assertRaisesRegex(base.UnsupportedField, "only batch_bench reads QW_LAYERS"):
+            spec_for("qwen3", (4096, 4), sets=[*QW, "engine.layers=6"])
+
     def test_moe_without_cfg_is_refused(self):
         with self.assertRaisesRegex(ConfigError, "DS_CFG"):
             spec_for("deepseek", (1024, 1), sets=["engine.model=/ckpt/ds"])

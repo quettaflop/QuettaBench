@@ -50,6 +50,25 @@ class Halves(unittest.TestCase):
             ("to", "cuda:0"), ("eval",)])
         return rows
 
+    def test_layers_cut_the_config_as_slice_truncate_did(self):
+        with crossval_path(stubs=True):
+            transformers = fresh_import("transformers")
+            torch = fresh_import("torch")
+            transformers.CALLS.clear()
+            driver = ReferenceDriver(LaunchSpec(adapter="reference", engine_kwargs={
+                "model": "/w", "dtype": "float32", "layers": 2}))
+            list(driver.run(requests(), cell=CELL))
+            (_, path, kwargs) = transformers.CALLS[1]
+            self.assertEqual(transformers.CALLS[0], ("AutoConfig.from_pretrained", "/w", {}))
+            self.assertEqual((path, kwargs["torch_dtype"]), ("/w", torch.float32))
+            self.assertEqual((kwargs["config"].num_hidden_layers, kwargs["config"].layer_types),
+                             (2, ["a", "b"]))
+            self.assertEqual(len(driver.model().model.layers), 2)
+            deep = ReferenceDriver(LaunchSpec(adapter="reference", engine_kwargs={
+                "model": "/w", "dtype": "float32", "layers": 5}))
+            with self.assertRaisesRegex(ValueError, "exceeds the checkpoint's 4 layers"):
+                deep.model()
+
     def test_summaries_line_up(self):
         with crossval_path(stubs=True):
             ours, ref = self.vllm_rows(), self.reference_rows()

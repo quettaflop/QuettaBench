@@ -15,6 +15,9 @@ env reads moved to Config fields:
   QS_VLLM_GDN_DIR (gdn) engine.extra.gdn_dir
   QS_KERNELS, QS_CUSTOM_AR, <P>_MODE (gdn overrides)
                         engine.extra.qs_kernels, .qs_custom_ar, .qs_mode
+  <P>_LAYERS            engine.layers (batch_bench only; its line then reads
+                        layers=N, which crossval's reader ignores, so a slice
+                        run's timing never pairs against a full model)
 
 Per-cell values come from a `cell=(ctx, bs)` argument to translate rather
 than a for_cell(spec, ...) helper: they are a pure function of (cfg, ctx,
@@ -43,7 +46,8 @@ OK_BY_TEST = {
 
 
 def moe_rule(p, extra, world):
-    """bench.sh:18-22: the moe bench needs <P>_CFG and must not see <P>_LAYERS."""
+    """bench.sh:18-22: the moe bench needs <P>_CFG and must not see an
+    inherited <P>_LAYERS; engine.layers sets it on purpose (translate)."""
     if not extra.get("qs_cfg"):
         raise ConfigError(f"quettaserve moe: set engine.extra.qs_cfg (bench.sh {p}_CFG)")
     return {f"{p}_CFG": extra["qs_cfg"]}, (f"{p}_LAYERS",), ""
@@ -76,7 +80,7 @@ FAMILY_RULES = {
 
 class QuettaServeAdapter(EngineAdapter):
     name = "quettaserve"
-    supports = frozenset({"model", "tp", "extra", "instrumentation"})
+    supports = frozenset({"model", "tp", "extra", "instrumentation", "layers"})
 
     def translate(self, cfg, cell=None):
         engine, hw = cfg.engine, cfg.hardware
@@ -99,6 +103,14 @@ class QuettaServeAdapter(EngineAdapter):
         env.update({k: v for k, v in hw.collective.items() if v})
         family_env, drop, header_tail = FAMILY_RULES[bench["family"]](p, engine.extra, world)
         env.update(family_env)
+        ok = OK_BY_TEST[bench["test"]]
+        if engine.layers is not None:
+            if bench["test"] != "batch_bench":
+                raise UnsupportedField("quettaserve", f"layers={engine.layers}",
+                                       f"only batch_bench reads {p}_LAYERS")
+            env[f"{p}_LAYERS"] = str(engine.layers)
+            drop = tuple(d for d in drop if d != f"{p}_LAYERS")
+            ok = ok.replace("layers=all", f"layers={engine.layers}")
         env.update({f"{p}_CKPT": engine.model, f"{p}_WORLD": str(world),
                     f"{p}_TIMING_STEPS": str(steps)})
         header = ""
@@ -124,7 +136,7 @@ class QuettaServeAdapter(EngineAdapter):
             env_drop=drop,
             cwd=engine.extra.get("qs_dir") or ".",
             instrumentation=engine.instrumentation,
-            ok_pattern=OK_BY_TEST[bench["test"]],
+            ok_pattern=ok,
             log_header=header,
             cells=cells,
         )
