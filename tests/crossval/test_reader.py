@@ -90,11 +90,12 @@ class RunDir(unittest.TestCase):
             return out
 
         for log in ("bench_loop.log", "bench_criterion.log"):
-            # Clock and commit frozen: a commit landing mid-test changes bench_sha.
+            # Clock and commit frozen in the writer's own module (the golden
+            # harness re-imports quettabench): a commit mid-test changes bench_sha.
             with self.subTest(log=log), tempfile.TemporaryDirectory() as td, \
-                    mock.patch("quettabench.metrics.results._now",
-                               return_value="2026-10-09T00:00:00+00:00"), \
-                    mock.patch("quettabench.metrics.results.bench_sha", return_value="0123abc"):
+                    mock.patch.dict(RunWriter.finish.__globals__, {
+                        "_now": lambda: "2026-10-09T00:00:00+00:00",
+                        "bench_sha": lambda *a, **k: "0123abc"}):
                 ours = reader.read_run(bench_run_dir(Path(td) / "qs", FIXTURES / log))
                 theirs = reader.read_run(hand_written(Path(td) / "hand" / "qs", FIXTURES / log))
                 self.assertEqual(ours, theirs)
