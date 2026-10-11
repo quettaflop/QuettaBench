@@ -139,6 +139,7 @@ class HardwareCfg:
     collective: Mapping[str, str] = field(default_factory=dict)
     provision: Mapping[str, str] = field(default_factory=dict)
     visible_devices: str | None = None  # CUDA_VISIBLE_DEVICES: trace_serve power sampler
+    ready_timeout_s: int = 1800         # seconds the launcher waits for the server health check
 
 
 @dataclass(frozen=True)

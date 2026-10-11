@@ -60,7 +60,8 @@ def run_one(cfg, out):
     gpus = cfg.hardware.visible_devices or launcher.idle_gpus(cfg.engine.tp * cfg.engine.pp,
                                                               cfg.hardware.backend)
     env_map.export({**cfg.hardware.collective, "CUDA_VISIBLE_DEVICES": gpus})
-    handle = launcher.start(spec, out) if adapter.needs_server(cfg) else launcher.NoServer(out)
+    handle = (launcher.start(spec, out, timeout_s=cfg.hardware.ready_timeout_s)
+              if adapter.needs_server(cfg) else launcher.NoServer(out))
     try:
         driver = adapter.driver(spec, handle)
         trace = workloads.build(cfg, tokenizer=getattr(driver, "tokenizer", None))

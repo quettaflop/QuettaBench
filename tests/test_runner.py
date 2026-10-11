@@ -102,6 +102,25 @@ class GpuPick(unittest.TestCase):
         self.assertEqual((gpus, idle), ("6,7", None))
 
 
+class ReadyTimeout(unittest.TestCase):
+    def test_hardware_ready_timeout_reaches_the_launcher(self):
+        (cfg,) = loader.load(RUNS[0].with_name("llama.yaml"),
+                             ["engine.model=/w", "hardware.visible_devices=0",
+                              "mode.grid=null", "hardware.ready_timeout_s=10800"], env={})
+        with mock.patch.object(runner.launcher, "start") as start, \
+                mock.patch.object(runner.env_map, "export"), \
+                mock.patch.object(runner.workloads, "build"), \
+                mock.patch.object(runner, "RunWriter"), mock.patch.object(runner.serve, "run"), \
+                tempfile.TemporaryDirectory() as td:
+            runner.run_one(cfg, Path(td))
+        self.assertEqual(start.call_args.kwargs, {"timeout_s": 10800})
+
+    def test_dry_run_shows_it(self):
+        out, _ = qbench("run", str(RUNS[0].with_name("llama.yaml")), "--dry-run",
+                        "--set", "engine.model=/w", "--set", "hardware.ready_timeout_s=3600")
+        self.assertIn("hardware.ready_timeout_s = 3600  (cli)", out.splitlines())
+
+
 class ProbeMode(unittest.TestCase):
     def test_probe_gets_its_flags_and_the_run_dir(self):
         run = {"mode": {"mode": "probe", "probe": "fake", "probe_args": "--gpu-label A100 --wide"}}
