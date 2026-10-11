@@ -238,3 +238,32 @@ def test_elementwise_entries_union_with_gemm_fp8_quant(tmp_path: Path) -> None:
     export([results], dest, only=["kernel_tables"])
     assert json.loads((dest / "kernel_data" / table).read_text()) == {
         "rms_norm": 2, "fp8_act_quant": 3}
+
+
+def test_an_unmergeable_file_stops_the_export_before_anything_is_written(tmp_path: Path) -> None:
+    results, dest = tmp_path / "results", tmp_path / "out"
+    probe_run(results, "gdn", {"cuda_event/gdn/H100_9b_decode.csv": "g\n"}, 0)
+    probe_run(results, "gemm", {"ncu/moe/H100.csv": "a\n"}, 1)
+    probe_run(results, "moe", {"ncu/moe/H100.csv": "b\n"}, 2)
+    with pytest.raises(SystemExit, match="ncu/moe/H100.csv"):
+        export([results], dest, only=["kernel_tables"])
+    assert not dest.exists()
+
+
+def test_the_manifest_names_only_runs_whose_rows_were_copied(tmp_path: Path) -> None:
+    """A run every one of whose rows a later run replaced, and a collective
+    run with only all_reduce rows, put nothing in the export."""
+    results, dest = tmp_path / "results", tmp_path / "out"
+    fa = "ncu/flash_attn/H100.csv"
+    probe_run(results, "flash_attn", {fa: csv_text([FA_HEAD, (32, 8, 128, 1, 9.0)])}, 0)
+    probe_run(results, "flash_attn", {fa: csv_text([FA_HEAD, (32, 8, 128, 1, 8.0)])}, 1)
+    only_ar = csv_text([("op", "world", "bytes", "latency_us", "dtype_bytes"),
+                        ("all_reduce", 2, 4096, 20.3, 2)])
+    probe_run(results, "collective", {"ncu/collectives/H100_tp2.csv": only_ar}, 2)
+    probe_run(results, "vllm_allreduce", {"ncu/collectives/H100_tp2.csv": VLLM}, 3)
+    written, used = kernel_tables.run([results], dest)
+    assert sorted(used) == ["ncu/collectives/H100_tp2.csv", fa]
+    assert [Path(r).parent.name for r in used["ncu/collectives/H100_tp2.csv"]] == ["vllm_allreduce"]
+    assert [Path(r).name for r in used[fa]] == ["20261011T120001.000000Z"]
+    export([results], dest, only=["kernel_tables"])
+    assert json.loads((dest / "manifest.json").read_text())["kernel_tables"] == used

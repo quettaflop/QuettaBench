@@ -155,17 +155,23 @@ def _merge_collectives(collective: Source, vllm: Source, out: Path) -> list[Path
     return [s[2] for s, rows in ((collective, kept), (vllm, ours)) if rows]
 
 
-def _write(rel: Path, by_probe: dict[str, list[Source]], out: Path) -> list[Path]:
-    """Build one dest file; returns the run dirs whose rows it holds."""
-    used = {probe: _runs_used(probe, rel, sources) for probe, sources in by_probe.items()}
-    probes = sorted(used)
-    if probes == ["collective", "vllm_allreduce"] and rel.suffix == ".csv":
-        return _merge_collectives(used["collective"][-1], used["vllm_allreduce"][-1], out)
-    if probes == ["elementwise", "gemm"] and rel.suffix == ".json":
-        return _union_json(used["elementwise"] + used["gemm"], out)
-    if len(probes) != 1:
+def _check(rel: Path, by_probe: dict[str, list[Source]]) -> None:
+    """Stop on a file two probes write that kernel_tables does not merge."""
+    probes = sorted(by_probe)
+    if len(probes) > 1 and (probes, rel.suffix) not in ((["collective", "vllm_allreduce"], ".csv"),
+                                                        (["elementwise", "gemm"], ".json")):
         raise SystemExit(f"{rel.as_posix()}: written by probes {probes}; kernel_tables "
                          "merges only collective+vllm_allreduce and elementwise+gemm")
+
+
+def _write(rel: Path, by_probe: dict[str, list[Source]], out: Path) -> list[Path]:
+    """Build one dest file (_check passed); returns the run dirs whose rows it holds."""
+    used = {probe: _runs_used(probe, rel, sources) for probe, sources in by_probe.items()}
+    probes = sorted(used)
+    if probes == ["collective", "vllm_allreduce"]:
+        return _merge_collectives(used["collective"][-1], used["vllm_allreduce"][-1], out)
+    if probes == ["elementwise", "gemm"]:
+        return _union_json(used["elementwise"] + used["gemm"], out)
     (probe,) = probes
     sources = used[probe]
     if len(sources) == 1:
@@ -176,21 +182,21 @@ def _write(rel: Path, by_probe: dict[str, list[Source]], out: Path) -> list[Path
     return _union_csv(sources, ROW_KEYS[(probe, rel.parts[-2])], out)
 
 
-def sources(results_dirs: Iterable[Path]) -> dict[str, list[str]]:
-    """{<method>/<kind>/<file>: the run dirs its table comes from}, for the manifest."""
-    used = {}
-    for rel, by_probe in found(results_dirs).items():
-        runs = [s for probe, srcs in by_probe.items() for s in _runs_used(probe, rel, srcs)]
-        used[rel.as_posix()] = [str(s[2]) for s in sorted(runs, key=lambda s: (s[0], str(s[2])))]
-    return used
-
-
-def run(results_dirs: Iterable[Path], dest: Path) -> list[Path]:
-    written = []
-    for rel, by_probe in sorted(found(results_dirs).items()):
+def run(results_dirs: Iterable[Path], dest: Path) -> tuple[list[Path], dict[str, list[str]]]:
+    """Write every table, after checking all of them merge, so a stop leaves
+    dest untouched. Returns the files written and, for the manifest,
+    {<method>/<kind>/<file>: the run dirs with rows in it, in finished order}."""
+    tables = sorted(found(results_dirs).items())
+    for rel, by_probe in tables:
+        _check(rel, by_probe)
+    written, used = [], {}
+    for rel, by_probe in tables:
         out = Path(dest) / "kernel_data" / rel
         out.parent.mkdir(parents=True, exist_ok=True)
-        _write(rel, by_probe, out)
+        runs = set(_write(rel, by_probe, out))
+        order = sorted((s[0], str(s[2])) for sources in by_probe.values() for s in sources
+                       if s[2] in runs)
+        used[rel.as_posix()] = list(dict.fromkeys(run for _, run in order))
         print(f"{rel.as_posix()} <- {', '.join(sorted(by_probe))}")
         written.append(out)
-    return written
+    return written, used

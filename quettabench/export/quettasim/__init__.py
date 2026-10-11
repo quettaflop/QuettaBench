@@ -64,7 +64,7 @@ def export(results_dirs: Iterable[Path], dest: Path, only: Iterable[str] | None 
 
     Also writes dest/manifest.json: where the inputs came from, the runs
     recorded there (run.json), which bench commit, when, and with
-    kernel_tables the run dirs behind each kernel table.
+    kernel_tables the run dirs whose rows each kernel table holds.
     """
     results_dirs = [Path(d) for d in results_dirs]
     dest = Path(dest)
@@ -73,9 +73,14 @@ def export(results_dirs: Iterable[Path], dest: Path, only: Iterable[str] | None 
     if unknown:
         raise SystemExit(f"unknown builder {unknown}; choose from {sorted(BUILDERS)}")
     written: list[Path] = []
+    tables = None
     for name in names:
         _inputs.run_dirs.cache_clear()
-        written.extend(BUILDERS[name].run(results_dirs, dest))
+        if name == "kernel_tables":
+            paths, tables = kernel_tables.run(results_dirs, dest)
+            written.extend(paths)
+        else:
+            written.extend(BUILDERS[name].run(results_dirs, dest))
     _inputs.run_dirs.cache_clear()
     dest.mkdir(parents=True, exist_ok=True)
     manifest = {
@@ -84,7 +89,7 @@ def export(results_dirs: Iterable[Path], dest: Path, only: Iterable[str] | None 
         "bench_sha": bench_sha(),
         "exported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
-    if "kernel_tables" in names:
-        manifest["kernel_tables"] = kernel_tables.sources(results_dirs)
+    if tables is not None:
+        manifest["kernel_tables"] = tables
     (dest / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     return written
