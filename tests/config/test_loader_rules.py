@@ -130,6 +130,11 @@ class LoaderRules(unittest.TestCase):
         self.assertEqual(str(ctx.exception), "unknown serving_style 'disagg:2p'; use aggregated, "
                          "disagg:<P>p<D>d, or ep<N>dp<M>")
 
+    def test_zero_ep_or_dp_degree_is_refused(self):
+        with self.assertRaisesRegex(ConfigError, "ep_dp needs >=1 expert-parallel and >=1 "
+                                                 "data-parallel: 'ep0dp2'"):
+            self.load({"engine": {"serving_style": "ep0dp2"}})
+
     def test_ep_degree_must_divide_known_expert_count(self):
         with self.assertRaisesRegex(ConfigError, "ep=3 does not divide 256 experts"):
             self.load({"engine": {"tp": 3}}, model={"ep": True, "num_experts": 256})

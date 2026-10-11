@@ -24,7 +24,10 @@ def parse_serving_style(spec):
         return {"mode": "disagg", "prefill": p, "decode": d}
     m = re.fullmatch(r"ep(\d+)dp(\d+)", spec)
     if m:
-        return {"mode": "ep_dp", "ep": int(m.group(1)), "dp": int(m.group(2))}
+        ep, dp = int(m.group(1)), int(m.group(2))
+        if ep < 1 or dp < 1:
+            raise ValueError(f"ep_dp needs >=1 expert-parallel and >=1 data-parallel: {spec!r}")
+        return {"mode": "ep_dp", "ep": ep, "dp": dp}
     raise ValueError(f"unknown serving_style {spec!r}; use aggregated, "
                      "disagg:<P>p<D>d, or ep<N>dp<M>")
 

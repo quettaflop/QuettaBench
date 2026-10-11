@@ -262,7 +262,8 @@ class CrossvalScripts(unittest.TestCase):
                              {"mode": "disagg", "prefill": 2, "decode": 2})
             self.assertEqual(validate.parse_serving_style("ep8dp2"),
                              {"mode": "ep_dp", "ep": 8, "dp": 2})
-            for bad in ("disagg:0p1d", "disagg:2p", "ep8", "wideEP", "disagg:xp1d"):
+            for bad in ("disagg:0p1d", "disagg:2p", "ep8", "wideEP", "disagg:xp1d",
+                        "ep0dp2", "ep8dp0"):
                 with self.assertRaises(ValueError):
                     validate.parse_serving_style(bad)
             pre, dec = validate.disagg_gpu_sets(
