@@ -146,9 +146,10 @@ class LaunchVllm(unittest.TestCase):
                                                              {"timeout_s": 420}))
         argv = list(spec.server_argv)
         self.assertEqual((Path(argv[0]).name, argv[1:3]), ("vllm", ["serve", "/w/llama"]))
-        for flag in ("--enable-prefix-caching", "--served-model-name", "--api-key",
-                     "--no-enable-log-requests"):
+        for flag in ("--enable-prefix-caching", "--served-model-name", "--no-enable-log-requests"):
             self.assertIn(flag, argv)
+        self.assertNotIn("--api-key", argv)
+        self.assertEqual(spec.env["VLLM_API_KEY"], "test")
         self.assertEqual(argv[argv.index("--port") + 1], "8794")
 
     def test_a_run_probe_launches_with_the_runs_hardware(self):
@@ -190,17 +191,17 @@ class LaunchVllm(unittest.TestCase):
             grid = launched(lambda: serving_decode_grid.launch_server(
                 "/w", 8795, 0.9, 32768, "k", Path(td), 1, 256, 8192))
         self.assertEqual(pool, (["vllm", "serve", "/w", "--port", "8794", *common,
-                                 "--enable-prefix-caching", *tail, "--api-key", "test",
+                                 "--enable-prefix-caching", *tail,
                                  "--prefix-caching-hash-algo", "sha256",
-                                 "--no-enable-log-requests"], env))
+                                 "--no-enable-log-requests"], {**env, "VLLM_API_KEY": "test"}))
         self.assertEqual(split, (["vllm", "serve", "/w", "--port", "8794", *common,
-                                  "--enable-prefix-caching", *tail, "--api-key", "k",
+                                  "--enable-prefix-caching", *tail,
                                   "--no-enable-log-requests", "--prefix-caching-hash-algo",
-                                  "sha256"], env))
+                                  "sha256"], {**env, "VLLM_API_KEY": "k"}))
         self.assertEqual(grid, (["vllm", "serve", "/w", "--port", "8795", *common,
                                  "--no-enable-prefix-caching", *tail, "--max-num-seqs", "256",
-                                 "--max-num-batched-tokens", "8192", "--api-key", "k",
-                                 "--no-enable-log-requests"], env))
+                                 "--max-num-batched-tokens", "8192",
+                                 "--no-enable-log-requests"], {**env, "VLLM_API_KEY": "k"}))
 
     def test_no_probe_starts_a_process(self):
         for path in sorted(PROBES.glob("*.py")):

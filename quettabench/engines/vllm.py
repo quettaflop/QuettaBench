@@ -58,6 +58,9 @@ SERVER_ENV = {
     "VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS": "1",  # sizes KV after graph capture
 }
 KWARGS = {"disable_log_stats": True, "trust_remote_code": True}
+# extra.vllm.api_key goes to the server as this env var, redacted by name,
+# not as --api-key, which vLLM's startup args log would print.
+API_KEY_ENV = "VLLM_API_KEY"
 
 
 def flag(name):
@@ -120,11 +123,14 @@ SCALARS = (str, int, float, bool)
 
 
 def extra_fragments(extra, taken):
-    """argv and kwargs for engine.extra.vllm: {kwarg_name: scalar}, appended last."""
+    """argv and kwargs for engine.extra.vllm: {kwarg_name: scalar}, appended
+    last; api_key is left to the env (API_KEY_ENV)."""
     if not isinstance(extra, dict):
         raise UnsupportedField("vllm", "extra.vllm", "expected a mapping of flag: value")
     argv, kwargs = [], {}
     for key, value in extra.items():
+        if key == "api_key":
+            continue
         if not isinstance(value, SCALARS) or key in taken:
             raise UnsupportedField("vllm", f"extra.vllm.{key}",
                                    "a table field" if key in taken else "value must be a scalar")
@@ -160,8 +166,12 @@ class VllmAdapter(EngineAdapter):
             else:
                 argv += part
             kwargs.update(to_kwargs(value))
-        extra_argv, extra_kwargs = extra_fragments(engine.extra.get("vllm", {}), kwargs)
+        extra = engine.extra.get("vllm", {})
+        extra_argv, extra_kwargs = extra_fragments(extra, kwargs)
         kwargs.update(extra_kwargs)
+        env = dict(SERVER_ENV)
+        if extra.get("api_key") is not None:
+            env[API_KEY_ENV] = str(extra["api_key"])
         py = cfg.hardware.provision.get("py")
         vllm_bin = str(Path(py).with_name("vllm")) if py else "vllm"
         server = [vllm_bin, SERVER_CMD, engine.model, *argv, *SERVER_FLAGS, *extra_argv]
@@ -172,7 +182,7 @@ class VllmAdapter(EngineAdapter):
             server_argv=() if unsupported else tuple(server),
             server_unsupported=tuple(unsupported),
             engine_kwargs=kwargs,
-            env=dict(SERVER_ENV),
+            env=env,
             health_path="/health",
             port=engine.port,
             image=engine.image,
@@ -191,13 +201,14 @@ class VllmAdapter(EngineAdapter):
     def driver(self, spec, handle, trace=None):
         """InProcessDriver when nothing was launched (an in-process grid run),
         else the launched server with the model it was started on: its
-        /v1/chat/completions for chat requests, /v1/completions otherwise."""
+        /v1/chat/completions for chat requests, /v1/completions otherwise,
+        sending the server's api key when it was started with one."""
         if handle.endpoint is None:
             return InProcessDriver(spec)
         endpoint = "chat" if chat_requests(trace) else "completions"
         path = "/v1/chat/completions" if endpoint == "chat" else "/v1/completions"
-        return HttpDriver(endpoint, url=handle.endpoint + path,
-                          model=spec.engine_kwargs["model"], timeout=spec.timeout_s)
+        return HttpDriver(endpoint, url=handle.endpoint + path, model=spec.engine_kwargs["model"],
+                          api_key=spec.env.get(API_KEY_ENV, "test"), timeout=spec.timeout_s)
 
 
 def chat_requests(trace):

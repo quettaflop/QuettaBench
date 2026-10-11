@@ -6,6 +6,7 @@ translate always passes pipeline_parallel_size; vmin_fit used to leave it
 out at pp == 1, a spelling difference only (golden regenerated with it).
 """
 
+import dataclasses
 import json
 import tempfile
 import unittest
@@ -177,6 +178,16 @@ class GridDriver(unittest.TestCase):
         driver = adapter.driver(spec, handle)
         self.assertIsInstance(driver, HttpDriver)
         self.assertEqual(driver.url, "http://127.0.0.1:8000/v1/completions")
+
+    def test_the_driver_sends_the_servers_api_key(self):
+        cfg = self.cfg("engine.driver=http")
+        handle = launcher.NoServer(Path("r"), endpoint="http://127.0.0.1:8000")
+        keyed = dataclasses.replace(cfg, engine=dataclasses.replace(
+            cfg.engine, extra={"vllm": {"api_key": "sk-1"}}))
+        drivers = {name: vllm_adapter.ADAPTER.driver(vllm_adapter.ADAPTER.translate(c), handle)
+                   for name, c in (("plain", cfg), ("keyed", keyed))}
+        self.assertEqual({n: d.api_key for n, d in drivers.items()},
+                         {"plain": "test", "keyed": "sk-1"})
 
     def test_chat_requests_go_to_chat_completions(self):
         spec = vllm_adapter.ADAPTER.translate(self.cfg("engine.driver=http"))

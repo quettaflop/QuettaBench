@@ -155,7 +155,8 @@ class Redaction(unittest.TestCase):
         cfg = dataclasses.replace(cfg, engine=dataclasses.replace(
             cfg.engine, extra={"vllm": {"api_key": "sk-live"}}))
         spec = vllm.ADAPTER.translate(cfg)
-        self.assertIn("sk-live", spec.server_argv)
+        self.assertEqual(spec.env["VLLM_API_KEY"], "sk-live")
+        self.assertNotIn("sk-live", spec.server_argv)
         self.assertNotIn("sk-live", json.dumps(results.redact(dataclasses.asdict(spec))))
         with tempfile.TemporaryDirectory() as td:
             results.RunWriter(td, cfg, launch_env=spec.env).finish({})

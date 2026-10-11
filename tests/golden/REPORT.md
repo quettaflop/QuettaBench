@@ -441,3 +441,10 @@ takes its frontend-off reference from QuettaSim's
 removed. `mult_curve` is the measured TTFT residual over that reference,
 so a `mult_curve` exported to a device yaml before 4383be8 and one exported
 after it are not comparable; no run has measured how far they differ.
+
+2026-10-11: no fixture changed. The vllm adapter passes `engine.extra.vllm.api_key`
+to the server as the `VLLM_API_KEY` env var instead of `--api-key`, so vLLM's
+startup args log no longer prints it; the three live-server probes' launches
+pinned in `tests/probes/test_probe_record.py` lose `--api-key <key>` and gain
+that env var. A run's HttpDriver now sends that key; before, it always sent
+`test`, which a server started with another key refused.
