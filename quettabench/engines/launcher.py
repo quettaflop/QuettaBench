@@ -5,11 +5,15 @@ local: the server runs in its own process group and Handle.stop() signals the
 whole group, so tensor-parallel workers die with it; this replaces
 scripts/clean_orphan_gpus.py. docker: the server runs detached in engine.image
 (docker_argv), `docker logs -f` streams into server.log, and Handle.stop()
-runs `docker stop`. The docker path has not been run against a real daemon.
+runs `docker stop`, waits for the stream to drain, then `docker rm -f`; the
+container is not --rm, so a crashed engine's log is still there to read. A
+container that fails to start has `docker logs` written to server.log and
+is removed. The docker path has not been run against a real daemon.
 """
 
 import json
 import os
+import re
 import signal
 import subprocess
 import time
@@ -39,19 +43,26 @@ def urlopen(url, **kwargs):
 class Handle:
     adapter: str
     endpoint: str
-    pid: int
+    pid: int              # the server, or for docker the `docker logs -f` stream
     results_dir: Path
     proc: subprocess.Popen
     gpu: str = ""
-    container: str = ""   # docker: the container name; pid is then its id
+    container: str = ""   # docker: the container name
+    container_id: str = ""
 
     def stop(self, grace_s=30):
         """SIGTERM the process group; SIGKILL whatever is left after grace_s.
-        A container gets `docker stop`, and its log stream then ends."""
+        A container gets `docker stop`; its log stream then ends (killed if
+        it has not after grace_s + 10 s) and the container is removed."""
         if self.container:
             subprocess.run(["docker", "stop", "-t", str(grace_s), self.container],
                            capture_output=True, check=False)
-            self.proc.wait()
+            try:
+                self.proc.wait(timeout=grace_s + 10)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
+                self.proc.wait()
+            remove(self.container)
             return
         deadline = time.monotonic() + grace_s
         if self._signal_group(signal.SIGTERM):
@@ -122,6 +133,16 @@ def wait_healthy(proc, url, timeout_s, poll_s):
     raise TimeoutError(f"{url} not healthy after {timeout_s}s")
 
 
+def remove(container):
+    """`docker rm -f`: the container is gone whatever state it was in."""
+    subprocess.run(["docker", "rm", "-f", container], capture_output=True, check=False)
+
+
+def container_name(run_name):
+    """qbench-<run_name> with every character docker refuses in a name made -."""
+    return "qbench-" + re.sub(r"[^a-zA-Z0-9_.-]", "-", run_name)
+
+
 def docker_argv(spec, cfg, gpus):
     """`docker run -d` of spec.server_argv in spec.image on the given GPUs.
 
@@ -147,7 +168,8 @@ def docker_argv(spec, cfg, gpus):
         mounts.append(model)
     env = {**spec.env, **{k: v for k, v in hw.collective.items() if v},
            **({"HF_HOME": hw.hf_home} if hw.hf_home else {})}
-    return ["docker", "run", "-d", "--pull=never", "--init", "--rm", "--name", f"qbench-{cfg.run_name}",
+    return ["docker", "run", "-d", "--pull=never", "--init",
+            "--name", container_name(cfg.run_name),
             "--gpus", f'"device={gpus}"', "--ipc=host", f"--shm-size={hw.shm_size}",
             "-p", f"{spec.port}:{spec.port}",
             *(a for path in [*mounts, REPO] for a in ("-v", f"{path}:{path}:ro")),
@@ -165,37 +187,46 @@ def start(spec, results_dir, *, backend="local", cfg=None, gpus="", timeout_s=18
         raise ValueError(f"{spec.adapter}: the spec has no server to launch")
     results_dir = Path(results_dir)
     results_dir.mkdir(parents=True, exist_ok=True)
-    container = ""
+    container = container_id = ""
     if backend == "docker":
         argv = docker_argv(spec, cfg, gpus)
         container = argv[argv.index("--name") + 1]
         run = subprocess.run(argv, capture_output=True, text=True, check=False)
         if run.returncode != 0:
+            with (results_dir / "server.log").open("w") as log:
+                subprocess.run(["docker", "logs", container], stdout=log,
+                               stderr=subprocess.STDOUT, check=False)
+            remove(container)
             raise RuntimeError(f"docker run exited with {run.returncode}: {run.stderr.strip()}")
-        pid, server = run.stdout.strip(), ["docker", "logs", "-f", container]
+        container_id, server = run.stdout.strip(), ["docker", "logs", "-f", container]
     else:
-        pid, server = None, spec.child_argv(spec.server_argv)
-    with (results_dir / "server.log").open("w") as log:
-        proc = subprocess.Popen(server, stdout=log, stderr=subprocess.STDOUT,
-                                start_new_session=True)
-    pid = pid or proc.pid
+        server = spec.child_argv(spec.server_argv)
+    try:
+        with (results_dir / "server.log").open("w") as log:
+            proc = subprocess.Popen(server, stdout=log, stderr=subprocess.STDOUT,
+                                    start_new_session=True)
+    except BaseException:
+        if container:
+            remove(container)
+        raise
     endpoint = f"http://127.0.0.1:{spec.port}"
-    handle = Handle(spec.adapter, endpoint, pid, results_dir, proc, gpu_name(), container)
+    handle = Handle(spec.adapter, endpoint, proc.pid, results_dir, proc, gpu_name(),
+                    container, container_id)
     try:
         wait_healthy(proc, endpoint + spec.health_path, timeout_s, poll_s)
+        record = {
+            "adapter": spec.adapter,
+            "endpoint": endpoint,
+            "pid": proc.pid,
+            "launch_spec": {**asdict(spec), "env": redact(spec.env)},
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "instrumentation": spec.instrumentation,
+        }
+        if container:
+            record.update(container=container, container_id=container_id, image=spec.image)
+        (results_dir / "engine.json").write_text(json.dumps(record, indent=2, sort_keys=True)
+                                                 + "\n")
     except BaseException:
         handle.stop()
         raise
-    launch = {**asdict(spec), "env": redact(spec.env)}
-    record = {
-        "adapter": spec.adapter,
-        "endpoint": endpoint,
-        "pid": pid,
-        "launch_spec": launch,
-        "started_at": datetime.now(timezone.utc).isoformat(),
-        "instrumentation": spec.instrumentation,
-    }
-    if container:
-        record.update(container=container, image=spec.image)
-    (results_dir / "engine.json").write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
     return handle
