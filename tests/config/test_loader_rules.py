@@ -57,6 +57,11 @@ class LoaderRules(unittest.TestCase):
         self.assertEqual(o["mode.concurrency"], "cli")
         self.assertEqual((cfg.engine.tp, cfg.engine.gpu_util, cfg.mode.concurrency), (2, 0.8, 4))
 
+    def test_visible_devices_is_a_string_even_when_yaml_reads_a_number(self):
+        self.assertEqual(self.one(overrides=["hardware.visible_devices=0"]).hardware.visible_devices, "0")
+        self.assertEqual(self.one({"hardware": {"visible_devices": 3}}).hardware.visible_devices, "3")
+        self.assertIsNone(self.one().hardware.visible_devices)
+
     def test_cli_beats_env_beats_run_beats_model_beats_hardware(self):
         run = {"engine": {"pp": 2, "dtype": "float16"},
                "hardware": {"collective": {"NCCL_PROTO": "LL"}}}

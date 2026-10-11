@@ -203,6 +203,9 @@ def _one_of(allowed):
 
 
 def _validate(values, origins, allow_unverified, where):
+    # yaml reads `visible_devices: 0` or --set ...=1 as an int; 0 would read as unset.
+    if values["hardware.visible_devices"] is not None:
+        values["hardware.visible_devices"] = str(values["hardware.visible_devices"])
     for path, allowed in CHOICES.items():
         if values[path] not in allowed:
             raise ConfigError(f"{where}: unknown {path.rsplit('.', 1)[-1]} {values[path]!r}; "
