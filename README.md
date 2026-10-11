@@ -17,7 +17,8 @@ just dry configs/runs/llama.yaml --set engine.model=/w/llama   # Config + Launch
 just run configs/runs/llama.yaml --set engine.model=/w/llama   # -> results/llama/
 just profile --run results/llama --source metrics --source energy
 just crossval results/<ours> results/<theirs>   # compares two results dirs
-just export --results results/llama --dest ../QuettaSim/engine/data
+just export --results results/llama --dest <export dir>   # the builders but kernel_tables
+just export --only kernel_tables --results results/probes --kernel-dest ../QuettaSim/data
 ```
 
 Without `just`, every recipe is one line: `python3 -m quettabench.cli run ...`,

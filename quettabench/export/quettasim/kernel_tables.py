@@ -3,7 +3,7 @@
 That is the tree QuettaSim's kernel_composed backend reads
 (engine/backends/kernel_composed_cost.py kernel_artifact_paths, under the
 data root $QUETTASIM_DATA, default the checkout's data/), so dest is that
-data root. A probe run writes <method>/<kind>/<file> (method ncu or
+data root, given to `qbench export` as --kernel-dest. A probe run writes <method>/<kind>/<file> (method ncu or
 cuda_event) under its run dir: results/probes/<gpu>/<probe>/<run-id>/, or
 results/<run>/<probe>/ for a `qbench run` probe. Each run holds only the
 rows it measured; _inputs.files leaves out failed and unfinished runs.

@@ -5,12 +5,12 @@
 #   just run configs/runs/llama.yaml --set engine.model=/weights/llama
 #   just profile --run results/llama --source metrics
 #   just crossval ...
-#   just export --results results/<run> --dest ../QuettaSim/engine/data
+#   just export --results results/<run> --dest <export dir>
 #
 # .env (written by `just provision`) sets PYTHON_BIN and the cache dirs. Each probe run writes
 # results/probes/<gpu>/<probe>/<run-id>/ (pass --out through `just probe` to change the parent).
 # `just export` is the only route from results/ to QuettaSim; the probes' kernel tables go by
-# its kernel_tables builder into <QuettaSim data root>/kernel_data/.
+# its kernel_tables builder into <QuettaSim data root>/kernel_data/ (--kernel-dest).
 #
 #   REMOTE_HOST=a100  GPU_ID=0  PYTHON_BIN=~/miniconda3/envs/vllm/bin/python
 #
@@ -18,7 +18,7 @@
 #   just gpu=A100 profile-gpu
 #   just gpu=A100 flash tag=tp1 nh=32 nkv=8 hd=128
 #   just probe gemm "--gpu-label A100 --ncu"
-#   just export --dest ../QuettaSim/engine/data
+#   just export --only kernel_tables --results results/probes --kernel-dest ../QuettaSim/data
 
 set dotenv-load := true
 
@@ -96,7 +96,7 @@ probe name *args:
 remote-probe name gpu=gpu *args:
     python3 -m quettabench.probes.base remote-probe --host "{{remote_host}}" --py "{{py}}" --gpu-id "{{gpu_id}}" --gpu-ids "{{gpu_ids}}" --nproc "{{nproc}}" --ncu-bin "{{ncu_bin}}" --probe-args="{{args}}" {{name}} {{gpu}}
 
-# QuettaSim tables from results dirs: just export --results results/<run> --dest <dir>
+# QuettaSim tables from results dirs: just export --results results/<run> --dest <dir> [--kernel-dest <QuettaSim data root>]
 export *args:
     {{py}} -m quettabench.cli export {{args}}
 
@@ -175,7 +175,7 @@ profile-gpu gpu=gpu:
     @echo "GPU-generic tables done for {{gpu}}. Head-config-specific next:"
     @echo "  just gpu={{gpu}} flash tag=tp1 nh=<Hq> nkv=<Hkv> hd=<head_dim>"
     @echo "  just gpu={{gpu}} gdn  geom=9b     # Qwen3.5 hybrids only"
-    @echo "Then route the tables to QuettaSim: just export --only kernel_tables --results results/probes --dest <QuettaSim data root, e.g. ../QuettaSim/data>"
+    @echo "Then route the tables to QuettaSim: just export --only kernel_tables --results results/probes --kernel-dest <QuettaSim data root, e.g. ../QuettaSim/data>"
 
 mirror-preview:
     aws --profile {{r2_profile}} --endpoint-url {{r2_endpoint}} s3 sync {{kdata}}/ s3://{{r2_bucket}}/{{r2_prefix}}/ --dryrun --exclude '*/__pycache__/*' --exclude '*.pyc'

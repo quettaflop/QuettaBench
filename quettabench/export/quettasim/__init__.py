@@ -59,37 +59,51 @@ def source_runs(results_dirs: list[Path]) -> list[dict]:
     return runs
 
 
-def export(results_dirs: Iterable[Path], dest: Path, only: Iterable[str] | None = None) -> list[Path]:
+def export(results_dirs: Iterable[Path], dest: Path | None = None, only: Iterable[str] | None = None,
+           kernel_dest: Path | None = None) -> list[Path]:
     """Run the builders (all, or the named ones) over the results dirs; return the files written.
 
-    Also writes dest/manifest.json: where the inputs came from, the runs
-    recorded there (run.json), which bench commit, when, and with
-    kernel_tables the run dirs whose rows each kernel table holds.
+    kernel_tables writes under kernel_dest (QuettaSim's data root) and runs
+    only when it is given; the other builders write under dest and run only
+    when it is given. A builder named in only without its dest stops the
+    export. Each dest used also gets manifest.json: where the inputs came
+    from, the runs recorded there (run.json), which bench commit, when, and
+    in kernel_dest the run dirs whose rows each kernel table holds.
     """
     results_dirs = [Path(d) for d in results_dirs]
-    dest = Path(dest)
     names = list(only) if only else list(BUILDERS)
     unknown = [n for n in names if n not in BUILDERS]
     if unknown:
         raise SystemExit(f"unknown builder {unknown}; choose from {sorted(BUILDERS)}")
+    if only:
+        if "kernel_tables" in names and kernel_dest is None:
+            raise SystemExit("kernel_tables writes under --kernel-dest (QuettaSim's data root); give it")
+        if any(n != "kernel_tables" for n in names) and dest is None:
+            raise SystemExit("the builders other than kernel_tables write under --dest; give it")
+    names = [n for n in names if (kernel_dest if n == "kernel_tables" else dest) is not None]
+    if not names:
+        raise SystemExit("give --dest, --kernel-dest or both")
     written: list[Path] = []
     tables = None
     for name in names:
         _inputs.run_dirs.cache_clear()
         if name == "kernel_tables":
-            paths, tables = kernel_tables.run(results_dirs, dest)
+            paths, tables = kernel_tables.run(results_dirs, Path(kernel_dest))
             written.extend(paths)
         else:
-            written.extend(BUILDERS[name].run(results_dirs, dest))
+            written.extend(BUILDERS[name].run(results_dirs, Path(dest)))
     _inputs.run_dirs.cache_clear()
-    dest.mkdir(parents=True, exist_ok=True)
     manifest = {
         "source_dirs": [str(d) for d in results_dirs],
         "runs": source_runs(results_dirs),
         "bench_sha": bench_sha(),
         "exported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
+    if any(n != "kernel_tables" for n in names):
+        Path(dest).mkdir(parents=True, exist_ok=True)
+        (Path(dest) / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     if tables is not None:
-        manifest["kernel_tables"] = tables
-    (dest / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+        Path(kernel_dest).mkdir(parents=True, exist_ok=True)
+        (Path(kernel_dest) / "manifest.json").write_text(
+            json.dumps({**manifest, "kernel_tables": tables}, indent=2) + "\n")
     return written

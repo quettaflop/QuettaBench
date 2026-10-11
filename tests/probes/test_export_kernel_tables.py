@@ -80,7 +80,7 @@ def test_probe_runs_export_to_the_quettasim_layout(tmp_path: Path) -> None:
                                           "ncu/collectives/H100_tp2_nccl_vs_vllm.csv": "b\n"}, 8)
     probe_run(results, "fused_block", {"validation/fused_block_profile_m_tp1_H100.csv": "v\n"}, 9)
     probe_run(results, "moe_routing", {"m_layer1.safetensors": "s"}, 10)
-    written = export([results], dest, only=["kernel_tables"])
+    written = export([results], kernel_dest=dest, only=["kernel_tables"])
     got = tree(dest / "kernel_data")
     assert sorted(got) == [
         "cuda_event/fa3_cross/H100.csv",          # cross_attn_path
@@ -114,7 +114,7 @@ def test_vllm_all_reduce_rows_merge_over_the_collective_ones(tmp_path: Path, vll
     results, dest = tmp_path / "results", tmp_path / "out"
     probe_run(results, "collective", {"ncu/collectives/H100_tp2.csv": COLLECTIVE}, 1 - vllm_first)
     probe_run(results, "vllm_allreduce", {"ncu/collectives/H100_tp2.csv": VLLM}, vllm_first)
-    export([results], dest, only=["kernel_tables"])
+    export([results], kernel_dest=dest, only=["kernel_tables"])
     with (dest / "kernel_data" / "ncu" / "collectives" / "H100_tp2.csv").open(newline="") as f:
         rows = list(csv.reader(f))
     assert rows == [["op", "world", "bytes", "latency_us", "dtype_bytes", "path"],
@@ -133,7 +133,7 @@ def test_the_newest_ok_run_wins_and_failed_or_unfinished_runs_never_do(tmp_path:
     killed = results / "probes" / "H100" / "gemm" / "20261011T120003.000000Z"
     (killed / "run.json").unlink()   # what a kill before run_recorded's finally leaves
     probe_run(results, "flash_attn", {"ncu/flash_attn/H100.csv": "bad\n"}, 4, fails=True)
-    export([results], dest, only=["kernel_tables"])
+    export([results], kernel_dest=dest, only=["kernel_tables"])
     assert tree(dest / "kernel_data") == {"ncu/gemm/H100.csv": "good\n"}
 
 
@@ -147,7 +147,7 @@ def test_a_qbench_run_probe_exports_too(tmp_path: Path) -> None:
         "config": {"mode": {"mode": "probe", "probe": "gemm"}},
         "provenance": {"started": "2026-10-11T00:00:00+00:00"},
         "run_status": {"status": "ok", "reason": None}}))
-    export([tmp_path / "results"], tmp_path / "out", only=["kernel_tables"])
+    export([tmp_path / "results"], kernel_dest=tmp_path / "out", only=["kernel_tables"])
     assert tree(tmp_path / "out" / "kernel_data") == {"ncu/gemm/H100.csv": "t\n"}
 
 
@@ -176,7 +176,7 @@ def test_overlapping_runs_union_their_rows(tmp_path: Path) -> None:
     b = csv_text([FA_HEAD, (64, 8, 128, 1, 20.0), (16, 2, 128, 1, 9.0), (16, 2, 128, 2, 9.5)])
     probe_run(results, "flash_attn", {"ncu/flash_attn/H100.csv": a}, at=0, finished=100)
     probe_run(results, "flash_attn", {"ncu/flash_attn/H100.csv": b}, at=1, finished=50)
-    export([results], dest, only=["kernel_tables"])
+    export([results], kernel_dest=dest, only=["kernel_tables"])
     assert rows(dest / "kernel_data" / "ncu" / "flash_attn" / "H100.csv") == [
         list(FA_HEAD), ["64", "8", "128", "1", "20.0"],
         ["32", "8", "128", "1", "10.0"], ["32", "8", "128", "2", "11.0"],
@@ -198,7 +198,7 @@ def test_gemm_rows_union_with_append_and_reset_without(tmp_path: Path) -> None:
     probe_run(results, "gemm", {table: csv_text([GEMM_HEAD, (1, 4, 4, 2, 5.0), (8, 4, 4, 2, 6.0)])}, 1)
     probe_run(results, "gemm", {table: csv_text([GEMM_HEAD, (8, 4, 4, 2, 7.0)])}, 2,
               args=["--append"])
-    export([results], dest, only=["kernel_tables"])
+    export([results], kernel_dest=dest, only=["kernel_tables"])
     assert rows(dest / "kernel_data" / table) == [
         list(GEMM_HEAD), ["1", "4", "4", "2", "5.0"], ["8", "4", "4", "2", "7.0"]]
 
@@ -210,7 +210,7 @@ def test_reparallel_rows_upsert_on_their_key_and_sort(tmp_path: Path) -> None:
     probe_run(results, "reparallel", {table: csv_text([head, ("H100", 8, 4, 2, 16.0, 3.0),
                                                        ("H100", 8, 2, 1, 16.0, 2.0)])}, 0)
     probe_run(results, "reparallel", {table: csv_text([head, ("H100", 8, 2, 1, 16.0, 1.5)])}, 1)
-    export([results], dest, only=["kernel_tables"])
+    export([results], kernel_dest=dest, only=["kernel_tables"])
     assert rows(dest / "kernel_data" / table) == [
         list(head), ["H100", "8", "2", "1", "16.0", "1.5"], ["H100", "8", "4", "2", "16.0", "3.0"]]
 
@@ -222,7 +222,7 @@ def test_a_whole_table_comes_from_the_run_that_finished_last(tmp_path: Path) -> 
     table = "cuda_event/gdn/H100_9b_decode.csv"
     probe_run(results, "gdn", {table: "batch,us\n1,5\n"}, at=0, finished=100)
     probe_run(results, "gdn", {table: "batch,us\n2,6\n"}, at=1, finished=50)
-    export([results], dest, only=["kernel_tables"])
+    export([results], kernel_dest=dest, only=["kernel_tables"])
     assert tree(dest / "kernel_data") == {table: "batch,us\n1,5\n"}
 
 
@@ -235,7 +235,7 @@ def test_elementwise_entries_union_with_gemm_fp8_quant(tmp_path: Path) -> None:
     probe_run(results, "gemm", {table: '{"fp8_act_quant": 1}'}, 1)
     probe_run(results, "elementwise", {table: '{"rms_norm": 2}'}, 2)
     probe_run(results, "gemm", {table: '{"fp8_act_quant": 3}'}, 3)
-    export([results], dest, only=["kernel_tables"])
+    export([results], kernel_dest=dest, only=["kernel_tables"])
     assert json.loads((dest / "kernel_data" / table).read_text()) == {
         "rms_norm": 2, "fp8_act_quant": 3}
 
@@ -246,7 +246,7 @@ def test_an_unmergeable_file_stops_the_export_before_anything_is_written(tmp_pat
     probe_run(results, "gemm", {"ncu/moe/H100.csv": "a\n"}, 1)
     probe_run(results, "moe", {"ncu/moe/H100.csv": "b\n"}, 2)
     with pytest.raises(SystemExit, match="ncu/moe/H100.csv"):
-        export([results], dest, only=["kernel_tables"])
+        export([results], kernel_dest=dest, only=["kernel_tables"])
     assert not dest.exists()
 
 
@@ -265,5 +265,26 @@ def test_the_manifest_names_only_runs_whose_rows_were_copied(tmp_path: Path) -> 
     assert sorted(used) == ["ncu/collectives/H100_tp2.csv", fa]
     assert [Path(r).parent.name for r in used["ncu/collectives/H100_tp2.csv"]] == ["vllm_allreduce"]
     assert [Path(r).name for r in used[fa]] == ["20261011T120001.000000Z"]
-    export([results], dest, only=["kernel_tables"])
+    export([results], kernel_dest=dest, only=["kernel_tables"])
     assert json.loads((dest / "manifest.json").read_text())["kernel_tables"] == used
+
+
+def test_kernel_tables_go_to_their_own_dest_and_only_when_given(tmp_path: Path, capsys) -> None:
+    """--dest takes the other builders' files; the kernel tables go to the
+    QuettaSim data root given as --kernel-dest, and without it they are not built."""
+    from quettabench.export.quettasim.__main__ import main
+    results, dest, data = tmp_path / "results", tmp_path / "out", tmp_path / "QuettaSim" / "data"
+    probe_run(results, "gdn", {"cuda_event/gdn/H100_9b_decode.csv": "g\n"}, 0)
+    from quettabench.export import quettasim
+    with mock.patch.dict(quettasim.BUILDERS, {"tp_comm": quettasim.tp_comm,
+                                              "kernel_tables": kernel_tables}, clear=True):
+        main(["--results", str(results), "--dest", str(dest)])
+    assert not (dest / "kernel_data").exists() and not data.exists()
+    assert "kernel_tables" not in json.loads((dest / "manifest.json").read_text())
+    main(["--results", str(results), "--kernel-dest", str(data), "--only", "kernel_tables"])
+    assert tree(data / "kernel_data") == {"cuda_event/gdn/H100_9b_decode.csv": "g\n"}
+    assert "kernel_tables" in json.loads((data / "manifest.json").read_text())
+    for argv in (["--only", "kernel_tables", "--dest", str(dest)], ["--only", "tp_comm"],
+                 ["--kernel-dest", str(data), "--only", "tp_comm"]):
+        with pytest.raises(SystemExit):
+            main(["--results", str(results), *argv])

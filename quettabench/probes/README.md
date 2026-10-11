@@ -44,7 +44,7 @@ in a new dir. Every probe run opens its `requests.jsonl` before it starts, so a 
 before it finishes leaves no `run.json` and export skips its tables. The table paths below are relative to the run's dir.
 
 The one route to QuettaSim is the `kernel_tables` export builder:
-`just export --only kernel_tables --results results/probes --dest <QuettaSim data root>`
+`just export --only kernel_tables --results results/probes --kernel-dest <QuettaSim data root>`
 (`$QUETTASIM_DATA`, or `../QuettaSim/data` for the in-repo tree) builds every
 `<method>/<kind>/<file>` table from the ok runs of its probe by the rule above into
 `<dest>/kernel_data/<method>/<kind>/<file>`, the paths `kernel_artifact_paths` in

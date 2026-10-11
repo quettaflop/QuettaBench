@@ -530,3 +530,11 @@ remote run's exit code, then removes only that dir; a failed pull keeps
 it. Before, every invocation emptied and reused `/tmp/qbench-probes/`, so
 two concurrent invocations deleted each other's runs, a failed remote run
 was never pulled, and the run id came from the remote clock.
+
+2026-10-11: no fixture changed. `qbench export` takes the kernel tables'
+destination as its own `--kernel-dest` (QuettaSim's data root), and the
+`kernel_tables` builder runs only when it is given; the other builders keep
+`--dest` and run only when that is given. Before, every builder wrote under
+the one `--dest`, so a default export put `kernel_data/` beside `kernels/`
+and `results/`, and the examples named `../QuettaSim/engine/data`, a dir
+QuettaSim does not have.
