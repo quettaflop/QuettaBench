@@ -65,33 +65,6 @@ PROFILE_ALIASES: dict[str, str] = {
 }
 
 
-def filter_profiles(
-    agent_type: str | None = None,
-    turn_style: str | None = None,
-    serving_style: str | None = None,
-    data_source: str | None = None,
-    mode: str | None = None,
-    include_inactive: bool = False,
-) -> dict:
-    """Filter profiles by tag values. None means 'any'."""
-    result = {}
-    for name, p in PROFILES.items():
-        if not include_inactive and not p.active:
-            continue
-        if agent_type is not None and p.agent_type != agent_type:
-            continue
-        if turn_style is not None and p.turn_style != turn_style:
-            continue
-        if serving_style is not None and p.serving_style != serving_style:
-            continue
-        if data_source is not None and p.data_source != data_source:
-            continue
-        if mode is not None and p.mode != mode:
-            continue
-        result[name] = p
-    return result
-
-
 def get_profile(name: str) -> WorkloadProfile:
     """Look up a profile by name, resolving aliases for old names."""
     if name in PROFILES:
@@ -101,12 +74,3 @@ def get_profile(name: str) -> WorkloadProfile:
     raise ValueError(
         f"Unknown profile '{name}'. Available: {sorted(PROFILES.keys())}"
     )
-
-
-def resolve_profile_name(name: str) -> str:
-    """Return the canonical profile name, resolving aliases."""
-    if name in PROFILES:
-        return name
-    if name in PROFILE_ALIASES:
-        return PROFILE_ALIASES[name]
-    return name

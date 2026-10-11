@@ -79,7 +79,6 @@ class WorkloadCfg:
     # ramp:<start>:<end> | burst:<n>x<size>@<gap_s>
     arrival: str = "steady"
     speed: float = 1.0
-    limit: int | None = None
     prompt_mode: str = "distinct"     # grid runs only
     seed: int = 42
     num_requests: int = 100

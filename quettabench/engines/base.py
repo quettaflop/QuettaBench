@@ -80,9 +80,6 @@ class EngineAdapter(ABC):
         parity gate passes."""
         return cfg.mode.grid is None
 
-    def profiler_hook(self, handle):
-        """Attach point for the profiler; Phase 2. Returns None until then."""
-
 
 _ADAPTERS = {}
 

@@ -4,10 +4,8 @@ from pathlib import Path
 
 from quettabench.workloads.profiles import (
     PROFILES,
-    filter_profiles,
     get_profile,
     load_profiles,
-    resolve_profile_name,
 )
 from quettabench.workloads.sessions import resolve_multi_turn_num_sessions
 
@@ -27,7 +25,6 @@ class ProfileRegistryTests(unittest.TestCase):
                 load_profiles(td)
 
     def test_coding_agent_is_alias_for_coding_singleturn(self):
-        self.assertEqual(resolve_profile_name("coding-agent"), "coding-singleturn")
         self.assertEqual(get_profile("coding-agent").name, "coding-singleturn")
         self.assertEqual(get_profile("coding-singleturn").dataset, "jsonl")
 
@@ -36,19 +33,6 @@ class ProfileRegistryTests(unittest.TestCase):
         self.assertEqual(get_profile("swebench-multiturn-short").dataset, "swebench-multi-turn")
         self.assertEqual(get_profile("terminalbench-multiturn-medium").dataset, "terminalbench-multi-turn")
         self.assertEqual(get_profile("osworld-multiturn-long").dataset, "osworld-multi-turn")
-
-    def test_distributional_profiles_are_active_after_runner_wiring(self):
-        active = set(filter_profiles(turn_style="multi-turn"))
-        all_multi = set(filter_profiles(turn_style="multi-turn", include_inactive=True))
-
-        canonical = {
-            "chat-multiturn",
-            "swebench-multiturn",
-            "terminalbench-multiturn",
-            "osworld-multiturn",
-        }
-        self.assertTrue(canonical.issubset(all_multi))
-        self.assertTrue(canonical.issubset(active))
 
     def test_multi_turn_num_sessions_uses_concurrency_floor(self):
         profile = get_profile("osworld-multiturn")

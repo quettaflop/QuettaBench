@@ -1,7 +1,7 @@
 """Golden: the one Mooncake reader (workloads/live.py) on a 5-line trace.
 
-RealTrace.from_jsonl, RealTrace.from_mooncake and the runner's
-MooncakeTraceDataset all expand hash_ids through live.mooncake_prompt_ids, so
+RealTrace.from_jsonl, RealTrace.from_mooncake and MooncakeTrace (once
+the runner's MooncakeTraceDataset) all expand hash_ids through live.mooncake_prompt_ids, so
 they must produce the same token ids. Pinned with hash_ids, without them
 (synth_ids fallback), and with a zero output_length (kept, not dropped).
 Token id lists are pinned by sha256 plus length and first ids, and by how
@@ -42,11 +42,10 @@ def read_all(case, path):
     """The trace through every entry point; ids must agree across all three."""
     with crossval_path(), mock.patch.dict(os.environ, {}, clear=True):
         live = fresh_import("quettabench.workloads.live")
-        mooncake = fresh_import("quettabench.workloads.mooncake")
         trace = live.RealTrace.from_jsonl(str(path))
         strict = live.RealTrace.from_mooncake(str(path))
         limited = live.RealTrace.from_mooncake(str(path), limit=2)
-        ds = mooncake.MooncakeTraceDataset(str(path))
+        ds = live.MooncakeTrace(str(path))
         served = [ds.get_next_request() for _ in range(6)]  # five lines, then the wrap
     reqs = [r.to_dict() for r in trace.requests()]
     case.assertEqual(reqs, [r.to_dict() for r in strict.requests()])
