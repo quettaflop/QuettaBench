@@ -1,21 +1,29 @@
 __pycache__/
 *.pyc
-results/
 .venv/
+.pytest_cache/
+.ruff_cache/
+
+# Run output and logs stay on the box that produced them.
+results/
+logs/
+*.log
+!tests/golden/fixtures/*.log
+
+# Local agent and tool state; AGENTS.md is the tracked agent file.
+.claude/
+.omc/
 
 # Large datasets live on R2 (see data/fetch.py), not in git.
 data/*.jsonl
 data/distributions/*.json
+data/mooncake/*.jsonl
+data/mooncake/*.fit.json
 
 # Scratch output from distribution rebuilds / re-baselines.
 data/_rebuilt*/
 data/_pre_rebaseline_*/
 data/_holdout_*.jsonl
-.omc/
-data/mooncake/*.jsonl
-data/mooncake/*.fit.json
 
-# nsys captures from scripts/crossval/prof.sh stay local.
-scripts/crossval/profiles/
 # provision.py writes the resolved run env here (the justfile loads it); host-specific.
 .env
