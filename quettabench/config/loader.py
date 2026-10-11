@@ -20,7 +20,7 @@ from quettabench.config.schema import (
     dict_field,
 )
 from quettabench.config.validate import check_ep_legal, parse_serving_style
-from quettabench.workloads import arrival
+from quettabench.workloads import arrival, profiles
 
 # model yaml key -> Config path
 MODEL_KEYS = {
@@ -179,6 +179,23 @@ def _force(values, origins, path, value, by, where):
     origins[path] = by
 
 
+def _profile_prefix_caching(values, origins, where):
+    """A serve run on a workload profile with prefix_caching_required gets
+    engine.prefix_caching true (origin "profile"), as the old sweeps passed
+    --enable-prefix-caching; an explicit false is refused."""
+    source = values["workload.source"]
+    if values["mode.grid"] is not None or (source not in profiles.PROFILES
+                                           and source not in profiles.PROFILE_ALIASES):
+        return
+    if values["engine.prefix_caching"] or not profiles.get_profile(source).prefix_caching_required:
+        return
+    if origins.get("engine.prefix_caching", "default") != "default":
+        raise ConfigError(f"{where}: engine.prefix_caching=False contradicts workload profile "
+                          f"{source}, which requires prefix caching")
+    values["engine.prefix_caching"] = True
+    origins["engine.prefix_caching"] = "profile"
+
+
 def _one_of(allowed):
     """'a, b or c'."""
     words = [str(a) for a in allowed]
@@ -219,6 +236,7 @@ def _validate(values, origins, allow_unverified, where):
         _force(values, origins, "engine.prefix_caching", False, by, where)
     elif profile in ("single-turn", "multi-turn"):
         _force(values, origins, "engine.prefix_caching", True, by, where)
+    _profile_prefix_caching(values, origins, where)
     arrival = arrival_kind(values["workload.arrival"])
     if values["mode.load"] == "open" and arrival not in RATE_ARRIVALS + ("trace",):
         raise ConfigError(f"{where}: open load needs a rate-bearing arrival "

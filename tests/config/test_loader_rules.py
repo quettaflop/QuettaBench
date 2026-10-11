@@ -178,6 +178,15 @@ class LoaderRules(unittest.TestCase):
             self.load({"mode": {"serve_profile": "stress-test"},
                        "engine": {"prefix_caching": True}})
 
+    def test_workload_profile_turns_on_prefix_caching(self):
+        cfg = self.one({"workload": {"source": "chat-short"}})
+        self.assertEqual((cfg.engine.prefix_caching, cfg.origins["engine.prefix_caching"]),
+                         (True, "profile"))
+        with self.assertRaisesRegex(ConfigError, "contradicts workload profile chat-short"):
+            self.load({"workload": {"source": "chat-short"}}, ["engine.prefix_caching=false"])
+        self.assertFalse(self.one({"workload": {"source": "chat-short"},
+                                   "mode": {"grid": "toy"}}).engine.prefix_caching)
+
     def test_open_loop_needs_rate_arrival_and_closed_loop_forbids_it(self):
         with self.assertRaisesRegex(ConfigError, "open load needs a rate-bearing arrival"):
             self.load({"mode": {"load": "open"}})

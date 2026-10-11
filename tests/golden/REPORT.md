@@ -335,3 +335,10 @@ Other current behaviour the fixtures now pin, worth knowing before the move:
 now read `use aggregated, disagg:<P>p<D>d, afd:<A>a<F>f, or ep<N>dp<M>`.
 `parse_serving_style` accepted `afd:<A>a<F>f` but its refusal did not list
 it; only the message text changed, every spec is refused as before.
+
+2026-10-11: no fixture changed. A serve run whose workload profile sets
+`prefix_caching_required: true` now gets `engine.prefix_caching = true`
+(origin `profile`), as the retired sweeps passed `--enable-prefix-caching`;
+before, the profile key was never read and such runs launched with prefix
+caching off. An explicit `engine.prefix_caching=false` on such a profile is
+refused at load.
