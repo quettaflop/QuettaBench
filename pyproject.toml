@@ -16,6 +16,9 @@ dependencies = [
     "pyyaml>=6",
 ]
 
+[project.optional-dependencies]
+dev = ["pre-commit"]
+
 [project.scripts]
 qbench = "quettabench.cli:main"
 

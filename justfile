@@ -62,9 +62,13 @@ crossval *args:
 test:
     python3 -m pytest tests -q
 
-# ruff only: mypy is not installed in this environment, so it is not part of the gate yet.
+# The CI hooks when pre-commit is installed, else ruff alone. mypy is not part of the gate yet.
 lint:
-    ruff check quettabench tests
+    if command -v pre-commit >/dev/null; then pre-commit run --all-files --hook-stage manual; else ruff check quettabench tests; fi
+
+# Install the pre-commit and commit-msg hooks into .git
+hooks:
+    pre-commit install
 
 # Show the GPU(s) the probes will target (local, or REMOTE_HOST if set).
 gpu-info:
