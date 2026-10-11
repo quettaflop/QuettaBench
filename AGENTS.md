@@ -83,6 +83,9 @@ Every writer and every process starter, exactly:
 - `profiler.py`: `profile.json` (and the nsys export) in the run dir.
 - `profiling/kv_transfer.py`: its CSV under `--out-dir`, run under its own
   torchrun ranks.
+- `profiling/serving_frontend.py`: its JSON at `--out`, when given.
+- `profiling/pd_host.py`: its CSV at `--out`.
+- `workloads/tokenize.py`: the tokenized request jsonl at `--out`.
 - `crossval/`: its report json (default `results/xval/`).
 - `export/`: the QuettaSim tables at `--dest`, outside the repo.
 - `provision.py`: outside the repo, the `cache_root` dirs, the QuettaServe
