@@ -139,7 +139,8 @@ Print the exact command + the worker hook, then run it by hand (kept separate so
 does not contaminate the Lane-0/A walls):
 
 ```bash
-$PYTHON -m quettabench.probes.serving_stage_split --emit-nsys-cmd --port 8771
+$PYTHON -m quettabench.probes.serving_stage_split --emit-nsys-cmd --port 8771 \
+  --out results/probes/H100/serving_stage_split/<date>-nsys/serving_stage_split_H100.csv
 ```
 
 That prints (paths are **VERIFY-ON-H100**):

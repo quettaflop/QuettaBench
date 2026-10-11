@@ -327,9 +327,18 @@ class StageSplitKey(unittest.TestCase):
         from quettabench.probes import serving_stage_split as sss
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            sss.main(["--model", "/w", "--emit-nsys-cmd", "--api-key", "sk-live"])
+            sss.main(["--model", "/w", "--emit-nsys-cmd", "--api-key", "sk-live", "--out", "x.csv"])
         self.assertNotIn("sk-live", out.getvalue())
         self.assertIn("VLLM_API_KEY", out.getvalue())
+
+    def test_out_is_required_so_the_run_is_recorded(self):
+        """With no --out the probe would write a table record_dir cannot place;
+        argparse refuses before anything is written."""
+        from quettabench.probes import serving_stage_split as sss
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as stop:
+            sss.main(["--model", "/w", "--no-launch"])
+        self.assertEqual(stop.exception.code, 2)
+        self.assertNotIn("H100", (PROBES / "serving_stage_split.py").read_text().split("def main")[1])
 
 
 def import_without_torch(name):

@@ -403,7 +403,9 @@ def main(argv=None):
     ap.add_argument("--news", default="8,128,512,1024,2048", help="fresh-token counts to sweep")
     ap.add_argument("--cacheds", default="0,2000,8000,16000", help="cached-prefix token counts")
     ap.add_argument("--trials", type=int, default=5)
-    ap.add_argument("--out", default="results/probes/H100/serving_stage_split/serving_stage_split_H100.csv")
+    ap.add_argument("--out", required=True,
+                    help="the stage-split CSV; its dir also gets run.json "
+                         "(e.g. results/probes/<gpu>/serving_stage_split/<date>/serving_stage_split_<gpu>.csv)")
     ap.add_argument("--no-launch", action="store_true",
                     help="server already running (e.g. the nsys-wrapped LANE B server)")
     ap.add_argument("--emit-nsys-cmd", action="store_true",
