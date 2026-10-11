@@ -1,0 +1,8 @@
+# Real words in this repo that typos reads as misspellings.
+[default.extend-words]
+arange = "arange"     # torch.arange
+mape = "mape"         # mean absolute percentage error
+thr = "thr"           # threshold / throughput loop variable
+ect = "ect"           # engine_cache_truth
+sequrity = "sequrity" # GCS bucket name
+hel = "hel"           # streamed token fragment in a test

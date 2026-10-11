@@ -1,0 +1,32 @@
+default_install_hook_types:
+  - pre-commit
+  - commit-msg
+default_stages:
+  - pre-commit # Run locally
+  - manual # Run in CI
+repos:
+- repo: https://github.com/astral-sh/ruff-pre-commit
+  rev: v0.16.6
+  hooks:
+  - id: ruff-check
+    args: [--output-format, github]
+    # Same scope as `just lint`; analysis/ and data/ are one-off studies.
+    files: ^(quettabench|tests|tools)/
+- repo: https://github.com/crate-ci/typos
+  rev: v1.43.5
+  hooks:
+  - id: typos
+    args: [--force-exclude]
+- repo: https://github.com/rhysd/actionlint
+  rev: v1.7.7
+  hooks:
+  - id: actionlint
+- repo: https://github.com/pre-commit/pre-commit-hooks
+  rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c # v6.0.0
+  hooks:
+  - id: check-yaml
+  - id: check-json
+  - id: end-of-file-fixer
+    exclude: ^tests/golden/fixtures/
+  - id: trailing-whitespace
+    exclude: ^tests/golden/fixtures/
