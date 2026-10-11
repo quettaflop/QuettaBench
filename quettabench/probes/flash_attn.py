@@ -99,7 +99,7 @@ def main(argv=None):
 
     dev = torch.device("cuda")
     dt = torch.bfloat16
-    out = out_root(a)
+    out = out_root(a, "flash_attn")
     out.mkdir(parents=True, exist_ok=True)
 
     kv_axis = ([int(x) for x in a.kv_axis.split(",")] if a.kv_axis

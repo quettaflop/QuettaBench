@@ -268,7 +268,7 @@ def main(argv=None):
     a = ap.parse_args(argv)
     dev = torch.device("cuda")
     dt = torch.bfloat16
-    out = out_root(a)
+    out = out_root(a, "gemm")
     out.mkdir(parents=True, exist_ok=True)
     if a.dtype == "fp8" and a.ncu:
         raise SystemExit("--dtype fp8 has no --ncu path (the op is a Python-level "

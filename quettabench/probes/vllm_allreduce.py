@@ -7,8 +7,9 @@ the custom all-reduce kernel (one-/two-shot over NVLink P2P) and only large ones
 NCCL. On H200 tp2 the plain-NCCL grid over-priced graphed decode comm by ~1.5 ms/step
 (legacy 15.8 us/op x 96 sub-layers), which showed up as a 15-17pp TPOT MAPE gap vs a
 zero-latency analytic ring (Mooncake GT, 2026-08-25). This probe measures the path
-vLLM actually takes and UPSERTS the all_reduce rows of ncu/collectives/{gpu}_tp{N}.csv
-(other ops keep their NCCL rows -- vLLM uses NCCL for those).
+vLLM actually takes and UPSERTS the all_reduce rows of its own
+vllm_allreduce/ncu/collectives/{gpu}_tp{N}.csv; the other ops' NCCL rows (vLLM uses
+NCCL for those) are the collective probe's, in collective/ncu/collectives/.
 
   CUDA_VISIBLE_DEVICES=0,1 python3 -m torch.distributed.run --nproc_per_node=2 -m quettabench.probes.vllm_allreduce \
       --gpu-label H200 --out <dir>
@@ -80,7 +81,7 @@ def main(argv=None):
         if rank == 0:
             print(f"  {nbytes:>9d} B: vllm path {us_vllm:8.2f} us   plain nccl {us_nccl:8.2f} us", flush=True)
     if rank == 0:
-        root = out_root(a)
+        root = out_root(a, "vllm_allreduce")
         out = root / "ncu" / "collectives" / f"{a.gpu_label}_tp{world}.csv"
         out.parent.mkdir(parents=True, exist_ok=True)
         kept = []

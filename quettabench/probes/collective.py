@@ -135,7 +135,7 @@ def main(argv=None):
     if rank == 0:
         # ── Method B: the whole curve, as a grid ──────────────────────────────
         if a.out_dir != "-":  # --out - prints without writing
-            root = out_root(a)
+            root = out_root(a, "collective")
             out = root / "ncu" / "collectives" / f"{a.gpu_label}_tp{world}.csv"
             out.parent.mkdir(parents=True, exist_ok=True)
             with out.open("w", newline="") as f:

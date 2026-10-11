@@ -176,7 +176,7 @@ def main(argv=None) -> bool:
                         "pp": "reshard_pp", "kv": "reshard_kv",
                         "plan": "reshard_plan", "xnode": "reshard_xnode"}[a.mode]
         stem = a.out_name or f"{a.gpu_label}_{default_stem}"
-        path = out_root(a) / "cuda_event" / "reparallel" / f"{stem}.csv"
+        path = out_root(a, "reparallel") / "cuda_event" / "reparallel" / f"{stem}.csv"
         _upsert(path, out_rows)
         print(f"\nwrote {path}")
         print(f"\nfit comm_ms = floor + bytes/bw   (mode={a.mode}, per GPU)")

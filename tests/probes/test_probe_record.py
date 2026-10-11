@@ -1,7 +1,9 @@
-"""probes.base: run_recorded leaves <out>/<probe>/run.json through RunWriter
+"""probes.base: run_recorded leaves <out>/<probe>/run.json, beside the
+probe's tables, through RunWriter
 with its argv and run_status; launch_vllm starts the server through the vllm
 adapter and launcher.start, and no probe starts a process itself."""
 
+import argparse
 import ast
 import json
 import os
@@ -15,7 +17,7 @@ import pytest
 
 from quettabench import runner
 from quettabench.config.schema import Config, ConfigError, EngineCfg, HardwareCfg, ModeCfg, WorkloadCfg
-from quettabench.probes.base import launch_vllm, run_recorded
+from quettabench.probes.base import launch_vllm, out_root, run_recorded
 
 PROBES = Path(__file__).resolve().parents[2] / "quettabench" / "probes"
 
@@ -76,7 +78,19 @@ class RunRecorded(unittest.TestCase):
     def test_a_probe_that_names_its_file(self):
         _, _, files = recorded(["--out-raw", "<TD>/h100/raw.jsonl.gz"], lambda: None,
                                name="serving_decode_grid", file_flag="--out-raw")
-        self.assertEqual(files, ["h100/serving_decode_grid/run.json"])
+        self.assertEqual(files, ["h100/run.json"])
+
+    def test_tables_and_run_json_share_the_probe_dir(self):
+        def main():
+            a = argparse.Namespace(out_dir=sys.argv[sys.argv.index("--out") + 1], gpu_label="H100")
+            table = out_root(a, "gemm") / "ncu" / "gemm" / "H100.csv"
+            table.parent.mkdir(parents=True)
+            table.write_text("m,n,k,us\n")
+            seen.append(table)
+        seen = []
+        _, _, files = recorded(["--gpu-label", "H100", "--out", "<TD>"], main)
+        self.assertEqual(files, ["gemm/run.json"])
+        self.assertEqual(seen[0].parts[-4:], ("gemm", "ncu", "gemm", "H100.csv"))
 
 
 def probe_modules():

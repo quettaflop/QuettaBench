@@ -111,7 +111,7 @@ def main(argv=None):
     dt = torch.bfloat16
     H, K, V = a.hv, a.dk, a.dv
     scale = 1.0 / (K ** 0.5)
-    out = out_root(a)
+    out = out_root(a, "gdn")
     out.mkdir(parents=True, exist_ok=True)
     # Decode is CUDA-graphed in serving -> NCU (--ncu) is faithful; prefill is eager
     # -> always cuda_event (the multi-kernel dispatch floor is real), never NCU.

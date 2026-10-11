@@ -134,7 +134,7 @@ def probe(args) -> dict:
 def main(argv=None) -> None:
     args = parser().parse_args(argv)
     tensors = probe(args)
-    out = out_root(args) / "moe_routing" / f"{Path(args.model).name}_layer{args.layer}.safetensors"
+    out = out_root(args, "moe_routing") / f"{Path(args.model).name}_layer{args.layer}.safetensors"
     out.parent.mkdir(parents=True, exist_ok=True)
     for k, v in tensors.items():
         print(f"  {k}: {tuple(v.shape)} {v.dtype}")

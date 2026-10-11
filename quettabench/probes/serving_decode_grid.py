@@ -9,8 +9,8 @@ from this module).
 
     python3 -m quettabench.probes.serving_decode_grid \
       --model /path/to/Llama-3.1-8B-Instruct --tensor-parallel-size 4 \
-      --port 8791 --out-raw results/probes/H100x4/serving_decode_grid_H100x4_<date>.jsonl.gz \
-      --out-summary results/probes/H100x4/serving_decode_grid_summary.csv
+      --port 8791 --out-raw results/probes/H100x4/serving_decode_grid/serving_decode_grid_H100x4_<date>.jsonl.gz \
+      --out-summary results/probes/H100x4/serving_decode_grid/serving_decode_grid_summary.csv
 """
 from __future__ import annotations
 
@@ -442,7 +442,7 @@ def main(argv=None) -> None:
     server = None
     if not a.no_launch:
         server = launch_server(a.model, a.port, a.gpu_mem, a.max_model_len, a.api_key,
-                               Path(a.out_raw).parent / "serving_decode_grid",
+                               Path(a.out_raw).parent / "server",
                                a.tensor_parallel_size, a.max_num_seqs,
                                a.max_num_batched_tokens)
     try:

@@ -376,7 +376,7 @@ def main(argv=None) -> None:
     # misses -- but that is only faithful for EAGER execution. vLLM CUDA-graphs MoE
     # decode, so --graph (dispatch-free, ncu/-equivalent) is the decode-faithful
     # method; H200 GT showed the eager grid overprices graphed decode 2.3x.
-    dst = out_root(a) / ("ncu" if _GRAPH else "cuda_event") / "moe"
+    dst = out_root(a, "moe") / ("ncu" if _GRAPH else "cuda_event") / "moe"
     dst.mkdir(parents=True, exist_ok=True)
     path = dst / f"{a.gpu_label}{'' if a.dtype == 'bf16' else '_' + a.dtype}.csv"
     n_new = len(rows)

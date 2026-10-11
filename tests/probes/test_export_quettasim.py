@@ -1,11 +1,17 @@
 """export() routes results dirs to QuettaSim's files and records where they came from."""
 from __future__ import annotations
 
+import contextlib
 import csv
 import json
+import sys
 from pathlib import Path
+from unittest import mock
 
-from quettabench.export.quettasim import export
+import pytest
+
+from quettabench.export.quettasim import _inputs, export
+from quettabench.probes.base import run_recorded
 
 
 def write_leg(path: Path, scale: float) -> None:
@@ -75,3 +81,39 @@ def test_unfinished_unreadable_and_failed_runs_are_skipped(tmp_path: Path, capsy
     assert json.loads((dest / "manifest.json").read_text())["runs"] == []
     reference = export([good], tmp_path / "ref", only=["tp_comm"])
     assert written[0].read_text() == reference[0].read_text()
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_a_failed_probe_run_keeps_its_tables_out(tmp_path: Path, fails: bool) -> None:
+    """`just probe serving_stage_split` writes its legs and run.json in one dir;
+    a run that raised after writing them exports nothing."""
+    results = tmp_path / "results"
+    leg = results / "H100" / "serving_stage_split" / "serving_stage_split_H100.csv"
+
+    def main():
+        leg.parent.mkdir(parents=True)
+        write_leg(leg, 1.0)
+        write_leg(leg.with_name("serving_stage_split_H100_tp2.csv"), 0.6)
+        if fails:
+            raise RuntimeError("server died")
+
+    with mock.patch.object(sys, "argv", ["probe", "--out", str(leg)]), \
+            pytest.raises(RuntimeError) if fails else contextlib.nullcontext():
+        run_recorded(main, "serving_stage_split", file_flag="--out")
+    assert (leg.parent / "run.json").exists()
+    written = export([results], tmp_path / "out", only=["tp_comm"])
+    assert written == ([] if fails else [tmp_path / "out" / "kernels" / "prefill_tp_comm_H100.json"])
+
+
+def test_a_file_belongs_to_its_nearest_run_dir(tmp_path: Path) -> None:
+    """A failed run dir outside a table's own run dir does not drop it, and a
+    table under a failed run's subdirs is dropped."""
+    for run, status in (("H100/gemm", "ok"), ("H100/flash_attn", "failed"), ("H100", "failed")):
+        (tmp_path / run).mkdir(parents=True, exist_ok=True)
+        (tmp_path / run / "run.json").write_text(json.dumps({"run_status": {"status": status}}))
+    for table in ("H100/gemm/ncu/gemm/H100.csv", "H100/flash_attn/ncu/flash_attn/H100.csv"):
+        (tmp_path / table).parent.mkdir(parents=True)
+        (tmp_path / table).write_text("")
+    _inputs.run_dirs.cache_clear()
+    kept = [p.relative_to(tmp_path).as_posix() for p in _inputs.files(tmp_path, "*.csv")]
+    assert kept == ["H100/gemm/ncu/gemm/H100.csv"]

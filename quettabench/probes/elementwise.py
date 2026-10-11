@@ -169,7 +169,7 @@ def main(argv=None):
     # ncu/ = graphed-decode-faithful (NCU or --graph replay, both dispatch-free);
     # cuda_event/ = eager incl. dispatch. The loader prefers ncu/ and falls back.
     method = "ncu" if a.graph else "cuda_event"
-    out = out_root(a) / method / "elementwise"
+    out = out_root(a, "elementwise") / method / "elementwise"
     out.mkdir(parents=True, exist_ok=True)
     path = out / f"{a.gpu_label}.json"
     path.write_text(json.dumps(result, indent=2))

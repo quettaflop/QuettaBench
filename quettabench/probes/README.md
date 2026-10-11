@@ -22,7 +22,12 @@ just gpu=A100 flash tag=tp1 nh=32 nkv=8 hd=128
 just probe gemm "--gpu-label A100 --ncu"
 ```
 
-Tables land in `results/probes/<gpu>/` (`--out` changes it). Nothing writes into the
+Each probe writes under its own `results/probes/<gpu>/<probe>/` (`--out` changes the
+`results/probes/<gpu>/` part): its tables and its `run.json` sit in that one dir, so
+`just export` drops the tables of a run whose `run.json` is not ok. A probe that names its
+output file (`serving_stage_split --out`, `serving_decode_grid --out-raw`) writes its
+`run.json` beside that file. The table paths below are relative to the probe's dir, and
+the R2 mirror (`just mirror-up`) carries the same `<gpu>/<probe>/` layout. Nothing writes into the
 QuettaSim checkout: `just export --results results/probes/A100 --dest <dir>` is the one
 route out. Schema
 contract: filenames `{gpu}[_tpN].csv`, method split `ncu/` (graphed decode) vs
@@ -52,7 +57,7 @@ contract: filenames `{gpu}[_tpN].csv`, method split `ncu/` (graphed decode) vs
    just gpu=X gdn geom=9b                         # ONLY for Qwen3.5-style hybrids
    just gpu=X moe                                 # ONLY if you serve MoE models
    ```
-   Tables land in the method-explicit layout under `results/probes/X/`
+   Tables land in the method-explicit layout under `results/probes/X/<probe>/`
    (`ncu/` = graphed-decode-faithful, `cuda_event/` = eager-prefill-faithful):
    `ncu/gemm/X.csv`, `cuda_event/elementwise/X.json`,
    `{ncu,cuda_event}/flash_attn/X[_tpN].csv` (decode; ncu with `flash-ncu`),
@@ -84,7 +89,7 @@ contract: filenames `{gpu}[_tpN].csv`, method split `ncu/` (graphed decode) vs
 
 Set `REMOTE_HOST`, `GPU_ID` and `PYTHON_BIN`; `remote-probe` rsyncs the probes package to
 the host, runs the probe on `GPU_ID` (`NPROC=2 GPU_IDS=0,1` for the torchrun probes), and
-rsyncs the tables back into `results/probes/<gpu>/`. Pick a **free** GPU (`just gpu-info`)
+rsyncs the tables back into `results/probes/<gpu>/<probe>/`. Pick a **free** GPU (`just gpu-info`)
 on shared hosts and clean up `/tmp/qbench-probes` when done.
 ```
 REMOTE_HOST=a100 GPU_ID=0 \
@@ -99,7 +104,7 @@ PYTHON_BIN=/home/<user>/miniconda3/envs/vllm/bin/python \
 | `flash_attn` | decode → `{ncu if --ncu else cuda_event}/flash_attn/{gpu}[_tpN].csv`; prefill → `cuda_event/fa3_prefill/{gpu}[_tpN].csv` (always) | decode (kv×batch), prefill (seq) |
 | `cross_attn` | `cuda_event/fa3_cross/{gpu}.csv` | chunked-prefill attention PER LAYER over (q_len × resident_tokens) -- the rectangular shape neither the decode (q=1) nor the full-causal prefill grid covers; on long-ISL traces it dominates prefill attention FLOPs. One run per head config (`--n-heads/--n-kv-heads/--head-dim`), upserts |
 | `collective` | `ncu/collectives/{gpu}_tp{N}.csv` | plain-NCCL collectives over decode-step payloads (torchrun); also prints a legacy `tp_comm:` YAML block |
-| `vllm_allreduce` | `ncu/collectives/{gpu}_tp{N}.csv` (all_reduce rows, `path=vllm`) | torchrun; times TP all-reduce through vLLM's OWN `GroupCoordinator` (custom allreduce on) next to plain NCCL. NOTE: vLLM ≥0.27 fuses allreduce+rmsnorm under torch.compile (`fuse_allreduce_rms`), so this standalone grid over-prices graphed decode -- see h200.yaml `tp_comm.source` |
+| `vllm_allreduce` | `ncu/collectives/{gpu}_tp{N}.csv` (all_reduce rows, `path=vllm`; its own dir, so the other ops' rows stay in `collective/`) | torchrun; times TP all-reduce through vLLM's OWN `GroupCoordinator` (custom allreduce on) next to plain NCCL. NOTE: vLLM ≥0.27 fuses allreduce+rmsnorm under torch.compile (`fuse_allreduce_rms`), so this standalone grid over-prices graphed decode -- see h200.yaml `tp_comm.source` |
 | `elementwise` | `cuda_event/elementwise/{gpu}.json` | affine `floor_us + bytes/eff_bw` per kernel. **Prefer `--vllm --graph`** (needs a vLLM env): times the REAL fused kernels (`rms_norm`, `fused_add_rms_norm`, `silu_and_mul`, `rotary_embedding`, `reshape_and_cache_flash`) instead of multi-kernel torch-chain proxies, and adds the `fused_add_rmsnorm` + `kv_cache_write` entries the composition prefers when present (each fused entry replaces a two-kernel proxy pair). The torch-chain default overpriced vLLM's fused ops ~2-3 ms/step at 48 layers |
 | `gdn` | decode → `{ncu if --ncu else cuda_event}/gdn/{gpu}_{geom}_decode.csv`; prefill → `cuda_event/gdn/…_prefill.csv` (always) | Gated-DeltaNet; prefill (seq), decode (batch) |
 | `moe` | `cuda_event/moe/{gpu}.csv` + `cuda_event/moe/{gpu}_routing.json` (cuda_event **always**) | tokens × (n_experts, top_k, intermediate, hidden) |

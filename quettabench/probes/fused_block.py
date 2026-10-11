@@ -29,7 +29,7 @@ not a different kernel's.
   CUDA_VISIBLE_DEVICES=1 python3 -m quettabench.probes.fused_block --gpu-label H200 \
       --spec-dir <QuettaSim>/engine/device_spec/models --model qwen3-235b-a22b-fp8 --tp 4
 
-writes results/probes/<gpu>/validation/fused_block_profile_<model>_tp<N>_<gpu>.csv
+writes results/probes/<gpu>/fused_block/validation/fused_block_profile_<model>_tp<N>_<gpu>.csv
 (--out changes the directory).
 """
 from __future__ import annotations
@@ -217,7 +217,7 @@ def main(argv=None) -> None:
             del x, ab
             torch.cuda.empty_cache()
 
-    dst = out_root(a) / "validation"
+    dst = out_root(a, "fused_block") / "validation"
     dst.mkdir(parents=True, exist_ok=True)
     tag = f"{a.model}_tp{a.tp}_{a.gpu_label}"
     path = dst / f"fused_block_profile_{tag}.csv"

@@ -101,7 +101,7 @@ def main(argv=None):
                          "fa_version": f"vllm-fa{a.fa_version}", "dtype": "bfloat16",
                          "latency_us": round(us, 3)})
             print(f"  q={ql:5d} resident={ctx:6d} kv={kv:6d}: {us:8.1f} us/layer", flush=True)
-    out = out_root(a) / "cuda_event" / "fa3_cross"
+    out = out_root(a, "cross_attn") / "cuda_event" / "fa3_cross"
     out.mkdir(parents=True, exist_ok=True)
     path = out / f"{a.gpu_label}.csv"
     geom = (str(a.n_heads), str(a.n_kv_heads), str(a.head_dim))

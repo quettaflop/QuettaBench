@@ -97,8 +97,8 @@ the old run, so `profile.json` and the nsys export go with it.
 
 Grid runs no longer write `results/baselines/*.json`; `qbench crossval`
 reads the run dir, and still reads old baselines files. Probe recipes write
-`results/probes/<gpu>/`, and each probe run records itself in
-`results/probes/<gpu>/<probe>/run.json` (argv, provenance, run_status);
+`results/probes/<gpu>/<probe>/`, and each probe run records itself beside its
+tables in `results/probes/<gpu>/<probe>/run.json` (argv, provenance, run_status);
 `just export` is the only route to QuettaSim.
 
 ## Cross-validation

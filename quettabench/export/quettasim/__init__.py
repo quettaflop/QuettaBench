@@ -64,6 +64,7 @@ def export(results_dirs: Iterable[Path], dest: Path, only: Iterable[str] | None 
     recorded there (run.json), which bench commit, when.
     """
     results_dirs = [Path(d) for d in results_dirs]
+    _inputs.run_dirs.cache_clear()
     dest = Path(dest)
     names = list(only) if only else list(BUILDERS)
     unknown = [n for n in names if n not in BUILDERS]

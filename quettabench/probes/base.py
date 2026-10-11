@@ -16,31 +16,33 @@ DEFAULT_OUT = Path("results") / "probes"
 
 
 def add_output_args(ap: argparse.ArgumentParser) -> None:
-    """Add --gpu-label and --out; --out defaults to results/probes/<gpu-label>."""
+    """Add --gpu-label and --out; --out defaults to results/probes/<gpu-label>,
+    and each probe writes under its own <out>/<probe>/ (out_root)."""
     ap.add_argument("--gpu-label", "--gpu", required=True, help="GPU name the tables are keyed by, e.g. A100/H100")
     ap.add_argument("--out", "--out-dir", dest="out_dir", default=None,
-                    help="directory the grids are written under (default: results/probes/<gpu-label>)")
+                    help="parent of the probe's own <probe>/ dir (default: results/probes/<gpu-label>)")
 
 
-def out_root(args: argparse.Namespace) -> Path:
-    return Path(args.out_dir) if args.out_dir else DEFAULT_OUT / args.gpu_label
+def out_root(args: argparse.Namespace, name: str) -> Path:
+    """<out>/<name>/: the dir a probe's tables and its run.json go under."""
+    return (Path(args.out_dir) if args.out_dir else DEFAULT_OUT / args.gpu_label) / name
 
 
 def record_dir(name: str, argv: list[str], file_flag: str | None = None) -> Path | None:
-    """Where a probe's run.json goes: <out_root>/<name>/, or with file_flag
-    (a probe that names its output file) <that file's dir>/<name>/. None when
-    argv names no output (no --gpu-label, or --out -)."""
+    """Where a probe's run.json goes: out_root, the dir its tables are written
+    under, or with file_flag (a probe that names its output file) that file's
+    dir. None when argv names no output (no --gpu-label, or --out -)."""
     ap = argparse.ArgumentParser(add_help=False)
     if file_flag:
         ap.add_argument(file_flag, dest="file")
         known, _ = ap.parse_known_args(argv)
-        return Path(known.file).parent / name if known.file else None
+        return Path(known.file).parent if known.file else None
     ap.add_argument("--gpu-label", "--gpu")
     ap.add_argument("--out", "--out-dir", dest="out_dir")
     known, _ = ap.parse_known_args(argv)
     if not known.gpu_label or known.out_dir == "-":
         return None
-    return out_root(known) / name
+    return out_root(known, name)
 
 
 def run_recorded(main, name: str, file_flag: str | None = None) -> None:

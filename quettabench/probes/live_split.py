@@ -7,7 +7,7 @@ vLLM server and measures per-request TTFT, then fits TTFT(B,P) = floor + shared*
 decomposition the headline applies (shared once/step + perreq per request). Reports the shared/perreq split.
 
   python3 -m quettabench.probes.live_split --gpu-label H100 --url http://localhost:8771/v1/chat/completions
-writes results/probes/<gpu>/live_split_<gpu>.csv (--out changes the directory).
+writes results/probes/<gpu>/live_split/live_split_<gpu>.csv (--out changes the directory).
 """
 import argparse
 import asyncio
@@ -81,7 +81,7 @@ async def sweep(argv=None):
     ap.add_argument("--rounds", type=int, default=3)
     add_output_args(ap)
     a = ap.parse_args(argv)
-    out = out_root(a) / f"live_split_{a.gpu_label}.csv"
+    out = out_root(a, "live_split") / f"live_split_{a.gpu_label}.csv"
     out.parent.mkdir(parents=True, exist_ok=True)
     Bs = [int(x) for x in a.Bs.split(",")]
     Ps = [int(x) for x in a.Ps.split(",")]

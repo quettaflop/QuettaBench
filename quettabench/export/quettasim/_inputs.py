@@ -1,6 +1,7 @@
 """Find the result files the QuettaSim builders read."""
 from __future__ import annotations
 
+import functools
 import json
 from collections.abc import Iterable
 from pathlib import Path
@@ -10,33 +11,51 @@ TP_DEGREES = (2, 4)
 RUN_MARKERS = ("run.json", "requests.jsonl", "engine.json")
 
 
-def skipped_runs(root: Path) -> dict[Path, str]:
-    """{run dir: why} for every run dir under root (root included) that export
-    leaves out: run.json missing (a run that never finished), unparsable, or
-    a run_status other than ok."""
-    skipped = {}
+@functools.cache
+def run_dirs(root: Path) -> dict[Path, str | None]:
+    """{run dir: why export leaves it out, None when kept} for every run dir
+    under root (root included): run.json missing (a run that never finished),
+    unparsable, or a run_status other than ok. Cached per root; export()
+    clears it."""
+    runs = {}
     dirs = sorted({p.parent for marker in RUN_MARKERS for p in Path(root).rglob(marker)})
     for run_dir in dirs:
         path = run_dir / "run.json"
         if not path.exists():
-            skipped[run_dir] = "no run.json"
+            runs[run_dir] = "no run.json"
             continue
         try:
             status = json.loads(path.read_text())["run_status"]["status"]
         except (OSError, ValueError, KeyError, TypeError) as e:
-            skipped[run_dir] = f"run.json unreadable ({type(e).__name__})"
+            runs[run_dir] = f"run.json unreadable ({type(e).__name__})"
             continue
-        if status != "ok":
-            skipped[run_dir] = f"run_status {status}"
-    return skipped
+        runs[run_dir] = None if status == "ok" else f"run_status {status}"
+    return runs
+
+
+def skipped_runs(root: Path) -> dict[Path, str]:
+    """{run dir: why} for every run dir under root that export leaves out."""
+    return {d: why for d, why in run_dirs(Path(root)).items() if why}
+
+
+def owner(path: Path, root: Path, runs: dict[Path, str | None]) -> Path | None:
+    """The run dir path belongs to: its nearest ancestor (up to root) that is
+    a run dir, None when it sits in none (a table without a run.json)."""
+    for d in path.parents:
+        if d in runs:
+            return d
+        if d == root:
+            return None
+    return None
 
 
 def files(root: Path, pattern: str, recursive: bool = True) -> list[Path]:
-    """Paths under root matching pattern, sorted, without those inside a
-    run dir skipped_runs leaves out."""
-    skipped = skipped_runs(root)
-    hits = Path(root).rglob(pattern) if recursive else Path(root).glob(pattern)
-    return [p for p in sorted(hits) if not any(p.is_relative_to(d) for d in skipped)]
+    """Paths under root matching pattern, sorted, without those whose run dir
+    (owner) export leaves out."""
+    root = Path(root)
+    runs = run_dirs(root)
+    hits = root.rglob(pattern) if recursive else root.glob(pattern)
+    return [p for p in sorted(hits) if runs.get(owner(p, root, runs)) is None]
 
 
 def quettasim_symbol_gone(symbol: str) -> None:

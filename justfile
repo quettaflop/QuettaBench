@@ -8,7 +8,7 @@
 #   just export --results results/<run> --dest ../QuettaSim/engine/data
 #
 # .env (written by `just provision`) sets PYTHON_BIN and the cache dirs. Probes write
-# under results/probes/<gpu>/ (pass --out through `just probe` to change that).
+# under results/probes/<gpu>/<probe>/ (pass --out through `just probe` to change the parent).
 # `just export` is the only route from results/ to QuettaSim.
 #
 #   REMOTE_HOST=a100  GPU_ID=0  PYTHON_BIN=~/miniconda3/envs/vllm/bin/python
@@ -85,7 +85,7 @@ probe name *args:
 
 # Run a probe on REMOTE_HOST: ship the probes package (and the schema, env_map and run
 # writer its run.json needs), run it there (NPROC>1 = one rank per
-# GPU in GPU_IDS through torchrun), pull the tables into results/probes/<gpu>/.
+# GPU in GPU_IDS through torchrun), pull the tables into results/probes/<gpu>/<probe>/.
 remote-probe name gpu=gpu *args:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -145,7 +145,7 @@ gdn gpu=gpu geom="9b" hv="32" dk="128" dv="128" nlin="24" mode="full":
 gdn-ncu gpu=gpu geom="9b" hv="32" dk="128" dv="128" nlin="24":
     CUDA_VISIBLE_DEVICES={{gpu_id}} {{py}} -m quettabench.probes.gdn --gpu-label {{gpu}} --geometry-tag {{geom}} --hv {{hv}} --dk {{dk}} --dv {{dv}} --n-linear {{nlin}} --ncu
 
-# NCCL grid -> results/probes/<gpu>/ncu/collectives/. Also prints a legacy tp_comm: YAML block.
+# NCCL grid -> results/probes/<gpu>/collective/ncu/collectives/. Also prints a legacy tp_comm: YAML block.
 collectives gpu=gpu world="2" hidden="4096" layers="32" ops="all_reduce,all_gather,reduce_scatter,all_to_all" gpu_ids="0,1":
     CUDA_VISIBLE_DEVICES={{gpu_ids}} {{py}} -m torch.distributed.run --nproc_per_node={{world}} -m quettabench.probes.collective --gpu-label {{gpu}} --hidden {{hidden}} --layers {{layers}} --ops {{ops}}
 

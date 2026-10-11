@@ -9,7 +9,7 @@ turn every miss into a hit. c1 only: /metrics _sum deltas isolate one request.
 
     python3 -m quettabench.probes.serving_stage_split \
       --model /path/to/Llama-3.1-8B-Instruct --port 8771 \
-      --out results/probes/H100/serving_stage_split_H100.csv
+      --out results/probes/H100/serving_stage_split/serving_stage_split_H100.csv
 
 See quettabench/probes/runbooks/serving_stage_split_plan.md.
 """
@@ -399,7 +399,7 @@ def main(argv=None):
     ap.add_argument("--news", default="8,128,512,1024,2048", help="fresh-token counts to sweep")
     ap.add_argument("--cacheds", default="0,2000,8000,16000", help="cached-prefix token counts")
     ap.add_argument("--trials", type=int, default=5)
-    ap.add_argument("--out", default="results/probes/H100/serving_stage_split_H100.csv")
+    ap.add_argument("--out", default="results/probes/H100/serving_stage_split/serving_stage_split_H100.csv")
     ap.add_argument("--no-launch", action="store_true",
                     help="server already running (e.g. the nsys-wrapped LANE B server)")
     ap.add_argument("--emit-nsys-cmd", action="store_true",
@@ -421,7 +421,7 @@ def main(argv=None):
     server = None
     if not a.no_launch:
         server = launch_server(a.model, a.port, a.gpu_mem, a.max_model_len, a.api_key,
-                               a.hash or None, Path(a.out).parent / "serving_stage_split",
+                               a.hash or None, Path(a.out).parent / "server",
                                tp=a.tensor_parallel_size)
     try:
         print("server healthy; starting c1 stage-split sweep", flush=True)
