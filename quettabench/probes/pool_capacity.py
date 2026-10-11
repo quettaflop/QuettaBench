@@ -8,7 +8,7 @@ startup KV-block lines for the static number.
 Run (starts the server through probes.base.launch_vllm, which writes its
 engine.json and server.log beside run.json in results/probes/<gpu>/pool_capacity/):
   CUDA_VISIBLE_DEVICES=3 python3 -m quettabench.probes.pool_capacity --gpu-label H100 \
-      --port 8794 --tokens 4096 --count 120
+      --model <model-dir> --port 8794 --tokens 4096 --count 120
 writes results/probes/<gpu>/pool_capacity_<gpu>.txt (--out changes the directory).
 """
 from __future__ import annotations
@@ -98,7 +98,7 @@ async def run(base_url, model, tokens, count, out_path):
 
 def main(argv=None):
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model", default="/data48/kevinlau/models/Llama-3.1-8B-Instruct")
+    ap.add_argument("--model", required=True, help="model dir (Llama-3.1-8B-Instruct)")
     ap.add_argument("--served-model-name", default="llama")
     ap.add_argument("--port", type=int, default=8794)
     ap.add_argument("--tokens", type=int, default=4096)

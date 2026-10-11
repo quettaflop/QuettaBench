@@ -9,14 +9,14 @@ SSH alias: `h100`
 export CUDA_VISIBLE_DEVICES=6
 
 # Temp / cache (data48 mount)
-export TMPDIR=/data48/kevinlau/tmp
-export XDG_CACHE_HOME=/data48/kevinlau/tmp/.cache
+export TMPDIR=<tmp-dir>
+export XDG_CACHE_HOME=<tmp-dir>/.cache
 
 # Python
 PYTHON=~/miniconda3/envs/vllm/bin/python
 
 # Model
-MODEL=/data48/kevinlau/models/Llama-3.1-8B-Instruct
+MODEL=<model-dir>
 ```
 
 ## Run a profiling script
@@ -26,8 +26,8 @@ ssh h100
 cd /root/agentic-serve   # or wherever the repo is checked out
 
 CUDA_VISIBLE_DEVICES=6 \
-TMPDIR=/data48/kevinlau/tmp \
-XDG_CACHE_HOME=/data48/kevinlau/tmp/.cache \
+TMPDIR=<tmp-dir> \
+XDG_CACHE_HOME=<tmp-dir>/.cache \
 ~/miniconda3/envs/vllm/bin/python <script-path> <args>
 ```
 
@@ -38,11 +38,11 @@ ssh h100
 cd /root/agentic-serve
 
 CUDA_VISIBLE_DEVICES=6 \
-TMPDIR=/data48/kevinlau/tmp \
-XDG_CACHE_HOME=/data48/kevinlau/tmp/.cache \
+TMPDIR=<tmp-dir> \
+XDG_CACHE_HOME=<tmp-dir>/.cache \
 ~/miniconda3/envs/vllm/bin/python \
   profiling/profile/vllm/cuda_events/prefill_decomposition.py \
-  --model /data48/kevinlau/models/Llama-3.1-8B-Instruct \
+  --model <model-dir> \
   --output profile_data/results/prefill_decomposition_H100.csv
 ```
 
@@ -73,12 +73,12 @@ Use `profiling/profile/scripts/run_vllm_profile.py` for orchestration:
 
 ```bash
 CUDA_VISIBLE_DEVICES=6 \
-TMPDIR=/data48/kevinlau/tmp \
-XDG_CACHE_HOME=/data48/kevinlau/tmp/.cache \
+TMPDIR=<tmp-dir> \
+XDG_CACHE_HOME=<tmp-dir>/.cache \
 ~/miniconda3/envs/vllm/bin/python profiling/profile/scripts/run_vllm_profile.py \
   --source cuda-events \
   --target <target> \
   -- \
-  --model /data48/kevinlau/models/Llama-3.1-8B-Instruct \
+  --model <model-dir> \
   <target-specific-args>
 ```

@@ -383,7 +383,8 @@ def _round(x):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--model", default="/data48/kevinlau/models/Llama-3.1-8B-Instruct")
+    ap.add_argument("--model", default=None,
+                    help="model dir (Llama-3.1-8B-Instruct); needed unless --no-launch")
     ap.add_argument("--served-model-name", default="llama",
                     help="model name sent in the OpenAI payload (matches --served-model-name)")
     ap.add_argument("--port", type=int, default=8771)
@@ -404,6 +405,8 @@ def main(argv=None):
     ap.add_argument("--emit-nsys-cmd", action="store_true",
                     help="print the LANE B nsys wrapper command + worker hook and exit")
     a = ap.parse_args(argv)
+    if a.model is None and (a.emit_nsys_cmd or not a.no_launch):
+        ap.error("--model is required to launch the server or print its nsys command")
 
     base_url = f"http://127.0.0.1:{a.port}"
 

@@ -106,10 +106,10 @@ ssh h100
 cd /root/agentic-serve            # CLEAN cwd (no stray flash_attn.py)
 
 export CUDA_VISIBLE_DEVICES=7
-export TMPDIR=/data48/kevinlau/tmp
-export XDG_CACHE_HOME=/data48/kevinlau/tmp/.cache
+export TMPDIR=<tmp-dir>
+export XDG_CACHE_HOME=<tmp-dir>/.cache
 PYTHON=~/miniconda3/envs/vllm/bin/python
-MODEL=/data48/kevinlau/models/Llama-3.1-8B-Instruct
+MODEL=<model-dir>
 ```
 
 ### 4a. LANE 0 + LANE A (no patch) -- the main run

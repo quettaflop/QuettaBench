@@ -394,7 +394,8 @@ def warmup_and_verify_eos(port: int, api_key: str, model_name: str) -> str:
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--model", default="/data48/kevinlau/models/Llama-3.1-8B-Instruct")
+    ap.add_argument("--model", default=None,
+                    help="model dir (Llama-3.1-8B-Instruct); needed unless --no-launch")
     ap.add_argument("--served-model-name", default="llama")
     ap.add_argument("--port", type=int, default=8791)
     ap.add_argument("--api-key", default="test")
@@ -419,6 +420,8 @@ def main(argv=None) -> None:
     ap.add_argument("--out-summary", required=True, help="operator cell-summary CSV")
     ap.add_argument("--no-launch", action="store_true")
     a = ap.parse_args(argv)
+    if a.model is None and not a.no_launch:
+        ap.error("--model is required to launch the server (or pass --no-launch)")
 
     if a.pool_tokens is None and a.tensor_parallel_size == 4:
         lattice = LATTICE_TP4

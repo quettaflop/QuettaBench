@@ -22,12 +22,12 @@ campaign's numbers and ours. Run this when the preflight in step 1 passes.
   `a100` alias).
 - Model weights: under `/data/models` (expect `Llama-3.1-8B-Instruct`; **Rule #1: never
   download** -- if missing, STOP and report).
-- Python env: `/home/kevinlau/miniconda3/envs/vllm` (use this env's `vllm`/`python`).
+- Python env: `<vllm-env>` (use this env's `vllm`/`python`).
 - GPU: A100-SXM4-40GB (1.555 TB/s HBM2e, 312 TFLOPS BF16 dense) -- matches
   `profile_data/kernels/roofline_params_A100_llama31_8b.json` peaks, which the builder
   reads for `--gpu A100`.
 - Fresh run dir per attempt (mirror the h100_setup.md convention): e.g.
-  `/data/kevinlau/l6_roofline_run_<date>/` -- never reuse, never `rm` inside an ssh
+  `<run-root>/l6_roofline_run_<date>/` -- never reuse, never `rm` inside an ssh
   command (deny rule).
 
 ## Capture harness: the honest gap
@@ -59,7 +59,7 @@ engine step, not a replay).
    - the host answers `hostname`
    - `nvidia-smi --query-compute-apps=gpu_uuid,pid,process_name,used_memory --format=csv,noheader`
      prints nothing (no compute app on any GPU)
-   - `/home/kevinlau/miniconda3/envs/vllm/bin/python -c 'import vllm'` works
+   - `<vllm-env>/bin/python -c 'import vllm'` works
    - Llama-3.1-8B-Instruct weights are under `/data/models` (never download; report instead)
    - `df -BG /data` shows at least 20 GiB free for the run dir and traces
 2. Launch the instrumented vLLM OpenAI server on the ONE free GPU

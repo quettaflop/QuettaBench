@@ -161,7 +161,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT)
-    ap.add_argument("--tokenizer", default="/home/kevinlau/models/Llama-3.1-8B-Instruct",
+    ap.add_argument("--tokenizer", required=True,
                     help="local model dir or HF id; counts are recorded with the artifact")
     ap.add_argument("--max-sessions", type=int, default=4000)
     ap.add_argument("--min-turns", type=int, default=2)
