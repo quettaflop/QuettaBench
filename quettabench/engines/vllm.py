@@ -106,7 +106,8 @@ FIELDS = {
     "quant":          (lambda v: [],                       kw_when("quantization", bool)),  # server reads it from the checkpoint
     "max_model_len":  (flag("--max-model-len"),            kw("max_model_len")),
     "gpu_util":       (flag("--gpu-memory-utilization"),   kw("gpu_memory_utilization")),
-    "prefix_caching": (switch("--enable-prefix-caching"),  kw("enable_prefix_caching")),
+    "prefix_caching": (lambda v: ["--enable-prefix-caching" if v else "--no-enable-prefix-caching"],
+                       kw("enable_prefix_caching")),
     "cudagraph":      (only(True),                         lambda v: {} if v else
                        {"compilation_config": {"cudagraph_mode": "NONE"}}),
     "serving_style":  (only("aggregated"),                 aggregated_only),

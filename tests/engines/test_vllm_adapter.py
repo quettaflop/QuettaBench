@@ -59,7 +59,7 @@ class ServerArgv(unittest.TestCase):
         self.assertEqual(list(spec.server_argv), [
             "vllm", "serve", "<MODEL>", "--port", "8000", "--tensor-parallel-size", "1",
             "--dtype", "float16", "--max-model-len", "9216",
-            "--gpu-memory-utilization", "0.9",
+            "--gpu-memory-utilization", "0.9", "--no-enable-prefix-caching",
             "--enable-chunked-prefill", "--trust-remote-code"])
         self.assertEqual(spec.env, {"VLLM_SERVER_DEV_MODE": "1",
                                     "VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS": "1"})
