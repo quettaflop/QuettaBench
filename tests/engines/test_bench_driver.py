@@ -3,6 +3,7 @@ fails where bench.sh fails."""
 
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -21,6 +22,14 @@ def cell_spec(ctx, bs, **env):
         adapter="quettaserve", bench_argv=(sys.executable, str(FAKE)), cwd=".",
         env={"QW_BENCH_PROMPT": str(ctx), "QW_BATCH": str(bs), "QW_WORLD": "1", **env},
         ok_pattern=r"^LOOP ", log_header=f">>> ctx={ctx} bs={bs} world=1")
+
+
+def alive(pid):
+    """Whether pid runs: a zombie waiting for its reaper counts as gone."""
+    try:
+        return Path(f"/proc/{pid}/stat").read_text().split(") ")[1][0] != "Z"
+    except (OSError, IndexError):
+        return False
 
 
 def as_points(rows):
@@ -81,6 +90,18 @@ class CellLoop(unittest.TestCase):
             list(BenchDriver(self.log).run([(1, 1, cell_spec(1, 1, FAKE_BENCH_SLEEP="60"))]))
         (proc,) = started
         self.assertIsNotNone(proc.poll())  # killed and reaped, not left sleeping
+
+    def test_an_interrupted_cell_kills_the_bench_children(self):
+        pid_file = self.log.with_name("child.pid")
+        spec = cell_spec(1, 1, FAKE_BENCH_SLEEP="60", FAKE_BENCH_CHILD=str(pid_file))
+        with mock.patch.object(drivers.sys, "stdout") as out, self.assertRaises(KeyboardInterrupt):
+            out.write.side_effect = KeyboardInterrupt
+            list(BenchDriver(self.log).run([(1, 1, spec)]))
+        pid = int(pid_file.read_text())
+        deadline = time.monotonic() + 5
+        while alive(pid) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertFalse(alive(pid))
 
 if __name__ == "__main__":
     unittest.main()

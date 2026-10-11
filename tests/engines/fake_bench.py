@@ -2,12 +2,19 @@
 """Stand-in for a QuettaServe decode_loop bench: one LOOP line from the QW_* env.
 
 FAKE_BENCH_EXIT sets the exit code; FAKE_BENCH_SILENT=1 prints no LOOP line;
-FAKE_BENCH_SLEEP=<s> sleeps that long before exiting.
+FAKE_BENCH_SLEEP=<s> sleeps that long before exiting; FAKE_BENCH_CHILD=<file>
+starts a sleeping child first and writes its pid there.
 """
 
 import os
+import subprocess
 import sys
 import time
+
+if os.environ.get("FAKE_BENCH_CHILD"):
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    with open(os.environ["FAKE_BENCH_CHILD"], "w") as fh:
+        fh.write(str(child.pid))
 
 if os.environ.get("FAKE_BENCH_SILENT") != "1":
     print(f"LOOP ctx={os.environ['QW_BENCH_PROMPT']} bs={os.environ['QW_BATCH']} "

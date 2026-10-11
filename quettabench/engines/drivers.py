@@ -24,8 +24,11 @@ they are imported inside the methods that use them.
 """
 
 import asyncio
+import contextlib
 import json
+import os
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -640,7 +643,8 @@ class BenchDriver(Driver):
         ok = re.compile(spec.ok_pattern)
         passed = False
         proc = subprocess.Popen(spec.child_argv(spec.bench_argv), cwd=spec.cwd, text=True,
-                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                start_new_session=True)
         try:
             with self.log_path.open("a") as fh:
                 for line in proc.stdout:
@@ -649,9 +653,11 @@ class BenchDriver(Driver):
                     passed = passed or bool(ok.search(line))
             rc = proc.wait()
         finally:
-            # Ctrl-C or a failed write must not leave the bench holding the GPUs.
+            # Ctrl-C or a failed write must not leave the bench, or a child it
+            # started (cargo's), holding the GPUs: kill its whole group.
             if proc.poll() is None:
-                proc.kill()
+                with contextlib.suppress(ProcessLookupError):
+                    os.killpg(proc.pid, signal.SIGKILL)
                 proc.wait()
         if rc != 0:
             self._log(f"FAIL ctx={ctx} bs={bs} (bench exited {rc}; see {self.log_path})")
