@@ -37,7 +37,7 @@ default:
 
 # Check and set up this box for the given run yamls (--dry-run prints the plan; writes .env)
 provision *args:
-    {{py}} -m quettabench.provision {{args}}
+    {{py}} -m quettabench.cli provision {{args}}
 
 # One run yaml to results/<run>/
 run cfg *args:
@@ -168,11 +168,11 @@ reparallel gpu=gpu world="8" mode="tp" gpu_ids="0,1,2,3,4,5,6,7":
 
 _default_model_yaml := sim_root / "device_spec/models/qwen3.5-9b.yaml"
 
-# Live vLLM server -> frontend: + serving: YAML (no GT). GT-fit stays in QuettaSim:
+# The live vLLM server of a results/<run>/ -> its profile.json frontend section (no GT),
+# through qbench profile. GT-fit stays in QuettaSim:
 #   just -f $QUETTASIM/justfile serving-fit gpu=X model=...
-serving-profile gpu=gpu model="Qwen3.5-9B" model_yaml=_default_model_yaml base_url="http://localhost:8000/v1" tp="1":
-    {{py}} -m quettabench.profiling.serving_frontend --gpu-label {{gpu}} --model {{model}} \
-        --model-yaml {{model_yaml}} --base-url {{base_url}} --tp {{tp}}
+serving-profile run gpu=gpu model_yaml=_default_model_yaml tp="1" *args:
+    {{py}} -m quettabench.cli profile --run {{run}} --source frontend --frontend-args "--gpu-label {{gpu}} --model-yaml {{model_yaml}} --tp {{tp}}" {{args}}
 
 profile-gpu gpu=gpu:
     just gpu={{gpu}} gemm-ncu

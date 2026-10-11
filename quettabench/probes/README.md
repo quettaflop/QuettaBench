@@ -78,8 +78,9 @@ contract: filenames `{gpu}[_tpN].csv`, method split `ncu/` (graphed decode) vs
    just -f $QUETTASIM/justfile serving-fit gpu=X model=<Model>   # fits frontend:+serving: FROM GT (no GPU)
    just gpu=X tp-comm tp=2 hidden=<H> layers=<L>                 # measures tp_comm: (needs 2 GPUs, torchrun)
    ```
-   If `X` has no GT yet, `just gpu=X serving-profile …` measures frontend:+serving: against a
-   live `vllm serve`. Each prints a YAML block to paste into `X.yaml`.
+   If `X` has no GT yet, `just gpu=X serving-profile results/<run>` measures frontend:+serving:
+   against that run's live `vllm serve` into its `profile.json` (`frontend` section); the
+   others print a YAML block to paste into `X.yaml`.
 
 5. **Validate** against GT: `just -f $QUETTASIM/justfile xval serving` (or the
    suite that matches your GT) and check the cell-MAPE. See QuettaSim's
@@ -120,7 +121,8 @@ The decode-step-vs-batch curve the old `decode_batch_probe.py` measured is a gri
 
 `quettabench/profiling/serving_frontend.py` (a profiler source) is the live-server probe that fits
 the device-YAML `frontend:` + `serving:` blocks against a running `vllm serve`
-(recipe: `serving-profile`), for GPUs with no GT yet. With GT, prefer the cheaper
+(recipe: `serving-profile results/<run>`, which goes through `qbench profile --source frontend`),
+for GPUs with no GT yet. With GT, prefer the cheaper
 `just -f $QUETTASIM/justfile serving-fit`. It and `pd_host.py` are
 consumer-coupled like the two emitters: they import the sim's `engine` package,
 so run them from a QuettaSim checkout (or with QuettaSim on `PYTHONPATH`).

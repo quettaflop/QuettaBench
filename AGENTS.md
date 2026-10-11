@@ -118,7 +118,9 @@ Every writer and every process starter, exactly:
 - No attribution trailers in code, commits or PRs: the author field is the only authorship.
 - No em-dash in prose; write `--`.
 - Imports at the top of the file. No inline python in shell or justfile
-  recipes; a recipe is one command line into the package.
+  recipes; a recipe is one command line into the package. `gpu-info` and
+  `remote-probe` are the exceptions: host-shell glue (ssh, rsync,
+  nvidia-smi) that runs where the package may not be installed.
 - Measured before kept: an optimization lands with the measurement that
   justifies it, and a feature lands with its measurement.
 - Report every number, including the ones that weaken a claim.
