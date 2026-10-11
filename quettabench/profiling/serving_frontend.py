@@ -38,6 +38,7 @@ the source is asked for).
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import statistics as st
 import time
@@ -177,7 +178,6 @@ def parser():
 def probe(a):
     """Run the sweeps against a.base_url; prints the blocks and returns them as
     {frontend, serving, conc} (conc: [c, median ttft ms, sim frontend-off ms])."""
-    import dataclasses
 
     from kernel_composed.types import FrontendParams
     gpu = load_kernel_gpu(HERE / ".." / ".." / "device_spec" / f"{a.gpu_label.lower()}.yaml")

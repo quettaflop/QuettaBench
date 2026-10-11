@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import csv
+import gc
 import gzip
 import json
 import math
@@ -250,7 +251,6 @@ async def _run_shard(req_specs: list[dict], port: int, api_key: str, model_name:
         # GC pauses are the dominant client-side lag source at high event rates (measurement
         # hygiene, run 1 -> run 2 fix): freeze startup garbage and disable collection for the
         # duration of the streams; re-enable after gather.
-        import gc
         gc.collect()
         gc.freeze()
         gc.disable()

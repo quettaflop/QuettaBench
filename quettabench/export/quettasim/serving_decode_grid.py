@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import csv
 import gzip
+import inspect
 import json
 import re
 from collections.abc import Iterable
@@ -97,7 +98,6 @@ def build(inputs: list[Path], snap_tolerance: float = 0.02,
         run cannot be upgraded by an agreeing pair -- it must be re-measured clean).
     Upgraded rows carry the evidence (pass count, spread, per-pass lags) in the
     ``lag_reproducibility_upgrade`` diagnostic column."""
-    import inspect
     sig = inspect.signature(summarize_cell)
     min_samples = sig.parameters["min_samples"].default
     lag_limit_ms = sig.parameters["lag_limit_ms"].default
