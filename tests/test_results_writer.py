@@ -1,5 +1,6 @@
 """metrics/results.py: run.json + requests.jsonl through one writer."""
 
+import dataclasses
 import json
 import subprocess
 import sys
@@ -8,6 +9,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from quettabench.config import loader
 from quettabench.config.schema import (
     Config,
     EngineCfg,
@@ -15,6 +17,7 @@ from quettabench.config.schema import (
     ModeCfg,
     WorkloadCfg,
 )
+from quettabench.engines import vllm
 from quettabench.metrics import results
 from quettabench.metrics.core import RequestResult
 
@@ -105,6 +108,34 @@ class Redaction(unittest.TestCase):
         self.assertEqual(results.redact(env), {
             "HF_TOKEN": "REDACTED", "HF_HOME": "REDACTED", "OPENAI_API_KEY": "REDACTED",
             "AWS_SECRET": "REDACTED", "NCCL_ALGO": "Ring", "CUDA_VISIBLE_DEVICES": "0,1"})
+
+    def test_names_match_without_case_and_only_as_words(self):
+        kwargs = {"api_key": "k", "hf_token": "t", "Password": "p", "max_num_batched_tokens": 4096,
+                  "kv_cache_dtype": "fp8", "keyless": 1}
+        self.assertEqual(results.redact(kwargs), {
+            "api_key": "REDACTED", "hf_token": "REDACTED", "Password": "REDACTED",
+            "max_num_batched_tokens": 4096, "kv_cache_dtype": "fp8", "keyless": 1})
+
+    def test_argv_values_are_redacted_in_both_forms(self):
+        argv = ["vllm", "serve", "/w", "--api-key", "k1", "--hf-token", "t1", "--x-token=t2",
+                "--max-num-batched-tokens", "4096", "--trust-remote-code"]
+        self.assertEqual(results.redact(argv), [
+            "vllm", "serve", "/w", "--api-key", "REDACTED", "--hf-token", "REDACTED",
+            "--x-token=REDACTED", "--max-num-batched-tokens", "4096", "--trust-remote-code"])
+        self.assertEqual(results.redact({"probe_args": "--gpu A100 --api-key k1"}),
+                         {"probe_args": "--gpu A100 --api-key REDACTED"})
+
+    def test_extra_vllm_api_key_reaches_no_results_file(self):
+        (cfg,) = loader.load(ROOT / "configs" / "runs" / "llama.yaml",
+                             ["engine.model=/w", "mode.grid=null"], env={})
+        cfg = dataclasses.replace(cfg, engine=dataclasses.replace(
+            cfg.engine, extra={"vllm": {"api_key": "sk-live"}}))
+        spec = vllm.ADAPTER.translate(cfg)
+        self.assertIn("sk-live", spec.server_argv)
+        self.assertNotIn("sk-live", json.dumps(results.redact(dataclasses.asdict(spec))))
+        with tempfile.TemporaryDirectory() as td:
+            results.RunWriter(td, cfg, launch_env=spec.env).finish({})
+            self.assertNotIn("sk-live", (Path(td) / "run.json").read_text())
 
     def test_run_json_never_holds_a_secret_value(self):
         with tempfile.TemporaryDirectory() as td:

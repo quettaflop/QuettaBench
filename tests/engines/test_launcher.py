@@ -47,6 +47,14 @@ class LocalLauncher(unittest.TestCase):
                           env={"FAKE_MARK": "from-spec", "HF_TOKEN": "secret",
                                "DB_SECRET": "secret"}, **kw)
 
+    def test_engine_json_holds_no_engine_kwarg_or_argv_secret(self):
+        handle = launcher.start(self.spec(engine_kwargs={"api_key": "sk-live"}),
+                                self.dir / "run", timeout_s=30, poll_s=0.1)
+        handle.stop(grace_s=5)
+        record = json.loads((self.dir / "run" / "engine.json").read_text())
+        self.assertEqual(record["launch_spec"]["engine_kwargs"], {"api_key": "REDACTED"})
+        self.assertNotIn("sk-live", json.dumps(record))
+
     def test_start_health_engine_json_stop(self):
         handle = launcher.start(self.spec(), self.dir / "run", timeout_s=30, poll_s=0.1)
         state = json.loads(self.state.read_text())

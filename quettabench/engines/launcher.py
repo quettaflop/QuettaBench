@@ -221,7 +221,7 @@ def start(spec, results_dir, *, backend="local", cfg=None, gpus="", timeout_s=18
             "adapter": spec.adapter,
             "endpoint": endpoint,
             "pid": proc.pid,
-            "launch_spec": {**asdict(spec), "env": redact(spec.env)},
+            "launch_spec": redact(asdict(spec)),
             "started_at": datetime.now(timezone.utc).isoformat(),
             "instrumentation": spec.instrumentation,
         }

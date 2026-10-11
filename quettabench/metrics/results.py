@@ -14,8 +14,8 @@ A driver that times a whole cell itself (BenchDriver) yields dict rows,
 {cell, measured_ms_per_step, group, kv, method}; append writes them with
 the RequestResult keys that apply to them, success and error.
 run_status is {"status": ok | partial | aborted | failed, "reason": ...}.
-Provenance carries the launch env with every key matching
-TOKEN|KEY|SECRET|HF_ written as REDACTED.
+Secrets (redact) are written as REDACTED: in the provenance's launch env
+and in the config.
 Grid runs write no baselines/ file; crossval reads the run dir, and old
 baselines through its compat reader.
 """
@@ -23,21 +23,64 @@ baselines through its compat reader.
 import json
 import os
 import re
+import shlex
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
 RUN_SCHEMA_VERSION = 1
 RUN_STATUSES = ("ok", "partial", "aborted", "failed")
-SECRET_NAME = re.compile(r"TOKEN|KEY|SECRET|HF_")
+# A name whose value is a secret: a token/key/secret/password word, or an HF_ name.
+SECRET_NAME = re.compile(r"(?:^|[_.-])(?:token|key|apikey|secret|password|passwd)(?:$|[_.-])|^hf_",
+                         re.IGNORECASE)
 REPO = Path(__file__).resolve().parents[2]
 
 
-def redact(env):
-    """env with the value of every secret-looking key replaced by REDACTED:
-    the one rule for results/, used by run.json's provenance and by the
-    launcher's engine.json."""
-    return {k: "REDACTED" if SECRET_NAME.search(k) else v for k, v in (env or {}).items()}
+def secret(name):
+    return bool(SECRET_NAME.search(str(name).lstrip("-")))
+
+
+def redact_argv(argv):
+    """argv with the value of every secret-named flag replaced by REDACTED,
+    in both `--api-key X` and `--api-key=X` forms."""
+    out, hide = [], False
+    for arg in argv:
+        if hide and not arg.startswith("--"):
+            out.append("REDACTED")
+            hide = False
+            continue
+        hide = False
+        name, eq, _ = arg.partition("=")
+        if arg.startswith("-") and secret(name):
+            if eq:
+                arg = f"{name}=REDACTED"
+            else:
+                hide = True
+        out.append(arg)
+    return out
+
+
+def redact(obj):
+    """obj with every secret replaced by REDACTED: the one rule for results/.
+    In a mapping (an env, engine kwargs, a config) the scalar value of every
+    secret-named key; in a list of strings (an argv) the value of every
+    secret-named flag; probe_args, an argv as one shell string, likewise.
+    run.json's provenance and config, the probe argv and the launcher's
+    engine.json all go through it."""
+    if isinstance(obj, dict):
+        out = {}
+        for k, v in obj.items():
+            if secret(k) and not isinstance(v, (dict, list, tuple)):
+                v = "REDACTED"
+            elif k == "probe_args" and isinstance(v, str):
+                v = shlex.join(redact_argv(shlex.split(v)))
+            out[k] = redact(v)
+        return out
+    if isinstance(obj, (list, tuple)):
+        if obj and all(isinstance(x, str) for x in obj):
+            return redact_argv(obj)
+        return [redact(x) for x in obj]
+    return obj
 
 
 def exit_status(exc):
@@ -150,7 +193,7 @@ def provenance(cfg, handle=None, driver=None, launch_env=None):
         "serving_style": engine.serving_style,
         "quant": engine.quant,
         "kv_dtype": engine.kv_dtype,
-        "launch_env": redact(launch_env),
+        "launch_env": redact(launch_env or {}),
     }
 
 
@@ -204,7 +247,7 @@ class RunWriter:
         run = {
             "schema_version": RUN_SCHEMA_VERSION,
             "provenance": self.provenance,
-            "config": cfg,
+            "config": redact(cfg),
             "origins": origins,
             "summary": summary,
             "steps": steps,

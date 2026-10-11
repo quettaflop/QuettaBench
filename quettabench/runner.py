@@ -27,7 +27,7 @@ from quettabench.config import env_map, loader
 from quettabench.config.schema import ConfigError
 from quettabench.config.validate import device_count
 from quettabench.engines import base, launcher
-from quettabench.metrics.results import RunWriter
+from quettabench.metrics.results import RunWriter, redact
 from quettabench.modes import serve
 
 # What a run writes into results/<run>/ itself; --overwrite removes these.
@@ -79,7 +79,7 @@ def run_probe(cfg, out):
     except BaseException as e:
         writer.fail(e)
         raise
-    writer.finish({"probe": cfg.mode.probe, "argv": argv})
+    writer.finish({"probe": cfg.mode.probe, "argv": redact(argv)})
 
 
 def with_child_env(spec, pins):

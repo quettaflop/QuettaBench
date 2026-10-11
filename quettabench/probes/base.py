@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from quettabench.config.schema import Config, EngineCfg, HardwareCfg, ModeCfg, WorkloadCfg
-from quettabench.metrics.results import RunWriter, exit_status
+from quettabench.metrics.results import RunWriter, exit_status, redact
 
 DEFAULT_OUT = Path("results") / "probes"
 
@@ -64,7 +64,7 @@ def run_recorded(main, name: str, file_flag: str | None = None) -> None:
                          HardwareCfg(), run_name=f"probe-{name}")
             writer = RunWriter(run_dir, cfg)
             writer.provenance["started"] = started
-            writer.finish({"probe": name, "argv": argv}, status=status, reason=reason)
+            writer.finish({"probe": name, "argv": redact(argv)}, status=status, reason=reason)
 
 
 def launch_vllm(run_dir: Path, model: str, *, port: int, max_model_len: int, prefix_caching: bool,

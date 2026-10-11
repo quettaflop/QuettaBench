@@ -42,6 +42,12 @@ class RunRecorded(unittest.TestCase):
         self.assertEqual(doc["summary"]["argv"][-1], "--wide")
         self.assertIn("bench_sha", doc["provenance"])
 
+    def test_argv_secrets_are_redacted(self):
+        argv = ["--gpu-label", "H100", "--out", "<TD>", "--api-key", "sk-live", "--hf-token=t"]
+        _, doc, _ = recorded(argv, lambda: None)
+        self.assertNotIn("sk-live", json.dumps(doc))
+        self.assertEqual(doc["summary"]["argv"][-3:], ["--api-key", "REDACTED", "--hf-token=REDACTED"])
+
     def test_failure_is_recorded_and_raised(self):
         def boom():
             raise RuntimeError("no GPU")
