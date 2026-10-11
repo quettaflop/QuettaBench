@@ -21,10 +21,12 @@ import ast
 import dataclasses
 import importlib
 import json
+import os
 import re
 import shlex
 import shutil
 import sys
+import uuid
 from pathlib import Path
 
 from quettabench import workloads
@@ -233,7 +235,8 @@ def clear_run_dir(out, overwrite, results_dir):
     appends; with overwrite, or when its run.json says failed, empty it:
     everything in results/<run>/ belongs to the run, including profile.json
     and the nsys export. Only a real dir directly under results_dir that
-    holds a run marker is ever emptied."""
+    holds a run marker is ever emptied: renamed to a hidden sibling, then
+    removed, so the run dir is gone afterwards."""
     if out.is_symlink():
         raise ConfigError(f"{out} is a symlink; qbench empties only a run dir it made")
     if not out.is_dir() or not any(out.iterdir()):
@@ -245,11 +248,13 @@ def clear_run_dir(out, overwrite, results_dir):
                           "qbench did not make it, so it is never emptied")
     if not (overwrite or run_failed(out)):
         raise ConfigError(f"{out} already holds a run; pass --overwrite to replace it")
-    for path in out.iterdir():
-        if path.is_dir() and not path.is_symlink():
-            shutil.rmtree(path)
-        else:
-            path.unlink()
+    # os.rename moves the entry itself, never what a symlink swapped in since points at.
+    aside = out.parent / f".clearing-{uuid.uuid4().hex}-{out.name}"
+    os.rename(out, aside)
+    if aside.is_symlink() or not aside.is_dir():
+        os.rename(aside, out)
+        raise ConfigError(f"{out} became a symlink or a file while being emptied; left as it is")
+    shutil.rmtree(aside)
 
 
 def main(run_yaml, overrides=(), dry=False, results_dir="results", allow_unverified=False,

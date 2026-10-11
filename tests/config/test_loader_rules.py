@@ -288,13 +288,14 @@ class LoaderRules(unittest.TestCase):
     def test_a_run_name_that_is_no_plain_dir_name_is_refused(self):
         """run_name becomes results/<run_name>/, which --overwrite empties."""
         for name in ("..", ".", "/tmp/x", "a/../..", "probes", "xval", "baselines", "Probes",
-                     "", "-x", ".hidden", "a b", "a\\b"):
+                     "", "-x", ".hidden", "a b", "a\\b", "trailing.", "x" * 201):
             with self.subTest(name=name), self.assertRaisesRegex(ConfigError, "run_name"):
                 self.load(overrides=[f"run_name={name}"])
         with self.assertRaisesRegex(ConfigError, "run_name"):
             self.write("runs/probes.yaml", {"model": "toy"})
             load(self.root / "runs" / "probes.yaml", env={"XVAL_LINK_PROFILE": "pcie"})
         self.assertEqual(self.one(overrides=["run_name=a.b_c-1"]).run_name, "a.b_c-1")
+        self.assertEqual(self.one(overrides=[f"run_name={'x' * 200}"]).run_name, "x" * 200)
 
     def test_matrix_suffixes_keep_to_the_run_name_charset(self):
         configs = self.load({"matrix": {"engine.model": ["/w/llama", "../x"]}})

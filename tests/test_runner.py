@@ -509,6 +509,37 @@ class ProbeMode(unittest.TestCase):
                 self.assertTrue((out / "run.json").exists())
                 (out / "run.json").unlink()
 
+    def test_clearing_never_follows_a_dir_swapped_for_a_symlink(self):
+        """A run dir replaced by a symlink between the checks and the emptying
+        is moved aside as the link itself; the files it points at stay."""
+        with tempfile.TemporaryDirectory() as td:
+            results, elsewhere = Path(td, "results"), Path(td, "elsewhere")
+            out = results / "p"
+            out.mkdir(parents=True)
+            (out / "run.json").write_text(json.dumps({"run_status": {"status": "failed"}}))
+            elsewhere.mkdir()
+            (elsewhere / "keep.txt").write_text("mine\n")
+
+            def swap(path):
+                shutil.rmtree(out)
+                out.symlink_to(elsewhere)
+                return True
+            with mock.patch.object(runner, "run_failed", side_effect=swap), \
+                    self.assertRaisesRegex(ConfigError, "symlink"):
+                runner.clear_run_dir(out, False, results)
+            self.assertEqual([p.name for p in elsewhere.iterdir()], ["keep.txt"])
+            self.assertTrue(out.is_symlink())
+            self.assertEqual(sorted(p.name for p in results.iterdir()), ["p"])
+
+    def test_clearing_leaves_no_dir_behind(self):
+        with tempfile.TemporaryDirectory() as td:
+            results = Path(td, "results")
+            (results / "p" / "sub").mkdir(parents=True)
+            (results / "p" / "run.json").write_text("{}")
+            (results / "p" / "sub" / "x").write_text("1")
+            runner.clear_run_dir(results / "p", True, results)
+            self.assertEqual(list(results.iterdir()), [])
+
     def test_a_failed_run_is_replaced_without_overwrite(self):
         run = {"mode": {"mode": "probe", "probe": "fake"}}
         with scratch_configs("p", run) as (path, td), \
