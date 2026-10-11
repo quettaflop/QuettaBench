@@ -1,5 +1,5 @@
 """One idempotent provisioning pass for a GPU box. It replaced bootstrap.sh
-and oneshot.sh, retired in e34d433.
+and oneshot.sh, retired in 73aec89.
 
   python3 -m quettabench.provision <run.yaml>... [--set [<run>:]k=v ...]
                                    [--backend local|docker] [--dry-run] [--env-file FILE]

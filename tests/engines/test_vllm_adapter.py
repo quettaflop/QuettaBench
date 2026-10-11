@@ -1,5 +1,5 @@
 """translate(cfg).engine_kwargs equals vmin_fit's golden LLM kwargs (captured
-before vmin_fit.py retired in 9f9e0ee) for every run yaml, and server_argv is the `vllm serve <model>` form the H200 campaign
+before vmin_fit.py retired in 0b71b64) for every run yaml, and server_argv is the `vllm serve <model>` form the H200 campaign
 harness (v4sweep.py) launched.
 
 translate always passes pipeline_parallel_size; vmin_fit used to leave it

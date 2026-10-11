@@ -32,7 +32,7 @@ CLASHES = {"XVAL_TRACE": "XVAL_CORPUS", "XVAL_AFD": "XVAL_SERVING_STYLE"}
 
 
 # env var -> (Config path, converter, old reader). The old reader is where
-# the pre-refactor code read the var, as file:line at 0b38cbc; every one of
+# the pre-refactor code read the var, as file:line at 8bd8bd6; every one of
 # those files has since retired.
 ENV_MAP = {
     "XVAL_LINK_PROFILE": ("hardware.link_profile", str, "xval_config.py:79,283 vmin_fit.py:27,151"),
@@ -43,7 +43,7 @@ ENV_MAP = {
     "XVAL_TRACE": ("workload.source", str, "vmin_fit.py:137, prompt_mode trace"),
     "XVAL_QUANT": ("engine.quant", str, "table.py:137"),
     "XVAL_SERVING_STYLE": ("engine.serving_style", str, "table.py:129"),
-    "XVAL_AFD": ("engine.serving_style", _attn_ffn, "xval_config.py:271 at fa2eebc"),
+    "XVAL_AFD": ("engine.serving_style", _attn_ffn, "xval_config.py:271 on branch feat/afd, never merged"),
     "XVAL_ALLOW_METHOD_MISMATCH": ("crossval.allow_method_mismatch", _nonempty, "table.py:152"),
     "VMIN_ATTEMPTS": ("mode.vmin_attempts", int, "vmin_fit.py:256"),
     "PROMPT_MODE": ("workload.prompt_mode", str, "vmin_fit.py:130"),
@@ -52,7 +52,7 @@ ENV_MAP = {
     "NCCL_ALGO": ("hardware.collective.NCCL_ALGO", str, "vmin_fit.py:30,149 table.py:119"),
     "NCCL_PROTO": ("hardware.collective.NCCL_PROTO", str, "vmin_fit.py:30,150 table.py:120"),
     # The other five collective pins: the caller's value beat the hardware
-    # yaml in bench.sh:41-45 and vmin_fit.py:28-30 (as of 0b38cbc).
+    # yaml in bench.sh:41-45 and vmin_fit.py:28-30 (as of 8bd8bd6).
     "NCCL_P2P_LEVEL": ("hardware.collective.NCCL_P2P_LEVEL", str, "bench.sh:42 vmin_fit.py:30"),
     "NCCL_IB_DISABLE": ("hardware.collective.NCCL_IB_DISABLE", str, "bench.sh:42 vmin_fit.py:30"),
     "NCCL_SOCKET_IFNAME": ("hardware.collective.NCCL_SOCKET_IFNAME", str,

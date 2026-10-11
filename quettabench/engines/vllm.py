@@ -11,12 +11,12 @@ here is one a launch on real GPUs already used:
          scripts/sweep_all_profiles.sh:109-119 for --dtype,
          --enable-chunked-prefill, --enable-prefix-caching and
          --trust-remote-code; sweep_all_profiles.sh:19,26 (env). Both
-         scripts retired in 3672b16.
+         scripts retired in e50717f.
          max_num_seqs and max_num_batched_tokens come in through extra.vllm.
   kwargs quettabench/modes/vmin_fit.py LLM(...) and legacy/trace_serve.py
-         AsyncEngineArgs(...) as they stood at 9e814e9 (retired in
-         9f9e0ee and 5c67969)
-  nsys   scripts/crossval/prof.sh:16 (retired in af0e9b8)
+         AsyncEngineArgs(...) as they stood at 90952ea (retired in
+         0b71b64 and b2eaa97)
+  nsys   scripts/crossval/prof.sh:16 (retired in bd9815f)
 
 The server binary is `vllm` on PATH, or the `vllm` script beside
 hardware.provision.py when a venv is provisioned (v4sweep ran {VENV}/vllm).

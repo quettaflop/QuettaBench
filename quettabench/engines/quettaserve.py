@@ -2,7 +2,7 @@
 
 QuettaServe cannot listen yet, so there is no server_argv; the spec runs the
 crate's bench test once per grid cell. Everything here is
-scripts/crossval/bench.sh (retired in af0e9b8) restated as data, with its
+scripts/crossval/bench.sh (retired in bd9815f) restated as data, with its
 env reads moved to Config fields:
 
   <P>_CKPT              engine.model
