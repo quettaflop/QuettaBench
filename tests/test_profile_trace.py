@@ -56,6 +56,14 @@ class SingleTurn(unittest.TestCase):
         self.assertEqual(first.prompt_len, 30)
         self.assertEqual(first.metadata["request_index"], 0)
 
+    def test_a_wrapped_lap_follows_the_last_at_the_trace_pace(self):
+        path = write_jsonl(self.dir / "m.jsonl", [
+            {"timestamp": t, "input_length": 30, "output_length": 3, "hash_ids": [i]}
+            for i, t in enumerate((1000, 3000, 5000))])
+        trace = MooncakeTrace(path).draw(7, warmup=0)
+        self.assertEqual([r.arrival_ts for r in trace.requests()],
+                         [1.0, 3.0, 5.0, 7.0, 9.0, 11.0, 13.0])
+
     def test_messages_and_metadata_never_reach_the_hash(self):
         plain = Request([1, 2], 2, order=0, output_length=4)
         chat = dataclasses.replace(plain, messages=[{"content": "x"}], metadata={"k": 1})

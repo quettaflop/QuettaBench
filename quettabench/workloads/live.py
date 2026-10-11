@@ -194,13 +194,17 @@ class MooncakeTrace(DrawnTrace):
     no chat template can disturb block boundaries; metadata names the record
     (request_index) and its block count (num_hash_blocks). arrival_ts is the
     record's timestamp in seconds, so workload.arrival=trace replays it; a
-    wrapped draw repeats the first lap's times."""
+    wrapped draw's lap k is shifted by k * (span + mean gap) of the file's
+    timestamps, so laps follow one another at the trace's own pace."""
 
     rewinds = True
 
     def __init__(self, path, seed=42, limit=0):
         super().__init__()
         self.records = parse_mooncake_trace(path, limit)
+        stamps = [r.timestamp for r in self.records if r.timestamp is not None]
+        span = max(stamps) - min(stamps) if stamps else 0
+        self.lap_ms = span + (span / (len(stamps) - 1) if len(stamps) > 1 else 0)
         self.seed = seed
         self._cursor = 0
         self._block_cache = {}
@@ -209,10 +213,11 @@ class MooncakeTrace(DrawnTrace):
         self._cursor = 0
 
     def get_next_request(self):
-        record = self.records[self._cursor % len(self.records)]
+        lap, i = divmod(self._cursor, len(self.records))
+        record = self.records[i]
         self._cursor += 1
         ids = mooncake_prompt_ids(record, self.seed, self._block_cache)
-        arrival = None if record.timestamp is None else record.timestamp / 1e3
+        arrival = None if record.timestamp is None else (record.timestamp + lap * self.lap_ms) / 1e3
         return Request(ids, len(ids), output_length=record.output_length, arrival_ts=arrival,
                        messages=[], metadata={
                            "prompt_token_ids": ids,

@@ -391,3 +391,12 @@ for these profiles (`cut` is the test's own truncated trajectory):
 | `terminalbench-multiturn-short` | `a28027e756a8a273` | `2ab1e354437af5f0` |
 | `test` | `c19e2bb3db6d4434` | `7ae706bdf8eeae1d` |
 | `cut` | `c769b8ce9e3a8fe2` | `a7ffbc60a718ff0d` |
+
+2026-10-11: no fixture changed; the `mooncake-trace` pin in
+`tests/test_profile_hashes.py` moved from `52bae3bbfe646fd8` /
+`a1384dbf00844c6c` (workload_hash / content digest) to `a03be7b0ed268d81`
+/ `b5ed59cd7a0d7aff`. A Mooncake draw that wraps past the file's end
+shifted each lap k by k * (span + mean gap) of the file's timestamps;
+before, every lap repeated the first lap's arrival times, so
+`workload.arrival=trace` fired the wrapped requests together with the
+first lap's.

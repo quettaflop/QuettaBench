@@ -40,7 +40,7 @@ PINS = {
     "coding-singleturn": ("15384d696a4d7a1b", "0359e7a0be1623a2"),
     "decode-heavy": ("adc88f3eae2adc96", "77345bbb26805e62"),
     "fixed-seq128": ("3439077f38252544", "c0a7d2444b3654da"),
-    "mooncake-trace": ("52bae3bbfe646fd8", "a1384dbf00844c6c"),
+    "mooncake-trace": ("a03be7b0ed268d81", "b5ed59cd7a0d7aff"),
     "osworld-multiturn-long": ("762312f6b602cb88", "7c281ff0cc772773"),
     "osworld-multiturn-medium": ("29482f55adf89f20", "c8ecbee41859e40e"),
     "osworld-multiturn-short": ("ab09ce8e07b841c8", "387a35fabdd98d42"),
