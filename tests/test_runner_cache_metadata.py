@@ -17,7 +17,7 @@ from quettabench.metrics.core import (
     annotate_request_observability,
 )
 from quettabench.metrics.results import RunWriter
-from quettabench.workloads.dataset import BenchmarkRequest
+from quettabench.workloads.base import Request
 from quettabench.workloads.profiles import get_profile
 from quettabench.workloads.sessions import resolve_multi_turn_num_sessions
 
@@ -116,12 +116,13 @@ class RunnerCacheMetadataTests(unittest.TestCase):
         self.assertIsNone(result.block_aligned_cached_context_tokens)
 
     def test_request_observability_records_shape_timing_and_metadata(self):
-        request = BenchmarkRequest(
+        request = Request(
+            [], 0,
             messages=[
                 {"role": "system", "content": "s"},
                 {"role": "user", "content": "hello"},
             ],
-            max_tokens=32,
+            output_length=32,
             metadata={"planned_new_prefill_tokens": 17},
         )
         result = RequestResult(success=True)
@@ -146,7 +147,8 @@ class RunnerCacheMetadataTests(unittest.TestCase):
         self.assertEqual(result.request_metadata["planned_new_prefill_tokens"], 17)
 
     def test_request_observability_allows_unscheduled_multiturn_requests(self):
-        request = BenchmarkRequest(messages=[{"role": "user", "content": "hello"}], max_tokens=8)
+        request = Request([], 0, output_length=8, messages=[{"role": "user", "content": "hello"}],
+                          metadata={})
         result = RequestResult(success=True)
 
         annotate_request_observability(
@@ -238,9 +240,10 @@ class RunnerCacheMetadataTests(unittest.TestCase):
         result = annotate_request_observability(
             result,
             request_index=7,
-            request=BenchmarkRequest(
+            request=Request(
+                [], 0,
                 messages=[{"role": "user", "content": "hello world"}],
-                max_tokens=64,
+                output_length=64,
                 metadata={"planned_new_prefill_tokens": 75},
             ),
             scheduled_at_s=1.0,

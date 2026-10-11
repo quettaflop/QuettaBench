@@ -37,7 +37,7 @@ class Request:
     image_tokens: int | None = None
     source: str | None = None
     # A workload profile's chat request: its messages and metadata objects,
-    # shared with the dataset so a later turn sees replies written into them.
+    # shared with its session so a later turn sees replies written into them.
     # Not part of the replay schema, never hashed.
     messages: list | None = None
     metadata: dict | None = None

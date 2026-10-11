@@ -14,8 +14,16 @@ import hashlib
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-from quettabench.workloads.dataset import BenchmarkRequest
 from .trace_distributions import TraceDistribution, TraceTurnSample
+
+
+@dataclass
+class BenchmarkRequest:
+    """One sampled turn: chat messages, max tokens, turn metadata."""
+
+    messages: list[dict]
+    max_tokens: int
+    metadata: dict = field(default_factory=dict)
 
 
 DEFAULT_CONTEXT_SAFETY_MARGIN_TOKENS = 256
