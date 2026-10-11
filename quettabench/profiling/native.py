@@ -15,8 +15,9 @@ after a run covers everything the server did, warmup included.
 import csv
 import importlib
 import re
-import urllib.request
 from pathlib import Path
+
+from quettabench.engines import launcher
 
 HITS = "vllm:gpu_prefix_cache_hits"
 QUERIES = "vllm:gpu_prefix_cache_queries"
@@ -88,7 +89,7 @@ def prefix_cache_hit_rate(metrics):
 
 def scrape_metrics(endpoint, timeout_s=10):
     """GET <endpoint>/metrics and parse it."""
-    with urllib.request.urlopen(f"{endpoint}/metrics", timeout=timeout_s) as resp:
+    with launcher.urlopen(f"{endpoint}/metrics", timeout=timeout_s) as resp:
         return parse_prometheus(resp.read().decode())
 
 

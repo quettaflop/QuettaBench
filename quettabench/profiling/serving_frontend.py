@@ -48,6 +48,8 @@ from pathlib import Path
 from engine.backends.kernel_composed_cost import KernelComposedCost
 from engine.loaders.config_loader import load_kernel_gpu, load_kernel_model
 
+from quettabench.engines import launcher
+
 HERE = Path(__file__).resolve().parent
 
 _SWEEP_PROMPTS = [128, 256, 512, 1024, 2048]   # single-stream prompt lengths (tokens)
@@ -70,7 +72,7 @@ def _stream_once(base_url: str, model: str, prompt: str,
     first_at = None
     n = 0
     prompt_tokens = 0
-    with urllib.request.urlopen(req) as r:
+    with launcher.urlopen(req) as r:
         for line in r:
             if not line.startswith(b"data:") or b"[DONE]" in line:
                 continue

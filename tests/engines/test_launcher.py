@@ -11,6 +11,8 @@ from unittest import mock
 
 from quettabench.engines import launcher
 from quettabench.engines.base import LaunchSpec, UnsupportedField
+from quettabench.profiling import native
+from tests.profiling import fake_endpoint
 
 FAKE = Path(__file__).with_name("fake_server.py")
 
@@ -74,6 +76,19 @@ class LocalLauncher(unittest.TestCase):
             launcher.start(LaunchSpec(adapter="vllm", server_unsupported=("pp=2",)), self.dir)
         with self.assertRaisesRegex(ValueError, "no server"):
             launcher.start(LaunchSpec(adapter="quettaserve"), self.dir)
+
+
+class NoProxy(unittest.TestCase):
+    """An http_proxy in the environment never carries engine traffic."""
+
+    def test_endpoints_are_reached_directly(self):
+        dead_proxy = {"http_proxy": "http://127.0.0.1:9", "HTTP_PROXY": "http://127.0.0.1:9",
+                      "no_proxy": "", "NO_PROXY": ""}
+        with fake_endpoint.serve() as (endpoint, _), \
+                mock.patch.dict(os.environ, dead_proxy):
+            self.assertIn("process_open_fds", native.scrape_metrics(endpoint))
+            with launcher.urlopen(endpoint + "/metrics", timeout=5) as resp:
+                self.assertEqual(resp.status, 200)
 
 
 class IdleGpus(unittest.TestCase):

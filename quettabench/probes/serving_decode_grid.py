@@ -28,13 +28,14 @@ import subprocess
 import sys
 import tempfile
 import time
-import urllib.request
 from pathlib import Path
 
 # --- defensive: strip our own dir from sys.path so a stray flash_attn.py can't shadow the pkg ---
 _SCRIPT_DIR = str(Path(__file__).resolve().parent)
 for _p in [e for e in sys.path if e == _SCRIPT_DIR]:
     sys.path.remove(_p)
+
+from quettabench.engines import launcher  # noqa: E402
 
 # aiohttp is needed only at MEASUREMENT time (on the GPU host). The local builder/test import
 # of this module (for summarize_cell / the lattice) must work without it.
@@ -348,7 +349,7 @@ def wait_health(port, timeout=600):
     t0 = time.time()
     while time.time() - t0 < timeout:
         try:
-            with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=5) as r:
+            with launcher.urlopen(f"http://127.0.0.1:{port}/health", timeout=5) as r:
                 if r.status == 200:
                     return True
         except Exception:

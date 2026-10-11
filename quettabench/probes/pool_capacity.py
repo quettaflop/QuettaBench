@@ -19,7 +19,6 @@ import re
 import subprocess
 import sys
 import time
-import urllib.request
 from pathlib import Path
 
 _SCRIPT_DIR = str(Path(__file__).resolve().parent)
@@ -28,6 +27,7 @@ for _p in [e for e in sys.path if e == _SCRIPT_DIR]:
 
 import aiohttp  # noqa: E402
 
+from quettabench.engines import launcher  # noqa: E402
 from quettabench.probes.base import add_output_args, out_root  # noqa: E402
 
 _VOCAB = ("the of and to in a is that for it as was with on be at by this had not are but from or "
@@ -101,7 +101,7 @@ def wait_health(port, timeout=420):
     t0 = time.time()
     while time.time() - t0 < timeout:
         try:
-            with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=5) as r:
+            with launcher.urlopen(f"http://127.0.0.1:{port}/health", timeout=5) as r:
                 if r.status == 200:
                     return True
         except Exception:

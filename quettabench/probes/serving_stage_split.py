@@ -24,7 +24,6 @@ import statistics as st
 import subprocess
 import sys
 import time
-import urllib.request
 from pathlib import Path
 
 # --- defensive: strip our own dir from sys.path so a stray flash_attn.py can't shadow the pkg ---
@@ -33,6 +32,8 @@ for _p in [e for e in sys.path if e == _SCRIPT_DIR]:
     sys.path.remove(_p)
 
 import aiohttp  # noqa: E402  (after the sys.path scrub)
+
+from quettabench.engines import launcher  # noqa: E402
 
 # ------------------------------------------------------------------------------------------------
 # Prompt construction -- reused verbatim from live_ttft_probe.py so the wall TTFT reproduces the
@@ -251,7 +252,7 @@ def wait_health(port, timeout=420):
     t0 = time.time()
     while time.time() - t0 < timeout:
         try:
-            with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=5) as r:
+            with launcher.urlopen(f"http://127.0.0.1:{port}/health", timeout=5) as r:
                 if r.status == 200:
                     return True
         except Exception:

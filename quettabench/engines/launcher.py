@@ -21,6 +21,15 @@ from pathlib import Path
 from quettabench.engines.base import UnsupportedField
 from quettabench.metrics.results import redact
 
+# Engine endpoints are local or on cluster-private addresses; an http_proxy in
+# the environment would send those requests through the proxy, which answers 403.
+_DIRECT = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
+def urlopen(url, **kwargs):
+    """urllib.request.urlopen(url, **kwargs) without any proxy."""
+    return _DIRECT.open(url, **kwargs)
+
 
 @dataclass
 class Handle:
@@ -93,7 +102,7 @@ def wait_healthy(proc, url, timeout_s, poll_s):
         if proc.poll() is not None:
             raise RuntimeError(f"server exited with {proc.returncode} before {url} answered")
         try:
-            with urllib.request.urlopen(url, timeout=poll_s) as resp:
+            with urlopen(url, timeout=poll_s) as resp:
                 if resp.status == 200:
                     return
         except (urllib.error.URLError, ConnectionError, TimeoutError):

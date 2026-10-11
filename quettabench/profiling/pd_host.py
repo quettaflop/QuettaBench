@@ -61,6 +61,8 @@ from engine.core.cost import step_host_ms
 from engine.factory import build_kernel_composed_cost
 from engine.sim.disagg import Link
 
+from quettabench.engines import launcher
+
 HERE = Path(__file__).resolve().parent
 
 COLS = ("gpu", "phase", "conc", "tokens_total", "tokens_new_p", "tokens_cached_d",
@@ -115,7 +117,7 @@ def chat_stream(proxy_url: str, model: str, text: str, rid: str, max_tokens: int
                                  headers={"Content-Type": "application/json", "X-Request-Id": rid})
     t0 = time.perf_counter()
     first = None
-    with urllib.request.urlopen(req, timeout=3600) as r:
+    with launcher.urlopen(req, timeout=3600) as r:
         for line in r:
             if line.startswith(b"data:") and first is None and b'"content"' in line:
                 first = time.perf_counter()

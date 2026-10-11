@@ -13,6 +13,8 @@ import subprocess
 import threading
 import urllib.request
 
+from quettabench.engines import launcher
+
 GSM8K_MAX_TOKENS = 256
 
 
@@ -148,6 +150,6 @@ def http_generate(endpoint, model, timeout_s=600):
                            "temperature": 0.0}).encode()
         req = urllib.request.Request(f"{endpoint}/v1/completions", data=body,
                                      headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+        with launcher.urlopen(req, timeout=timeout_s) as resp:
             return json.loads(resp.read())["choices"][0]["text"]
     return generate
