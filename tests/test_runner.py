@@ -296,6 +296,12 @@ class ChatOverHttp(unittest.TestCase):
 
 
 class FailureRecord(unittest.TestCase):
+    def setUp(self):
+        """run_probe exports CUDA_VISIBLE_DEVICES into os.environ; undo it per test."""
+        patch = mock.patch.dict(os.environ, {}, clear=True)
+        patch.start()
+        self.addCleanup(patch.stop)
+
     """A run that raises anywhere after its Config resolved leaves run.json."""
 
     def run_raising(self, **patches):
@@ -340,6 +346,12 @@ class FailureRecord(unittest.TestCase):
 
 
 class ProbeMode(unittest.TestCase):
+    def setUp(self):
+        """run_probe exports CUDA_VISIBLE_DEVICES into os.environ; undo it per test."""
+        patch = mock.patch.dict(os.environ, {}, clear=True)
+        patch.start()
+        self.addCleanup(patch.stop)
+
     def test_probe_gets_its_flags_and_the_run_dir(self):
         run = {"mode": {"mode": "probe", "probe": "fake", "probe_args": "--gpu-label A100 --wide"}}
         probe = mock.Mock()
@@ -352,6 +364,27 @@ class ProbeMode(unittest.TestCase):
         argv = ["--gpu-label", "A100", "--wide", "--out", str(td / "results" / "gemm-a100")]
         probe.main.assert_called_once_with(argv)
         self.assertEqual(doc["summary"], {"probe": "fake", "argv": argv})
+
+    def test_probe_runs_on_the_runs_gpus(self):
+        """CUDA_VISIBLE_DEVICES is exported before the probe module is imported,
+        from hardware.visible_devices or else the idle GPUs, and recorded."""
+        seen = []
+
+        def import_probe(name):
+            seen.append(os.environ.get("CUDA_VISIBLE_DEVICES"))
+            return mock.Mock()
+
+        for hardware, idle, gpus in (({"visible_devices": "2,3"}, None, "2,3"), ({}, "5", "5")):
+            run = {"mode": {"mode": "probe", "probe": "fake"}, "hardware": hardware}
+            with self.subTest(gpus=gpus), scratch_configs("p", run) as (path, td), \
+                    mock.patch.dict(os.environ, {}, clear=True), \
+                    mock.patch.object(runner.importlib, "import_module", side_effect=import_probe), \
+                    mock.patch.object(launcher, "idle_gpus", return_value=idle) as idle_gpus:
+                runner.main(path, results_dir=td / "results", allow_unverified=True)
+                doc = json.loads((td / "results" / "p" / "run.json").read_text())
+            self.assertEqual(seen.pop(), gpus)
+            self.assertEqual(doc["provenance"]["launch_env"], {"CUDA_VISIBLE_DEVICES": gpus})
+            self.assertEqual(idle_gpus.called, idle is not None)
 
     def test_a_run_dir_with_a_run_is_refused_without_overwrite(self):
         run = {"mode": {"mode": "probe", "probe": "fake"}}

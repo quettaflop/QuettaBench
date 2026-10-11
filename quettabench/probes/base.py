@@ -3,6 +3,8 @@ and the one way a live-server probe starts vLLM (launch_vllm)."""
 from __future__ import annotations
 
 import argparse
+import contextlib
+import dataclasses
 import shlex
 import sys
 from datetime import datetime, timezone
@@ -13,6 +15,19 @@ from quettabench.config.schema import Config, EngineCfg, HardwareCfg, ModeCfg, W
 from quettabench.metrics.results import RunWriter, exit_status, redact
 
 DEFAULT_OUT = Path("results") / "probes"
+# The Config of the `qbench run` (mode: probe) running this probe, if any.
+_RUN_CFG: Config | None = None
+
+
+@contextlib.contextmanager
+def run_config(cfg: Config):
+    """Hand the run's Config to launch_vllm for the duration of a probe's main."""
+    global _RUN_CFG
+    _RUN_CFG = cfg
+    try:
+        yield
+    finally:
+        _RUN_CFG = None
 
 
 def add_output_args(ap: argparse.ArgumentParser) -> None:
@@ -76,7 +91,9 @@ def launch_vllm(run_dir: Path, model: str, *, port: int, max_model_len: int, pre
     """Start vLLM as `qbench run` does: a Config through the vllm adapter's
     translate, then launcher.start into run_dir (engine.json, server.log).
     vllm_flags (served_model_name, api_key, ...) go in as engine.extra.vllm.
-    The server is this python's venv vllm. Returns the Handle; the caller
+    The hardware is the run's (run_config) when a `qbench run` started the
+    probe, else the defaults; the server is this python's venv vllm unless
+    that hardware names a provision.py. Returns the Handle; the caller
     stops it."""
     # Imported here: base.py ships to remote kernel-probe hosts, which have
     # no engine stack; only the live-server probes, run locally, launch.
@@ -85,7 +102,8 @@ def launch_vllm(run_dir: Path, model: str, *, port: int, max_model_len: int, pre
     engine = EngineCfg(model=model, tp=tp, dtype="bfloat16", port=port, gpu_util=gpu_util,
                        max_model_len=max_model_len, prefix_caching=prefix_caching,
                        extra={"vllm": dict(vllm_flags or {})})
-    cfg = Config(engine, WorkloadCfg(), ModeCfg(), HardwareCfg(provision={"py": sys.executable}),
-                 run_name=Path(run_dir).name)
+    hardware = _RUN_CFG.hardware if _RUN_CFG else HardwareCfg()
+    hardware = dataclasses.replace(hardware, provision={"py": sys.executable, **hardware.provision})
+    cfg = Config(engine, WorkloadCfg(), ModeCfg(), hardware, run_name=Path(run_dir).name)
     spec = vllm.ADAPTER.translate(cfg, run_dir)
     return launcher.start(spec, run_dir, timeout_s=timeout_s)

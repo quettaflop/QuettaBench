@@ -9,8 +9,8 @@ adapter drives the engine itself (in-process grid, cargo bench), get the
 driver, build the Trace (before the launch when a server is launched, since
 its driver has no tokenizer), and let modes/serve.py run trace
 through driver into a RunWriter; the server is stopped whatever happens.
-mode: probe runs quettabench.probes.<name> with --out results/<run>/
-instead and records it in the same run.json. --dry-run prints each Config
+mode: probe runs quettabench.probes.<name> on the same GPUs with --out
+results/<run>/ instead and records it in the same run.json. --dry-run prints each Config
 with its origins and its LaunchSpec (a bench run: each cell's env and
 bench_argv as one shell line), and starts nothing. hardware.launcher=docker
 runs the server in engine.image and needs a launched server (a grid run sets
@@ -30,6 +30,7 @@ from quettabench.config.validate import device_count
 from quettabench.engines import base, launcher
 from quettabench.metrics.results import RunWriter, redact
 from quettabench.modes import serve
+from quettabench.probes import base as probes_base
 
 # Probes mode: probe refuses (check_probe): torchrun's, and those whose
 # output flags name files instead of taking a directory --out.
@@ -85,13 +86,21 @@ def check_probe(cfg):
 
 
 def run_probe(cfg, out):
-    """The probe's main with its own flags and --out set to the run dir; a
-    probe that raises leaves run.json failed (aborted on Ctrl-C)."""
+    """The probe's main with its own flags and --out set to the run dir, on
+    the run's GPUs (hardware.visible_devices, else the first idle ones),
+    exported before the probe is imported; a live-server probe launches with
+    the run's hardware. A probe that raises leaves run.json failed (aborted
+    on Ctrl-C)."""
     check_probe(cfg)
     argv = [*shlex.split(cfg.mode.probe_args), "--out", str(out)]
-    writer = RunWriter(out, cfg)
+    gpus = cfg.hardware.visible_devices or launcher.idle_gpus(device_count(cfg.engine),
+                                                              cfg.hardware.backend)
+    env_map.export({"CUDA_VISIBLE_DEVICES": gpus})
+    writer = RunWriter(out, cfg, launch_env={"CUDA_VISIBLE_DEVICES": gpus})
     try:
-        importlib.import_module(f"quettabench.probes.{cfg.mode.probe}").main(argv)
+        probe = importlib.import_module(f"quettabench.probes.{cfg.mode.probe}")
+        with probes_base.run_config(cfg):
+            probe.main(argv)
     except BaseException as e:
         writer.fail(e)
         raise

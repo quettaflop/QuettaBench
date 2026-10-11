@@ -5,6 +5,7 @@ adapter and launcher.start, and no probe starts a process itself."""
 
 import argparse
 import ast
+import dataclasses
 import json
 import os
 import sys
@@ -17,6 +18,7 @@ import pytest
 
 from quettabench import runner
 from quettabench.config.schema import Config, ConfigError, EngineCfg, HardwareCfg, ModeCfg, WorkloadCfg
+from quettabench.probes import base as probes_base
 from quettabench.probes.base import launch_vllm, out_root, run_recorded
 
 PROBES = Path(__file__).resolve().parents[2] / "quettabench" / "probes"
@@ -114,7 +116,7 @@ def test_probe_main_takes_argv_and_run_mode_decides(name):
     assert [a.arg for a in fn.args.args] == ["argv"], name
     assert len(fn.args.defaults) == 1 and fn.args.defaults[0].value is None, name
     source = (PROBES / f"{name}.py").read_text()
-    with tempfile.TemporaryDirectory() as td:
+    with tempfile.TemporaryDirectory() as td, mock.patch.dict(os.environ):
         fake = mock.Mock()
         with mock.patch.dict(sys.modules, {f"quettabench.probes.{name}": fake}):
             if "init_process_group" in source or "init_distributed_environment" in source:
@@ -148,6 +150,17 @@ class LaunchVllm(unittest.TestCase):
                      "--no-enable-log-requests"):
             self.assertIn(flag, argv)
         self.assertEqual(argv[argv.index("--port") + 1], "8794")
+
+    def test_a_run_probe_launches_with_the_runs_hardware(self):
+        cfg = dataclasses.replace(probe_cfg("pool_capacity"),
+                                  hardware=HardwareCfg(provision={"py": "/venv/bin/python"}))
+        with mock.patch("quettabench.engines.launcher.start") as start:
+            with probes_base.run_config(cfg):
+                launch_vllm(Path("/r/x"), "/w", port=1, max_model_len=8, prefix_caching=False)
+            launch_vllm(Path("/r/x"), "/w", port=1, max_model_len=8, prefix_caching=False)
+        ran, after = (call.args[0].server_argv[0] for call in start.call_args_list)
+        self.assertEqual(ran, "/venv/bin/vllm")
+        self.assertEqual(after, str(Path(sys.executable).with_name("vllm")))
 
     def test_each_live_probe_launch_is_pinned(self):
         """argv and env of the three live-server probes' launches; what changed
