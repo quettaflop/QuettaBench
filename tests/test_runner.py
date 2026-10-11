@@ -188,6 +188,34 @@ class InProcessEnv(unittest.TestCase):
         self.assertEqual(run_one.call_count, 2)
 
 
+    def test_probe_points_count_as_in_process(self):
+        """A probe point exports CUDA_VISIBLE_DEVICES into this process like an
+        in-process grid point, so the same rules hold for it."""
+        probe = {"mode": "probe", "probe": "gemm", "probe_args": "--gpu-label A100"}
+        for matrix, sets, refused in (
+                ({"mode.probe_args": ["--gpu-label A", "--gpu-label B"]}, [],
+                 "set hardware.visible_devices"),
+                ({"mode.probe_args": ["--gpu-label A", "--gpu-label B"]},
+                 ["hardware.visible_devices=0"], None),
+                ({"hardware.visible_devices": ["0", "1"]}, [], "one process cannot change")):
+            with self.subTest(sets=sets, matrix=matrix), \
+                    scratch_configs("p", {"mode": probe, "matrix": matrix}) as (path, td), \
+                    mock.patch.object(runner, "run_one") as run_one:
+                if refused:
+                    with self.assertRaisesRegex(ConfigError, refused):
+                        runner.main(path, sets, results_dir=td, allow_unverified=True)
+                else:
+                    runner.main(path, sets, results_dir=td, allow_unverified=True)
+                self.assertEqual(run_one.call_count, 0 if refused else 2)
+        (grid,) = loader.load(RUNS[0].with_name("llama.yaml"),
+                              ["engine.model=/w", "hardware.visible_devices=0"], env={})
+        (gemm,) = loader.load(RUNS[0].with_name("llama.yaml"),
+                              ["hardware.visible_devices=1", "mode.mode=probe", "mode.probe=gemm",
+                               "mode.grid=null"], env={})
+        with self.assertRaisesRegex(ConfigError, "one process cannot change"):
+            runner.refuse_mixed_in_process([grid, gemm])
+
+
 class ReadyTimeout(unittest.TestCase):
     def test_hardware_ready_timeout_reaches_the_launcher(self):
         (cfg,) = loader.load(RUNS[0].with_name("llama.yaml"),

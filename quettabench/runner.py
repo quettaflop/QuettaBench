@@ -152,13 +152,12 @@ def refuse_mixed_in_process(cfgs):
     """One process cannot change its CUDA_VISIBLE_DEVICES or collective pins
     between matrix points, so in-process points must agree on them, and with
     more than one they name their GPUs: idle GPUs picked per point could
-    differ, and CUDA reads the first point's for the whole process."""
+    differ, and CUDA reads the first point's for the whole process. A probe
+    point (run_probe exports its GPUs here too) counts as in-process."""
     seen, unnamed, points = set(), False, 0
     for cfg in cfgs:
-        if cfg.mode.mode == "probe":
-            continue
-        adapter = base.get(cfg.engine.name)
-        if in_process(cfg, adapter, adapter.translate(cfg)):
+        adapter = None if cfg.mode.mode == "probe" else base.get(cfg.engine.name)
+        if adapter is None or in_process(cfg, adapter, adapter.translate(cfg)):
             hw = cfg.hardware
             points += 1
             unnamed = unnamed or not hw.visible_devices
