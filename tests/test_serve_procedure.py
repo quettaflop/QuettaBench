@@ -114,15 +114,32 @@ class SingleTurn(unittest.TestCase):
         self.assertNotEqual(trace.workload_hash(), before)
         self.assertEqual(summary.core.target_rate, 500.0)
 
-    def test_a_failed_request_fails_the_identity_gate(self):
+    def test_a_failed_request_marks_the_run_partial(self):
         with tempfile.TemporaryDirectory() as td:
-            code, _ = run(single_trace(8), FakeDriver(fail=lambda r: r.order == 0),
-                          ModeCfg(concurrency=2, warmup=0, min_success_rate=0.5), results_dir=td)
+            summary, out = run(single_trace(8), FakeDriver(fail=lambda r: r.order == 0),
+                               ModeCfg(concurrency=2, warmup=0, min_success_rate=0.5),
+                               results_dir=td)
             run_json = json.loads((Path(td) / "run.json").read_text())
+        self.assertEqual((summary.status, summary.reason), ("partial", "1 of 8 requests failed"))
+        self.assertEqual(run_json["run_status"], {"status": "partial",
+                                                  "reason": "1 of 8 requests failed"})
+        workload = run_json["summary"]["workload"]
+        self.assertEqual((workload["match"], workload["n"], workload["of"]), (True, 8, 8))
+        self.assertNotIn("WORKLOADVOID", out)
+
+    def test_failures_under_min_success_rate_abort(self):
+        with tempfile.TemporaryDirectory() as td:
+            code, _ = run(single_trace(8), FakeDriver(fail=lambda r: r.order < 2),
+                          ModeCfg(concurrency=2, warmup=0, min_success_rate=0.9), results_dir=td)
+            status = json.loads((Path(td) / "run.json").read_text())["run_status"]
+        self.assertEqual((code, status["status"]), (1, "aborted"))
+
+    def test_a_request_changed_after_hashing_fails_the_identity_gate(self):
+        trace = single_trace(4)
+        trace.workload_hash = lambda: "0" * 16
+        code, out = run(trace, FakeDriver(), ModeCfg(warmup=0))
         self.assertEqual(code, 3)
-        self.assertEqual(run_json["run_status"], {"status": "failed", "reason": "workload identity"})
-        self.assertEqual((run_json["summary"]["workload"]["n"],
-                          run_json["summary"]["workload"]["of"]), (7, 8))
+        self.assertIn("WORKLOADVOID replayed workload differs from the trace; comparison is void", out)
 
     def test_mostly_failed_run_aborts(self):
         with tempfile.TemporaryDirectory() as td:

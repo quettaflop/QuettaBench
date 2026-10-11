@@ -342,3 +342,13 @@ it; only the message text changed, every spec is refused as before.
 before, the profile key was never read and such runs launched with prefix
 caching off. An explicit `engine.prefix_caching=false` on such a profile is
 refused at load.
+
+2026-10-11: no fixture changed. The serve identity gate hashes every
+dispatched request, failed or not (`serve.served`), in a single run and in
+each goodput-sweep probe. 4318bf0 had hashed only successful single-turn
+requests, so one failed request failed the run with exit 3 and
+WORKLOADVOID; such a run is `partial` again, and below
+`mode.min_success_rate` it aborts with exit 1. WORKLOADVOID now means the
+requests sent differ from the trace: a request changed after hashing, or a
+multi-turn session whose failed turn left its later turns unsent. Chat
+requests without token ids still hash their messages (4318bf0).

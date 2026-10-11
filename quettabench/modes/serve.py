@@ -14,8 +14,10 @@ which feeds each reply into the session's later turns. With mode.grid set
 the trace is a GridTrace and run_grid (modes/_grid.py) times it cell by
 cell instead; its per-step numbers are the run's steps section. Every row goes to the
 writer as it finishes. Then the gates from metrics.core (exit 1 on abort)
-and the workload identity gate: the served requests must hash to
-trace.workload_hash(), else the run is "failed" and exits 3.
+and the workload identity gate: every dispatched request, failed or not,
+hashed must equal trace.workload_hash(), else the run is "failed" and exits
+3. Failed requests make the run "partial", or abort it below
+mode.min_success_rate.
 
 quettabench/runner.py builds the trace, driver and writer and calls run.
 """
@@ -337,7 +339,7 @@ def sweep(trace, driver, mode, writer, workload, request_id):
         out = asyncio.run(measure(trace, driver, probe_mode, emitter(mode, writer, len(probes)),
                                   dataclasses.replace(workload, speed=speed), request_id))
         section = {"max_req_s": None, "speed": None, "fail_bound": fail_bound, "probes": probes}
-        if not identity(trace, [q for q, _ in out[2]])["match"]:
+        if not identity(trace, served(out[2]))["match"]:
             return out, {**section, "iterations": len(probes) + 1}
         s = summarize_serve(serve_records(out[2], True), out[3], "nearest")
         bound = sla_verdict(s, mode.sla_ttft_ms, mode.sla_tpot_ms)
@@ -370,6 +372,13 @@ def enforce(gate, writer, summary):
         print(message)
     if verdict == "abort":
         stop(writer, summary.to_dict(), "aborted", message, 1)
+
+
+def served(pairs):
+    """The requests the identity gate hashes: every one dispatched, failed or
+    not. A failure is the success-rate gate's and the partial status's to
+    judge; the hash moves only when what was sent differs from the trace."""
+    return [q for q, _ in pairs]
 
 
 def identity(trace, served) -> dict:
@@ -427,10 +436,7 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
     enforce(success_rate_gate(core, mode.min_success_rate), writer, summary)
     enforce(usage_gate(core, mode.allow_missing_usage), writer, summary)
 
-    # Single-turn: only requests that got a result count as served, so a
-    # dropped request moves the hash.
-    served = [q for q, r in pairs if by_turn is not None or r.success]
-    ident = summary.sections["workload"] = identity(trace, served)
+    ident = summary.sections["workload"] = identity(trace, served(pairs))
     summary.sections.update({"goodput": goodput} if goodput else
                             crossval_sections(pairs, duration, mode, server_spec))
     print_legacy_lines(summary.sections)
