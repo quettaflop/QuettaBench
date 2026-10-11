@@ -143,7 +143,9 @@ def kernel_summary(results_dir, steps, window=None, subtract=None, top=25, gap_u
         if rep is None:
             raise ValueError(f"no armed nsys trace in {results_dir}")
         # Into a temp file first, so an interrupted export leaves no db to trust.
+        # An earlier interrupted export's leftover makes nsys refuse the -o path.
         part = db.with_name("nsys.partial.sqlite")
+        part.unlink(missing_ok=True)
         subprocess.run([nsys, "export", "--type", "sqlite", "-o", str(part), str(rep)], check=True)
         part.replace(db)
     with closing(sqlite3.connect(db)) as con:
