@@ -23,19 +23,36 @@ in one results layer, `results/<run>/`, and leaves the repo by one route,
   `workload_hash`. A source without a hash does not belong here.
 - `quettabench/engines/`: adapters translate a Config to a LaunchSpec from a
   field table; a field with no flag raises `UnsupportedField`, never a silent
-  drop. Drivers are the only code that talks to an engine. `launcher.py` is
-  the only code that starts a process.
+  drop. Drivers are the only code in a run that talks to an engine.
+  `launcher.py` is the only code that starts an engine server, for a run or
+  a probe (`probes/base.py` `launch_vllm`); `BenchDriver` runs the
+  QuettaServe bench, which is its own engine, once per grid cell. Other
+  subprocesses are tools (nvidia-smi, git, nsys export, docker, cargo in
+  provision), never an engine.
 - `quettabench/modes/`: `serve.py` and its two private siblings (`_grid.py`,
   `_sessions_dispatch.py`), nothing else. Nothing in `modes/` branches on the
   engine name; an engine difference is a driver.
 - `quettabench/metrics/`: one percentile function, and the caller states the
-  method. `step_fit.py` turns grid rows into ms per step. `results.py` is the
-  only writer of `results/`.
+  method. `step_fit.py` turns grid rows into ms per step. `results.py`
+  writes every `run.json` and `requests.jsonl`; besides it only the probes
+  (their tables under `results/probes/`), the profiler (`profile.json` and
+  the nsys export in the run dir) and crossval (`results/xval/`) write
+  under `results/`.
 - `quettabench/profiling/` and `profiler.py`: attach only. They never launch
-  an engine and never send load.
-- `quettabench/probes/`: kernel microbenchmarks; they write through
-  `metrics/results.py`. Their runbooks are in `probes/runbooks/`.
-- `quettabench/crossval/`: reads files only.
+  an engine.
+- `quettabench/probes/`: kernel microbenchmarks and live-server probes. Each
+  run records itself in `run.json` through `metrics/results.py`
+  (`probes/base.py` `run_recorded`). Their runbooks are in
+  `probes/runbooks/`.
+- Owner decision (2026-10-11): probes and profiler sources may send requests
+  to an engine that launcher.py started, to measure engine-level behaviour;
+  they never start a process and never write outside results/. Today that
+  is the probes `serving_decode_grid`, `serving_stage_split`, `live_split`
+  and `pool_capacity`, and the profiling sources `serving_frontend`,
+  `pd_host` and gsm8k (`wrapped.py`). Their `--out` paths are the caller's;
+  nothing checks that they stay under results/.
+- `quettabench/crossval/`: reads run files; its only write is the report json
+  (default `results/xval/`).
 - `quettabench/export/`: the only code that writes outside the repo.
 - `configs/`: `models/` holds per-model facts, once. `runs/` reference a model
   and never restate its facts. `grids.yaml` holds the grids and step points,
@@ -48,8 +65,10 @@ in one results layer, `results/<run>/`, and leaves the repo by one route,
 
 ## Laws
 
-1. The runner launches, the profiler attaches, crossval and export read.
-2. Everything that sends requests or steps an engine is `serve.py`.
+1. The runner launches (probes start a server only through the launcher),
+   the profiler attaches, crossval and export read.
+2. Every measured run's requests go through `serve.py`; the owner-decision
+   exception above is the only other code that sends requests.
 3. One hash: workloads compute it, serve gates on it, crossval joins on it.
 4. A number that is not comparable is withheld, not footnoted.
 5. A setting is added in exactly one place: a `schema.py` field, an adapter
