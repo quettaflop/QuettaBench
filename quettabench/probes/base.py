@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from quettabench.config.schema import Config, EngineCfg, HardwareCfg, ModeCfg, WorkloadCfg
-from quettabench.metrics.results import RunWriter
+from quettabench.metrics.results import RunWriter, exit_status
 
 DEFAULT_OUT = Path("results") / "probes"
 
@@ -54,15 +54,8 @@ def run_recorded(main, name: str, file_flag: str | None = None) -> None:
     primary, status, reason = None, "ok", None
     try:
         primary = main()
-    except SystemExit as e:
-        if e.code not in (None, 0):
-            status, reason = "failed", str(e.code)
-        raise
-    except KeyboardInterrupt:
-        status, reason = "aborted", "interrupted"
-        raise
-    except Exception as e:
-        status, reason = "failed", f"{type(e).__name__}: {e}"
+    except BaseException as e:
+        status, reason = exit_status(e)
         raise
     finally:
         if run_dir is not None and primary is not False:

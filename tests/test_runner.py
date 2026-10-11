@@ -243,6 +243,50 @@ class ChatOverHttp(unittest.TestCase):
         self.assertEqual([r["success"] for r in rows], [True] * 6)
 
 
+class FailureRecord(unittest.TestCase):
+    """A run that raises anywhere after its Config resolved leaves run.json."""
+
+    def run_raising(self, **patches):
+        (cfg,) = loader.load(RUNS[0].with_name("llama.yaml"),
+                             ["engine.model=/w", "hardware.visible_devices=0", "mode.grid=null"],
+                             env={})
+        with tempfile.TemporaryDirectory() as td, \
+                mock.patch.object(runner.workloads, "build"), \
+                mock.patch.object(runner.launcher, "start", **patches.get("start", {})), \
+                mock.patch.object(runner.serve, "run", **patches.get("serve", {})):
+            out = Path(td, "run")
+            with self.assertRaises(BaseException) as raised:
+                runner.run_one(cfg, out)
+            doc = json.loads((out / "run.json").read_text())
+            files = sorted(p.name for p in out.iterdir())
+        return raised.exception, doc, files
+
+    def test_a_failed_launch_is_recorded(self):
+        exc, doc, files = self.run_raising(start={"side_effect": RuntimeError("no health")})
+        self.assertIsInstance(exc, RuntimeError)
+        self.assertEqual(doc["run_status"], {"status": "failed",
+                                             "reason": "RuntimeError: no health"})
+        self.assertEqual(files, ["requests.jsonl", "run.json"])
+
+    def test_ctrl_c_mid_run_is_aborted_and_the_server_stops(self):
+        handle = mock.Mock(gpu="H200", endpoint="http://127.0.0.1:1")
+        exc, doc, _ = self.run_raising(start={"return_value": handle},
+                                       serve={"side_effect": KeyboardInterrupt()})
+        self.assertIsInstance(exc, KeyboardInterrupt)
+        self.assertEqual(doc["run_status"]["status"], "aborted")
+        self.assertEqual(doc["provenance"]["gpu"], "H200")
+        handle.stop.assert_called_once_with()
+
+    def test_a_probe_that_raises_is_recorded(self):
+        probe = mock.Mock(**{"main.side_effect": ValueError("bad shape")})
+        with scratch_configs("p", {"mode": {"mode": "probe", "probe": "fake"}}) as (path, td), \
+                mock.patch.dict(sys.modules, {"quettabench.probes.fake": probe}):
+            with self.assertRaises(ValueError):
+                runner.main(path, results_dir=td / "results", allow_unverified=True)
+            doc = json.loads((td / "results" / "p" / "run.json").read_text())
+        self.assertEqual(doc["run_status"], {"status": "failed", "reason": "ValueError: bad shape"})
+
+
 class ProbeMode(unittest.TestCase):
     def test_probe_gets_its_flags_and_the_run_dir(self):
         run = {"mode": {"mode": "probe", "probe": "fake", "probe_args": "--gpu-label A100 --wide"}}

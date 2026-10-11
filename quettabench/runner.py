@@ -70,10 +70,15 @@ def dry_run(cfg, out):
 
 
 def run_probe(cfg, out):
-    """The probe's main with its own flags and --out set to the run dir."""
+    """The probe's main with its own flags and --out set to the run dir; a
+    probe that raises leaves run.json failed (aborted on Ctrl-C)."""
     argv = [*shlex.split(cfg.mode.probe_args), "--out", str(out)]
     writer = RunWriter(out, cfg)
-    importlib.import_module(f"quettabench.probes.{cfg.mode.probe}").main(argv)
+    try:
+        importlib.import_module(f"quettabench.probes.{cfg.mode.probe}").main(argv)
+    except BaseException as e:
+        writer.fail(e)
+        raise
     writer.finish({"probe": cfg.mode.probe, "argv": argv})
 
 
@@ -120,20 +125,26 @@ def run_one(cfg, out):
     if in_process(cfg, adapter, spec):
         env_map.export(pins)
     spec = with_child_env(spec, pins)
-    # A launched server's driver has no tokenizer, so its trace is built
-    # first: a bad workload fails before a long model load, not after.
-    trace = workloads.build(cfg) if adapter.needs_server(cfg) else None
-    handle = (launcher.start(spec, out, backend=backend, cfg=cfg, gpus=gpus,
-                             timeout_s=cfg.hardware.ready_timeout_s)
-              if adapter.needs_server(cfg) else launcher.NoServer(out))
+    # Opened first, so a run that raises anywhere below still leaves run.json.
+    writer = RunWriter(out, cfg, launch_env=spec.env)
     try:
-        driver = adapter.driver(spec, handle, trace)
-        if trace is None:
-            trace = workloads.build(cfg, tokenizer=getattr(driver, "tokenizer", None))
-        writer = RunWriter(out, cfg, handle=handle, driver=driver, launch_env=spec.env)
-        serve.run(trace, driver, cfg.mode, writer, cfg.workload)
-    finally:
-        handle.stop()
+        # A launched server's driver has no tokenizer, so its trace is built
+        # first: a bad workload fails before a long model load, not after.
+        trace = workloads.build(cfg) if adapter.needs_server(cfg) else None
+        handle = (launcher.start(spec, out, backend=backend, cfg=cfg, gpus=gpus,
+                                 timeout_s=cfg.hardware.ready_timeout_s)
+                  if adapter.needs_server(cfg) else launcher.NoServer(out))
+        try:
+            driver = adapter.driver(spec, handle, trace)
+            writer.bind(handle, driver)
+            if trace is None:
+                trace = workloads.build(cfg, tokenizer=getattr(driver, "tokenizer", None))
+            serve.run(trace, driver, cfg.mode, writer, cfg.workload)
+        finally:
+            handle.stop()
+    except BaseException as e:
+        writer.fail(e)
+        raise
 
 
 def clear_run_dir(out, overwrite):

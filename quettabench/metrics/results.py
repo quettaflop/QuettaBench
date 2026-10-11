@@ -39,6 +39,15 @@ def redact(env):
     return {k: "REDACTED" if SECRET_NAME.search(k) else v for k, v in (env or {}).items()}
 
 
+def exit_status(exc):
+    """(status, reason) run.json records for a run that ended by raising exc:
+    aborted on Ctrl-C, ok on a clean SystemExit, failed otherwise."""
+    if isinstance(exc, SystemExit) and exc.code in (None, 0):
+        return "ok", None
+    status = "aborted" if isinstance(exc, KeyboardInterrupt) else "failed"
+    return status, f"{type(exc).__name__}: {exc}"
+
+
 def bench_sha(repo=REPO, short=False):
     """This checkout's commit; empty when there is no git or no repo (an rsync
     copy), never a crash. Old baselines recorded the short form."""
@@ -149,10 +158,22 @@ class RunWriter:
         self.provenance = provenance(cfg, handle, driver, launch_env)
         self.provenance["started"] = _now()
         self.rows = 0
+        self.finished = False
         self._fh = None
         if self.dir is not None:
             self.dir.mkdir(parents=True, exist_ok=True)
             self._fh = (self.dir / "requests.jsonl").open("a")
+
+    def bind(self, handle=None, driver=None):
+        """Fill in the provenance only a launch knows: the GPU and the engine version."""
+        self.provenance["gpu"] = getattr(handle, "gpu", "") or ""
+        self.provenance["engine_version"] = getattr(driver, "version", None)
+
+    def fail(self, exc):
+        """run.json for a run that raised exc, unless finish() already wrote one."""
+        if not self.finished:
+            status, reason = exit_status(exc)
+            self.finish(None, status=status, reason=reason)
 
     def append(self, result, **extra):
         """Write one row now and flush it to disk. result is a RequestResult,
@@ -168,6 +189,7 @@ class RunWriter:
         if status not in RUN_STATUSES:
             raise ValueError(f"run_status {status!r}; use one of {RUN_STATUSES}")
         self.provenance["finished"] = _now()
+        self.finished = True
         cfg = self.cfg.to_dict()
         origins = cfg.pop("origins")
         run = {
