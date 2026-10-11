@@ -10,6 +10,8 @@ import yaml
 
 from quettabench.config import loader
 from quettabench.config.loader import ConfigError, load, parse_set
+from quettabench.config.schema import CHOICES
+from quettabench.engines import base as engine_base
 
 MODEL = {"name": "Toy-1B", "dtype": "bfloat16", "weights_gib": 2, "max_model_len": 4096,
          "attention": "dense", "verified": True}
@@ -297,6 +299,13 @@ class LoaderRules(unittest.TestCase):
     def test_matrix_suffixes_keep_to_the_run_name_charset(self):
         configs = self.load({"matrix": {"engine.model": ["/w/llama", "../x"]}})
         self.assertEqual([c.run_name for c in configs], ["r-model_w_llama", "r-model.._x"])
+
+    def test_an_engine_without_an_adapter_is_refused_at_load(self):
+        for name in ("sglang", "trtllm"):
+            with self.subTest(name), self.assertRaisesRegex(
+                    ConfigError, rf"unknown name '{name}'; .*vllm.*quettaserve"):
+                self.load({"engine": {"name": name}})
+        self.assertEqual(sorted(CHOICES["engine.name"]), sorted(engine_base._ADAPTERS))
 
     def test_env_lands_in_provenance_and_hardware(self):
         cfg = self.one(env={"QS_SHA": "1234567", "CUDA_VISIBLE_DEVICES": "0"})

@@ -15,7 +15,8 @@ class ConfigError(ValueError):
 
 # Allowed values per enumerated field, checked at load.
 CHOICES = {
-    "engine.name": ("vllm", "quettaserve", "sglang", "trtllm", "reference"),
+    # One per registered adapter (engines/): an engine without one is refused at load.
+    "engine.name": ("vllm", "quettaserve", "reference"),
     "engine.attention": ("dense", "mla", "hybrid"),
     "engine.instrumentation": ("none", "nsys", "torch"),
     "engine.driver": ("in-process", "http"),

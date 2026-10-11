@@ -234,7 +234,7 @@ are withheld. glm53 and glm53flash have no engine bench yet: vLLM side only.
 | `scripts/crossval/prof.sh <name> <cmd>` (`PROF=1`) | `--set engine.instrumentation=nsys` on the run |
 | `scripts/crossval/free_gpu.sh`, `with_gpu.sh` | automatic: `qbench run` takes `CUDA_VISIBLE_DEVICES`, else the first idle tp * pp GPUs |
 | `benchmark.sh`, `scripts/bench.sh`, `scripts/launch_server.sh` + `python -m src.benchmark.runner --profile P --concurrency N` | `just run configs/runs/<model>.yaml --set mode.grid=null --set workload.kind=live --set workload.source=P --set mode.concurrency=N --set engine.model=<weights>` (the runner launches the server) |
-| `scripts/sweep_*_profiles[_sglang].sh` | a `matrix:` block in the run yaml, `just sweep <yaml>` |
+| `scripts/sweep_*_profiles[_sglang].sh` | a `matrix:` block in the run yaml, `just sweep <yaml>` (sglang has no adapter yet; `engine.name: sglang` is refused at load) |
 | `python -m quettabench.modes.serve ...` (and its `--output` file) | `just run ...`; results in `results/<run>/` |
 | `vmin_fit.py <wl>` / `serve --grid --workload <wl>` | `just run configs/runs/<wl>.yaml --set engine.model=<weights>` (`--nograph`: `--set engine.cudagraph=false`, `--dump-tokens`: `--set mode.returns=text`) |
 | `trace_serve.py <trace> --model <w>` | `just run <yaml> --set mode.grid=null --set workload.kind=live --set workload.source=<trace> --set mode.load=open --set workload.arrival=trace`; energy, cost, gsm8k: `just profile --source energy|cost|gsm8k` |

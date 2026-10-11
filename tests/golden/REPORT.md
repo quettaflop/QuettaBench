@@ -500,3 +500,8 @@ elementwise run after a gemm fp8 run used to drop `fp8_act_quant`.
 `profiling/kernel_data/` (overridable by `R2_KERNEL_PREFIX`), which is
 QuettaSim's kernel data. `mirror-up-prune`, an `s3 sync --delete` onto that
 prefix, is gone.
+
+2026-10-11: no fixture changed. `engine.name` accepts only the engines with
+an adapter (`vllm`, `quettaserve`, `reference`); `sglang` and `trtllm`,
+which the schema listed but no adapter served, are refused at load with
+the list of those three, where before they failed later in the runner.
