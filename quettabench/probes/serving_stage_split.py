@@ -9,7 +9,7 @@ turn every miss into a hit. c1 only: /metrics _sum deltas isolate one request.
 
     python3 -m quettabench.probes.serving_stage_split \
       --model /path/to/Llama-3.1-8B-Instruct --port 8771 \
-      --out results/probes/H100/serving_stage_split/serving_stage_split_H100.csv
+      --out results/probes/H100/serving_stage_split/<date>/serving_stage_split_H100.csv
 
 See quettabench/probes/runbooks/serving_stage_split_plan.md.
 """

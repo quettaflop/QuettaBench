@@ -14,7 +14,7 @@ from pathlib import Path
 
 from quettabench.config import env_map
 from quettabench.config.schema import Config, EngineCfg, HardwareCfg, ModeCfg, WorkloadCfg
-from quettabench.metrics.results import RunWriter, exit_status, redact
+from quettabench.metrics.results import RUN_MARKERS, RunWriter, exit_status, redact
 
 DEFAULT_OUT = Path("results") / "probes"
 # A run id: the run's start in UTC to the microsecond, so a probe's run dirs sort by start.
@@ -109,12 +109,23 @@ def run_recorded(main, name: str, file_flag: str | None = None, now: datetime | 
     holding the probe and its argv as config (mode=probe), provenance and
     run_status ok, or failed (aborted on Ctrl-C) with the exception, which is
     raised on. A probe without file_flag gets --run-id from now (the start,
-    taken here once when not given), so each run has its own dir. Under
-    torchrun only RANK 0 records, whatever its main does; a main that returns
-    False writes nothing either."""
+    taken here once when not given), so each run has its own dir. The writer
+    opens before main, so a run killed before it finishes leaves
+    requests.jsonl and no run.json, which export skips; a dir that already
+    records a run is refused. Under torchrun only RANK 0 records, whatever
+    its main does; a main that returns False writes nothing either."""
     now = now or datetime.now(timezone.utc)
     argv = sys.argv[1:] if file_flag else ["--run-id", run_id(now), *sys.argv[1:]]
     run_dir = record_dir(name, argv, file_flag) if env_map.torchrun_rank() in (None, 0) else None
+    writer = None
+    if run_dir is not None:
+        if any((run_dir / marker).exists() for marker in RUN_MARKERS):
+            raise SystemExit(f"{run_dir} already records a run; give this run its own dir")
+        cfg = Config(EngineCfg(), WorkloadCfg(), ModeCfg(mode="probe", probe=name,
+                                                         probe_args=shlex.join(argv)),
+                     HardwareCfg(), run_name=f"probe-{name}")
+        writer = RunWriter(run_dir, cfg)
+        writer.provenance["started"] = now.isoformat()
     primary, status, reason = None, "ok", None
     try:
         primary = main(argv)
@@ -122,12 +133,9 @@ def run_recorded(main, name: str, file_flag: str | None = None, now: datetime | 
         status, reason = exit_status(e)
         raise
     finally:
-        if run_dir is not None and primary is not False:
-            cfg = Config(EngineCfg(), WorkloadCfg(), ModeCfg(mode="probe", probe=name,
-                                                             probe_args=shlex.join(argv)),
-                         HardwareCfg(), run_name=f"probe-{name}")
-            writer = RunWriter(run_dir, cfg)
-            writer.provenance["started"] = now.isoformat()
+        if writer is not None and primary is False:
+            writer.discard()
+        elif writer is not None:
             writer.finish({"probe": name, "argv": redact(argv)}, status=status, reason=reason)
 
 

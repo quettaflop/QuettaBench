@@ -91,7 +91,7 @@ def test_a_failed_probe_run_keeps_its_tables_out(tmp_path: Path, fails: bool) ->
     leg = results / "H100" / "serving_stage_split" / "serving_stage_split_H100.csv"
 
     def main(argv):
-        leg.parent.mkdir(parents=True)
+        leg.parent.mkdir(parents=True, exist_ok=True)
         write_leg(leg, 1.0)
         write_leg(leg.with_name("serving_stage_split_H100_tp2.csv"), 0.6)
         if fails:
@@ -103,6 +103,43 @@ def test_a_failed_probe_run_keeps_its_tables_out(tmp_path: Path, fails: bool) ->
     assert (leg.parent / "run.json").exists()
     written = export([results], tmp_path / "out", only=["tp_comm"])
     assert written == ([] if fails else [tmp_path / "out" / "kernels" / "prefill_tp_comm_H100.json"])
+
+
+def test_a_killed_probe_run_leaves_its_tables_out(tmp_path: Path) -> None:
+    """A probe killed before run_recorded's finally (SIGKILL, OOM) leaves its
+    tables beside requests.jsonl and no run.json: export skips them."""
+    leg = tmp_path / "results" / "H100" / "serving_stage_split" / "serving_stage_split_H100.csv"
+    seen = []
+
+    def main(argv):
+        seen.append(sorted(p.name for p in leg.parent.iterdir()))
+        write_leg(leg, 1.0)
+        write_leg(leg.with_name("serving_stage_split_H100_tp2.csv"), 0.6)
+        raise KeyboardInterrupt
+
+    with mock.patch.object(sys, "argv", ["probe", "--out", str(leg)]), \
+            pytest.raises(KeyboardInterrupt):
+        run_recorded(main, "serving_stage_split", file_flag="--out")
+    assert seen == [["requests.jsonl"]]
+    (leg.parent / "run.json").unlink()  # what a kill, which skips the finally, leaves
+    _inputs.run_dirs.cache_clear()
+    assert _inputs.skipped_runs(tmp_path / "results") == {leg.parent: "no run.json"}
+    assert export([tmp_path / "results"], tmp_path / "out", only=["tp_comm"]) == []
+
+
+def test_a_second_run_into_one_dir_is_refused(tmp_path: Path) -> None:
+    """A probe that names its output file records the dir that file is in; a
+    second run there would make one run.json stand for both, so it is refused
+    and the first run's record is kept."""
+    out = tmp_path / "h100" / "raw.jsonl.gz"
+    with mock.patch.object(sys, "argv", ["probe", "--out-raw", str(out)]):
+        run_recorded(lambda argv: None, "serving_decode_grid", file_flag="--out-raw")
+        first = (out.parent / "run.json").read_text()
+        main = mock.Mock()
+        with pytest.raises(SystemExit, match="already records a run"):
+            run_recorded(main, "serving_decode_grid", file_flag="--out-raw")
+    main.assert_not_called()
+    assert (out.parent / "run.json").read_text() == first
 
 
 def test_a_file_belongs_to_its_nearest_run_dir(tmp_path: Path) -> None:

@@ -30,7 +30,9 @@ overwrites an earlier one. A probe that upserts (gemm and moe `--append`, flash_
 cross_attn, reparallel) starts from the same table of its newest earlier run whose
 `run.json` is ok (`probes/base.py` `prior_table`). A probe that names its output file
 (`serving_stage_split --out`, `serving_decode_grid --out-raw`) writes its `run.json`
-beside that file. The table paths below are relative to the run's dir, and the R2 mirror
+beside that file and refuses a dir that already records a run, so give each run a file
+in a new dir. Every probe run opens its `requests.jsonl` before it starts, so a run killed
+before it finishes leaves no `run.json` and export skips its tables. The table paths below are relative to the run's dir, and the R2 mirror
 (`just mirror-up`) carries the same `<gpu>/<probe>/<run-id>/` layout. Nothing writes into the
 QuettaSim checkout: `just export --results results/probes/A100 --dest <dir>` is the one
 route out. Schema

@@ -122,7 +122,7 @@ fresh tail per trial and a `/metrics` scrape around each request.
 $PYTHON -m quettabench.probes.serving_stage_split \
   --model "$MODEL" --port 8771 \
   --news 8,128,512,1024,2048 --cacheds 0,2000,8000,16000 --trials 5 \
-  --out results/probes/H100/serving_stage_split/serving_stage_split_H100.csv
+  --out results/probes/H100/serving_stage_split/<date>/serving_stage_split_H100.csv
 ```
 
 Writes one row per `(new,cached)` with columns:
@@ -175,7 +175,7 @@ Emit a small `serving_stage_device_H100.csv` (`new,cached,device_kernel_ms`) for
 
 ```bash
 $PYTHON -m quettabench.probes.serving_stage_split \
-  --csv results/probes/H100/serving_stage_split/serving_stage_split_H100.csv \
+  --csv results/probes/H100/serving_stage_split/<date>/serving_stage_split_H100.csv \
   --device-csv profile_data/results/serving_stage_device_H100.csv   # optional (LANE B)
 ```
 

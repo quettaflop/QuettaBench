@@ -230,6 +230,17 @@ class RunWriter:
             self.dir.mkdir(parents=True, exist_ok=True)
             self._fh = (self.dir / "requests.jsonl").open("a")
 
+    def discard(self):
+        """Close requests.jsonl and remove it and the run dir while they are
+        empty: for a run this process turns out not to record."""
+        if self._fh is not None:
+            self._fh.close()
+            self._fh = None
+            if not self.rows:
+                (self.dir / "requests.jsonl").unlink(missing_ok=True)
+                if not any(self.dir.iterdir()):
+                    self.dir.rmdir()
+
     def bind(self, handle=None, driver=None):
         """Fill in the provenance only a launch knows: the GPU and the engine version."""
         self.provenance["gpu"] = getattr(handle, "gpu", "") or ""

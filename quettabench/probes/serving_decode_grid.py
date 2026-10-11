@@ -9,8 +9,8 @@ from this module).
 
     python3 -m quettabench.probes.serving_decode_grid \
       --model /path/to/Llama-3.1-8B-Instruct --tensor-parallel-size 4 \
-      --port 8791 --out-raw results/probes/H100x4/serving_decode_grid/serving_decode_grid_H100x4_<date>.jsonl.gz \
-      --out-summary results/probes/H100x4/serving_decode_grid/serving_decode_grid_summary.csv
+      --port 8791 --out-raw results/probes/H100x4/serving_decode_grid/<date>/serving_decode_grid_H100x4.jsonl.gz \
+      --out-summary results/probes/H100x4/serving_decode_grid/<date>/serving_decode_grid_summary.csv
 """
 from __future__ import annotations
 

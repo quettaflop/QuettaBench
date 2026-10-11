@@ -470,3 +470,11 @@ before it started from whatever the last run, ok or not, left. A
 `qbench run` probe (`mode: probe`) still writes `results/<run>/<probe>/`.
 `remote-probe` empties the remote out dir, sends the probe's local runs up,
 and pulls back without overwriting local files.
+
+2026-10-11: no fixture changed. A probe run from its CLI opens
+`requests.jsonl` in its run dir before the probe starts, so a run killed
+before it finishes leaves no `run.json` and export skips its tables; before,
+a killed run left tables with no record at all, and export kept them. A
+probe that names its output file (`serving_stage_split --out`,
+`serving_decode_grid --out-raw`) refuses a dir that already records a run;
+before, the second run's `run.json` replaced the first's.
