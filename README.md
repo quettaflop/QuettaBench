@@ -270,3 +270,7 @@ Canonical data lives on the `agent-bench` R2 bucket:
 | `results/` | benchmark ground truth (synthetic_distributional, trace_replay, archived) |
 | `json/current/` | dashboard runtime JSONs |
 | `archive/` | pre-2026-05 result snapshots |
+
+## Known open items
+
+- The GPU parity gate (HTTP grid vs in-process grid, `QBENCH_STRUCTURE.md` section 5) is open: no GPU run has passed it, so `InProcessDriver` stays and the two grid paths are not yet shown to agree.
