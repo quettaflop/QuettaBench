@@ -135,7 +135,7 @@ class DockerArgv(unittest.TestCase):
         repo = str(launcher.REPO)
         self.assertEqual(launcher.docker_argv(spec, cfg, "2", "/r/run"), [
             "docker", "run", "-d", "--pull=never", "--init", "--name", NAME,
-            "--label", "qbench.run_dir=/r/run", "--gpus", '"device=2"', "--ipc=host", "--shm-size=16g", "-p", "8000:8000",
+            "--gpus", '"device=2"', "--ipc=host", "--shm-size=16g", "-p", "8000:8000",
             "-v", "/hf:/hf:ro", "-v", f"{repo}:{repo}:ro", "-v", "/r/run:/r/run",
             "-e", "VLLM_SERVER_DEV_MODE=1", "-e", "VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1",
             "-e", "NCCL_IB_DISABLE=1", "-e", "HF_HOME=/hf",
@@ -247,17 +247,18 @@ class DockerStart(unittest.TestCase):
                 self.start(cfg, spec)
         popen.assert_not_called()
         self.assertEqual(self.docker_calls(run),
-                         [["docker", "logs", "c0ffee"], ["docker", "rm", "-f", "c0ffee"]])
+                         [["docker", "logs", NAME], ["docker", "rm", "-f", NAME]])
         self.assertEqual(run.call_args_list[1].kwargs["stdout"].name,
                          str(self.dir / "run" / "server.log"))
         self.assertEqual((self.dir / "run" / "server.log").read_text(), "no such image")
 
-    def test_a_docker_run_that_created_nothing_removes_nothing(self):
+    def test_a_docker_run_that_printed_no_id_is_still_cleaned_by_name(self):
         cfg, spec = docker_spec()
         with self.run_mock(docker_rc=125, created="") as run, \
                 self.assertRaisesRegex(RuntimeError, "docker run exited with 125"):
             self.start(cfg, spec)
-        self.assertEqual(self.docker_calls(run), [])
+        self.assertEqual(self.docker_calls(run),
+                         [["docker", "logs", NAME], ["docker", "rm", "-f", NAME]])
         cfg, spec = docker_spec("engine.image=null")
         with self.run_mock() as run, self.assertRaisesRegex(ConfigError, "needs engine.image"):
             self.start(cfg, spec)

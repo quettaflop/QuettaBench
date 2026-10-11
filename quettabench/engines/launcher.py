@@ -161,8 +161,7 @@ def docker_argv(spec, cfg, gpus, results_dir):
     output (nsys) lands there and outlives the container.
     --entrypoint is the argv's first word, so the image's own ENTRYPOINT does
     not prefix the command. env is spec.env, the non-empty collective pins
-    and HF_HOME. The label qbench.run_dir names the run dir the container
-    belongs to.
+    and HF_HOME.
     """
     hw, run_dir = cfg.hardware, Path(results_dir).resolve()
     if not spec.image:
@@ -175,7 +174,7 @@ def docker_argv(spec, cfg, gpus, results_dir):
     env = {**spec.env, **{k: v for k, v in hw.collective.items() if v},
            **({"HF_HOME": hw.hf_home} if hw.hf_home else {})}
     return ["docker", "run", "-d", "--pull=never", "--init",
-            "--name", container_name(cfg.run_name), "--label", f"qbench.run_dir={run_dir}",
+            "--name", container_name(cfg.run_name),
             "--gpus", f'"device={gpus}"', "--ipc=host", f"--shm-size={hw.shm_size}",
             "-p", f"{spec.port}:{spec.port}",
             *(a for path in [*mounts, REPO] for a in ("-v", f"{path}:{path}:ro")),
@@ -200,17 +199,14 @@ def start(spec, results_dir, *, backend="local", cfg=None, gpus="", timeout_s=18
         container = argv[argv.index("--name") + 1]
         run = subprocess.run(argv, capture_output=True, text=True, check=False)
         if run.returncode != 0:
-            # A container exists only when docker run printed its id; without
-            # one, the name may be another run's container, so it is left alone.
-            created = run.stdout.strip()
+            # The name is this run's own (container_name), so whatever docker
+            # left under it is logged and removed.
             with (results_dir / "server.log").open("w") as log:
                 log.write(run.stderr)
                 log.flush()
-                if created:
-                    subprocess.run(["docker", "logs", created], stdout=log,
-                                   stderr=subprocess.STDOUT, check=False)
-            if created:
-                remove(created)
+                subprocess.run(["docker", "logs", container], stdout=log,
+                               stderr=subprocess.STDOUT, check=False)
+            remove(container)
             raise RuntimeError(f"docker run exited with {run.returncode}: {run.stderr.strip()}")
         container_id, server = run.stdout.strip(), ["docker", "logs", "-f", container]
     else:
