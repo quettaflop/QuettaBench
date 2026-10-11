@@ -5,8 +5,8 @@ Restore the pools from
 s3://agent-bench/archive/2026-08-26-realized-session-distributions/
 into data/distributions/ first.
 
-    python analysis/synthetic/ablate_synthetic_generator.py
-    python analysis/synthetic/ablate_synthetic_generator.py --hw h100 --benchmark swebench
+    python3 -m analysis.synthetic.ablate_synthetic_generator
+    python3 -m analysis.synthetic.ablate_synthetic_generator --hw h100 --benchmark swebench
 """
 
 from __future__ import annotations
@@ -14,16 +14,14 @@ from __future__ import annotations
 import argparse
 import json
 import statistics
-import sys
 from pathlib import Path
+
+from analysis.synthetic.distributional import DistributionalSampler
+from analysis.synthetic.trace_distributions import load_trace_distribution
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
 DIST = ROOT / "data" / "distributions"
-sys.path.insert(0, str(ROOT))
-
-from analysis.synthetic.distributional import DistributionalSampler  # noqa: E402
-from analysis.synthetic.trace_distributions import load_trace_distribution  # noqa: E402
 
 # synthetic distribution  ->  realized file stem
 PAIRS = {

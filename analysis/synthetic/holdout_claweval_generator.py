@@ -3,8 +3,8 @@
 
 Fit on train sessions, score on held-out test sessions.
 
-    python analysis/synthetic/holdout_claweval_generator.py
-    python analysis/synthetic/holdout_claweval_generator.py --splits 5 --seed 7
+    python3 -m analysis.synthetic.holdout_claweval_generator
+    python3 -m analysis.synthetic.holdout_claweval_generator --splits 5 --seed 7
 """
 
 from __future__ import annotations
@@ -13,17 +13,14 @@ import argparse
 import json
 import random
 import statistics
-import sys
 from pathlib import Path
+
+from analysis.synthetic.build_trace_distributions import build_trajectory_distribution
+from analysis.synthetic.distributional import DistributionalSampler
+from analysis.synthetic.trace_distributions import parse_trace_distribution
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
-sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(HERE))
-
-from build_trace_distributions import build_trajectory_distribution  # noqa: E402
-from analysis.synthetic.distributional import DistributionalSampler  # noqa: E402
-from analysis.synthetic.trace_distributions import parse_trace_distribution  # noqa: E402
 
 TRAJ = ROOT / "data" / "claweval_trajectories.jsonl"
 

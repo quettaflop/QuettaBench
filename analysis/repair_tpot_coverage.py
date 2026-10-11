@@ -19,8 +19,8 @@ fields are recomputed from the repaired rows, and a top-level
 no stamp. A per-directory _tpot_repair.json manifest records counts.
 
 Usage:
-    python3 analysis/repair_tpot_coverage.py DIR [DIR ...]          # dry run
-    python3 analysis/repair_tpot_coverage.py --apply DIR [DIR ...]
+    python3 -m analysis.repair_tpot_coverage DIR [DIR ...]          # dry run
+    python3 -m analysis.repair_tpot_coverage --apply DIR [DIR ...]
 """
 
 import argparse
@@ -28,11 +28,9 @@ import glob
 import json
 import os
 import statistics
-import sys
 from datetime import datetime, timezone
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from quettabench.metrics.core import _percentile  # noqa: E402
+from quettabench.metrics.core import percentile
 
 COVERAGE_THRESHOLD = 0.8
 RULE = "len(itl)<0.8*(out-1) -> tpot=(e2el-ttft)/(out-1)"
@@ -61,8 +59,8 @@ def summary_tpot_stats(rows):
     return {
         "mean_tpot_ms": statistics.mean(tpots),
         "median_tpot_ms": statistics.median(tpots),
-        "p90_tpot_ms": _percentile(tpots, 90),
-        "p99_tpot_ms": _percentile(tpots, 99),
+        "p90_tpot_ms": percentile(tpots, 90, "linear"),
+        "p99_tpot_ms": percentile(tpots, 99, "linear"),
     }
 
 

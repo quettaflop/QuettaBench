@@ -246,6 +246,9 @@ configs/                  models, runs, grids, hardware
 analysis/, data/          one-off studies and data fetch; not imported by the package
 ```
 
+analysis/ scripts import `quettabench` plainly: run them from the repo root as
+`python3 -m analysis.<path>` (or anywhere once `pip install -e .`).
+
 ## Data
 
 Canonical data lives on the `agent-bench` R2 bucket:

@@ -20,7 +20,7 @@ the exact chat template, but the question here is 0.5% vs 99%, which is far
 outside any template overhead.
 
 Usage:
-    python analysis/prefix_reuse/measure_true_prefix_reuse.py
+    python3 -m analysis.prefix_reuse.measure_true_prefix_reuse
 """
 
 from __future__ import annotations
@@ -28,13 +28,11 @@ from __future__ import annotations
 import json
 import os
 import statistics
-import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
 DATA = ROOT / "data"
-sys.path.insert(0, str(HERE))
 
 DATASETS = ["swebench", "terminalbench", "osworld"]
 

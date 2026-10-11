@@ -830,9 +830,9 @@ class TableParity(unittest.TestCase):
         def gen(seed):
             fd, p = tempfile.mkstemp(suffix=".jsonl")
             os.close(fd)
-            subprocess.run([sys.executable, str(REPO / "analysis" / "synthetic" / "agentic.py"), "gen",
+            subprocess.run([sys.executable, "-m", "analysis.synthetic.agentic", "gen",
                             "--profile", "terminal_bench", "--n", "8", "--seed", str(seed),
-                            "--out", p], check=True, capture_output=True)
+                            "--out", p], check=True, capture_output=True, cwd=REPO)
             return p
         a, b, c = gen(1), gen(1), gen(2)
         self.assertEqual(Path(a).read_bytes(), Path(b).read_bytes(),

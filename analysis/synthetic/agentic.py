@@ -8,14 +8,10 @@ that quettabench/workloads/live.py reads.
 import argparse
 import json
 import math
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parents[2]))
 from analysis.synthetic.synth_bench import lcg
 from quettabench.workloads.base import synth_ids, workload_hash
 from quettabench.workloads.grid import stamp_synthetic
-
 
 # Agentic workload shapes: prefix_frac = cache-hit fraction, growth = context per
 # turn, gap = inter-turn think/tool seconds, burst = session-arrival pattern.

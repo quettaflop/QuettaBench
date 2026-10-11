@@ -17,8 +17,8 @@ Reporting the same quantity for both variants isolates the path, since the fit
 data, seed, and estimator are identical.
 
 Usage:
-    python analysis/synthetic/holdout_marginal_vs_session.py --traj data/swebench_trajectories.jsonl
-    python analysis/synthetic/holdout_marginal_vs_session.py --all
+    python3 -m analysis.synthetic.holdout_marginal_vs_session --traj data/swebench_trajectories.jsonl
+    python3 -m analysis.synthetic.holdout_marginal_vs_session --all
 """
 
 from __future__ import annotations
@@ -28,17 +28,14 @@ import copy
 import json
 import random
 import statistics
-import sys
 from pathlib import Path
+
+from analysis.synthetic.build_trace_distributions import build_trajectory_distribution
+from analysis.synthetic.distributional import DistributionalSampler
+from analysis.synthetic.trace_distributions import parse_trace_distribution
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
-sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(HERE))
-
-from build_trace_distributions import build_trajectory_distribution  # noqa: E402
-from analysis.synthetic.distributional import DistributionalSampler  # noqa: E402
-from analysis.synthetic.trace_distributions import parse_trace_distribution  # noqa: E402
 
 DATA = ROOT / "data"
 DATASETS = [

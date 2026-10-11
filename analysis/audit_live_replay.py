@@ -8,9 +8,6 @@ the trace fields. Mismatches, missing usage, or dropped requests fail.
 import argparse
 import json
 import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from quettabench.workloads.live import parse_mooncake_trace
 
