@@ -33,14 +33,12 @@ from __future__ import annotations
 
 import argparse
 import csv
-import io
 import json
 import os
-import subprocess
-import sys
 
 import torch
 
+from quettabench.probes import _ncu
 from quettabench.probes.base import add_output_args, out_root, prior_table, run_recorded
 
 M_AXIS = [1, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
@@ -79,32 +77,21 @@ NCU_NK = [(4096, 4096), (8192, 4096), (4096, 8192), (14336, 4096), (4096, 14336)
 NCU_REPS = 3
 
 
+# GEMM kernel family across archs: Ampere/Ada cuBLAS name their bf16 GEMMs
+# "...gemm...", but Hopper (H100) dispatches to nvJet ("nvjet_...") and
+# cutlass3x/xmma/wgmma kernels that DON'T contain "gemm". Matching the family
+# still excludes the randn setup kernel (distribution_elementwise...).
+GEMM_KERNELS = ("gemm", "nvjet", "cutlass", "xmma", "wgmma")
+
+
 def ncu_gemm_us(m, n, k, ncu_bin, reps=NCU_REPS) -> float | None:
     """NCU pure-kernel gpu__time_duration (us) for one GEMM, min over `reps` warm
-    launches. Filters to the GEMM kernel (ignores the randn setup kernels)."""
+    launches of its GEMM-family kernels (_ncu.ncu_kernel_durations parses the CSV)."""
     inner = (f"import torch;a=torch.randn({m},{k},device='cuda',dtype=torch.bfloat16);"
              f"b=torch.randn({k},{n},device='cuda',dtype=torch.bfloat16);"
              f"[torch.matmul(a,b) for _ in range({reps})];torch.cuda.synchronize()")
-    cmd = [ncu_bin, "--csv", "--metrics", "gpu__time_duration.sum",
-           "--target-processes", "all", sys.executable, "-c", inner]
-    out = subprocess.run(cmd, capture_output=True, text=True).stdout
-    lines = out.splitlines()
-    hdr = next((i for i, line in enumerate(lines) if line.startswith('"ID"')), None)
-    if hdr is None:
-        return None
-    durs = []
-    for r in csv.DictReader(io.StringIO("\n".join(lines[hdr:]))):
-        if r.get("Metric Name") != "gpu__time_duration.sum":
-            continue
-        # GEMM kernel family across archs: Ampere/Ada cuBLAS name their bf16 GEMMs
-        # "...gemm...", but Hopper (H100) dispatches to nvJet ("nvjet_...") and
-        # cutlass3x/xmma/wgmma kernels that DON'T contain "gemm". Match the family so
-        # the randn-setup kernel (distribution_elementwise...) is still excluded.
-        kn = r.get("Kernel Name", "").lower()
-        if not any(tok in kn for tok in ("gemm", "nvjet", "cutlass", "xmma", "wgmma")):
-            continue
-        val = float(r["Metric Value"].replace(",", ""))
-        durs.append(val / 1000.0 if r.get("Metric Unit") == "ns" else val)
+    durs = [us for name, us in _ncu.ncu_kernel_durations(inner, ncu_bin)
+            if any(tok in name.lower() for tok in GEMM_KERNELS)]
     return min(durs) if durs else None
 
 

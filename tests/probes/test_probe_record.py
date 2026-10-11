@@ -7,11 +7,13 @@ import argparse
 import ast
 import contextlib
 import dataclasses
+import importlib
 import io
 import json
 import os
 import sys
 import tempfile
+import types
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -328,3 +330,28 @@ class StageSplitKey(unittest.TestCase):
             sss.main(["--model", "/w", "--emit-nsys-cmd", "--api-key", "sk-live"])
         self.assertNotIn("sk-live", out.getvalue())
         self.assertIn("VLLM_API_KEY", out.getvalue())
+
+
+def import_without_torch(name):
+    """quettabench.probes.<name> imported on CPU with an empty torch module."""
+    fake = types.ModuleType("torch")
+    fake.nn = types.ModuleType("torch.nn")
+    fake.nn.functional = types.ModuleType("torch.nn.functional")
+    with mock.patch.dict(sys.modules, {"torch": fake, "torch.nn": fake.nn,
+                                       "torch.nn.functional": fake.nn.functional}):
+        sys.modules.pop(f"quettabench.probes.{name}", None)
+        return importlib.import_module(f"quettabench.probes.{name}")
+
+
+def test_gemm_ncu_reads_kernels_through_the_shared_parser():
+    """gemm --ncu takes its kernel times from _ncu.ncu_kernel_durations, the one
+    NCU CSV parser, and keeps the GEMM family's fastest launch."""
+    gemm = import_without_torch("gemm")
+    launches = [("distribution_elementwise_kernel", 1.0), ("nvjet_tst_64x8", 5.0),
+                ("ampere_bf16_s16816gemm", 4.0), ("at::fill", 0.5)]
+    with mock.patch.object(gemm._ncu, "ncu_kernel_durations", return_value=launches) as durs:
+        assert gemm.ncu_gemm_us(1, 4096, 4096, "/opt/ncu") == 4.0
+    assert durs.call_args.args[1] == "/opt/ncu"
+    with mock.patch.object(gemm._ncu, "ncu_kernel_durations", return_value=[("at::fill", 1.0)]):
+        assert gemm.ncu_gemm_us(1, 4096, 4096, "/opt/ncu") is None
+    assert "Metric Value" not in (PROBES / "gemm.py").read_text()
