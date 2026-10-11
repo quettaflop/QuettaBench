@@ -20,6 +20,7 @@ from quettabench.config.schema import (
     dict_field,
 )
 from quettabench.config.validate import check_ep_legal, parse_serving_style
+from quettabench.workloads import arrival
 
 # model yaml key -> Config path
 MODEL_KEYS = {
@@ -125,29 +126,14 @@ def parse_set(item):
     return path.strip(), yaml.safe_load(text)
 
 
-def parse_arrival(spec):
-    """(kind, params) from steady | trace | poisson:<r> | ramp:<a>:<b> | burst:<n>x<size>@<gap>."""
-    kind, _, rest = str(spec).partition(":")
+def arrival_kind(spec):
+    """The arrival's kind, the spec checked by workloads.arrival.parse_arrival."""
     try:
-        if kind in ("steady", "trace") and not rest:
-            return kind, ()
-        if kind == "poisson":
-            params = (float(rest),)
-        elif kind == "ramp":
-            a, b = rest.split(":")
-            params = (float(a), float(b))
-        elif kind == "burst":
-            n, tail = rest.split("x")
-            size, gap = tail.split("@")
-            params = (int(n), int(size), float(gap))
-        else:
-            raise ValueError
+        arrival.parse_arrival(str(spec), 0)
     except ValueError:
         raise ConfigError(f"arrival {spec!r}: use steady, trace, poisson:<r>, "
-                          "ramp:<a>:<b> or burst:<n>x<size>@<gap>") from None
-    if kind in ("poisson", "ramp") and min(params) <= 0:
-        raise ConfigError(f"arrival {spec!r}: rate must be > 0")
-    return kind, params
+                          "ramp:<a>:<b> or burst:<n>x<size>@<gap>, rates > 0") from None
+    return str(spec).partition(":")[0]
 
 
 def detect_backend(tpu_name):
@@ -233,7 +219,7 @@ def _validate(values, origins, allow_unverified, where):
         _force(values, origins, "engine.prefix_caching", False, by, where)
     elif profile in ("single-turn", "multi-turn"):
         _force(values, origins, "engine.prefix_caching", True, by, where)
-    arrival, _ = parse_arrival(values["workload.arrival"])
+    arrival = arrival_kind(values["workload.arrival"])
     if values["mode.load"] == "open" and arrival not in RATE_ARRIVALS + ("trace",):
         raise ConfigError(f"{where}: open load needs a rate-bearing arrival "
                           f"(poisson, ramp, burst) or trace, got {values['workload.arrival']!r}")

@@ -78,6 +78,12 @@ def burst_arrivals(num_requests: int, n_bursts: int, burst_size: int, gap_s: flo
     return times
 
 
+def positive(rate, spec):
+    if rate <= 0:
+        raise ValueError(f"arrival {spec!r}: rate must be > 0")
+    return rate
+
+
 def parse_arrival(spec: str, n: int, seed: int = 42) -> list[float] | None:
     """Arrival offsets in seconds for n requests from one spec string:
     trace (None: keep the trace's own times), steady (all at t=0),
@@ -88,10 +94,10 @@ def parse_arrival(spec: str, n: int, seed: int = 42) -> list[float] | None:
         return [0.0] * n
     kind, _, rest = spec.partition(":")
     if kind == "poisson":
-        return poisson_arrivals(n, float(rest), seed)
+        return poisson_arrivals(n, positive(float(rest), spec), seed)
     if kind == "ramp":
         a, b = rest.split(":")
-        return ramp_arrivals(n, float(a), float(b), seed)
+        return ramp_arrivals(n, positive(float(a), spec), positive(float(b), spec), seed)
     if kind == "burst":
         nb, rest2 = rest.split("x")
         size, gap = rest2.split("@")
