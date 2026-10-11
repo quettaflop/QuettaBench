@@ -27,7 +27,7 @@ import time
 from dataclasses import dataclass, field
 
 from ..config.schema import WorkloadCfg
-from ..engines.drivers import PrefixCacheResetError
+from ..engines.drivers import PrefixCacheResetError, server_base_url
 from ..metrics.core import (
     BenchmarkSummary,
     acceptance,
@@ -44,6 +44,7 @@ from ..metrics.core import (
     usage_gate,
 )
 from ..metrics.results import goodprobe_line, print_legacy_lines
+from ..profiling.native import spec_decode_counters
 from ..workloads.arrival import offered_rate, parse_arrival, rebase_arrivals
 from ..workloads.base import workload_hash
 from ..workloads.sessions import SessionTrace
@@ -198,8 +199,17 @@ async def replay(trace, driver, mode, emit, offsets, request_id):
     return rows, start
 
 
+def server_counters(driver):
+    """Spec-decode counters of the server an HTTP driver talks to; None for
+    any other driver, or a server without them."""
+    url = getattr(driver, "url", None)
+    return spec_decode_counters(server_base_url(url)) if url else None
+
+
 async def measure(trace, driver, mode, emit, workload, request_id):
-    """Warm, reset, dispatch: (results, results_by_turn | None, [(request, result)], duration)."""
+    """Warm, reset, dispatch: (results, results_by_turn | None, [(request, result)],
+    duration, server SPECSUM | None). The server's spec-decode counters are read
+    just before and just after dispatch, so warmup is not in the window."""
     multi = isinstance(trace, SessionTrace)
     offsets = None if multi else arrival_offsets(trace, workload)
     sessions = None
@@ -214,12 +224,15 @@ async def measure(trace, driver, mode, emit, workload, request_id):
         # After warmup, so the run starts cold whatever warmup left behind.
         if mode.reset_prefix_cache:
             print(f"Prefix cache: {await driver.reset()}")
+        before = server_counters(driver)
         if multi:
             results, by_turn, pairs, start = await sessions.run()
         else:
             pairs, start = await replay(trace, driver, mode, emit, offsets, request_id)
             results, by_turn = [r for _, r in pairs], None
-    return results, by_turn, pairs, time.perf_counter() - start
+        duration = time.perf_counter() - start
+        spec = server_spec_section(before, server_counters(driver) if before else None)
+    return results, by_turn, pairs, duration, spec
 
 
 def serve_records(pairs, open_loop):
@@ -249,9 +262,25 @@ def spec_section(pairs):
             "accept_rate": sum(a / n for a, n in scored) / len(scored)}
 
 
-def crossval_sections(pairs, duration, mode):
-    """serve (nearest-rank, as SERVESUM always was), sla, burst and spec."""
-    out = {"spec": spec_section(pairs)}
+def server_spec_section(before, after):
+    """SPECSUM from the server's counter deltas over the measured window, as
+    vllm bench serve defines them: accept_rate = accepted / draft tokens,
+    accept_len = 1 + accepted / drafts (its qwen_tp_bench.json numbers obey
+    both). None without both scrapes or without a draft in the window."""
+    if before is None or after is None:
+        return None
+    d = {key: int(after[key] - before[key]) for key in after}
+    if d["drafts"] <= 0 or d["draft_tokens"] <= 0:
+        return None
+    return {"spec": "measured", "source": "server_metrics", **d,
+            "accept_rate": d["accepted_tokens"] / d["draft_tokens"],
+            "accept_len": 1 + d["accepted_tokens"] / d["drafts"], "n": d["drafts"]}
+
+
+def crossval_sections(pairs, duration, mode, server_spec=None):
+    """serve (nearest-rank, as SERVESUM always was), sla, burst and spec;
+    spec is the server's counters when it reported them, else the rows'."""
+    out = {"spec": server_spec or spec_section(pairs)}
     records = serve_records(pairs, mode.load == "open")
     if not records:
         return out
@@ -379,7 +408,7 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
     except RunAborted as e:
         print(e)
         stop(writer, None, "aborted", str(e), 1)
-    results, by_turn, pairs, duration = measured
+    results, by_turn, pairs, duration, server_spec = measured
 
     core = aggregate(
         results=[r for r in results if r is not None], duration_s=duration,
@@ -399,7 +428,7 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
 
     ident = summary.sections["workload"] = identity(trace, [q for q, _ in pairs])
     summary.sections.update({"goodput": goodput} if goodput else
-                            crossval_sections(pairs, duration, mode))
+                            crossval_sections(pairs, duration, mode, server_spec))
     print_legacy_lines(summary.sections)
     if not ident["match"]:
         stop(writer, summary.to_dict(), "failed", "workload identity", IDENTITY_EXIT)

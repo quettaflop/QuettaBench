@@ -7,11 +7,13 @@ import unittest
 from unittest import mock
 
 from quettabench.config.schema import ModeCfg, WorkloadCfg
+from quettabench.engines.drivers import HttpDriver
 from quettabench.metrics.core import RequestResult
 from quettabench.metrics.results import RunWriter, legacy_lines
 from quettabench.modes import serve
 from quettabench.workloads.base import Request
 from quettabench.workloads.live import RealTrace
+from tests.profiling import fake_endpoint
 from tests.test_serve_procedure import FakeDriver, config, single_trace
 
 
@@ -101,6 +103,31 @@ class Sections(unittest.TestCase):
         self.assertEqual(summary.sections["spec"], {"spec": "off"})
         self.assertEqual(tail(out, "SPECSUM"), ["SPECSUM spec=off note=needs-real-text-trace"])
 
+    def test_http_spec_comes_from_server_counter_deltas(self):
+        scrapes = iter([(100, 300, 150), (160, 480, 240)])
+
+        def metrics():
+            drafts, draft_tokens, accepted = next(scrapes)
+            return (f'vllm:spec_decode_num_drafts_total{{engine="0"}} {drafts}\n'
+                    f'vllm:spec_decode_num_draft_tokens_total{{engine="0"}} {draft_tokens}\n'
+                    f'vllm:spec_decode_num_accepted_tokens_total{{engine="0"}} {accepted}\n')
+
+        with fake_endpoint.serve(metrics) as (endpoint, _):
+            driver = HttpDriver("completions", url=endpoint + "/v1/completions", model="m")
+            summary, out = run(single_trace(3), driver, ModeCfg(warmup=0, concurrency=3))
+        self.assertEqual(summary.sections["spec"], {
+            "spec": "measured", "source": "server_metrics", "accepted_tokens": 90,
+            "draft_tokens": 180, "drafts": 60, "accept_rate": 0.5, "accept_len": 2.5, "n": 60})
+        self.assertEqual(tail(out, "SPECSUM"), [
+            "SPECSUM spec=measured source=server_metrics accept_len=2.50 accept_rate=0.500 "
+            "drafts=60 draft_tokens=180 accepted_tokens=90"])
+
+    def test_http_without_spec_counters_is_spec_off(self):
+        with fake_endpoint.serve() as (endpoint, _):
+            driver = HttpDriver("completions", url=endpoint + "/v1/completions", model="m")
+            summary, _ = run(single_trace(3), driver, ModeCfg(warmup=0, concurrency=3))
+        self.assertEqual(summary.sections["spec"], {"spec": "off"})
+
     def test_sla_and_burst_follow_the_mode(self):
         summary, out = run(single_trace(4), FakeDriver(),
                            ModeCfg(warmup=0, concurrency=4, sla_ttft_ms=0.5, sla_tpot_ms=100))
@@ -127,7 +154,7 @@ class GoodputSweep(unittest.TestCase):
                                   scheduled_at_s=i * 0.1, semaphore_acquired_at_s=i * 0.1)
                 emit(q, r)
                 pairs.append((q, r))
-            return [r for _, r in pairs], None, pairs, 1.0 / workload.speed
+            return [r for _, r in pairs], None, pairs, 1.0 / workload.speed, None
         return measure
 
     def test_bisects_to_the_boundary_within_six_probes(self):

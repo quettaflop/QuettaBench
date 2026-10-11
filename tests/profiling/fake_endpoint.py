@@ -1,5 +1,5 @@
 """A local stand-in for an attached vLLM server: GET /metrics returns the
-given Prometheus text, POST /v1/completions answers `#### <prompt length>`,
+given Prometheus text (or what a given callable returns, per scrape), POST /v1/completions answers `#### <prompt length>`,
 or with "stream" set streams max_tokens one-token chunks and a usage chunk,
 and POST /reset_prefix_cache answers 200. Every POST body is recorded in
 `posts` (None for a bodiless POST)."""
@@ -37,7 +37,7 @@ def serve(metrics=METRICS):
                 self.send_response(404)
                 self.end_headers()
                 return
-            self._reply(metrics.encode(), "text/plain")
+            self._reply((metrics() if callable(metrics) else metrics).encode(), "text/plain")
 
         def do_POST(self):
             size = int(self.headers.get("Content-Length") or 0)

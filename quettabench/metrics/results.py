@@ -233,7 +233,12 @@ def legacy_lines(summary):
         lines.append(f"BURSTSUM peak_ttft_p99={b['peak_ttft_p99']:.1f} "
                      f"recovery_s={rec} target_ms={b['target_ms']}")
     spec = summary.get("spec")
-    if spec is not None:
+    if spec is not None and spec.get("source") == "server_metrics":
+        lines.append(f"SPECSUM spec=measured source=server_metrics "
+                     f"accept_len={spec['accept_len']:.2f} accept_rate={spec['accept_rate']:.3f} "
+                     f"drafts={spec['drafts']} draft_tokens={spec['draft_tokens']} "
+                     f"accepted_tokens={spec['accepted_tokens']}")
+    elif spec is not None:
         lines.append(f"SPECSUM spec=measured accept_len={spec['accept_len']:.2f} "
                      f"accept_rate={spec['accept_rate']:.3f} n={spec['n']}"
                      if spec["spec"] == "measured" else "SPECSUM spec=off note=needs-real-text-trace")

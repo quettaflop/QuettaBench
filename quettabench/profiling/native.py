@@ -21,6 +21,14 @@ from pathlib import Path
 HITS = "vllm:gpu_prefix_cache_hits"
 QUERIES = "vllm:gpu_prefix_cache_queries"
 
+# vLLM's speculative-decoding counters, named as the H200 campaign's own
+# /metrics scrape recorded them (v4bench_backup_20260928/sweep_results.jsonl,
+# spec_metrics: vllm:spec_decode_num_drafts_total, ..._draft_tokens_total,
+# ..._accepted_tokens_total). They exist only on a server with spec decoding.
+SPEC_COUNTERS = {"accepted_tokens": "vllm:spec_decode_num_accepted_tokens",
+                 "draft_tokens": "vllm:spec_decode_num_draft_tokens",
+                 "drafts": "vllm:spec_decode_num_drafts"}
+
 # name{labels} value [timestamp]; label values may hold escaped quotes.
 SAMPLE = re.compile(r'^([a-zA-Z_:][a-zA-Z0-9_:]*)(?:\{(.*)\})?\s+(\S+)(?:\s+\S+)?$')
 LABEL = re.compile(r'([a-zA-Z_][a-zA-Z0-9_]*)="((?:[^"\\]|\\.)*)"')
@@ -82,6 +90,18 @@ def scrape_metrics(endpoint, timeout_s=10):
     """GET <endpoint>/metrics and parse it."""
     with urllib.request.urlopen(f"{endpoint}/metrics", timeout=timeout_s) as resp:
         return parse_prometheus(resp.read().decode())
+
+
+def spec_decode_counters(endpoint, timeout_s=10):
+    """{accepted_tokens, draft_tokens, drafts} from one /metrics scrape,
+    each summed over engines; None when a counter is missing (spec decoding
+    off) or /metrics does not answer."""
+    try:
+        metrics = scrape_metrics(endpoint, timeout_s)
+    except OSError:
+        return None
+    counts = {key: counter_total(metrics, name) for key, name in SPEC_COUNTERS.items()}
+    return None if None in counts.values() else counts
 
 
 def metrics_section(metrics):
