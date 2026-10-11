@@ -393,6 +393,15 @@ for these profiles (`cut` is the test's own truncated trajectory):
 | `cut` | `c769b8ce9e3a8fe2` | `a7ffbc60a718ff0d` |
 
 2026-10-11: no fixture changed; the `mooncake-trace` pin in
+`tests/test_profile_hashes.py` moved in 969c7f7 from `0e6f083e59f1f9dd` /
+`d483cd1411833245` (workload_hash / content digest) to `52bae3bbfe646fd8` /
+`a1384dbf00844c6c`. `MooncakeTrace` dropped each record's timestamp, so
+its requests carried no `arrival_ts` and `workload.arrival=trace`
+submitted them all at once; its requests now carry `arrival_ts`, the
+record's timestamp in seconds. A mooncake-trace run recorded before
+969c7f7 does not join on workload_hash with one recorded after it.
+
+2026-10-11: no fixture changed; the `mooncake-trace` pin in
 `tests/test_profile_hashes.py` moved from `52bae3bbfe646fd8` /
 `a1384dbf00844c6c` (workload_hash / content digest) to `a03be7b0ed268d81`
 / `b5ed59cd7a0d7aff`. A Mooncake draw that wraps past the file's end
@@ -424,3 +433,11 @@ before it, pinned in `tests/probes/test_probe_record.py`:
 no TPOT sample (none decoded 2+ tokens) records `sla.tpot_p99` as null and
 prints `SLASUM ... tpot_p99=-/<sla>`; before, it recorded 0 and printed
 `tpot_p99=0.000`, a number nothing measured.
+
+2026-10-11: no fixture changed. Since 4383be8 `profiling/serving_frontend.py`
+takes its frontend-off reference from QuettaSim's
+`engine.sim.closed_loop.predict_cell` (the vLLM-scheduler replay) instead of
+`engine.sim.queue_sim.predict_cell` (the queue sim), which QuettaSim main
+removed. `mult_curve` is the measured TTFT residual over that reference,
+so a `mult_curve` exported to a device yaml before 4383be8 and one exported
+after it are not comparable; no run has measured how far they differ.
