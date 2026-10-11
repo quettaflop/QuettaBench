@@ -94,7 +94,7 @@ class DockerArgv(unittest.TestCase):
         cfg, spec = docker_spec()
         repo = str(launcher.REPO)
         self.assertEqual(launcher.docker_argv(spec, cfg, "2"), [
-            "docker", "run", "-d", "--rm", "--name", "qbench-llama-tp1-docker",
+            "docker", "run", "-d", "--pull=never", "--init", "--rm", "--name", "qbench-llama-tp1-docker",
             "--gpus", '"device=2"', "--ipc=host", "--shm-size=16g", "-p", "8000:8000",
             "-v", "/hf:/hf:ro", "-v", f"{repo}:{repo}:ro",
             "-e", "VLLM_SERVER_DEV_MODE=1", "-e", "VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1",

@@ -126,8 +126,10 @@ def docker_argv(spec, cfg, gpus):
     """`docker run -d` of spec.server_argv in spec.image on the given GPUs.
 
     The flags follow the H200 campaign notes (no launch script ever used
-    docker): detached, --gpus, --ipc=host, --shm-size, the port published,
-    and the repo, the HF cache (hardware.hf_home, when set) and the model
+    docker): detached, --pull=never (provision never pulls, and a missing
+    image fails here instead of downloading), --init (so the engine is not
+    PID 1 and reaps its workers), --gpus, --ipc=host, --shm-size, the
+    port published, and the repo, the HF cache (hardware.hf_home, when set) and the model
     dir (when it is an absolute path no other mount covers; provision puts
     weights under <cache_root>/models/) mounted read-only at their host
     paths so model paths resolve unchanged inside.
@@ -145,7 +147,7 @@ def docker_argv(spec, cfg, gpus):
         mounts.append(model)
     env = {**spec.env, **{k: v for k, v in hw.collective.items() if v},
            **({"HF_HOME": hw.hf_home} if hw.hf_home else {})}
-    return ["docker", "run", "-d", "--rm", "--name", f"qbench-{cfg.run_name}",
+    return ["docker", "run", "-d", "--pull=never", "--init", "--rm", "--name", f"qbench-{cfg.run_name}",
             "--gpus", f'"device={gpus}"', "--ipc=host", f"--shm-size={hw.shm_size}",
             "-p", f"{spec.port}:{spec.port}",
             *(a for path in [*mounts, REPO] for a in ("-v", f"{path}:{path}:ro")),
