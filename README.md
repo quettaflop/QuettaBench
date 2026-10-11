@@ -171,6 +171,21 @@ FIDELITY passes only with zero hard disagreements (an argmax flip where the
 reference's top-2 gap is not a near tie). deepseek has no transformers
 reference; its correctness comes from the engine's own batch gates.
 
+### Slice verification
+
+A model cut to its first N layers cannot be checked on a free-running greedy
+chain: bf16 rounding flips its router within a few steps. The check is
+teacher-forced logits against a float32 reference anchor, passing when the
+engine's argmax flips are no more than the reference's own at the engine's
+dtype (the noise floor). `engine.layers=N` cuts the reference (and sets the
+QuettaServe batch_bench's `<P>_LAYERS`); vLLM loads a checkpoint dir cut the
+same way as `engine.model`. The four commands are in the
+`crossval/agreement.py` docstring; `qbench crossval <ours> <anchor> --floor
+<run>` prints the BAND line. `qbench profile --source kernels` gives per-kernel
+GPU time per decode step from an nsys-armed run, and `just moe-routing
+<model>` dumps one MoE block for an engine-side diff. The verdict log of the
+original harness is `quettabench/probes/runbooks/slice_verification.md`.
+
 ### Model notes
 
 llama is verified. deepseek, qwen, qwen3, glm53 and glm53flash are bring-up
@@ -206,6 +221,10 @@ are withheld. glm53 and glm53flash have no engine bench yet: vLLM side only.
 | `xval_config.py tp|devices|cells|bench <wl>` | `just dry configs/runs/<wl>.yaml` (`engine.tp`, `engine.pp`, `grid.cells`, `engine.extra.quettaserve`) |
 | `xval_config.py collective|link-profile|backend|run-params` | `just dry ...` (`hardware.*` lines) |
 | `xval_config.py provision [key]` | `just provision ... --dry-run`, or the `hardware.provision.*` lines of `just dry` |
+| `slice_tf/tf_verify.py`, `ref_full.py`, `ref_slice.py`, `vllm_tf.py`, `vllm_baseline.py` | logits runs with `engine.layers` and `qbench crossval ... --floor` (Slice verification above) |
+| `slice_tf/slice_truncate.py` | `--set engine.layers=N` (reference, QuettaServe); a cut checkpoint dir for vLLM |
+| `slice_tf/vllm_nsys.py`, `nsys_kernels.py <sqlite> --steps N` | `--set engine.instrumentation=nsys`, then `just profile --run results/<run> --source kernels --kernel-steps N` |
+| `slice_tf/moe_routing_probe.py <out>` | `just moe-routing <model> <gpu> 1 "--layers 13 --kda-mode fused_recurrent"` |
 | `xval.yaml`, `workloads.json` | `configs/models/`, `configs/runs/`, `configs/grids.yaml`, `configs/hardware/` |
 
 ## Layout
