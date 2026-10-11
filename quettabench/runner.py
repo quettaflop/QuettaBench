@@ -50,19 +50,19 @@ def in_docker(cfg, adapter):
     return True
 
 
-def dry_run(cfg):
+def dry_run(cfg, out):
     print(f"== {cfg.run_name}")
     print(cfg.dump(origins=True))
     if cfg.mode.mode != "probe":
         adapter = base.get(cfg.engine.name)
-        spec = adapter.translate(cfg)
+        spec = adapter.translate(cfg, out)
         print("\n".join(spec_lines(spec)))
         print(f"launch = {'server' if adapter.needs_server(cfg) else 'none, the driver runs it'}")
         if in_docker(cfg, adapter) and spec.server_argv:
             # the run takes idle GPUs; the dry run shows 0..n-1 unless visible_devices is set
             gpus = cfg.hardware.visible_devices or ",".join(
                 str(i) for i in range(device_count(cfg.engine)))
-            print(f"docker = {shlex.join(launcher.docker_argv(spec, cfg, gpus))}")
+            print(f"docker = {shlex.join(launcher.docker_argv(spec, cfg, gpus, out))}")
 
 
 def run_probe(cfg, out):
@@ -106,7 +106,7 @@ def run_one(cfg, out):
     if cfg.mode.mode == "probe":
         return run_probe(cfg, out)
     adapter = base.get(cfg.engine.name)
-    spec = adapter.translate(cfg)
+    spec = adapter.translate(cfg, out)
     gpus = cfg.hardware.visible_devices or launcher.idle_gpus(device_count(cfg.engine),
                                                               cfg.hardware.backend)
     backend = "docker" if in_docker(cfg, adapter) else "local"
@@ -135,8 +135,9 @@ def main(run_yaml, overrides=(), dry=False, results_dir="results", allow_unverif
     if not dry:
         refuse_mixed_in_process(cfgs)
     for cfg in cfgs:
+        out = Path(results_dir) / cfg.run_name
         if dry:
-            dry_run(cfg)
+            dry_run(cfg, out)
         else:
-            run_one(cfg, Path(results_dir) / cfg.run_name)
+            run_one(cfg, out)
     return 0

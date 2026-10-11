@@ -93,10 +93,10 @@ class DockerArgv(unittest.TestCase):
     def test_example_yaml_argv(self):
         cfg, spec = docker_spec()
         repo = str(launcher.REPO)
-        self.assertEqual(launcher.docker_argv(spec, cfg, "2"), [
+        self.assertEqual(launcher.docker_argv(spec, cfg, "2", "/r/run"), [
             "docker", "run", "-d", "--pull=never", "--init", "--name", "qbench-llama-tp1-docker",
             "--gpus", '"device=2"', "--ipc=host", "--shm-size=16g", "-p", "8000:8000",
-            "-v", "/hf:/hf:ro", "-v", f"{repo}:{repo}:ro",
+            "-v", "/hf:/hf:ro", "-v", f"{repo}:{repo}:ro", "-v", "/r/run:/r/run",
             "-e", "VLLM_SERVER_DEV_MODE=1", "-e", "VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1",
             "-e", "NCCL_IB_DISABLE=1", "-e", "HF_HOME=/hf",
             "--entrypoint", "vllm", "vllm/vllm-openai:v0.30.0",
@@ -106,24 +106,24 @@ class DockerArgv(unittest.TestCase):
 
     def test_shm_size_and_collective_pins_come_from_hardware(self):
         cfg, spec = docker_spec("hardware.shm_size=64g", "hardware.link_profile=pcie")
-        argv = launcher.docker_argv(spec, cfg, "0,1")
+        argv = launcher.docker_argv(spec, cfg, "0,1", "/r/run")
         self.assertIn("--shm-size=64g", argv)
         self.assertIn('"device=0,1"', argv)
         self.assertIn("NCCL_PROTO=Simple", argv)
 
     def test_provisioned_model_dir_is_mounted(self):
         cfg, spec = docker_spec("engine.model=/cache/models/llama")
-        argv = launcher.docker_argv(spec, cfg, "0")
+        argv = launcher.docker_argv(spec, cfg, "0", "/r/run")
         self.assertIn("/cache/models/llama:/cache/models/llama:ro",
                       [argv[i + 1] for i, a in enumerate(argv) if a == "-v"])
         cfg, spec = docker_spec("engine.model=meta-llama/Llama-3.1-8B")
         self.assertNotIn("meta-llama/Llama-3.1-8B:meta-llama/Llama-3.1-8B:ro",
-                         launcher.docker_argv(spec, cfg, "0"))
+                         launcher.docker_argv(spec, cfg, "0", "/r/run"))
 
     def test_missing_image_is_a_config_error(self):
         cfg, spec = docker_spec("engine.image=null")
         with self.assertRaisesRegex(ConfigError, "needs engine.image"):
-            launcher.docker_argv(spec, cfg, "0")
+            launcher.docker_argv(spec, cfg, "0", "/r/run")
 
 
 class DockerStart(unittest.TestCase):
@@ -154,7 +154,8 @@ class DockerStart(unittest.TestCase):
                 mock.patch.object(launcher.subprocess, "Popen", return_value=proc) as popen, \
                 mock.patch.object(launcher, "wait_healthy") as healthy:
             handle = self.start(cfg, spec)
-            self.assertEqual(run.call_args_list[0].args[0], launcher.docker_argv(spec, cfg, "0"))
+            self.assertEqual(run.call_args_list[0].args[0],
+                             launcher.docker_argv(spec, cfg, "0", self.dir / "run"))
             self.assertEqual(popen.call_args.args[0],
                              ["docker", "logs", "-f", "qbench-llama-tp1-docker"])
             self.assertEqual(popen.call_args.kwargs["stdout"].name,

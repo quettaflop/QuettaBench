@@ -62,7 +62,7 @@ class QuettaServeBenchRun(unittest.TestCase):
         spec = quettaserve.ADAPTER.translate(cfg)
         self.assertEqual([(c, b) for c, b, _ in spec.cells], list(cfg.grid.cells))
         for ctx, bs, cell in spec.cells:
-            self.assertEqual(cell, quettaserve.ADAPTER.translate(cfg, (ctx, bs)))
+            self.assertEqual(cell, quettaserve.ADAPTER.translate(cfg, cell=(ctx, bs)))
 
     def test_serve_run_writes_measured_rows(self):
         cfg = config("llama", "engine.model=/w", "mode.grid=smoke")

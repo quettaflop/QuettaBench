@@ -21,7 +21,7 @@ def spec_for(name, cell, link="nvlink", sets=()):
     sets = ["allow_unverified=true", "hardware.backend=cuda",
             f"hardware.link_profile={link}", *sets]
     (cfg,) = loader.load(RUNS / f"{name}.yaml", sets, env={})
-    return quettaserve.ADAPTER.translate(cfg, cell)
+    return quettaserve.ADAPTER.translate(cfg, cell=cell)
 
 
 DS = ["engine.model=/ckpt/ds", "engine.extra.qs_cfg=/ckpt/ds/config.json"]
@@ -45,6 +45,15 @@ class DeepseekMoe(unittest.TestCase):
         self.assertEqual(spec.log_header,
                          ">>> ctx=1024 bs=16 world=8 max_seq=1152 link=nvlink nccl=auto/auto")
         self.assertEqual(spec.server_argv, ())
+
+    def test_nsys_writes_one_report_per_cell_in_the_run_dir(self):
+        (cfg,) = loader.load(RUNS / "deepseek.yaml",
+                             ["allow_unverified=true", "hardware.backend=cuda",
+                              "hardware.link_profile=nvlink", "engine.instrumentation=nsys",
+                              *DS], env={})
+        spec = quettaserve.ADAPTER.translate(cfg, "/abs/run")
+        outs = [c.bench_argv[c.bench_argv.index("-o") + 1] for _, _, c in spec.cells]
+        self.assertEqual(outs, [f"/abs/run/nsys-{ctx}x{bs}" for ctx, bs in cfg.grid.cells])
 
     def test_pcie_exports_every_nonempty_collective_var(self):
         spec = spec_for("deepseek", (8192, 64), link="pcie", sets=DS)

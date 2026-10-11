@@ -7,12 +7,14 @@ out at pp == 1, a spelling difference only (golden regenerated with it).
 """
 
 import json
+import tempfile
 import unittest
 from pathlib import Path
 
 from quettabench.config import loader
 from quettabench.engines import base, launcher, vllm as vllm_adapter
 from quettabench.engines.drivers import HttpDriver, InProcessDriver
+from quettabench.profiling import native
 from tests.golden._harness import ENV_OVERRIDE, FIXTURES, REPO
 
 GOLDEN = json.loads((FIXTURES / "engine_args.json").read_text())
@@ -106,8 +108,18 @@ class ServerArgv(unittest.TestCase):
     def test_nsys_prefix_is_prof_sh(self):
         spec = spec_for("llama", sets=["engine.instrumentation=nsys", "run_name=r1"])
         self.assertEqual(list(spec.server_argv[:7]), [
-            "nsys", "profile", "-t", "cuda,nvtx", "-o", "results/r1/nsys",
+            "nsys", "profile", "-t", "cuda,nvtx", "-o", str(Path("results/r1/nsys").resolve()),
             "--force-overwrite=true"])
+
+    def test_nsys_writes_into_the_run_dir_kernel_summary_reads(self):
+        (cfg,) = loader.load(RUNS / "llama.yaml", [*PINNED, "engine.instrumentation=nsys"],
+                             env={})
+        with tempfile.TemporaryDirectory() as td:
+            argv = vllm_adapter.ADAPTER.translate(cfg, Path(td, "r")).server_argv
+            out = Path(argv[argv.index("-o") + 1])
+            self.assertTrue(out.is_absolute())
+            self.assertEqual(out.with_suffix(".nsys-rep").name, native.TRACE_FILES["nsys"][0])
+            self.assertEqual(out.parent, Path(td, "r").resolve())
 
     def test_torch_instrumentation_is_unsupported(self):
         with self.assertRaises(base.UnsupportedField):

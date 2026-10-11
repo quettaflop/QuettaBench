@@ -3,10 +3,18 @@
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 
 # From scripts/crossval/prof.sh:16 (retired in af0e9b8); {out} is the report
 # path without extension.
 NSYS = ("nsys", "profile", "-t", "cuda,nvtx", "-o", "{out}", "--force-overwrite=true")
+
+
+def nsys_argv(cfg, run_dir, name="nsys"):
+    """NSYS writing <run dir>/<name>; the run dir is made absolute, since the
+    engine may run in another cwd. run_dir None is results/<run_name>."""
+    out = Path(run_dir if run_dir is not None else Path("results", cfg.run_name)).resolve() / name
+    return [a.format(out=out) for a in NSYS]
 
 
 class UnsupportedField(ValueError):
@@ -58,8 +66,9 @@ class EngineAdapter(ABC):
     benchmarked = True   # False: a scoring side only (reference), not offered as an engine
 
     @abstractmethod
-    def translate(self, cfg) -> LaunchSpec:
-        """The LaunchSpec for cfg; the single builder of this engine's arguments."""
+    def translate(self, cfg, run_dir=None) -> LaunchSpec:
+        """The LaunchSpec for cfg; the single builder of this engine's arguments.
+        run_dir is where the run writes (instrumentation output lands there)."""
 
     @abstractmethod
     def driver(self, spec, handle):

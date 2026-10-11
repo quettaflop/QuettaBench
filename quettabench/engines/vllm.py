@@ -42,10 +42,10 @@ from pathlib import Path
 
 from quettabench.config.schema import ConfigError
 from quettabench.engines.base import (
-    NSYS,
     EngineAdapter,
     LaunchSpec,
     UnsupportedField,
+    nsys_argv,
     register,
 )
 from quettabench.engines.drivers import HttpDriver, InProcessDriver
@@ -137,7 +137,7 @@ class VllmAdapter(EngineAdapter):
     name = "vllm"
     supports = frozenset(FIELDS) | {"extra", "instrumentation", "image"}
 
-    def translate(self, cfg):
+    def translate(self, cfg, run_dir=None):
         engine = cfg.engine
         if engine.model is None:
             raise ConfigError("vllm: engine.model is required to launch")
@@ -164,8 +164,7 @@ class VllmAdapter(EngineAdapter):
         vllm_bin = str(Path(py).with_name("vllm")) if py else "vllm"
         server = [vllm_bin, SERVER_CMD, engine.model, *argv, *SERVER_FLAGS, *extra_argv]
         if engine.instrumentation == "nsys":
-            out = f"results/{cfg.run_name}/nsys"
-            server = [a.format(out=out) for a in NSYS] + server
+            server = nsys_argv(cfg, run_dir) + server
         return LaunchSpec(
             adapter=self.name,
             server_argv=() if unsupported else tuple(server),

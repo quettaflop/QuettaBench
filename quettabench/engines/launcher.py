@@ -143,7 +143,7 @@ def container_name(run_name):
     return "qbench-" + re.sub(r"[^a-zA-Z0-9_.-]", "-", run_name)
 
 
-def docker_argv(spec, cfg, gpus):
+def docker_argv(spec, cfg, gpus, results_dir):
     """`docker run -d` of spec.server_argv in spec.image on the given GPUs.
 
     The flags follow the H200 campaign notes (no launch script ever used
@@ -153,12 +153,14 @@ def docker_argv(spec, cfg, gpus):
     port published, and the repo, the HF cache (hardware.hf_home, when set) and the model
     dir (when it is an absolute path no other mount covers; provision puts
     weights under <cache_root>/models/) mounted read-only at their host
-    paths so model paths resolve unchanged inside.
+    paths so model paths resolve unchanged inside; the run's results dir
+    is mounted read-write at its absolute host path, so instrumentation
+    output (nsys) lands there and outlives the container.
     --entrypoint is the argv's first word, so the image's own ENTRYPOINT does
     not prefix the command. env is spec.env, the non-empty collective pins
     and HF_HOME.
     """
-    hw = cfg.hardware
+    hw, run_dir = cfg.hardware, Path(results_dir).resolve()
     if not spec.image:
         raise ConfigError(f"{cfg.run_name}: hardware.launcher=docker needs engine.image")
     mounts = [hw.hf_home] if hw.hf_home else []
@@ -173,6 +175,7 @@ def docker_argv(spec, cfg, gpus):
             "--gpus", f'"device={gpus}"', "--ipc=host", f"--shm-size={hw.shm_size}",
             "-p", f"{spec.port}:{spec.port}",
             *(a for path in [*mounts, REPO] for a in ("-v", f"{path}:{path}:ro")),
+            "-v", f"{run_dir}:{run_dir}",
             *(a for k, v in env.items() for a in ("-e", f"{k}={v}")),
             "--entrypoint", spec.server_argv[0], spec.image, *spec.server_argv[1:]]
 
@@ -180,7 +183,7 @@ def docker_argv(spec, cfg, gpus):
 def start(spec, results_dir, *, backend="local", cfg=None, gpus="", timeout_s=1800,
           poll_s=1.0):
     """Launch spec.server_argv, wait for health, write engine.json; return a Handle.
-    backend docker runs it in a container built by docker_argv(spec, cfg, gpus)."""
+    backend docker runs it in a container built by docker_argv(spec, cfg, gpus, results_dir)."""
     if spec.server_unsupported:
         raise UnsupportedField(spec.adapter, ", ".join(spec.server_unsupported))
     if not spec.server_argv:
@@ -189,7 +192,7 @@ def start(spec, results_dir, *, backend="local", cfg=None, gpus="", timeout_s=18
     results_dir.mkdir(parents=True, exist_ok=True)
     container = container_id = ""
     if backend == "docker":
-        argv = docker_argv(spec, cfg, gpus)
+        argv = docker_argv(spec, cfg, gpus, results_dir)
         container = argv[argv.index("--name") + 1]
         run = subprocess.run(argv, capture_output=True, text=True, check=False)
         if run.returncode != 0:

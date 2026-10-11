@@ -30,10 +30,10 @@ from pathlib import Path
 
 from quettabench.config.schema import ConfigError
 from quettabench.engines.base import (
-    NSYS,
     EngineAdapter,
     LaunchSpec,
     UnsupportedField,
+    nsys_argv,
     register,
 )
 from quettabench.engines.drivers import BenchDriver
@@ -82,7 +82,7 @@ class QuettaServeAdapter(EngineAdapter):
     name = "quettaserve"
     supports = frozenset({"model", "tp", "extra", "instrumentation", "layers"})
 
-    def translate(self, cfg, cell=None):
+    def translate(self, cfg, run_dir=None, cell=None):
         engine, hw = cfg.engine, cfg.hardware
         bench = engine.extra.get("quettaserve")
         if not bench:
@@ -126,9 +126,10 @@ class QuettaServeAdapter(EngineAdapter):
                 ["cargo", "test", "-p", bench["crate"], "--test", bench["test"],
                  "--release", "--", "--nocapture"])
         if engine.instrumentation == "nsys":
-            argv = [a.format(out=f"results/{cfg.run_name}/nsys") for a in NSYS] + argv
+            name = "nsys" if cell is None else f"nsys-{cell[0]}x{cell[1]}"
+            argv = nsys_argv(cfg, run_dir, name) + argv
         cells = () if cell is not None or cfg.grid is None else tuple(
-            (ctx, bs, self.translate(cfg, (ctx, bs))) for ctx, bs in cfg.grid.cells)
+            (ctx, bs, self.translate(cfg, run_dir, (ctx, bs))) for ctx, bs in cfg.grid.cells)
         return LaunchSpec(
             adapter=self.name,
             bench_argv=tuple(argv),

@@ -64,7 +64,8 @@ engines.
 
 `hardware.launcher: docker` runs the server in `engine.image` (`docker run
 -d`, the GPUs, the port, and the repo, `hardware.hf_home` and an absolute
-`engine.model` dir mounted read-only at their host paths); `configs/runs/llama-tp1-docker.yaml` is the
+`engine.model` dir mounted read-only at their host paths, and `results/<run>/`
+read-write so nsys output lands there); `configs/runs/llama-tp1-docker.yaml` is the
 example. Provision never pulls; pull the image yourself:
 
 ```bash
@@ -82,7 +83,7 @@ just run configs/runs/llama-tp1-docker.yaml --set engine.model=/w/llama
 | `engine.json`, `server.log` | launcher | endpoint, pid, launch spec of a launched server |
 | `bench.log` | QuettaServe runs | the bench's stdout per cell |
 | `profile.json` | `qbench profile` | metrics, energy, cost, accuracy; never changes run.json |
-| `nsys.*` | `engine.instrumentation=nsys` | the capture armed at launch |
+| `nsys.*`, `nsys-<ctx>x<bs>.*` | `engine.instrumentation=nsys` | the capture armed at launch (QuettaServe: one per bench cell) |
 
 Grid runs no longer write `results/baselines/*.json`; `qbench crossval`
 reads the run dir, and still reads old baselines files. Probe recipes write
