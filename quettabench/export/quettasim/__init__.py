@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from quettabench.export.quettasim import (
+    _inputs,
     extract_benchmark_per_request,
     prefill_floor,
     roofline_utils,
@@ -40,11 +41,15 @@ def bench_sha() -> str:
 
 
 def source_runs(results_dirs: list[Path]) -> list[dict]:
-    """Every run.json under the results dirs: its run dir (the run id), run
-    name, status and start, so an exported table names the runs behind it."""
+    """Every exported run.json under the results dirs: its run dir (the run
+    id), run name, status and start, so an exported table names the runs
+    behind it. A run dir _inputs.skipped_runs leaves out is printed instead."""
     runs = []
     for root in results_dirs:
-        for path in sorted(root.rglob("run.json")):
+        skipped = _inputs.skipped_runs(root)
+        for run_dir, why in skipped.items():
+            print(f"skip {run_dir}: {why}")
+        for path in _inputs.files(root, "run.json"):
             doc = json.loads(path.read_text())
             runs.append({"run": str(path.parent), "run_name": doc["config"].get("run_name"),
                          "status": doc["run_status"]["status"],

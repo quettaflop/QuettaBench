@@ -51,3 +51,27 @@ def test_manifest_lists_the_runs_in_its_sources(tmp_path: Path) -> None:
     manifest = json.loads((dest / "manifest.json").read_text())
     assert manifest["runs"] == [{"run": str(run), "run_name": "probe-gemm", "status": "ok",
                                  "started": "2026-10-11T00:00:00+00:00"}]
+
+
+def test_unfinished_unreadable_and_failed_runs_are_skipped(tmp_path: Path, capsys) -> None:
+    results, dest = tmp_path / "results", tmp_path / "out"
+    good = results / "z-good"  # sorts after the bad runs
+    good.mkdir(parents=True)
+    write_leg(good / "serving_stage_split_H100.csv", 1.0)
+    write_leg(good / "serving_stage_split_H100_tp2.csv", 0.6)
+    for name, run_json in (("crashed", None), ("garbled", "{not json"),
+                           ("failed", json.dumps({"run_status": {"status": "failed"}}))):
+        run = results / name
+        run.mkdir()
+        (run / "requests.jsonl").write_text("")
+        if run_json is not None:
+            (run / "run.json").write_text(run_json)
+        write_leg(run / "serving_stage_split_H100.csv", 9.0)  # sorts first; must not be read
+    written = export([results], dest, only=["tp_comm"])
+    out = capsys.readouterr().out
+    assert f"skip {results / 'crashed'}: no run.json" in out
+    assert f"skip {results / 'garbled'}: run.json unreadable (JSONDecodeError)" in out
+    assert f"skip {results / 'failed'}: run_status failed" in out
+    assert json.loads((dest / "manifest.json").read_text())["runs"] == []
+    reference = export([good], tmp_path / "ref", only=["tp_comm"])
+    assert written[0].read_text() == reference[0].read_text()

@@ -32,6 +32,7 @@ import re
 from collections.abc import Iterable
 from pathlib import Path
 
+from quettabench.export.quettasim import _inputs
 from quettabench.probes import serving_decode_grid as _client  # aiohttp is imported lazily there
 
 summarize_cell = _client.summarize_cell
@@ -177,7 +178,7 @@ def run(results_dirs: Iterable[Path], dest: Path, lag_upgrade: bool = False) -> 
     """Write dest/results/serving_decode_grid_<tag>_<date>.csv, one per tag found."""
     runs: dict[str, list[tuple[str, Path]]] = {}
     for root in results_dirs:
-        for path in sorted(Path(root).rglob("serving_decode_grid_*.jsonl*")):
+        for path in _inputs.files(root, "serving_decode_grid_*.jsonl*"):
             m = RUN_NAME.match(path.name)
             if m:
                 runs.setdefault(m["tag"], []).append((m["date"], path))

@@ -63,6 +63,8 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from quettabench.export.quettasim import _inputs
+
 
 def _iter_bench_jsons(root: Path) -> Iterable[Path]:
     """Yield raw bench JSONs (skipping ``*_per_turn.json`` aggregates).
@@ -72,7 +74,7 @@ def _iter_bench_jsons(root: Path) -> Iterable[Path]:
     """
     if not root.exists():
         return
-    for path in sorted(root.glob("*.json")):
+    for path in _inputs.files(root, "*.json", recursive=False):
         if path.name.endswith("_per_turn.json"):
             continue
         yield path
