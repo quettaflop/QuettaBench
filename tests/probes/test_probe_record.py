@@ -1,6 +1,8 @@
-"""probes.base.run_recorded: every probe run leaves <out>/<probe>/run.json
-through RunWriter, with its argv and run_status."""
+"""probes.base: run_recorded leaves <out>/<probe>/run.json through RunWriter
+with its argv and run_status; launch_vllm starts the server through the vllm
+adapter and launcher.start, and no probe starts a process itself."""
 
+import ast
 import json
 import sys
 import tempfile
@@ -8,7 +10,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from quettabench.probes.base import run_recorded
+from quettabench.probes.base import launch_vllm, run_recorded
+
+PROBES = Path(__file__).resolve().parents[2] / "quettabench" / "probes"
 
 
 def recorded(argv, main, name="gemm", **kw):
@@ -53,6 +57,33 @@ class RunRecorded(unittest.TestCase):
         _, _, files = recorded(["--out-raw", "<TD>/h100/raw.jsonl.gz"], lambda: None,
                                name="serving_decode_grid", file_flag="--out-raw")
         self.assertEqual(files, ["h100/serving_decode_grid/run.json"])
+
+
+class LaunchVllm(unittest.TestCase):
+    def test_server_goes_through_the_adapter_and_launcher(self):
+        # by name: other tests re-import quettabench.engines.launcher
+        with mock.patch("quettabench.engines.launcher.start") as start:
+            launch_vllm(Path("/r/pool_capacity"), "/w/llama", port=8794, max_model_len=32768,
+                        prefix_caching=True, timeout_s=420,
+                        vllm_flags={"served_model_name": "llama", "api_key": "test",
+                                    "no_enable_log_requests": True})
+        spec, run_dir = start.call_args.args
+        self.assertEqual((run_dir, start.call_args.kwargs), (Path("/r/pool_capacity"),
+                                                             {"timeout_s": 420}))
+        argv = list(spec.server_argv)
+        self.assertEqual((Path(argv[0]).name, argv[1:3]), ("vllm", ["serve", "/w/llama"]))
+        for flag in ("--enable-prefix-caching", "--served-model-name", "--api-key",
+                     "--no-enable-log-requests"):
+            self.assertIn(flag, argv)
+        self.assertEqual(argv[argv.index("--port") + 1], "8794")
+
+    def test_no_probe_starts_a_process(self):
+        for path in sorted(PROBES.glob("*.py")):
+            calls = {f"{n.func.value.id}.{n.func.attr}" for n in ast.walk(ast.parse(path.read_text()))
+                     if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                     and isinstance(n.func.value, ast.Name)}
+            self.assertFalse(calls & {"subprocess.Popen", "launcher.start"} - (
+                {"launcher.start"} if path.name == "base.py" else set()), path.name)
 
 
 if __name__ == "__main__":

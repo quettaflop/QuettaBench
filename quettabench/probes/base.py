@@ -1,4 +1,5 @@
-"""Output arguments every kernel probe shares, and the run record each writes."""
+"""Output arguments every kernel probe shares, the run record each writes,
+and the one way a live-server probe starts vLLM (launch_vllm)."""
 from __future__ import annotations
 
 import argparse
@@ -71,3 +72,24 @@ def run_recorded(main, name: str, file_flag: str | None = None) -> None:
             writer = RunWriter(run_dir, cfg)
             writer.provenance["started"] = started
             writer.finish({"probe": name, "argv": argv}, status=status, reason=reason)
+
+
+def launch_vllm(run_dir: Path, model: str, *, port: int, max_model_len: int, prefix_caching: bool,
+                tp: int = 1, gpu_util: float = 0.9, vllm_flags: dict | None = None,
+                timeout_s: int = 1800):
+    """Start vLLM as `qbench run` does: a Config through the vllm adapter's
+    translate, then launcher.start into run_dir (engine.json, server.log).
+    vllm_flags (served_model_name, api_key, ...) go in as engine.extra.vllm.
+    The server is this python's venv vllm. Returns the Handle; the caller
+    stops it."""
+    # Imported here: base.py ships to remote kernel-probe hosts, which have
+    # no engine stack; only the live-server probes, run locally, launch.
+    from quettabench.engines import launcher, vllm
+
+    engine = EngineCfg(model=model, tp=tp, dtype="bfloat16", port=port, gpu_util=gpu_util,
+                       max_model_len=max_model_len, prefix_caching=prefix_caching,
+                       extra={"vllm": dict(vllm_flags or {})})
+    cfg = Config(engine, WorkloadCfg(), ModeCfg(), HardwareCfg(provision={"py": sys.executable}),
+                 run_name=Path(run_dir).name)
+    spec = vllm.ADAPTER.translate(cfg, run_dir)
+    return launcher.start(spec, run_dir, timeout_s=timeout_s)

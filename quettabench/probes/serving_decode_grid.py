@@ -25,7 +25,6 @@ import multiprocessing as mp
 import os
 import random
 import statistics as st
-import subprocess
 import sys
 import tempfile
 import time
@@ -36,8 +35,7 @@ _SCRIPT_DIR = str(Path(__file__).resolve().parent)
 for _p in [e for e in sys.path if e == _SCRIPT_DIR]:
     sys.path.remove(_p)
 
-from quettabench.engines import launcher  # noqa: E402
-from quettabench.probes.base import run_recorded  # noqa: E402
+from quettabench.probes.base import launch_vllm, run_recorded  # noqa: E402
 
 # aiohttp is needed only at MEASUREMENT time (on the GPU host). The local builder/test import
 # of this module (for summarize_cell / the lattice) must work without it.
@@ -344,37 +342,18 @@ def run_cell(cell: dict, port: int, api_key: str, model_name: str, eos_mode: str
 
 
 # ------------------------------------------------------------------------------------------------
-# Server lifecycle -- launch/wait reused from serving_stage_split.py, flags per L11.
+# Server lifecycle: probes.base.launch_vllm, flags per L11.
 # ------------------------------------------------------------------------------------------------
-def wait_health(port, timeout=600):
-    t0 = time.time()
-    while time.time() - t0 < timeout:
-        try:
-            with launcher.urlopen(f"http://127.0.0.1:{port}/health", timeout=5) as r:
-                if r.status == 200:
-                    return True
-        except Exception:
-            pass
-        time.sleep(3)
-    return False
-
-
-def launch_server(model, port, gpu_mem, max_model_len, api_key, log_path, tp,
+def launch_server(model, port, gpu_mem, max_model_len, api_key, run_dir, tp,
                   max_num_seqs, max_num_batched_tokens):
-    cmd = [sys.executable, "-m", "vllm.entrypoints.openai.api_server",
-           "--model", model, "--served-model-name", "llama",
-           "--host", "127.0.0.1", "--port", str(port),
-           "--dtype", "bfloat16", "--gpu-memory-utilization", str(gpu_mem),
-           "--max-model-len", str(max_model_len),
-           "--tensor-parallel-size", str(tp),
-           "--no-enable-prefix-caching",                  # measurement isolation (L11)
-           "--max-num-seqs", str(max_num_seqs),
-           "--max-num-batched-tokens", str(max_num_batched_tokens),
-           "--api-key", api_key,
-           "--no-enable-log-requests"]
-    print("launching:", " ".join(cmd), flush=True)
-    logf = open(log_path, "w")
-    return subprocess.Popen(cmd, stdout=logf, stderr=subprocess.STDOUT)
+    return launch_vllm(run_dir, model, port=port, tp=tp, gpu_util=gpu_mem,
+                       max_model_len=max_model_len,
+                       prefix_caching=False,                  # measurement isolation (L11)
+                       vllm_flags={"served_model_name": "llama", "host": "127.0.0.1",
+                                   "max_num_seqs": max_num_seqs,
+                                   "max_num_batched_tokens": max_num_batched_tokens,
+                                   "api_key": api_key, "no_enable_log_requests": True},
+                       timeout_s=600)
 
 
 def kv_pool_from_log(log_path: str) -> int | None:
@@ -439,7 +418,6 @@ def main(argv=None) -> None:
     ap.add_argument("--out-raw", required=True, help="append-only per-request JSONL.gz")
     ap.add_argument("--out-summary", required=True, help="operator cell-summary CSV")
     ap.add_argument("--no-launch", action="store_true")
-    ap.add_argument("--server-log", default="vllm_server_decode_grid.log")
     a = ap.parse_args(argv)
 
     if a.pool_tokens is None and a.tensor_parallel_size == 4:
@@ -458,16 +436,14 @@ def main(argv=None) -> None:
         raise SystemExit(f"cells exceed the 0.95 pool cap: {over}")
     print(f"{len(cells)} cells; pool {pool} tokens; cap {CAP_FRAC}", flush=True)
 
-    proc = None
+    server = None
     if not a.no_launch:
-        proc = launch_server(a.model, a.port, a.gpu_mem, a.max_model_len, a.api_key,
-                             a.server_log, a.tensor_parallel_size,
-                             a.max_num_seqs, a.max_num_batched_tokens)
+        server = launch_server(a.model, a.port, a.gpu_mem, a.max_model_len, a.api_key,
+                               Path(a.out_raw).parent / "serving_decode_grid",
+                               a.tensor_parallel_size, a.max_num_seqs,
+                               a.max_num_batched_tokens)
     try:
-        if not wait_health(a.port):
-            print(f"SERVER DID NOT BECOME HEALTHY -- see {a.server_log}", flush=True)
-            sys.exit(1)
-        live_pool = kv_pool_from_log(a.server_log)
+        live_pool = kv_pool_from_log(server.results_dir / "server.log") if server else None
         print(f"server healthy; live KV pool from log: {live_pool} tokens", flush=True)
 
         eos_mode = warmup_and_verify_eos(a.port, a.api_key, a.served_model_name)
@@ -514,12 +490,8 @@ def main(argv=None) -> None:
         print("authoritative grid CSV: just export --only serving_decode_grid "
               f"--results <dir holding {out_raw.name}> --dest <dir>", flush=True)
     finally:
-        if proc is not None:
-            proc.terminate()
-            try:
-                proc.wait(timeout=60)
-            except Exception:
-                proc.kill()
+        if server is not None:
+            server.stop()
 
 
 if __name__ == "__main__":

@@ -21,7 +21,6 @@ import csv
 import json
 import random
 import statistics as st
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -33,8 +32,7 @@ for _p in [e for e in sys.path if e == _SCRIPT_DIR]:
 
 import aiohttp  # noqa: E402  (after the sys.path scrub)
 
-from quettabench.engines import launcher  # noqa: E402
-from quettabench.probes.base import run_recorded  # noqa: E402
+from quettabench.probes.base import launch_vllm, run_recorded  # noqa: E402
 
 # ------------------------------------------------------------------------------------------------
 # Prompt construction -- reused verbatim from live_ttft_probe.py so the wall TTFT reproduces the
@@ -247,40 +245,20 @@ async def measure(session, base_url, model, cached, new, trials):
 
 
 # ------------------------------------------------------------------------------------------------
-# Server lifecycle. Stats stay ON so /metrics populates for Lane A.
+# Server lifecycle: probes.base.launch_vllm. Stats stay ON so /metrics populates for Lane A.
 # ------------------------------------------------------------------------------------------------
-def wait_health(port, timeout=420):
-    t0 = time.time()
-    while time.time() - t0 < timeout:
-        try:
-            with launcher.urlopen(f"http://127.0.0.1:{port}/health", timeout=5) as r:
-                if r.status == 200:
-                    return True
-        except Exception:
-            pass
-        time.sleep(3)
-    return False
-
-
-def launch_server(model, port, gpu_mem, max_model_len, api_key, hash_algo, log_path, tp=1):
-    cmd = [sys.executable, "-m", "vllm.entrypoints.openai.api_server",
-           "--model", model, "--served-model-name", "llama",
-           "--host", "127.0.0.1", "--port", str(port),
-           "--dtype", "bfloat16", "--gpu-memory-utilization", str(gpu_mem),
-           "--max-model-len", str(max_model_len),
-           "--tensor-parallel-size", str(tp),
-           "--enable-prefix-caching", "--enable-chunked-prefill",
-           "--api-key", api_key,
-           # keep request logging quiet but STATS ON (do NOT add --disable-log-stats).
-           "--no-enable-log-requests"]
+def launch_server(model, port, gpu_mem, max_model_len, api_key, hash_algo, run_dir, tp=1):
     # prefix_caching_hash_algo: toggling sha256 vs builtin attributes the block-hash cost to the
     # frontend/scheduler-admit residual (the external-lit SHA-256 lead). Guarded -- older/newer
     # CLIs may name it differently.   [VERIFY ON H100] exact flag name on 0.19.0.
+    flags = {"served_model_name": "llama", "host": "127.0.0.1", "api_key": api_key,
+             # keep request logging quiet but STATS ON (do NOT add disable_log_stats).
+             "no_enable_log_requests": True}
     if hash_algo:
-        cmd += ["--prefix-caching-hash-algo", hash_algo]
-    print("launching:", " ".join(cmd), flush=True)
-    logf = open(log_path, "w")
-    return subprocess.Popen(cmd, stdout=logf, stderr=subprocess.STDOUT)
+        flags["prefix_caching_hash_algo"] = hash_algo
+    return launch_vllm(run_dir, model, port=port, tp=tp, gpu_util=gpu_mem,
+                       max_model_len=max_model_len, prefix_caching=True, vllm_flags=flags,
+                       timeout_s=420)
 
 
 # ------------------------------------------------------------------------------------------------
@@ -423,7 +401,6 @@ def main(argv=None):
     ap.add_argument("--out", default="results/probes/H100/serving_stage_split_H100.csv")
     ap.add_argument("--no-launch", action="store_true",
                     help="server already running (e.g. the nsys-wrapped LANE B server)")
-    ap.add_argument("--server-log", default="vllm_server_stage_split.log")
     ap.add_argument("--emit-nsys-cmd", action="store_true",
                     help="print the LANE B nsys wrapper command + worker hook and exit")
     a = ap.parse_args(argv)
@@ -438,14 +415,12 @@ def main(argv=None):
     news = [int(x) for x in a.news.split(",")]
     cacheds = [int(x) for x in a.cacheds.split(",")]
 
-    proc = None
+    server = None
     if not a.no_launch:
-        proc = launch_server(a.model, a.port, a.gpu_mem, a.max_model_len, a.api_key,
-                             a.hash or None, a.server_log, tp=a.tensor_parallel_size)
+        server = launch_server(a.model, a.port, a.gpu_mem, a.max_model_len, a.api_key,
+                               a.hash or None, Path(a.out).parent / "serving_stage_split",
+                               tp=a.tensor_parallel_size)
     try:
-        if not wait_health(a.port):
-            print(f"SERVER DID NOT BECOME HEALTHY -- see {a.server_log}", flush=True)
-            sys.exit(1)
         print("server healthy; starting c1 stage-split sweep", flush=True)
         asyncio.run(run_sweep(base_url, a.served_model_name, news, cacheds, a.trials, a.out))
         # Always remind the operator how to get the DEVICE split (LANE B is a separate run).
@@ -453,12 +428,8 @@ def main(argv=None):
                       out_sqlite="serving_stage_split_nsys")
         print("Next: parse the nsys sqlite (CUPTI kernels inside the vllm_prefill_step NVTX range).", flush=True)
     finally:
-        if proc is not None:
-            proc.terminate()
-            try:
-                proc.wait(timeout=30)
-            except Exception:
-                proc.kill()
+        if server is not None:
+            server.stop()
 
 
 if __name__ == "__main__":

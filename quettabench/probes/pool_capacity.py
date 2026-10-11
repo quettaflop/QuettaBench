@@ -5,7 +5,8 @@ prefill-span delta: ~T-token re-prefill on a miss, ~one block on a hit) is the U
 pool in tokens -- watermark/rounding/transients included. Also prints the server's own
 startup KV-block lines for the static number.
 
-Run (self-launches the server):
+Run (starts the server through probes.base.launch_vllm, which writes its
+engine.json and server.log beside run.json in results/probes/<gpu>/pool_capacity/):
   CUDA_VISIBLE_DEVICES=3 python3 -m quettabench.probes.pool_capacity --gpu-label H100 \
       --port 8794 --tokens 4096 --count 120
 writes results/probes/<gpu>/pool_capacity_<gpu>.txt (--out changes the directory).
@@ -16,7 +17,6 @@ import argparse
 import asyncio
 import random
 import re
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -27,8 +27,7 @@ for _p in [e for e in sys.path if e == _SCRIPT_DIR]:
 
 import aiohttp  # noqa: E402
 
-from quettabench.engines import launcher  # noqa: E402
-from quettabench.probes.base import add_output_args, out_root, run_recorded  # noqa: E402
+from quettabench.probes.base import add_output_args, launch_vllm, out_root, run_recorded  # noqa: E402
 
 _VOCAB = ("the of and to in a is that for it as was with on be at by this had not are but from or "
           "have an they which one you were her all she there would their we him been has when who "
@@ -97,19 +96,6 @@ async def run(base_url, model, tokens, count, out_path):
         print(ln, flush=True)
 
 
-def wait_health(port, timeout=420):
-    t0 = time.time()
-    while time.time() - t0 < timeout:
-        try:
-            with launcher.urlopen(f"http://127.0.0.1:{port}/health", timeout=5) as r:
-                if r.status == 200:
-                    return True
-        except Exception:
-            pass
-        time.sleep(3)
-    return False
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default="/data48/kevinlau/models/Llama-3.1-8B-Instruct")
@@ -117,35 +103,24 @@ def main():
     ap.add_argument("--port", type=int, default=8794)
     ap.add_argument("--tokens", type=int, default=4096)
     ap.add_argument("--count", type=int, default=120)
-    ap.add_argument("--server-log", default="vllm_pool_probe.log")
     add_output_args(ap)
     a = ap.parse_args()
     out = out_root(a) / f"pool_capacity_{a.gpu_label}.txt"
 
-    cmd = [sys.executable, "-m", "vllm.entrypoints.openai.api_server",
-           "--model", a.model, "--served-model-name", a.served_model_name,
-           "--host", "127.0.0.1", "--port", str(a.port),
-           "--dtype", "bfloat16", "--gpu-memory-utilization", "0.9",
-           "--max-model-len", "32768", "--tensor-parallel-size", "1",
-           "--enable-prefix-caching", "--enable-chunked-prefill",
-           "--api-key", "test", "--prefix-caching-hash-algo", "sha256",
-           "--no-enable-log-requests"]
-    proc = subprocess.Popen(cmd, stdout=open(a.server_log, "w"), stderr=subprocess.STDOUT)
+    server = launch_vllm(out_root(a) / "pool_capacity", a.model, port=a.port,
+                         max_model_len=32768, prefix_caching=True, timeout_s=420,
+                         vllm_flags={"served_model_name": a.served_model_name,
+                                     "host": "127.0.0.1", "api_key": "test",
+                                     "prefix_caching_hash_algo": "sha256",
+                                     "no_enable_log_requests": True})
     try:
-        if not wait_health(a.port):
-            print(f"SERVER NOT HEALTHY -- see {a.server_log}")
-            sys.exit(1)
-        for line in Path(a.server_log).read_text().splitlines():
+        for line in (server.results_dir / "server.log").read_text().splitlines():
             if re.search(r"GPU KV cache size|# GPU blocks|kv cache", line, re.I):
                 print("SERVER:", line.split("]")[-1].strip(), flush=True)
         asyncio.run(run(f"http://127.0.0.1:{a.port}", a.served_model_name,
                         a.tokens, a.count, out))
     finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=30)
-        except Exception:
-            proc.kill()
+        server.stop()
 
 
 if __name__ == "__main__":
