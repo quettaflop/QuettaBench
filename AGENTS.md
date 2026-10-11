@@ -6,8 +6,8 @@ each thing lives, and the rules every commit keeps.
 ## What this repo is
 
 QuettaBench is a measurement harness. It has one command, `qbench`, with four
-doors: `run | profile | crossval | export`. It has one measurement procedure,
-`quettabench/modes/serve.py`. Three structs flow one way, `Config ->
+doors: `run | profile | crossval | export`, plus `provision` for box setup.
+It has one measurement procedure, `quettabench/modes/serve.py`. Three structs flow one way, `Config ->
 LaunchSpec -> RequestResult`, and nothing flows back. Every measurement lands
 in one results layer, `results/<run>/`, and leaves the repo by one route,
 `quettabench/export/`.

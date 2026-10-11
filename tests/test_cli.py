@@ -29,7 +29,7 @@ class Doors(unittest.TestCase):
         proc = subprocess.run([sys.executable, "-m", "quettabench.cli"], cwd=REPO,
                               capture_output=True, text=True, check=False)
         self.assertEqual(proc.returncode, 2)
-        self.assertIn("{run,profile,crossval,export}", proc.stdout)
+        self.assertIn("{run,profile,crossval,export,provision}", proc.stdout)
 
 
 if __name__ == "__main__":

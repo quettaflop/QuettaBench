@@ -5,6 +5,7 @@
   qbench profile  --run results/<run> --source ...   quettabench.profiler
   qbench crossval ...                                 quettabench.crossval
   qbench export   --results ... --dest DIR            quettabench.export.quettasim
+  qbench provision <run.yaml>... [--dry-run]          quettabench.provision
 
 run is parsed here: --set is repeatable and its values are yaml scalars,
 --results-dir is the parent of results/<run>/. A config the loader refuses,
@@ -30,6 +31,7 @@ DOORS = {
     "profile": "quettabench.profiler",
     "crossval": "quettabench.crossval",
     "export": "quettabench.export.quettasim.__main__",
+    "provision": "quettabench.provision",
 }
 
 

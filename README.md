@@ -2,7 +2,8 @@
 
 Measures LLM serving engines on production-shaped workloads, and
 cross-validates the QuettaServe engine against vLLM per decode step. One
-command, `qbench`, with four doors: `run | profile | crossval | export`.
+command, `qbench`, with four doors: `run | profile | crossval | export`,
+and `qbench provision` for box setup.
 
 ## Quickstart
 
@@ -20,7 +21,7 @@ just export --results results/llama --dest ../QuettaSim/engine/data
 ```
 
 Without `just`, every recipe is one line: `python3 -m quettabench.cli run ...`,
-`python3 -m quettabench.provision ...`. `just test` and `just lint` run pytest
+`python3 -m quettabench.cli provision ...` (`qbench provision` once installed). `just test` and `just lint` run pytest
 and ruff.
 
 ## Config
@@ -231,7 +232,7 @@ are withheld. glm53 and glm53flash have no engine bench yet: vLLM side only.
 ## Layout
 
 ```
-quettabench/cli.py        qbench: run | profile | crossval | export
+quettabench/cli.py        qbench: run | profile | crossval | export, and provision
 quettabench/runner.py     run: load, translate, launch, drive, serve, write
 quettabench/provision.py  box setup, --dry-run plan, MISSING: and stop
 quettabench/config/       schema, loader (yaml + --set + env), env_map, validate
