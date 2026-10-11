@@ -11,7 +11,7 @@ its driver has no tokenizer), and let modes/serve.py run trace
 through driver into a RunWriter; the server is stopped whatever happens.
 mode: probe runs quettabench.probes.<name> on the same GPUs with --out
 results/<run>/ instead and records it in the same run.json. --dry-run prints each Config
-with its origins and its LaunchSpec (a bench run: each cell's env and
+with its origins and its LaunchSpec, secrets redacted (a bench run: each cell's env and
 bench_argv as one shell line), and starts nothing. hardware.launcher=docker
 runs the server in engine.image and needs a launched server (a grid run sets
 engine.driver=http); --dry-run then also prints the docker command.
@@ -41,9 +41,11 @@ FILE_OUT_PROBES = ("serving_decode_grid", "serving_stage_split")
 def spec_lines(spec):
     """One `spec.<field> = value` line per LaunchSpec field, then one
     `cell ctx= bs= = <shell line>` per bench cell: its env and bench_argv
-    as the child runs them."""
-    lines = [f"spec.{k} = {v!r}" for k, v in dataclasses.asdict(spec).items() if k != "cells"]
-    return lines + [f"cell ctx={ctx} bs={bs} = {shlex.join(cell.child_argv(cell.bench_argv))}"
+    as the child runs them; secrets redacted."""
+    lines = [f"spec.{k} = {v!r}" for k, v in redact(dataclasses.asdict(spec)).items()
+             if k != "cells"]
+    return lines + [f"cell ctx={ctx} bs={bs} = "
+                    f"{shlex.join(map(str, redact(cell.child_argv(cell.bench_argv))))}"
                     for ctx, bs, cell in spec.cells]
 
 
@@ -60,7 +62,7 @@ def in_docker(cfg, adapter):
 
 def dry_run(cfg, out):
     print(f"== {cfg.run_name}")
-    print(cfg.dump(origins=True))
+    print(cfg.dump(origins=True, scrub=redact))
     if cfg.mode.mode != "probe":
         adapter = base.get(cfg.engine.name)
         spec = adapter.translate(cfg, out)
@@ -70,7 +72,8 @@ def dry_run(cfg, out):
             # the run takes idle GPUs; the dry run shows 0..n-1 unless visible_devices is set
             gpus = cfg.hardware.visible_devices or ",".join(
                 str(i) for i in range(device_count(cfg.engine)))
-            print(f"docker = {shlex.join(launcher.docker_argv(spec, cfg, gpus, out))}")
+            argv = redact(launcher.docker_argv(spec, cfg, gpus, out))
+            print(f"docker = {shlex.join(map(str, argv))}")
 
 
 def check_probe(cfg):

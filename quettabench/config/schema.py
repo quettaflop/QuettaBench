@@ -168,10 +168,12 @@ class Config:
         out["origins"] = dict(self.origins)
         return out
 
-    def dump(self, origins=True):
-        """One `path = value` line per leaf, with its origin, for --dry-run."""
+    def dump(self, origins=True, scrub=None):
+        """One `path = value` line per leaf, with its origin, for --dry-run;
+        scrub (metrics.results.redact) rewrites the dict first."""
         lines = []
-        for path, value in flatten(self.to_dict(), skip=("origins", "grid")):
+        d = self.to_dict()
+        for path, value in flatten(scrub(d) if scrub else d, skip=("origins", "grid")):
             tail = f"  ({self.origins.get(path, 'default')})" if origins else ""
             lines.append(f"{path} = {value!r}{tail}")
         if self.grid is not None:

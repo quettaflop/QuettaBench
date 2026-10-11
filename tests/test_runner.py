@@ -247,6 +247,16 @@ class DockerDryRun(unittest.TestCase):
         kw = start.call_args.kwargs
         self.assertEqual((kw["backend"], kw["cfg"], kw["gpus"]), ("docker", cfg, "3,5"))
 
+    def test_dry_run_prints_no_secret(self):
+        run = yaml.safe_load(RUNS[0].with_name("llama-tp1-docker.yaml").read_text())
+        run["engine"]["extra"] = {"vllm": {"api_key": "sk-live"}}
+        with scratch_configs("secret", run) as (path, _):
+            out, exit_msg = qbench("run", str(path), "--dry-run", "--set", "engine.model=/w")
+        self.assertIsNone(exit_msg)
+        self.assertNotIn("sk-live", out)
+        self.assertIn("engine.extra.vllm = {'api_key': 'REDACTED'}  (run)", out.splitlines())
+        self.assertIn("--api-key REDACTED", out)
+
     def test_docker_without_an_image_is_refused(self):
         _, exit_msg = qbench("run", str(RUNS[0].with_name("llama-tp1-docker.yaml")),
                              "--dry-run", "--set", "engine.model=/w", "--set", "engine.image=null")
