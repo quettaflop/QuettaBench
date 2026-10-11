@@ -6,9 +6,9 @@ import json
 from collections.abc import Iterable
 from pathlib import Path
 
+from quettabench.metrics.results import RUN_MARKERS
+
 TP_DEGREES = (2, 4)
-# Files only a run dir holds; a dir with one of them is a run dir.
-RUN_MARKERS = ("run.json", "requests.jsonl", "engine.json")
 
 
 @functools.cache

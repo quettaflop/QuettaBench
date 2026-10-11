@@ -448,3 +448,12 @@ startup args log no longer prints it; the three live-server probes' launches
 pinned in `tests/probes/test_probe_record.py` lose `--api-key <key>` and gain
 that env var. A run's HttpDriver now sends that key; before, it always sent
 `test`, which a server started with another key refused.
+
+2026-10-11: no fixture changed. `run_name` must match
+`[A-Za-z0-9][A-Za-z0-9._-]*` and be none of `probes`, `xval`, `baselines`;
+load refuses any other name, since it names `results/<run_name>/`, which
+`--overwrite` empties. A matrix suffix has every other character replaced
+by `_` (`engine.model: /w/llama` gives `-model_w_llama`, before
+`-model/w/llama`). `--overwrite` now empties only a real dir directly under
+the results dir that holds `run.json`, `requests.jsonl` or `engine.json`,
+and a run dir whose `run.json` says failed is replaced without it.

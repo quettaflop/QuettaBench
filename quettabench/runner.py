@@ -20,6 +20,7 @@ engine.driver=http); --dry-run then also prints the docker command.
 import ast
 import dataclasses
 import importlib
+import json
 import re
 import shlex
 import shutil
@@ -31,7 +32,7 @@ from quettabench.config import env_map, loader
 from quettabench.config.schema import ConfigError
 from quettabench.config.validate import device_count
 from quettabench.engines import base, launcher
-from quettabench.metrics.results import RunWriter, redact
+from quettabench.metrics.results import RUN_MARKERS, RunWriter, redact
 from quettabench.modes import serve
 from quettabench.probes import base as probes_base
 
@@ -220,13 +221,30 @@ def serve_one(cfg, out, exported, writer):
         handle.stop()
 
 
-def clear_run_dir(out, overwrite):
+def run_failed(out):
+    """Whether out/run.json records a failed run."""
+    try:
+        return json.loads((out / "run.json").read_text())["run_status"]["status"] == "failed"
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+
+
+def clear_run_dir(out, overwrite, results_dir):
     """Refuse a run dir that already holds files, since requests.jsonl
-    appends; with overwrite, empty it: everything in results/<run>/ belongs
-    to the run, including profile.json and the nsys export."""
+    appends; with overwrite, or when its run.json says failed, empty it:
+    everything in results/<run>/ belongs to the run, including profile.json
+    and the nsys export. Only a real dir directly under results_dir that
+    holds a run marker is ever emptied."""
+    if out.is_symlink():
+        raise ConfigError(f"{out} is a symlink; qbench empties only a run dir it made")
     if not out.is_dir() or not any(out.iterdir()):
         return
-    if not overwrite:
+    if out.resolve().parent != Path(results_dir).resolve():
+        raise ConfigError(f"{out} is not a run dir directly under {results_dir}")
+    if not any((out / marker).exists() for marker in RUN_MARKERS):
+        raise ConfigError(f"{out} holds no {', '.join(RUN_MARKERS[:-1])} or {RUN_MARKERS[-1]}; "
+                          "qbench did not make it, so it is never emptied")
+    if not (overwrite or run_failed(out)):
         raise ConfigError(f"{out} already holds a run; pass --overwrite to replace it")
     for path in out.iterdir():
         if path.is_dir() and not path.is_symlink():
@@ -246,7 +264,7 @@ def main(run_yaml, overrides=(), dry=False, results_dir="results", allow_unverif
     if not dry:
         refuse_mixed_in_process(cfgs)
         for cfg in cfgs:
-            clear_run_dir(Path(results_dir) / cfg.run_name, overwrite)
+            clear_run_dir(Path(results_dir) / cfg.run_name, overwrite, results_dir)
     exported = set()
     for cfg in cfgs:
         out = Path(results_dir) / cfg.run_name

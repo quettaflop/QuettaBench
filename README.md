@@ -93,7 +93,13 @@ just run configs/runs/llama-tp1-docker.yaml --set engine.model=/w/llama
 
 `qbench run` refuses a `results/<run>/` that already holds files;
 `--overwrite` empties it first: every file and subdirectory there belongs to
-the old run, so `profile.json` and the nsys export go with it.
+the old run, so `profile.json` and the nsys export go with it. A run whose
+`run.json` says failed is replaced without `--overwrite`. Only a real dir
+directly under the results dir that holds `run.json`, `requests.jsonl` or
+`engine.json` is ever emptied; a symlink or a dir qbench did not make is
+refused. `run_name` (the yaml stem or `--set run_name=`) matches
+`[A-Za-z0-9][A-Za-z0-9._-]*` and is none of `probes`, `xval`, `baselines`;
+matrix suffixes are cut to that charset.
 
 Grid runs no longer write `results/baselines/*.json`; `qbench crossval`
 reads the run dir, and still reads old baselines files. Probe recipes write

@@ -444,6 +444,58 @@ class ProbeMode(unittest.TestCase):
         self.assertNotIn("metrics", prof)
         self.assertEqual(prof["sources_run"], ["cost"])
 
+    def test_overwrite_never_empties_a_dir_qbench_did_not_make(self):
+        """--overwrite empties only results/<run>/ itself, a real dir holding a
+        run marker; a symlink or a foreign dir is refused with its files kept."""
+        run = {"mode": {"mode": "probe", "probe": "fake"}}
+        with scratch_configs("p", run) as (path, td), \
+                mock.patch.dict(sys.modules, {"quettabench.probes.fake": mock.Mock()}):
+            results, elsewhere = td / "results", td / "elsewhere"
+            elsewhere.mkdir()
+            (elsewhere / "run.json").write_text("{}")
+            (elsewhere / "keep.txt").write_text("mine\n")
+            results.mkdir()
+            (results / "p").symlink_to(elsewhere)
+            argv = ("run", str(path), "--allow-unverified", "--results-dir", str(results),
+                    "--overwrite")
+            _, linked = qbench(*argv)
+            self.assertEqual(sorted(p.name for p in elsewhere.iterdir()), ["keep.txt", "run.json"])
+            (results / "p").unlink()
+            (results / "p").mkdir()
+            (results / "p" / "notes.txt").write_text("mine\n")
+            _, foreign = qbench(*argv)
+            self.assertEqual([p.name for p in (results / "p").iterdir()], ["notes.txt"])
+        self.assertIn("is a symlink", linked)
+        self.assertIn("holds no run.json, requests.jsonl or engine.json", foreign)
+
+    def test_clear_run_dir_stays_directly_under_results(self):
+        with tempfile.TemporaryDirectory() as td:
+            results = Path(td, "results")
+            for out in (Path(td, "x"), results, results / "a" / "b", results / ".." / "x"):
+                out.mkdir(parents=True, exist_ok=True)
+                (out / "run.json").write_text("{}")
+                with self.subTest(out=str(out)), \
+                        self.assertRaisesRegex(ConfigError, "not a run dir directly under"):
+                    runner.clear_run_dir(out, True, results)
+                self.assertTrue((out / "run.json").exists())
+                (out / "run.json").unlink()
+
+    def test_a_failed_run_is_replaced_without_overwrite(self):
+        run = {"mode": {"mode": "probe", "probe": "fake"}}
+        with scratch_configs("p", run) as (path, td), \
+                mock.patch.dict(sys.modules, {"quettabench.probes.fake": mock.Mock()}):
+            out = td / "results" / "p"
+            out.mkdir(parents=True)
+            argv = ("run", str(path), "--allow-unverified", "--results-dir", str(td / "results"))
+            for status, refused in (("failed", False), ("ok", True), ("aborted", True)):
+                (out / "run.json").write_text(json.dumps({"run_status": {"status": status}}))
+                (out / "requests.jsonl").write_text("old\n")
+                _, exit_msg = qbench(*argv)
+                with self.subTest(status):
+                    self.assertEqual("already holds a run" in (exit_msg or ""), refused)
+                    self.assertEqual((out / "requests.jsonl").read_text(),
+                                     "old\n" if refused else "")
+
     def test_a_name_that_is_no_probe_is_refused(self):
         for name in ("nope", "base", "_graph", "../cli"):
             with self.subTest(name), scratch_configs("p", {"mode": {"mode": "probe", "probe": name}}) \

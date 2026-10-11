@@ -283,6 +283,21 @@ class LoaderRules(unittest.TestCase):
         cfg = self.one(overrides=["run_name=mine"])
         self.assertEqual((cfg.run_name, cfg.origins["run_name"]), ("mine", "cli"))
 
+    def test_a_run_name_that_is_no_plain_dir_name_is_refused(self):
+        """run_name becomes results/<run_name>/, which --overwrite empties."""
+        for name in ("..", ".", "/tmp/x", "a/../..", "probes", "xval", "baselines", "Probes",
+                     "", "-x", ".hidden", "a b", "a\\b"):
+            with self.subTest(name=name), self.assertRaisesRegex(ConfigError, "run_name"):
+                self.load(overrides=[f"run_name={name}"])
+        with self.assertRaisesRegex(ConfigError, "run_name"):
+            self.write("runs/probes.yaml", {"model": "toy"})
+            load(self.root / "runs" / "probes.yaml", env={"XVAL_LINK_PROFILE": "pcie"})
+        self.assertEqual(self.one(overrides=["run_name=a.b_c-1"]).run_name, "a.b_c-1")
+
+    def test_matrix_suffixes_keep_to_the_run_name_charset(self):
+        configs = self.load({"matrix": {"engine.model": ["/w/llama", "../x"]}})
+        self.assertEqual([c.run_name for c in configs], ["r-model_w_llama", "r-model.._x"])
+
     def test_env_lands_in_provenance_and_hardware(self):
         cfg = self.one(env={"QS_SHA": "1234567", "CUDA_VISIBLE_DEVICES": "0"})
         self.assertEqual(cfg.provenance["engine_sha"], "1234567")

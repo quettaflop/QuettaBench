@@ -30,6 +30,8 @@ from pathlib import Path
 
 RUN_SCHEMA_VERSION = 1
 RUN_STATUSES = ("ok", "partial", "aborted", "failed")
+# Files only a run dir holds; a dir with one of them is a run dir.
+RUN_MARKERS = ("run.json", "requests.jsonl", "engine.json")
 # A name whose value is a secret: one of these words anywhere in it, between
 # _ . - or the ends ...
 SECRET_WORD = r"secrets?|password|passwd|credentials?|bearer|auth"

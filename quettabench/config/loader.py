@@ -37,6 +37,10 @@ RUN_KEYS = ("model", "engine", "workload", "mode", "hardware", "matrix")
 HARDWARE_FILE_KEYS = ("world", "timing_steps", "max_seq_headroom", "collective", "provision")
 GRIDS_KEYS = ("grids", "step_points")
 RATE_ARRIVALS = ("poisson", "ramp", "burst")
+# run_name is the dir results/<run_name>/, which --overwrite empties: one plain
+# name, never a path, and none of the dirs other writers own under results/.
+RUN_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+RESERVED_RUN_NAMES = ("probes", "xval", "baselines")
 # path -> (lowest, highest) allowed; None is no bound
 RANGES = {"mode.concurrency": (1, None), "workload.num_requests": (1, None),
           "mode.warmup": (0, None), "mode.discard_first": (0, None),
@@ -317,6 +321,16 @@ def _resolve(upper, configs, grids, step_points, detect, allow_unverified, where
     return _build(values, origins, _grid(values, grids, step_points, where))
 
 
+def check_run_name(name, where):
+    """Refuse a run_name that is not one plain dir name, or is a reserved one."""
+    if not RUN_NAME.fullmatch(name):
+        raise ConfigError(f"{where}: run_name {name!r} must match {RUN_NAME.pattern}; "
+                          "it names the dir results/<run_name>/")
+    if name.lower() in RESERVED_RUN_NAMES:
+        raise ConfigError(f"{where}: run_name {name!r} is reserved; results/{name}/ "
+                          "belongs to another writer")
+
+
 def load(run_yaml, overrides=(), env=None):
     """Configs for one run yaml: one, or one per point of its `matrix:`.
 
@@ -350,9 +364,12 @@ def load(run_yaml, overrides=(), env=None):
         point = dict(zip(matrix, combo))
         run_layer, cli_layer = {**run, **point}, dict(cli)
         named_by = cli_layer if "run_name" in cli else run_layer
-        named_by["run_name"] = "-".join([str(cli.get("run_name", run_path.stem))] + [
-            f"{p.rsplit('.', 1)[-1]}{v}" for p, v in point.items()])
+        base = cli.get("run_name", run_path.stem)
+        named_by["run_name"] = "-".join(["" if base is None else str(base)] + [
+            re.sub(r"[^A-Za-z0-9._-]", "_", f"{p.rsplit('.', 1)[-1]}{v}")
+            for p, v in point.items()])
         name = named_by["run_name"]
+        check_run_name(name, f"{run_path} [{name}]")
         upper = [("model", model), ("run", run_layer), ("env", from_env), ("cli", cli_layer)]
         out.append(_resolve(upper, configs, grids, step_points, detect, allow_unverified,
                             f"{run_path} [{name}]"))
