@@ -74,6 +74,32 @@ class Logit(unittest.TestCase):
         self.assertEqual(text[0], "DISAGREE req 0 pos=2 reference_gap=1.0000 reference=7 ours=9")
         self.assertEqual(text[-1], "FIDELITY verdict=FAIL hard_disagreements=1")
 
+    def test_one_bf16_step_is_a_near_tie(self):
+        ref = [logit_row(0, [5, 6], [0.125, 0.126], [-0.1, -0.2])]
+        rows = agreement.logit([logit_row(0, [9, 6], [0, 0], [-0.1, -0.2])], ref)
+        self.assertEqual((rows[-1]["near_tie_flips"], rows[-1]["verdict"]), (1, "PASS"))
+        rows = agreement.logit([logit_row(0, [5, 9], [0, 0], [-0.1, -0.2])], ref)
+        self.assertEqual(rows[-1]["verdict"], "FAIL")
+
+
+class Band(unittest.TestCase):
+    ONE_FLIP = [logit_row(0, [5, 9, 7, 8], [0, 0, 0, 0], [-0.1, -0.2, -0.3, -0.4])]
+    TWO_FLIPS = [logit_row(0, [1, 9, 7, 8], [0, 0, 0, 0], [-0.1, -0.2, -0.3, -0.4])]
+
+    def test_inside_the_worst_floor_run_passes(self):
+        row = agreement.band(self.ONE_FLIP, REF, [REF, self.TWO_FLIPS])
+        self.assertEqual((row["flips"], row["floor_flips"], row["verdict"]), (1, [0, 2], "PASS"))
+        self.assertEqual(agreement.render([row]),
+                         ["BAND verdict=PASS flips=1 floor=2 floor_runs=0,2 positions=4"])
+
+    def test_above_the_floor_fails(self):
+        row = agreement.band(self.TWO_FLIPS, REF, [self.ONE_FLIP])
+        self.assertEqual(row["verdict"], "FAIL")
+
+    def test_different_position_counts_are_withheld(self):
+        short = [logit_row(0, [5, 6], [0, 0], [-0.1, -0.2])]
+        self.assertEqual(agreement.band(self.ONE_FLIP, REF, [short])["verdict"], "WITHHELD")
+
 
 if __name__ == "__main__":
     unittest.main()

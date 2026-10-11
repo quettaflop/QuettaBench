@@ -87,11 +87,13 @@ class Halves(unittest.TestCase):
 
 
 class Recipe(unittest.TestCase):
-    def test_run_run_crossval_is_fidelity_pass(self):
+    def test_run_run_crossval_is_fidelity_and_band_pass(self):
         sets = ["--set", "mode.grid=smoke"]
         with tempfile.TemporaryDirectory() as td:
             for name, extra in (("ours", ["--set", "mode.returns=logits"]),
-                                ("ref", ["--set", "engine.name=reference"])):
+                                ("ref", ["--set", "engine.name=reference"]),
+                                ("slice", ["--set", "engine.name=reference",
+                                           "--set", "engine.layers=2"])):
                 run = run_grid_cli(grid_argv("llama", *sets, *extra, "--set", f"run_name={name}",
                                              "--results-dir", td), {})
                 self.assertIsNone(run["exit"])
@@ -99,9 +101,12 @@ class Recipe(unittest.TestCase):
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
                 crossval.main([str(Path(td, "ours")), str(Path(td, "ref")),
+                               "--floor", str(Path(td, "slice")),
                                "--json", str(Path(td, "x.json"))])
         self.assertIn("SUMMARY positions=99 argmax_agree=99 (100.00%)", out.getvalue())
         self.assertIn("FIDELITY verdict=PASS hard_disagreements=0", out.getvalue())
+        self.assertIn("BAND verdict=PASS flips=0 floor=0 floor_runs=0 positions=99",
+                      out.getvalue())
 
 
 if __name__ == "__main__":

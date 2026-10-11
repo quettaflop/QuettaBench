@@ -18,11 +18,34 @@ transformers reference on the same grid prompts:
   qbench run configs/runs/llama.yaml --set mode.grid=smoke --set mode.returns=logits --set 'engine.extra.vllm={enforce_eager: true}' --set run_name=llama-logits
   qbench run configs/runs/llama.yaml --set mode.grid=smoke --set engine.name=reference --set run_name=llama-reference
   qbench crossval results/llama-logits results/llama-reference
+
+Slice verification (the old slice_tf/ harness, tf_verify.py and vllm_tf.py).
+On a model cut to N layers (engine.layers, or a checkpoint dir cut the same
+way for vLLM) a free-running greedy chain cannot verify numerics: bf16
+rounding flips the router within a few steps, and the reference disagrees
+with itself across its own kernels. The attainable check is teacher-forced,
+which every logits run already is: each position is scored on the same true
+prefix, so nothing cascades. The anchor is the reference at float32. The
+noise floor is the reference at the engine's dtype (each kernel mode a
+run) against that anchor; the engine passes BAND when its argmax flips
+against the anchor are no more than the worst floor run's. A floor run is
+trusted only once it is deterministic: the same run twice crossvals to
+argmax_agree equal to positions and delta max 0.
+
+  qbench run <run>.yaml --set mode.returns=logits --set engine.model=<cut dir> --set run_name=slice-vllm
+  qbench run <run>.yaml --set engine.name=reference --set engine.layers=N --set engine.dtype=float32 --set run_name=slice-f32
+  qbench run <run>.yaml --set engine.name=reference --set engine.layers=N --set engine.dtype=bfloat16 --set run_name=slice-bf16
+  qbench crossval results/slice-vllm results/slice-f32 --floor results/slice-bf16
 """
 
 import statistics
 
-NEAR_TIE_GAP = 0.1   # reference top-2 gap below which an argmax flip is a near tie
+# Reference top-2 gap at or below which an argmax flip is a near tie: one
+# bf16 step for logits in [16, 32), where the 2026-09-13 llama check found
+# its two flips (V13, probes/runbooks/slice_verification.md).
+# logit_agreement.py used < 0.1 and so counted those two ties as hard
+# disagreements.
+NEAR_TIE_GAP = 0.125
 AGREE_MIN = 4        # leading tokens counted as "agrees" in the greedy summary
 
 
@@ -83,7 +106,7 @@ def logit(ours_rows, theirs_rows):
             total += 1
             if ours["argmax"][pos] == ref["argmax"][pos]:
                 agree += 1
-            elif ref["top2_gap"][pos] < NEAR_TIE_GAP:
+            elif ref["top2_gap"][pos] <= NEAR_TIE_GAP:
                 near_tie += 1
             else:
                 rows.append({"kind": "logit_disagree", "request": key, "pos": pos,
@@ -100,6 +123,27 @@ def logit(ours_rows, theirs_rows):
                  "delta_max": deltas[-1] if deltas else None,
                  "verdict": "SKIP" if not total else "PASS" if hard == 0 else "FAIL"})
     return rows
+
+
+def flips(rows, anchor_rows):
+    """(positions, argmax flips) of rows scored against anchor_rows."""
+    summary = logit(rows, anchor_rows)
+    if not summary:
+        return 0, 0
+    return summary[-1]["positions"], summary[-1]["positions"] - summary[-1]["argmax_agree"]
+
+
+def band(ours_rows, anchor_rows, floor_runs):
+    """tf_verify.py's acceptance: ours' argmax flips against the anchor are
+    at most the worst floor run's. Withheld when the runs score different
+    position counts, since the counts would not be comparable."""
+    positions, ours = flips(ours_rows, anchor_rows)
+    floors = [flips(rows, anchor_rows) for rows in floor_runs]
+    comparable = positions > 0 and all(p == positions for p, _ in floors)
+    worst = max(f for _, f in floors)
+    return {"kind": "band", "positions": positions, "flips": ours,
+            "floor_flips": [f for _, f in floors], "floor": worst,
+            "verdict": "WITHHELD" if not comparable else "PASS" if ours <= worst else "FAIL"}
 
 
 def compare_runs(ours_rows, theirs_rows):
@@ -135,4 +179,8 @@ def render(rows):
                              f"p95={r['delta_p95']:.5f} max={r['delta_max']:.5f}")
             lines.append(f"FIDELITY verdict={r['verdict']} "
                          f"hard_disagreements={r['hard_disagreements']}")
+        elif kind == "band":
+            lines.append(f"BAND verdict={r['verdict']} flips={r['flips']} floor={r['floor']} "
+                         f"floor_runs={','.join(map(str, r['floor_flips']))} "
+                         f"positions={r['positions']}")
     return lines

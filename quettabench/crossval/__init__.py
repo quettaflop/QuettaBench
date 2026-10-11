@@ -5,7 +5,8 @@ bench log, told apart by content (a dir, a json object, anything else).
 Prints the comparison text (crossval/compare.py, the old table.py output)
 and writes the Report as json to results/xval/<ours>_vs_<theirs>.json, or
 to --json OUT. Agreement rows appear when both sides are run dirs whose
-rows returned text or logits.
+rows returned text or logits; --floor adds the slice BAND verdict
+(crossval/agreement.py).
 
 The facts a bench log does not state (NCCL pins, quant, serving style) and
 XVAL_ALLOW_METHOD_MISMATCH come from the environment through env_map.
@@ -48,12 +49,17 @@ def main(argv=None):
     ap.add_argument("theirs", help="results/<run>/ dir, baselines/*.json, or bench log")
     ap.add_argument("--allow-method-mismatch", action="store_true",
                     help="ratios even when the two sides time different quantities")
+    ap.add_argument("--floor", action="append", default=[], metavar="RUN",
+                    help="a reference run at the engine's dtype; theirs is then the anchor "
+                         "and ours passes BAND within the worst floor run's argmax flips")
     ap.add_argument("--json", type=Path, default=None,
                     help="report path (default results/xval/<ours>_vs_<theirs>.json)")
     args = ap.parse_args(argv)
-    for path in (args.ours, args.theirs):
+    for path in (args.ours, args.theirs, *args.floor):
         if not Path(path).exists():
             sys.exit(f"no results at {path}")
+    if args.floor and not all(Path(p).is_dir() for p in (args.ours, args.theirs, *args.floor)):
+        sys.exit("--floor compares logits runs: ours, theirs and every floor must be run dirs")
 
     values = env_map.read_env(only=ENV)
     ours = read_side(args.ours, values)
@@ -64,8 +70,11 @@ def main(argv=None):
     allow = args.allow_method_mismatch or values.get("crossval.allow_method_mismatch", False)
     report = compare.pair(ours, theirs, allow, now=time.time())
     if Path(args.ours).is_dir() and Path(args.theirs).is_dir():
-        report.agreement = agreement.compare_runs(reader.read_rows(args.ours),
-                                                  reader.read_rows(args.theirs))
+        ours_rows, theirs_rows = reader.read_rows(args.ours), reader.read_rows(args.theirs)
+        report.agreement = agreement.compare_runs(ours_rows, theirs_rows)
+        if args.floor:
+            report.agreement.append(agreement.band(
+                ours_rows, theirs_rows, [reader.read_rows(f) for f in args.floor]))
     print(compare.render(report), end="")
 
     a, b = (Path(p).name if Path(p).is_dir() else Path(p).stem for p in (args.ours, args.theirs))
