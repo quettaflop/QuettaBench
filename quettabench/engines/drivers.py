@@ -18,6 +18,9 @@ ttft_rule:
 The stream bodies are openai_chat.send_request and
 openai_completions.send_request moved unchanged; only the header and payload
 building they shared byte for byte is factored out.
+
+vllm, torch and transformers are optional dependencies (GPU boxes only), so
+they are imported inside the methods that use them.
 """
 
 import asyncio
@@ -385,7 +388,7 @@ def server_base_url(url: str) -> str:
     """Strip the request path off an endpoint URL, keeping scheme://host:port."""
     parts = urlsplit(url)
     if not parts.scheme or not parts.netloc:
-        raise PrefixCacheResetError(f"Cannot derive server base URL from {url!r}")
+        raise ValueError(f"cannot derive a server base URL from {url!r}")
     return urlunsplit((parts.scheme, parts.netloc, "", "", ""))
 
 
@@ -505,14 +508,15 @@ class HttpDriver(Driver):
         """The batch at cell["step_point"] tokens, every row carrying the batch
         wall as e2el and batch_wall_s and no TTFT (ttft_basis "batch"), the rows
         InProcessDriver.run yields. A failed request, or a usage count other
-        than the step point, raises: the wall would not be a bs-wide batch."""
+        than the step point, or none reported, raises: the wall would not be a
+        bs-wide batch of n steps."""
         n = cell["step_point"]
         wall, results = self.timed_batch(requests, (cell["ctx"], cell["bs"]))
         for res in results:
-            if not res.success or (res.usage_reported and res.output_tokens != n):
-                raise GridBatchFailed(
-                    f"ctx={cell['ctx']} bs={cell['bs']} step={n}: "
-                    f"{res.error or f'{res.output_tokens} tokens decoded'}")
+            if not res.success or not res.usage_reported or res.output_tokens != n:
+                why = (res.error if not res.success else "no usage reported"
+                       if not res.usage_reported else f"{res.output_tokens} tokens decoded")
+                raise GridBatchFailed(f"ctx={cell['ctx']} bs={cell['bs']} step={n}: {why}")
         for r in requests:
             yield RequestResult(success=True, e2el=wall, batch_wall_s=wall,
                                 input_tokens=r.prompt_len, output_tokens=n, ttft_basis="batch",
@@ -556,7 +560,9 @@ class HttpDriver(Driver):
                     )
         except PrefixCacheResetError:
             raise
-        except Exception as e:  # network/timeout
+        except aiohttp.ClientConnectionError as e:
+            raise ConnectionError(f"POST {reset_url}: {e}") from e
+        except Exception as e:  # timeout, bad response
             raise PrefixCacheResetError(f"POST {reset_url} failed: {e}") from e
 
         return f"prefix cache reset via {reset_url}"
@@ -720,7 +726,7 @@ def truncated_config(model, layers):
     per-layer list (layer_types) cut to match. Weights of deeper layers are
     left unloaded."""
     from transformers import AutoConfig
-    config = AutoConfig.from_pretrained(model)
+    config = AutoConfig.from_pretrained(model, trust_remote_code=True)
     if layers > config.num_hidden_layers:
         raise ValueError(f"reference: engine.layers={layers} exceeds the checkpoint's "
                          f"{config.num_hidden_layers} layers")
@@ -764,7 +770,8 @@ class ReferenceDriver(Driver):
 
     def tokenizer(self):
         from transformers import AutoTokenizer
-        return AutoTokenizer.from_pretrained(self.spec.engine_kwargs["model"])
+        return AutoTokenizer.from_pretrained(self.spec.engine_kwargs["model"],
+                                             trust_remote_code=True)
 
     def model(self):
         """AutoModelForCausalLM in the run's dtype on cuda:0, eval mode, built
@@ -773,7 +780,7 @@ class ReferenceDriver(Driver):
             import torch
             from transformers import AutoModelForCausalLM
             kw = self.spec.engine_kwargs
-            load = {"torch_dtype": getattr(torch, kw["dtype"])}
+            load = {"torch_dtype": getattr(torch, kw["dtype"]), "trust_remote_code": True}
             if kw.get("layers"):
                 load["config"] = truncated_config(kw["model"], kw["layers"])
             self._model = AutoModelForCausalLM.from_pretrained(kw["model"], **load).to("cuda:0")

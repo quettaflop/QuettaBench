@@ -6,6 +6,8 @@ import unittest
 from contextlib import asynccontextmanager
 from unittest import mock
 
+import aiohttp
+
 from quettabench.engines.drivers import GridBatchFailed, HttpDriver, PrefixCacheResetError
 from quettabench.metrics.step_fit import fit_run
 from quettabench.workloads.base import Request
@@ -34,13 +36,15 @@ class _Resp:
 
 
 class _Session:
-    def __init__(self, chunks, status=200):
+    def __init__(self, chunks, status=200, error=None):
         self.lines = [b"data: " + json.dumps(c).encode() + b"\n" for c in chunks]
         self.lines.append(b"data: [DONE]\n")
-        self.status, self.posts = status, []
+        self.status, self.posts, self.error = status, [], error
 
     def post(self, url, headers=None, json=None, timeout=None):
         self.posts.append((url, json))
+        if self.error:
+            raise self.error
         return _Resp(self.lines, self.status)
 
 
@@ -91,6 +95,16 @@ class Reset(unittest.TestCase):
     def test_reset_404_names_dev_mode(self):
         with self.assertRaisesRegex(PrefixCacheResetError, "VLLM_SERVER_DEV_MODE=1"):
             asyncio.run(HttpDriver("chat", "vllm").reset(_Session([], status=404), "http://h:1/v1/x"))
+
+
+    def test_a_bad_url_is_not_a_reset_error(self):
+        with self.assertRaisesRegex(ValueError, "'nowhere'"):
+            asyncio.run(HttpDriver("chat", "vllm").reset(_Session([]), "nowhere"))
+
+    def test_a_refused_connection_raises_with_the_url(self):
+        with self.assertRaisesRegex(ConnectionError, "POST http://127.0.0.1:9/reset_prefix_cache"):
+            asyncio.run(HttpDriver("chat", "vllm", url="http://127.0.0.1:9/v1/x").reset(
+                _Session([], error=aiohttp.ClientConnectionError("refused"))))
 
 
 class BoundDriver(unittest.TestCase):
@@ -217,6 +231,20 @@ class GridOverHttp(unittest.TestCase):
 
             drv._stream = short
             with self.assertRaisesRegex(GridBatchFailed, "ctx=4 bs=2 step=5: 4 tokens decoded"):
+                self.batch(drv, 4, 2, 5)
+
+    def test_a_batch_without_usage_fails(self):
+        with fake_endpoint.serve() as (endpoint, _):
+            drv = self.driver(endpoint)
+            ok = drv._stream
+
+            async def no_usage(*args, **kw):
+                result = await ok(*args, **kw)
+                result.usage_reported = False
+                return result
+
+            drv._stream = no_usage
+            with self.assertRaisesRegex(GridBatchFailed, "step=5: no usage reported"):
                 self.batch(drv, 4, 2, 5)
 
 

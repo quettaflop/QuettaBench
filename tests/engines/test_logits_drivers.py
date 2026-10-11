@@ -46,7 +46,8 @@ class Halves(unittest.TestCase):
                                             engine_kwargs={"model": "/w", "dtype": "bfloat16"}))
         rows = list(driver.run(requests(), cell=CELL))
         self.assertEqual(transformers.CALLS, [
-            ("AutoModelForCausalLM.from_pretrained", "/w", {"torch_dtype": torch.bfloat16}),
+            ("AutoModelForCausalLM.from_pretrained", "/w", {"torch_dtype": torch.bfloat16,
+                                                     "trust_remote_code": True}),
             ("to", "cuda:0"), ("eval",)])
         return rows
 
@@ -59,7 +60,8 @@ class Halves(unittest.TestCase):
                 "model": "/w", "dtype": "float32", "layers": 2}))
             list(driver.run(requests(), cell=CELL))
             (_, path, kwargs) = transformers.CALLS[1]
-            self.assertEqual(transformers.CALLS[0], ("AutoConfig.from_pretrained", "/w", {}))
+            self.assertEqual(transformers.CALLS[0], ("AutoConfig.from_pretrained", "/w",
+                                                         {"trust_remote_code": True}))
             self.assertEqual((path, kwargs["torch_dtype"]), ("/w", torch.float32))
             self.assertEqual((kwargs["config"].num_hidden_layers, kwargs["config"].layer_types),
                              (2, ["a", "b"]))
