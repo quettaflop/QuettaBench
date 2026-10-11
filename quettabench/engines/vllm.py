@@ -49,6 +49,7 @@ from quettabench.engines.base import (
     register,
 )
 from quettabench.engines.drivers import HttpDriver, InProcessDriver
+from quettabench.workloads.sessions import SessionTrace
 
 SERVER_CMD = "serve"
 SERVER_FLAGS = ("--enable-chunked-prefill", "--trust-remote-code")
@@ -187,14 +188,29 @@ class VllmAdapter(EngineAdapter):
         grid run builds vllm.LLM itself."""
         return cfg.mode.grid is None or self.grid_over_http(cfg)
 
-    def driver(self, spec, handle):
+    def driver(self, spec, handle, trace=None):
         """InProcessDriver when nothing was launched (an in-process grid run),
-        else the launched server's /v1/completions with the model it was
-        started on."""
+        else the launched server with the model it was started on: its
+        /v1/chat/completions for chat requests, /v1/completions otherwise."""
         if handle.endpoint is None:
             return InProcessDriver(spec)
-        return HttpDriver("completions", url=handle.endpoint + "/v1/completions",
+        endpoint = "chat" if chat_requests(trace) else "completions"
+        path = "/v1/chat/completions" if endpoint == "chat" else "/v1/completions"
+        return HttpDriver(endpoint, url=handle.endpoint + path,
                           model=spec.engine_kwargs["model"], timeout=spec.timeout_s)
+
+
+def chat_requests(trace):
+    """Whether trace is chat: multi-turn sessions, whose turns carry the whole
+    conversation and take the engine's reply text, or requests that carry
+    messages and no token ids. The completions body would send only the last
+    user message of such a request."""
+    if trace is None:
+        return False
+    if isinstance(trace, SessionTrace):
+        return True
+    requests = trace.requests()
+    return bool(requests) and all(r.messages and not r.prompt_token_ids for r in requests)
 
 
 ADAPTER = register(VllmAdapter())

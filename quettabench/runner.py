@@ -124,7 +124,7 @@ def run_one(cfg, out):
                              timeout_s=cfg.hardware.ready_timeout_s)
               if adapter.needs_server(cfg) else launcher.NoServer(out))
     try:
-        driver = adapter.driver(spec, handle)
+        driver = adapter.driver(spec, handle, trace)
         if trace is None:
             trace = workloads.build(cfg, tokenizer=getattr(driver, "tokenizer", None))
         writer = RunWriter(out, cfg, handle=handle, driver=driver, launch_env=spec.env)

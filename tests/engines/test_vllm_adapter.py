@@ -10,11 +10,13 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from quettabench.config import loader
 from quettabench.engines import base, launcher, vllm as vllm_adapter
 from quettabench.engines.drivers import HttpDriver, InProcessDriver
 from quettabench.profiling import native
+from quettabench.workloads.base import Request
 from tests.golden._harness import ENV_OVERRIDE, FIXTURES, REPO
 
 GOLDEN = json.loads((FIXTURES / "engine_args.json").read_text())
@@ -175,6 +177,17 @@ class GridDriver(unittest.TestCase):
         driver = adapter.driver(spec, handle)
         self.assertIsInstance(driver, HttpDriver)
         self.assertEqual(driver.url, "http://127.0.0.1:8000/v1/completions")
+
+    def test_chat_requests_go_to_chat_completions(self):
+        spec = vllm_adapter.ADAPTER.translate(self.cfg("engine.driver=http"))
+        handle = launcher.NoServer(Path("r"), endpoint="http://127.0.0.1:8000")
+        chat = mock.Mock(**{"requests.return_value": [Request([], 3, messages=[{"role": "user"}])]})
+        ids = mock.Mock(**{"requests.return_value": [Request([1, 2], 2, messages=[{"role": "user"}])]})
+        urls = {name: vllm_adapter.ADAPTER.driver(spec, handle, trace).url
+                for name, trace in (("chat", chat), ("ids", ids), ("none", None))}
+        self.assertEqual(urls, {"chat": "http://127.0.0.1:8000/v1/chat/completions",
+                                "ids": "http://127.0.0.1:8000/v1/completions",
+                                "none": "http://127.0.0.1:8000/v1/completions"})
 
     def test_http_grid_returns_no_text_or_logits(self):
         for returns in ("text", "logits"):

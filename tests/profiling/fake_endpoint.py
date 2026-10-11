@@ -1,6 +1,8 @@
 """A local stand-in for an attached vLLM server: GET /metrics returns the
 given Prometheus text (or what a given callable returns, per scrape), POST /v1/completions answers `#### <prompt length>`,
-or with "stream" set streams max_tokens one-token chunks and a usage chunk,
+or with "stream" set streams max_tokens one-token chunks and a usage chunk;
+POST /v1/chat/completions streams them as delta content, the prompt length
+counted over every message's content,
 and POST /reset_prefix_cache answers 200. Every POST body is recorded in
 `posts` (None for a bodiless POST)."""
 
@@ -52,8 +54,13 @@ def serve(metrics=METRICS):
 
         def _stream(self, body):
             n = body["max_tokens"]
-            chunks = [{"choices": [{"text": "t"}]} for _ in range(n)]
-            chunks.append({"choices": [], "usage": {"prompt_tokens": len(body["prompt"]),
+            if self.path.endswith("/chat/completions"):
+                chunks = [{"choices": [{"delta": {"content": "t"}}]} for _ in range(n)]
+                prompt_len = sum(len(m.get("content") or "") for m in body["messages"])
+            else:
+                chunks = [{"choices": [{"text": "t"}]} for _ in range(n)]
+                prompt_len = len(body["prompt"])
+            chunks.append({"choices": [], "usage": {"prompt_tokens": prompt_len,
                                                     "completion_tokens": n}})
             lines = [f"data: {json.dumps(c)}\n\n" for c in chunks] + ["data: [DONE]\n\n"]
             self._reply("".join(lines).encode(), "text/event-stream")

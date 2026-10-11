@@ -148,7 +148,7 @@ class QuettaServeAdapter(EngineAdapter):
         """QuettaServe cannot listen yet: the bench is its own process per cell."""
         return False
 
-    def driver(self, spec, handle):
+    def driver(self, spec, handle, trace=None):
         """Bench rows logged to <results_dir>/bench.log, as bench.sh's out-log."""
         return BenchDriver(Path(handle.results_dir) / "bench.log", spec.cells)
 

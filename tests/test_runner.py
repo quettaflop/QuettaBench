@@ -18,8 +18,11 @@ import yaml
 from quettabench import cli, runner
 from quettabench.config import loader
 from quettabench.config.schema import ConfigError
+from quettabench.engines import launcher
 from quettabench.engines.base import LaunchSpec
+from quettabench.workloads.sessions import TrajectorySessionTrace
 from tests.golden._harness import REPO
+from tests.profiling import fake_endpoint
 
 RUNS = sorted((REPO / "configs" / "runs").glob("*.yaml"))
 # Hybrid attention without kv_bytes: the loader refuses on purpose.
@@ -201,6 +204,43 @@ class DockerDryRun(unittest.TestCase):
         _, exit_msg = qbench("run", str(RUNS[0].with_name("llama-tp1.yaml")), "--dry-run",
                              "--set", "engine.model=/w", "--set", "hardware.launcher=docker")
         self.assertIn("needs a launched server", exit_msg)
+
+
+def session_trace(td):
+    """Two sessions of three turns, each turn's messages the whole conversation."""
+    sessions = []
+    for s in range(2):
+        history, turns = [], []
+        for t in range(3):
+            history = [*history, {"role": "user", "content": f"s{s} t{t}"}]
+            turns.append({"turn_idx": t, "messages": history, "osl_tokens": 3})
+            history = [*history, {"role": "assistant", "content": f"reply {t}"}]
+        sessions.append({"session_id": f"S{s}", "turns": turns})
+    path = Path(td, "t.jsonl")
+    path.write_text("".join(json.dumps(x) + "\n" for x in sessions))
+    with contextlib.redirect_stdout(io.StringIO()):
+        return TrajectorySessionTrace(str(path), min_turns=3, num_sessions=2)
+
+
+class ChatOverHttp(unittest.TestCase):
+    def test_sessions_on_vllm_go_over_chat_with_the_whole_conversation(self):
+        (cfg,) = loader.load(RUNS[0].with_name("llama.yaml"),
+                             ["engine.model=/w", "hardware.visible_devices=0", "mode.grid=null",
+                              "mode.warmup=0", "mode.concurrency=2"], env={})
+        with tempfile.TemporaryDirectory() as td, fake_endpoint.serve() as (endpoint, posts):
+            trace = session_trace(td)
+            handle = launcher.Handle("vllm", endpoint, 0, Path(td), mock.Mock())
+            with mock.patch.object(runner.launcher, "start", return_value=handle), \
+                    mock.patch.object(handle, "stop"), \
+                    mock.patch.object(runner.workloads, "build", return_value=trace), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                runner.run_one(cfg, Path(td, "run"))
+            rows = [json.loads(x) for x in Path(td, "run", "requests.jsonl").read_text().splitlines()]
+        self.assertEqual({path for path, _ in posts}, {"/v1/chat/completions"})
+        sent = sorted(json.dumps(body["messages"]) for _, body in posts)
+        self.assertEqual(sent, sorted(json.dumps(r.messages) for r in trace.requests()))
+        self.assertEqual(max(len(body["messages"]) for _, body in posts), 5)
+        self.assertEqual([r["success"] for r in rows], [True] * 6)
 
 
 class ProbeMode(unittest.TestCase):

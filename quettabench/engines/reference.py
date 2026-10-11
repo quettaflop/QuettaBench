@@ -33,7 +33,7 @@ class ReferenceAdapter(EngineAdapter):
     def needs_server(self, cfg):
         return False
 
-    def driver(self, spec, handle):
+    def driver(self, spec, handle, trace=None):
         return ReferenceDriver(spec)
 
 

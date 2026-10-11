@@ -96,8 +96,9 @@ class EngineAdapter(ABC):
         run_dir is where the run writes (instrumentation output lands there)."""
 
     @abstractmethod
-    def driver(self, spec, handle):
-        """The Driver that sends work to an engine started from spec."""
+    def driver(self, spec, handle, trace=None):
+        """The Driver that sends work to an engine started from spec; trace
+        is the run's, for an adapter whose endpoint depends on it."""
 
     def needs_server(self, cfg):
         """Whether runner launches spec.server_argv before driving. A grid run
