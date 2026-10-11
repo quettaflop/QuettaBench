@@ -7,6 +7,7 @@ Reports input tok/s and output tok/s separately (not just total).
 """
 
 import json
+import re
 import statistics
 from dataclasses import dataclass, field
 
@@ -1038,3 +1039,54 @@ def print_summary(s: BenchmarkSummary) -> None:
         for e in s.errors[:3]:
             print(f"   {e}")
         print()
+
+
+# vLLM's speculative-decoding counters, named as the H200 campaign's own
+# /metrics scrape recorded them (v4bench_backup_20260928/sweep_results.jsonl,
+# spec_metrics: vllm:spec_decode_num_drafts_total, ..._draft_tokens_total,
+# ..._accepted_tokens_total). They exist only on a server with spec decoding.
+SPEC_COUNTERS = {"accepted_tokens": "vllm:spec_decode_num_accepted_tokens",
+                 "draft_tokens": "vllm:spec_decode_num_draft_tokens",
+                 "drafts": "vllm:spec_decode_num_drafts"}
+
+# name{labels} value [timestamp]; label values may hold escaped quotes.
+SAMPLE = re.compile(r'^([a-zA-Z_:][a-zA-Z0-9_:]*)(?:\{(.*)\})?\s+(\S+)(?:\s+\S+)?$')
+LABEL = re.compile(r'([a-zA-Z_][a-zA-Z0-9_]*)="((?:[^"\\]|\\.)*)"')
+
+
+def parse_prometheus(text):
+    """{name: value} for unlabeled samples, {(name, ((label, value), ...)): value}
+    for labeled ones, labels sorted. Comments and blank lines are skipped;
+    a line that does not parse is skipped too, since one odd exporter line
+    should not cost the whole scrape."""
+    out = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        m = SAMPLE.match(line)
+        if not m:
+            continue
+        name, labels, value = m.groups()
+        try:
+            value = float(value)
+        except ValueError:
+            continue
+        key = (name, tuple(sorted(LABEL.findall(labels)))) if labels else name
+        out[key] = value
+    return out
+
+
+def counter_total(metrics, name):
+    """Sum of a counter over every label set; prometheus_client exposes
+    counter X as X_total, so both spellings count. None when absent."""
+    names = (name, name + "_total")
+    vals = [v for k, v in metrics.items() if (k[0] if isinstance(k, tuple) else k) in names]
+    return sum(vals) if vals else None
+
+
+def spec_counts(metrics):
+    """{accepted_tokens, draft_tokens, drafts} from parsed /metrics, each
+    summed over engines; None when a counter is missing (spec decoding off)."""
+    counts = {key: counter_total(metrics, name) for key, name in SPEC_COUNTERS.items()}
+    return None if None in counts.values() else counts

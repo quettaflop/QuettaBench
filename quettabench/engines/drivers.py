@@ -38,8 +38,8 @@ import aiohttp
 
 from quettabench.config import env_map
 from quettabench.crossval import reader
-from quettabench.metrics.core import RequestResult
-from quettabench.profiling.native import spec_decode_counters
+from quettabench.engines import launcher
+from quettabench.metrics.core import RequestResult, parse_prometheus, spec_counts
 from quettabench.workloads.base import Request
 from quettabench.workloads.grid import distinct_ids
 
@@ -504,7 +504,13 @@ class HttpDriver(Driver):
     def spec_counters(self):
         """The server's spec-decode counters from one /metrics scrape; None
         without a bound url or without the counters."""
-        return spec_decode_counters(server_base_url(self.url)) if self.url else None
+        if not self.url:
+            return None
+        try:
+            with launcher.urlopen(f"{server_base_url(self.url)}/metrics", timeout=10) as resp:
+                return spec_counts(parse_prometheus(resp.read().decode()))
+        except OSError:
+            return None
 
     def warmup(self):
         """One 256-token prompt decoded 20 steps, as InProcessDriver's; the time is discarded."""

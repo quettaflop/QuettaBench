@@ -22,21 +22,10 @@ from contextlib import closing
 from pathlib import Path
 
 from quettabench.engines import launcher
+from quettabench.metrics.core import counter_total, parse_prometheus, spec_counts
 
 HITS = "vllm:gpu_prefix_cache_hits"
 QUERIES = "vllm:gpu_prefix_cache_queries"
-
-# vLLM's speculative-decoding counters, named as the H200 campaign's own
-# /metrics scrape recorded them (v4bench_backup_20260928/sweep_results.jsonl,
-# spec_metrics: vllm:spec_decode_num_drafts_total, ..._draft_tokens_total,
-# ..._accepted_tokens_total). They exist only on a server with spec decoding.
-SPEC_COUNTERS = {"accepted_tokens": "vllm:spec_decode_num_accepted_tokens",
-                 "draft_tokens": "vllm:spec_decode_num_draft_tokens",
-                 "drafts": "vllm:spec_decode_num_drafts"}
-
-# name{labels} value [timestamp]; label values may hold escaped quotes.
-SAMPLE = re.compile(r'^([a-zA-Z_:][a-zA-Z0-9_:]*)(?:\{(.*)\})?\s+(\S+)(?:\s+\S+)?$')
-LABEL = re.compile(r'([a-zA-Z_][a-zA-Z0-9_]*)="((?:[^"\\]|\\.)*)"')
 
 # The live probes import QuettaSim's `engine` package at the top, so they are
 # loaded by name only when their source is asked for; the GPU-free profiler
@@ -50,37 +39,6 @@ TRACE_FILES = {
     "nsys": ("nsys.nsys-rep", "nsys.qdrep", "nsys.rep"),
     "torch": ("torch_trace.json",),
 }
-
-
-def parse_prometheus(text):
-    """{name: value} for unlabeled samples, {(name, ((label, value), ...)): value}
-    for labeled ones, labels sorted. Comments and blank lines are skipped;
-    a line that does not parse is skipped too, since one odd exporter line
-    should not cost the whole scrape."""
-    out = {}
-    for line in text.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        m = SAMPLE.match(line)
-        if not m:
-            continue
-        name, labels, value = m.groups()
-        try:
-            value = float(value)
-        except ValueError:
-            continue
-        key = (name, tuple(sorted(LABEL.findall(labels)))) if labels else name
-        out[key] = value
-    return out
-
-
-def counter_total(metrics, name):
-    """Sum of a counter over every label set; prometheus_client exposes
-    counter X as X_total, so both spellings count. None when absent."""
-    names = (name, name + "_total")
-    vals = [v for k, v in metrics.items() if (k[0] if isinstance(k, tuple) else k) in names]
-    return sum(vals) if vals else None
 
 
 def prefix_cache_hit_rate(metrics):
@@ -98,15 +56,11 @@ def scrape_metrics(endpoint, timeout_s=10):
 
 
 def spec_decode_counters(endpoint, timeout_s=10):
-    """{accepted_tokens, draft_tokens, drafts} from one /metrics scrape,
-    each summed over engines; None when a counter is missing (spec decoding
-    off) or /metrics does not answer."""
+    """spec_counts of one /metrics scrape; None when /metrics does not answer."""
     try:
-        metrics = scrape_metrics(endpoint, timeout_s)
+        return spec_counts(scrape_metrics(endpoint, timeout_s))
     except OSError:
         return None
-    counts = {key: counter_total(metrics, name) for key, name in SPEC_COUNTERS.items()}
-    return None if None in counts.values() else counts
 
 
 def metrics_section(metrics):
