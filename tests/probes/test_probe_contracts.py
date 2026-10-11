@@ -162,3 +162,12 @@ def test_remote_recipe_ships_what_base_imports():
                 "assert b.__file__.startswith(sys.argv[1]), b.__file__")
         proc = subprocess.run([sys.executable, "-I", "-c", code, td], capture_output=True, text=True)
     assert proc.returncode == 0, proc.stderr
+
+
+def test_the_r2_mirror_has_its_own_prefix_and_never_deletes():
+    """mirror-up/down sync results/probes/ with profiling/qbench_probes/ only;
+    a --delete onto a shared prefix would remove what other writers keep."""
+    text = JUSTFILE.read_text()
+    assert 'r2_prefix := "profiling/qbench_probes"' in text
+    assert "--delete" not in text and "mirror-up-prune" not in text
+    assert "kernel_data" not in "".join(ln for ln in text.splitlines() if "r2_" in ln)

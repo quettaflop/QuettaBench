@@ -44,8 +44,9 @@ QuettaSim's `engine/backends/kernel_composed_cost.py` reads. Two merges: the col
 probe's and vllm_allreduce's `ncu/collectives/{gpu}_tp{N}.csv` become one table,
 vllm_allreduce's `all_reduce` rows over the collective probe's; gemm's `fp8_act_quant`
 joins the elementwise probe's `elementwise/{gpu}.json`. `manifest.json` names the run
-behind each table. The R2 mirror (`just mirror-up`) carries the same
-`<gpu>/<probe>/<run-id>/` layout. Schema
+behind each table. The R2 mirror (`just mirror-up`, `mirror-down`) is a backup of
+`results/probes/` under `profiling/qbench_probes/`, in the same `<gpu>/<probe>/<run-id>/`
+layout; QuettaSim never reads it. Schema
 contract: filenames `{gpu}[_tpN].csv`, method split `ncu/` (graphed decode) vs
 `cuda_event/` (eager prefill), columns as the current H100/A100 tables.
 
@@ -232,9 +233,9 @@ your serving stack runs, or the kernel numbers will not match production.
 
 ## Data flow
 
-Raw probe output is bulky and goes to R2 under `profiling/raw/`; `just export` turns results
-dirs into the small curated tables, which are committed into the consumer repos (QuettaSim,
-agentic-serve). QuettaBench holds the tools, not the curated tables.
+Probe runs stay in `results/probes/` and are backed up to R2 under `profiling/qbench_probes/`
+(`just mirror-up`); `just export` turns results dirs into the tables the consumer repos
+(QuettaSim, agentic-serve) read. QuettaBench holds the tools, not the curated tables.
 
 ## Tests
 

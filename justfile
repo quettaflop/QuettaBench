@@ -30,7 +30,8 @@ kdata := "results/probes"
 
 r2_endpoint := env_var_or_default("R2_ENDPOINT", "")
 r2_bucket := env_var_or_default("R2_BUCKET", "")
-r2_prefix := env_var_or_default("R2_KERNEL_PREFIX", "profiling/kernel_data")
+# The probes' own prefix: a backup of results/probes/, never QuettaSim's profiling/kernel_data/.
+r2_prefix := "profiling/qbench_probes"
 r2_profile := env_var_or_default("AWS_PROFILE", "r2")
 
 default:
@@ -195,10 +196,6 @@ mirror-preview:
 mirror-up:
     aws --profile {{r2_profile}} --endpoint-url {{r2_endpoint}} s3 sync {{kdata}}/ s3://{{r2_bucket}}/{{r2_prefix}}/ --exclude '*/__pycache__/*' --exclude '*.pyc' --only-show-errors
     @echo "{{kdata}} -> s3://{{r2_bucket}}/{{r2_prefix}}/"
-
-mirror-up-prune:
-    aws --profile {{r2_profile}} --endpoint-url {{r2_endpoint}} s3 sync {{kdata}}/ s3://{{r2_bucket}}/{{r2_prefix}}/ --delete --exclude '*/__pycache__/*' --exclude '*.pyc' --only-show-errors
-    @echo "{{kdata}} -> s3://{{r2_bucket}}/{{r2_prefix}}/ (pruned)"
 
 mirror-down:
     aws --profile {{r2_profile}} --endpoint-url {{r2_endpoint}} s3 sync s3://{{r2_bucket}}/{{r2_prefix}}/ {{kdata}}/ --exclude '*/__pycache__/*' --only-show-errors

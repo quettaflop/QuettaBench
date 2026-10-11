@@ -493,3 +493,10 @@ collective run after a `vllm_allreduce` run used to replace the vLLM rows
 with NCCL ones. Likewise gemm's `fp8_act_quant` entry and the elementwise
 probe's entries merge into one `elementwise/{gpu}.json`, where an
 elementwise run after a gemm fp8 run used to drop `fp8_act_quant`.
+
+2026-10-11: no fixture changed. `just mirror-up`, `mirror-down` and
+`mirror-preview` sync `results/probes/` with the R2 prefix
+`profiling/qbench_probes/`, fixed in the justfile, instead of
+`profiling/kernel_data/` (overridable by `R2_KERNEL_PREFIX`), which is
+QuettaSim's kernel data. `mirror-up-prune`, an `s3 sync --delete` onto that
+prefix, is gone.

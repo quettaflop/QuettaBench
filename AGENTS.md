@@ -91,8 +91,11 @@ Every writer and every process starter, exactly:
 - `provision.py`: outside the repo, the `cache_root` dirs, the QuettaServe
   `git clone`, `pip install`, the weights download and `cargo` builds; in the
   repo, `.env`.
-- `justfile` `mirror-up` (and `mirror-up-prune`): uploads `results/probes/`
-  to R2, the second route out of the repo, for probe tables only.
+- `justfile` `mirror-up`: uploads `results/probes/` to R2 under
+  `profiling/qbench_probes/`, a backup of the probe runs and the second
+  route out of the repo; it never deletes there and never writes
+  QuettaSim's `profiling/kernel_data/`. `mirror-down` writes that prefix
+  back into `results/probes/`.
 
 ## Laws
 
