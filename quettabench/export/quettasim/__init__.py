@@ -10,6 +10,7 @@ from pathlib import Path
 from quettabench.export.quettasim import (
     _inputs,
     extract_benchmark_per_request,
+    kernel_tables,
     prefill_floor,
     roofline_utils,
     saturated_ceiling,
@@ -26,6 +27,7 @@ BUILDERS = {
     "extract_benchmark_per_request": extract_benchmark_per_request,
     "prefill_floor": prefill_floor,
     "saturated_ceiling": saturated_ceiling,
+    "kernel_tables": kernel_tables,
 }
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -61,7 +63,8 @@ def export(results_dirs: Iterable[Path], dest: Path, only: Iterable[str] | None 
     """Run the builders (all, or the named ones) over the results dirs; return the files written.
 
     Also writes dest/manifest.json: where the inputs came from, the runs
-    recorded there (run.json), which bench commit, when.
+    recorded there (run.json), which bench commit, when, and with
+    kernel_tables the run dirs behind each kernel table.
     """
     results_dirs = [Path(d) for d in results_dirs]
     _inputs.run_dirs.cache_clear()
@@ -80,5 +83,7 @@ def export(results_dirs: Iterable[Path], dest: Path, only: Iterable[str] | None 
         "bench_sha": bench_sha(),
         "exported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
+    if "kernel_tables" in names:
+        manifest["kernel_tables"] = kernel_tables.sources(results_dirs)
     (dest / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     return written

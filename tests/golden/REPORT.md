@@ -478,3 +478,18 @@ a killed run left tables with no record at all, and export kept them. A
 probe that names its output file (`serving_stage_split --out`,
 `serving_decode_grid --out-raw`) refuses a dir that already records a run;
 before, the second run's `run.json` replaced the first's.
+
+2026-10-11: no fixture changed. Since the probe move, `vllm_allreduce` wrote
+its `all_reduce` rows to its own `vllm_allreduce/.../ncu/collectives/{gpu}_tp{N}.csv`
+and the collective probe its rows to `collective/.../ncu/collectives/`, so
+no table held both, where before the move `vllm_allreduce` upserted its
+rows into the collective probe's table in QuettaSim's `kernel_data/`. The
+new `kernel_tables` export builder merges them back into one
+`kernel_data/ncu/collectives/{gpu}_tp{N}.csv` by the old rule: the
+collective probe's rows other than `all_reduce` (`dtype_bytes` 2 and
+`path` nccl when absent), then `vllm_allreduce`'s `all_reduce` rows. Unlike
+the old upsert, the merge does not depend on which probe ran last: a
+collective run after a `vllm_allreduce` run used to replace the vLLM rows
+with NCCL ones. Likewise gemm's `fp8_act_quant` entry and the elementwise
+probe's entries merge into one `elementwise/{gpu}.json`, where an
+elementwise run after a gemm fp8 run used to drop `fp8_act_quant`.

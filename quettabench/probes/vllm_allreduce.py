@@ -7,9 +7,11 @@ the custom all-reduce kernel (one-/two-shot over NVLink P2P) and only large ones
 NCCL. On H200 tp2 the plain-NCCL grid over-priced graphed decode comm by ~1.5 ms/step
 (legacy 15.8 us/op x 96 sub-layers), which showed up as a 15-17pp TPOT MAPE gap vs a
 zero-latency analytic ring (Mooncake GT, 2026-08-25). This probe measures the path
-vLLM actually takes and UPSERTS the all_reduce rows of its own
-vllm_allreduce/ncu/collectives/{gpu}_tp{N}.csv; the other ops' NCCL rows (vLLM uses
-NCCL for those) are the collective probe's, in collective/ncu/collectives/.
+vLLM actually takes and writes them as the all_reduce rows of its own
+vllm_allreduce/<run-id>/ncu/collectives/{gpu}_tp{N}.csv. The other ops' NCCL rows (vLLM
+uses NCCL for those) are the collective probe's; the kernel_tables export merges the
+two into one ncu/collectives/{gpu}_tp{N}.csv, these all_reduce rows over the
+collective probe's.
 
   CUDA_VISIBLE_DEVICES=0,1 python3 -m torch.distributed.run --nproc_per_node=2 -m quettabench.probes.vllm_allreduce \
       --gpu-label H200 --out <dir>
@@ -84,21 +86,13 @@ def main(argv=None):
         root = out_root(a, "vllm_allreduce")
         out = root / "ncu" / "collectives" / f"{a.gpu_label}_tp{world}.csv"
         out.parent.mkdir(parents=True, exist_ok=True)
-        kept = []
-        if out.exists():
-            with out.open(newline="") as f:
-                kept = [r for r in csv.DictReader(f) if (r.get("op") or "all_reduce") != "all_reduce"]
         with out.open("w", newline="") as f:
             w = csv.DictWriter(f, fieldnames=["op", "world", "bytes", "latency_us", "dtype_bytes", "path"])
             w.writeheader()
-            for r in kept:
-                w.writerow({"op": r["op"], "world": r["world"], "bytes": r["bytes"],
-                            "latency_us": r["latency_us"], "dtype_bytes": r.get("dtype_bytes", 2),
-                            "path": r.get("path", "nccl")})
             for nbytes, us_v, _ in rows:
                 w.writerow({"op": "all_reduce", "world": world, "bytes": nbytes,
                             "latency_us": round(us_v, 4), "dtype_bytes": 2, "path": "vllm"})
-        print(f"[vllm-ar] wrote {out}: {len(rows)} all_reduce rows (vllm path) + {len(kept)} other-op rows kept", flush=True)
+        print(f"[vllm-ar] wrote {out}: {len(rows)} all_reduce rows (vllm path)", flush=True)
         ref = root / "ncu" / "collectives" / f"{a.gpu_label}_tp{world}_nccl_vs_vllm.csv"
         with ref.open("w", newline="") as f:
             w = csv.writer(f)
