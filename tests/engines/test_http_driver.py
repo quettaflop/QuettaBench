@@ -6,8 +6,10 @@ import unittest
 from contextlib import asynccontextmanager
 from unittest import mock
 
-from quettabench.engines.drivers import HttpDriver, PrefixCacheResetError
+from quettabench.engines.drivers import GridBatchFailed, HttpDriver, PrefixCacheResetError
+from quettabench.metrics.step_fit import fit_run
 from quettabench.workloads.base import Request
+from tests.profiling import fake_endpoint
 
 
 class _Resp:
@@ -152,6 +154,70 @@ class BoundDriver(unittest.TestCase):
 
         self.assertEqual(asyncio.run(go()),
                          "prefix cache reset via http://h:8000/reset_prefix_cache")
+
+
+class GridOverHttp(unittest.TestCase):
+    """A grid batch is bs concurrent completions against the fake server."""
+
+    def driver(self, endpoint):
+        return HttpDriver("completions", url=endpoint + "/v1/completions", model="m", timeout=9)
+
+    def cell(self, ctx, bs, step, attempt=0):
+        return {"ctx": ctx, "bs": bs, "tp": 1, "step_point": step, "phase": "fit",
+                "attempt": attempt}
+
+    def batch(self, drv, ctx, bs, step):
+        requests = [Request([i] * ctx, ctx, output_length=step) for i in range(bs)]
+        return list(drv.run(requests, cell=self.cell(ctx, bs, step)))
+
+    def test_rows_have_the_in_process_shape(self):
+        with fake_endpoint.serve() as (endpoint, posts):
+            rows = self.batch(self.driver(endpoint), 4, 3, 5)
+        sent = [b for path, b in posts if path == "/v1/completions"]
+        self.assertEqual(len(sent), 3)
+        for body in sent:
+            self.assertEqual((body["max_tokens"], body["ignore_eos"], body["temperature"],
+                              len(body["prompt"])), (5, True, 0.0, 4))
+        self.assertEqual(len(rows), 3)
+        for r in rows:
+            self.assertEqual((r.success, r.e2el, r.ttft, r.output_tokens, r.input_tokens,
+                              r.ttft_basis), (True, r.batch_wall_s, None, 5, 4, "batch"))
+            self.assertEqual(r.cell, self.cell(4, 3, 5))
+        self.assertEqual(len({r.batch_wall_s for r in rows}), 1)
+
+    def test_cache_resets_once_per_cell(self):
+        with fake_endpoint.serve() as (endpoint, posts):
+            drv = self.driver(endpoint)
+            drv.warmup()
+            for ctx, bs, step in ((4, 2, 3), (4, 2, 6), (8, 1, 3)):
+                self.batch(drv, ctx, bs, step)
+        paths = [path for path, _ in posts]
+        self.assertEqual(paths, ["/v1/completions", "/reset_prefix_cache",
+                                 *["/v1/completions"] * 4, "/reset_prefix_cache",
+                                 "/v1/completions"])
+
+    def test_step_fit_reads_the_rows_unchanged(self):
+        with fake_endpoint.serve() as (endpoint, _):
+            drv = self.driver(endpoint)
+            rows = [r for step in (3, 6, 9) for r in self.batch(drv, 4, 2, step)]
+        (step,) = fit_run(rows, 4, 131072, 15.0)
+        self.assertEqual((step["ctx"], step["bs"], step["step_points"]), (4, 2, [3, 6, 9]))
+        self.assertEqual(step["raw"], [rows[0].batch_wall_s, rows[2].batch_wall_s,
+                                       rows[4].batch_wall_s])
+
+    def test_a_short_decode_fails_the_batch(self):
+        with fake_endpoint.serve() as (endpoint, _):
+            drv = self.driver(endpoint)
+            ok = drv._stream
+
+            async def short(*args, **kw):
+                result = await ok(*args, **kw)
+                result.output_tokens -= 1
+                return result
+
+            drv._stream = short
+            with self.assertRaisesRegex(GridBatchFailed, "ctx=4 bs=2 step=5: 4 tokens decoded"):
+                self.batch(drv, 4, 2, 5)
 
 
 if __name__ == "__main__":

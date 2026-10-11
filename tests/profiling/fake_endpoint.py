@@ -1,6 +1,8 @@
 """A local stand-in for an attached vLLM server: GET /metrics returns the
-given Prometheus text, POST /v1/completions answers `#### <prompt length>`.
-Every POST body is recorded in `posts`."""
+given Prometheus text, POST /v1/completions answers `#### <prompt length>`,
+or with "stream" set streams max_tokens one-token chunks and a usage chunk,
+and POST /reset_prefix_cache answers 200. Every POST body is recorded in
+`posts` (None for a bodiless POST)."""
 
 import http.server
 import json
@@ -38,10 +40,23 @@ def serve(metrics=METRICS):
             self._reply(metrics.encode(), "text/plain")
 
         def do_POST(self):
-            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            size = int(self.headers.get("Content-Length") or 0)
+            body = json.loads(self.rfile.read(size)) if size else None
             posts.append((self.path, body))
+            if self.path == "/reset_prefix_cache":
+                return self._reply(b"", "text/plain")
+            if body.get("stream"):
+                return self._stream(body)
             text = f"#### {len(body['prompt'])}"
             self._reply(json.dumps({"choices": [{"text": text}]}).encode(), "application/json")
+
+        def _stream(self, body):
+            n = body["max_tokens"]
+            chunks = [{"choices": [{"text": "t"}]} for _ in range(n)]
+            chunks.append({"choices": [], "usage": {"prompt_tokens": len(body["prompt"]),
+                                                    "completion_tokens": n}})
+            lines = [f"data: {json.dumps(c)}\n\n" for c in chunks] + ["data: [DONE]\n\n"]
+            self._reply("".join(lines).encode(), "text/event-stream")
 
         def _reply(self, data, kind):
             self.send_response(200)

@@ -8,9 +8,11 @@ out at pp == 1, a spelling difference only (golden regenerated with it).
 
 import json
 import unittest
+from pathlib import Path
 
 from quettabench.config import loader
-from quettabench.engines import base, vllm as vllm_adapter
+from quettabench.engines import base, launcher, vllm as vllm_adapter
+from quettabench.engines.drivers import HttpDriver, InProcessDriver
 from tests.golden._harness import ENV_OVERRIDE, FIXTURES, REPO
 
 GOLDEN = json.loads((FIXTURES / "engine_args.json").read_text())
@@ -127,6 +129,37 @@ class Extra(unittest.TestCase):
                       "{tensor_parallel_size: 2}"):
             with self.subTest(value=value), self.assertRaises(base.UnsupportedField):
                 spec_for("llama", sets=[f"engine.extra.vllm={value}"])
+
+
+class GridDriver(unittest.TestCase):
+    """engine.driver picks how a grid run reaches vLLM; in-process stays the default."""
+
+    def cfg(self, *sets):
+        (cfg,) = loader.load(RUNS / "llama.yaml", [*PINNED, *sets], env={})
+        return cfg
+
+    def test_default_grid_is_in_process(self):
+        cfg = self.cfg()
+        adapter = vllm_adapter.ADAPTER
+        self.assertFalse(adapter.needs_server(cfg))
+        self.assertIsInstance(adapter.driver(adapter.translate(cfg), launcher.NoServer(Path("r"))),
+                              InProcessDriver)
+
+    def test_http_grid_launches_the_server(self):
+        cfg = self.cfg("engine.driver=http")
+        adapter = vllm_adapter.ADAPTER
+        spec = adapter.translate(cfg)
+        self.assertTrue(adapter.needs_server(cfg))
+        self.assertEqual(spec.server_argv, spec_for("llama").server_argv)
+        handle = launcher.NoServer(Path("r"), endpoint="http://127.0.0.1:8000")
+        driver = adapter.driver(spec, handle)
+        self.assertIsInstance(driver, HttpDriver)
+        self.assertEqual(driver.url, "http://127.0.0.1:8000/v1/completions")
+
+    def test_http_grid_returns_no_text_or_logits(self):
+        for returns in ("text", "logits"):
+            with self.subTest(returns=returns), self.assertRaises(base.UnsupportedField):
+                spec_for("llama", sets=["engine.driver=http", f"mode.returns={returns}"])
 
 
 if __name__ == "__main__":

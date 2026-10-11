@@ -5,7 +5,8 @@ times one grid batch per generate() call, or scores it (returns="logits").
 ReferenceDriver scores with transformers, the FIDELITY reference. BenchDriver runs a QuettaServe
 bench per grid cell, as bench.sh did, and reads its rows with
 crossval/reader.py's bench log parser. HttpDriver streams
-OpenAI-compatible requests at a launched server. Its two
+OpenAI-compatible requests at a launched server, and times a grid batch as
+bs concurrent completions with the same row shape InProcessDriver gives. Its two
 endpoints keep their own first-token rules, recorded on every result as
 ttft_rule:
 
@@ -34,6 +35,7 @@ import aiohttp
 
 from quettabench.crossval import reader
 from quettabench.metrics.core import RequestResult
+from quettabench.workloads.base import Request
 from quettabench.workloads.grid import distinct_ids
 
 
@@ -386,13 +388,30 @@ def server_base_url(url: str) -> str:
     return urlunsplit((parts.scheme, parts.netloc, "", "", ""))
 
 
+def nvidia_smi_device():
+    """(name, total bytes) of GPU 0 from nvidia-smi; None without one."""
+    try:
+        out = subprocess.run(["nvidia-smi", "--query-gpu=name,memory.total",
+                              "--format=csv,noheader,nounits"],
+                             capture_output=True, text=True, check=True).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    name, mib = out.splitlines()[0].rsplit(", ", 1)
+    return name, int(mib) * 2**20
+
+
+class GridBatchFailed(RuntimeError):
+    """A grid batch over HTTP lost a request or decoded the wrong length."""
+
+
 class HttpDriver(Driver):
     """OpenAI-compatible streaming client for one endpoint of a launched server.
 
     backend_name is serve.py's --backend; it picks the cache-reset endpoint.
     url, model, api_key and timeout (seconds, for every request and the
     reset) bind the driver to one server; send() and run() use them over
-    the aiohttp session opened by session().
+    the aiohttp session opened by session(). run() with a cell is a grid
+    batch (see grid_batch); device() and warmup() serve the grid loop.
     """
 
     version = None  # the server is not asked for one
@@ -403,6 +422,11 @@ class HttpDriver(Driver):
         self._stream, self.ttft_rule = ENDPOINTS[endpoint]
         self.url, self.model, self.api_key, self.timeout = url, model, api_key, timeout
         self._http = None
+        self._cell = None   # (ctx, bs) of the last grid batch; a new one resets the cache
+
+    def device(self):
+        """GPU 0 as nvidia-smi reports it on this box, as BenchDriver reads it."""
+        return nvidia_smi_device()
 
     async def send_request(self, *args, **kwargs) -> RequestResult:
         result = await self._stream(*args, **kwargs)
@@ -437,8 +461,13 @@ class HttpDriver(Driver):
             temperature=temperature, seed=seed, min_tokens=min_tokens, request_id=request_id,
             **extra)
 
-    def run(self, requests, *, concurrency, **sampling):
-        """Closed loop at `concurrency` over requests; yields results in request order."""
+    def run(self, requests, *, concurrency=None, cell=None, **sampling):
+        """Closed loop at `concurrency` over requests; yields results in request
+        order. With a cell, one grid batch instead (grid_batch)."""
+        if cell is not None:
+            yield from self.grid_batch(requests, cell)
+            return
+
         async def all_of_them():
             slots = asyncio.Semaphore(concurrency)
 
@@ -450,6 +479,43 @@ class HttpDriver(Driver):
                 return await asyncio.gather(*(one(r) for r in requests))
 
         yield from asyncio.run(all_of_them())
+
+    def timed_batch(self, requests, cell_key=None):
+        """(seconds, results) of every request sent at once, greedy and
+        ignoring EOS, so each decodes exactly its max_tokens. The clock spans
+        only the requests. A cell_key other than the last one resets the
+        prefix cache first, so a cell never reads the previous cell's blocks."""
+        async def go():
+            async with self.session(len(requests)):
+                if cell_key is not None and cell_key != self._cell:
+                    await self.reset()
+                    self._cell = cell_key
+                t0 = time.perf_counter()
+                results = await asyncio.gather(*(self.send(r, ignore_eos=True)
+                                                 for r in requests))
+                return time.perf_counter() - t0, results
+        return asyncio.run(go())
+
+    def warmup(self):
+        """One 256-token prompt decoded 20 steps, as InProcessDriver's; the time is discarded."""
+        self.timed_batch([Request(distinct_ids(256), 256, output_length=20)])
+
+    def grid_batch(self, requests, cell):
+        """The batch at cell["step_point"] tokens, every row carrying the batch
+        wall as e2el and batch_wall_s and no TTFT (ttft_basis "batch"), the rows
+        InProcessDriver.run yields. A failed request, or a usage count other
+        than the step point, raises: the wall would not be a bs-wide batch."""
+        n = cell["step_point"]
+        wall, results = self.timed_batch(requests, (cell["ctx"], cell["bs"]))
+        for res in results:
+            if not res.success or (res.usage_reported and res.output_tokens != n):
+                raise GridBatchFailed(
+                    f"ctx={cell['ctx']} bs={cell['bs']} step={n}: "
+                    f"{res.error or f'{res.output_tokens} tokens decoded'}")
+        for r in requests:
+            yield RequestResult(success=True, e2el=wall, batch_wall_s=wall,
+                                input_tokens=r.prompt_len, output_tokens=n, ttft_basis="batch",
+                                ttft_rule=self.ttft_rule, cell=dict(cell))
 
     async def reset(self, session=None, url=None, api_key=None, timeout=None) -> str:
         """
@@ -513,15 +579,7 @@ class BenchDriver(Driver):
         self.cells = cells
 
     def device(self):
-        """(name, total bytes) of GPU 0 from nvidia-smi; None without one."""
-        try:
-            out = subprocess.run(["nvidia-smi", "--query-gpu=name,memory.total",
-                                  "--format=csv,noheader,nounits"],
-                                 capture_output=True, text=True, check=True).stdout
-        except (OSError, subprocess.CalledProcessError):
-            return None
-        name, mib = out.splitlines()[0].rsplit(", ", 1)
-        return name, int(mib) * 2**20
+        return nvidia_smi_device()
 
     def run(self, cell_specs, *, concurrency=1, step_points=(), **kwargs):
         """cell_specs: (ctx, bs, translate(cfg, (ctx, bs))) per cell; yields rows.

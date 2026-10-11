@@ -110,6 +110,7 @@ FIELDS = {
     "cudagraph":      (only(True),                         lambda v: {} if v else
                        {"compilation_config": {"cudagraph_mode": "NONE"}}),
     "serving_style":  (only("aggregated"),                 aggregated_only),
+    "driver":         (lambda v: [],                       nothing),  # how a grid is driven
 }
 SCALARS = (str, int, float, bool)
 
@@ -139,6 +140,9 @@ class VllmAdapter(EngineAdapter):
             raise ConfigError("vllm: engine.model is required to launch")
         if engine.instrumentation == "torch":
             raise UnsupportedField("vllm", "instrumentation=torch", "no profiler env var in the repo")
+        if self.grid_over_http(cfg) and cfg.mode.returns != "none":
+            raise UnsupportedField("vllm", f"driver=http with mode.returns={cfg.mode.returns}",
+                                   "the completions stream carries no token ids or logits")
         argv, kwargs, unsupported = [], dict(KWARGS), []
         for name, (to_argv, to_kwargs) in FIELDS.items():
             value = getattr(engine, name)
@@ -168,9 +172,18 @@ class VllmAdapter(EngineAdapter):
             timeout_s=cfg.mode.timeout,
         )
 
+    def grid_over_http(self, cfg):
+        return cfg.mode.grid is not None and cfg.engine.driver == "http"
+
+    def needs_server(self, cfg):
+        """A serve run, or a grid run with engine.driver=http; an in-process
+        grid run builds vllm.LLM itself."""
+        return cfg.mode.grid is None or self.grid_over_http(cfg)
+
     def driver(self, spec, handle):
-        """InProcessDriver when nothing was launched (a grid run), else the
-        launched server's /v1/completions with the model it was started on."""
+        """InProcessDriver when nothing was launched (an in-process grid run),
+        else the launched server's /v1/completions with the model it was
+        started on."""
         if handle.endpoint is None:
             return InProcessDriver(spec)
         return HttpDriver("completions", url=handle.endpoint + "/v1/completions",

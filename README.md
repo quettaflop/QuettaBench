@@ -36,7 +36,9 @@ schema defaults. Unknown keys are refused. `just dry` prints every value
 with its origin.
 
 A grid run (`mode.grid` set) times decode ms per step per (ctx, bs) cell:
-vLLM in-process, QuettaServe through its cargo bench
+vLLM in-process, or over HTTP against a launched server
+(`--set engine.driver=http`: bs concurrent completions per batch, prefix
+cache reset per cell), QuettaServe through its cargo bench
 (`--set engine.name=quettaserve`). A serve run (`mode.grid` unset)
 launches the server and replays the workload against it. `mode: probe`
 runs a kernel probe (`mode.probe`, `mode.probe_args`).
