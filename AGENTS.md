@@ -51,7 +51,10 @@ in one results layer, `results/<run>/`, and leaves the repo by
   is the probes `serving_decode_grid`, `serving_stage_split`, `live_split`
   and `pool_capacity`, and the profiling sources `serving_frontend`,
   `pd_host` and gsm8k (`wrapped.py`). Their `--out` paths are the caller's;
-  nothing checks that they stay under results/.
+  nothing checks that they stay under results/. Those that take an endpoint
+  instead (`serving_stage_split --no-launch`, `live_split --url`) may drive
+  an operator-provided server that launcher.py did not start; the operator
+  owns that server.
 - Docker launch backend ships tested against mocks only, by owner decision; validate on a docker host before relying on it.
 - `quettabench/crossval/`: reads run files; its only write is the report json
   (default `results/xval/`).
@@ -79,7 +82,11 @@ Every writer and every process starter, exactly:
 - `metrics/results.py` `RunWriter`: `run.json` and `requests.jsonl`.
 - probes: their tables and their `run.json` in one dir under `results/`
   (default `results/probes/<gpu>/<probe>/<run-id>/`); `serving_decode_grid` also starts its request
-  shards as `multiprocessing` processes.
+  shards as `multiprocessing` processes, and `probes/_ncu.py` (gemm, flash_attn,
+  gdn `--ncu`) starts `ncu` with a `python -c` child per timed point.
+- `justfile` `remote-probe`: on `REMOTE_HOST`, empties and writes
+  `/tmp/qbench-probes/` (the shipped package and `out/`) and runs the probe
+  there; locally, adds the pulled run under `results/probes/<gpu>/`.
 - `profiler.py`: `profile.json` (and the nsys export) in the run dir.
 - `profiling/kv_transfer.py`: its CSV under `--out-dir`, run under its own
   torchrun ranks.
@@ -107,7 +114,11 @@ Every writer and every process starter, exactly:
 4. A number that is not comparable is withheld, not footnoted.
 5. A setting is added in exactly one place: a `schema.py` field, an adapter
    table row, and an `env_map` row only if an env var used to carry it.
-6. No module outside `config/` reads the environment.
+6. No module outside `config/` reads the environment, except the allowlist
+   in `tests/config/test_no_environ.py`: the torchrun probes read `RANK`,
+   `WORLD_SIZE` and `LOCAL_RANK` (the launcher's protocol), the `--ncu`
+   probes read `NCU_BIN`, and `profiling/kv_transfer.py` reads its torchrun
+   ranks and sets `UCX_RCACHE_MAX_UNRELEASED` as vLLM does.
 7. Rows are append-only jsonl, so a crash keeps partial data.
 
 ## How to change things
@@ -117,7 +128,8 @@ Every writer and every process starter, exactly:
 - Pure moves (`git mv`) are their own commits and carry nothing else.
 - Goldens pass unchanged. A fixture that has to change is a behaviour change
   and gets its line in `tests/golden/REPORT.md`.
-- `just test` and `just lint` are green before every commit.
+- `just test` and `just lint` are green before every commit. The lint gate
+  is ruff and the pre-commit hooks; mypy is not part of it.
 - No attribution trailers in code, commits or PRs: the author field is the only authorship.
 - No em-dash in prose; write `--`.
 - Imports at the top of the file. No inline python in shell or justfile

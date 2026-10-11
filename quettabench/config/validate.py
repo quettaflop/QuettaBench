@@ -75,7 +75,8 @@ def disagg_kv_config(role, rank, connector, kv_port=14579, kv_parallel_size=2):
     passed to the server as --kv-transfer-config <json>. role is 'kv_producer'
     (prefill) or 'kv_consumer' (decode); the two share kv_port and
     kv_parallel_size so the connector pairs them and take distinct kv_rank. A
-    wrong role raises here rather than starting a server that never pairs."""
+    wrong role raises here rather than starting a server that never pairs.
+    No adapter calls it yet; it stays because the golden config fixtures pin it."""
     if role not in ("kv_producer", "kv_consumer"):
         raise ValueError(f"kv_role must be kv_producer or kv_consumer, got {role!r}")
     return {"kv_connector": connector, "kv_role": role, "kv_rank": rank,
