@@ -4,6 +4,8 @@ A profile is data. One yaml per profile, named after it; its keys are
 WorkloadProfile's fields and an unknown key is an error at import. A profile
 with a sampler names synthetic sessions the package does not generate (see
 analysis/synthetic/); it keeps its tags for filtering and refuses to build.
+A profile with active: false is left out of listings (active_profiles, the
+unknown-name message) but still builds when named, unless it has a sampler.
 """
 
 import dataclasses
@@ -65,12 +67,16 @@ PROFILE_ALIASES: dict[str, str] = {
 }
 
 
+def active_profiles() -> list[str]:
+    """The names a listing shows: every profile with active true."""
+    return sorted(name for name, p in PROFILES.items() if p.active)
+
+
 def get_profile(name: str) -> WorkloadProfile:
     """Look up a profile by name, resolving aliases for old names."""
     if name in PROFILES:
         return PROFILES[name]
     if name in PROFILE_ALIASES:
         return PROFILES[PROFILE_ALIASES[name]]
-    raise ValueError(
-        f"Unknown profile '{name}'. Available: {sorted(PROFILES.keys())}"
-    )
+    raise ValueError(f"Unknown profile '{name}'. Available: {active_profiles()} "
+                     "(inactive profiles are not listed)")

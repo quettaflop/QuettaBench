@@ -2,8 +2,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from quettabench import workloads
+from quettabench.config.schema import Config, EngineCfg, HardwareCfg, ModeCfg, WorkloadCfg
 from quettabench.workloads.profiles import (
     PROFILES,
+    active_profiles,
     get_profile,
     load_profiles,
 )
@@ -23,6 +26,23 @@ class ProfileRegistryTests(unittest.TestCase):
                                              "description: d\ndataset: test\nisl: 3\n")
             with self.assertRaisesRegex(ValueError, r"x.yaml: unknown profile key\(s\) \['isl'\]"):
                 load_profiles(td)
+
+    def test_listings_hide_inactive_profiles(self):
+        self.assertEqual(active_profiles(), ["chat-singleturn", "chat-singleturn-synth",
+                                             "coding-singleturn", "mooncake-trace"])
+        with self.assertRaises(ValueError) as e:
+            get_profile("nope")
+        self.assertIn(str(active_profiles()), str(e.exception))
+        self.assertNotIn("chat-short", str(e.exception))
+        self.assertFalse(any(PROFILES[n].sampler for n in active_profiles()))
+
+    def test_an_inactive_sampler_profile_refuses_to_build_with_its_sampler_message(self):
+        cfg = Config(engine=EngineCfg(), workload=WorkloadCfg(kind="sessions",
+                                                              source="swebench-multiturn-synth"),
+                     mode=ModeCfg(), hardware=HardwareCfg())
+        self.assertFalse(PROFILES["swebench-multiturn-synth"].active)
+        with self.assertRaisesRegex(ValueError, "samples synthetic sessions .* analysis/synthetic/"):
+            workloads.build(cfg)
 
     def test_coding_agent_is_alias_for_coding_singleturn(self):
         self.assertEqual(get_profile("coding-agent").name, "coding-singleturn")
