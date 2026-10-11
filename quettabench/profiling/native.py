@@ -18,6 +18,7 @@ import importlib
 import re
 import sqlite3
 import subprocess
+from contextlib import closing
 from pathlib import Path
 
 from quettabench.engines import launcher
@@ -187,54 +188,56 @@ def kernel_summary(results_dir, steps, window=None, subtract=None, top=25, gap_u
                     if (results_dir / n).exists()), None)
         if rep is None:
             raise ValueError(f"no armed nsys trace in {results_dir}")
-        subprocess.run([nsys, "export", "--type", "sqlite", "-o", str(db), str(rep)], check=True)
-    con = sqlite3.connect(db)
+        # Into a temp file first, so an interrupted export leaves no db to trust.
+        part = db.with_name("nsys.partial.sqlite")
+        subprocess.run([nsys, "export", "--type", "sqlite", "-o", str(part), str(rep)], check=True)
+        part.replace(db)
+    with closing(sqlite3.connect(db)) as con:
+        def nvtx(name):
+            rows = [r for r in con.execute(
+                "SELECT e.start, e.end FROM NVTX_EVENTS e LEFT JOIN StringIds s ON s.id = e.textId "
+                "WHERE e.text = ? OR s.value = ?", (name, name)) if r[1] is not None]
+            if len(rows) != 1:
+                raise ValueError(f"NVTX range {name!r} occurs {len(rows)} times; expected once")
+            return rows[0]
 
-    def nvtx(name):
-        rows = [r for r in con.execute(
-            "SELECT e.start, e.end FROM NVTX_EVENTS e LEFT JOIN StringIds s ON s.id = e.textId "
-            "WHERE e.text = ? OR s.value = ?", (name, name)) if r[1] is not None]
-        if len(rows) != 1:
-            raise ValueError(f"NVTX range {name!r} occurs {len(rows)} times; expected once")
-        return rows[0]
+        cols = {r[1] for r in con.execute("PRAGMA table_info(CUPTI_ACTIVITY_KIND_KERNEL)")}
+        col = next(c for c in ("shortName", "demangledName", "nameId", "name") if c in cols)
 
-    cols = {r[1] for r in con.execute("PRAGMA table_info(CUPTI_ACTIVITY_KIND_KERNEL)")}
-    col = next(c for c in ("shortName", "demangledName", "nameId", "name") if c in cols)
+        def tally(win):
+            """{kernel: [launches, ns]}, {device: [(start, end)]}, {memop: [count, ns]}
+            for what lies fully inside win (None: everything)."""
+            bound, args = (" WHERE k.start >= ? AND k.end <= ?", win) if win else ("", ())
+            kernels, devices, mem = {}, {}, {}
+            for s, e, dev, name in con.execute(
+                    "SELECT k.start, k.end, k.deviceId, COALESCE(s.value, 'unknown') "
+                    f"FROM CUPTI_ACTIVITY_KIND_KERNEL k LEFT JOIN StringIds s ON s.id = k.{col}"
+                    + bound, args):
+                k = kernels.setdefault(name, [0, 0])
+                k[0], k[1] = k[0] + 1, k[1] + e - s
+                devices.setdefault(dev, []).append((s, e))
+            for table, kind in (("CUPTI_ACTIVITY_KIND_MEMCPY", "memcpy"),
+                                ("CUPTI_ACTIVITY_KIND_MEMSET", "memset")):
+                try:
+                    rows = con.execute(f"SELECT start, end FROM {table} k" + bound, args).fetchall()
+                except sqlite3.OperationalError:
+                    continue
+                for s, e in rows:
+                    m = mem.setdefault(kind, [0, 0])
+                    m[0], m[1] = m[0] + 1, m[1] + e - s
+            return kernels, devices, mem
 
-    def tally(win):
-        """{kernel: [launches, ns]}, {device: [(start, end)]}, {memop: [count, ns]}
-        for what lies fully inside win (None: everything)."""
-        bound, args = (" WHERE k.start >= ? AND k.end <= ?", win) if win else ("", ())
-        kernels, devices, mem = {}, {}, {}
-        for s, e, dev, name in con.execute(
-                "SELECT k.start, k.end, k.deviceId, COALESCE(s.value, 'unknown') "
-                f"FROM CUPTI_ACTIVITY_KIND_KERNEL k LEFT JOIN StringIds s ON s.id = k.{col}"
-                + bound, args):
-            k = kernels.setdefault(name, [0, 0])
-            k[0], k[1] = k[0] + 1, k[1] + e - s
-            devices.setdefault(dev, []).append((s, e))
-        for table, kind in (("CUPTI_ACTIVITY_KIND_MEMCPY", "memcpy"),
-                            ("CUPTI_ACTIVITY_KIND_MEMSET", "memset")):
-            try:
-                rows = con.execute(f"SELECT start, end FROM {table} k" + bound, args).fetchall()
-            except sqlite3.OperationalError:
-                continue
-            for s, e in rows:
-                m = mem.setdefault(kind, [0, 0])
-                m[0], m[1] = m[0] + 1, m[1] + e - s
-        return kernels, devices, mem
-
-    win = nvtx(window) if window else None
-    kernels, devices, mem = tally(win)
-    if not kernels:
-        raise ValueError("no kernel rows in the trace; was it captured with -t cuda?")
-    if subtract:
-        less_kernels, _, less_mem = tally(nvtx(subtract))
-        for totals, less in ((kernels, less_kernels), (mem, less_mem)):
-            for name, (c, d) in less.items():
-                if name in totals:
-                    totals[name] = [totals[name][0] - c, totals[name][1] - d]
-        kernels = {name: v for name, v in kernels.items() if v[0] > 0}
+        win = nvtx(window) if window else None
+        kernels, devices, mem = tally(win)
+        if not kernels:
+            raise ValueError("no kernel rows in the trace; was it captured with -t cuda?")
+        if subtract:
+            less_kernels, _, less_mem = tally(nvtx(subtract))
+            for totals, less in ((kernels, less_kernels), (mem, less_mem)):
+                for name, (c, d) in less.items():
+                    if name in totals:
+                        totals[name] = [totals[name][0] - c, totals[name][1] - d]
+            kernels = {name: v for name, v in kernels.items() if v[0] > 0}
     n = steps
     total_ns = sum(d for _, d in kernels.values())
     families = {}

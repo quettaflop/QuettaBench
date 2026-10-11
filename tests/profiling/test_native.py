@@ -117,12 +117,13 @@ class Kernels(unittest.TestCase):
     def test_exports_once_then_tabulates_per_step(self):
         with tempfile.TemporaryDirectory() as tmp:
             (Path(tmp) / "nsys.nsys-rep").write_bytes(b"")
-            db = Path(tmp) / "nsys.sqlite"
             with mock.patch.object(native.subprocess, "run",
-                                   side_effect=lambda argv, check: fake_nsys_export(db)) as run:
+                                   side_effect=lambda argv, check: fake_nsys_export(
+                                       Path(argv[argv.index("-o") + 1]))) as run:
                 out = native.kernel_summary(tmp, 2, window="prefill_decode")
                 native.kernel_summary(tmp, 2)
-            run.assert_called_once_with(["nsys", "export", "--type", "sqlite", "-o", str(db),
+            run.assert_called_once_with(["nsys", "export", "--type", "sqlite", "-o",
+                                         str(Path(tmp) / "nsys.partial.sqlite"),
                                          str(Path(tmp) / "nsys.nsys-rep")], check=True)
         self.assertEqual(out["launches_per_step"], 2.5)
         self.assertAlmostEqual(out["kernel_ms_per_step"], 0.0007)
