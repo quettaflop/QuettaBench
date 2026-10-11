@@ -215,6 +215,34 @@ class Redaction(unittest.TestCase):
         self.assertEqual(results.redact({"cmd": "x --api-key 'unbalanced"}),
                          {"cmd": "x --api-key REDACTED"})
 
+    def test_a_command_line_without_a_leading_space_is_redacted(self):
+        doc = {"a": "--api-key sk-A", "b": "--api-key=sk-B", "c": "-H 'Authorization: Bearer x'",
+               "d": "x\n--api-key y"}
+        self.assertEqual(results.redact(doc), {
+            "a": "--api-key REDACTED", "b": "--api-key=REDACTED",
+            "c": "-H 'Authorization: REDACTED'", "d": "x --api-key REDACTED"})
+
+    def test_an_argv_item_holding_a_command_is_redacted(self):
+        self.assertEqual(results.redact(["sh", "-c", "vllm serve --api-key sk-1 --port 1"]),
+                         ["sh", "-c", "vllm serve --api-key REDACTED --port 1"])
+        self.assertEqual(results.redact(["-H", "Content-Type: application/json"]),
+                         ["-H", "Content-Type: application/json"])
+
+    def test_passphrase_and_ssh_encryption_signing_keys_are_secret(self):
+        names = {"passphrase": True, "SSH_KEY": True, "encryption_key": True,
+                 "signing-key": True, "routing_key": False}
+        self.assertEqual({n: results.secret(n) for n in names}, names)
+
+    def test_probe_args_and_extra_cmd_reach_no_run_json(self):
+        for args in ("--api-key sk-AAA", "--api-key=sk-BBB", "-H 'Authorization: Bearer sk-CCC'",
+                     "x\n--api-key sk-DDD"):
+            cfg = Config(EngineCfg(extra={"vllm": {"cmd": "-H 'Authorization: Bearer sk-FFF'"}}),
+                         WorkloadCfg(), ModeCfg(mode="probe", probe="gemm", probe_args=args),
+                         HardwareCfg(), run_name="x")
+            with tempfile.TemporaryDirectory() as td:
+                results.RunWriter(td, cfg).finish({})
+                self.assertNotIn("sk-", (Path(td) / "run.json").read_text(), args)
+
     def test_extra_vllm_api_key_reaches_no_results_file(self):
         (cfg,) = loader.load(ROOT / "configs" / "runs" / "llama.yaml",
                              ["engine.model=/w", "mode.grid=null"], env={})

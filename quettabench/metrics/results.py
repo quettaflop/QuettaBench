@@ -35,14 +35,14 @@ RUN_MARKERS = ("run.json", "requests.jsonl", "engine.json")
 # A name whose value is a secret, read after camelCase is split into words
 # (authToken as auth_Token): one of these words anywhere in it, between _ . -
 # or the ends ...
-SECRET_WORD = (r"secrets?|password|passwd|pass|credentials?|bearer|auth|oauth|authorization"
-               r"|cookie")
+SECRET_WORD = (r"secrets?|password|passwd|pass|passphrase|credentials?|bearer|auth|oauth"
+               r"|authorization|cookie")
 # ... or one of these as its last word, so num_key_value_heads and
 # prompt_token_ids are not secrets while HF_TOKEN is ...
 SECRET_LAST = r"token|apikey|pat"
 # ... or key(s) as its last word after one of these, so OPENAI_API_KEY and
 # private_key are secrets while cache_keys and --num-keys are not.
-KEY_OWNER = r"api|secret|private|access|auth"
+KEY_OWNER = r"api|secret|private|access|auth|ssh|encryption|signing"
 SECRET_NAME = re.compile(rf"(?:^|[_.-])(?:{SECRET_WORD})(?:$|[_.-])|(?:^|[_.-])(?:{SECRET_LAST})$"
                          rf"|(?:^|[_.-])(?:{KEY_OWNER})[_.-]keys?$", re.IGNORECASE)
 # ... except a tokenizer's special tokens, which name a vocabulary entry.
@@ -50,6 +50,8 @@ SPECIAL_TOKEN = re.compile(r"(?:eos|bos|pad|unk|sep|cls|mask)[_.-]token", re.IGN
 CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
 # One `Name: value` HTTP header as an argv item (curl -H).
 HEADER = re.compile(r"\s*(?P<name>[A-Za-z0-9_.-]+)\s*:\s*\S.*", re.DOTALL)
+# A string that holds a flag: a command line.
+FLAG = re.compile(r"(^|\s)-")
 REPO = Path(__file__).resolve().parents[2]
 
 
@@ -69,7 +71,8 @@ def redact_argv(argv):
     in the `--api-key X`, `password X`, `--api-key=X`, `NAME=X` (docker -e),
     `Authorization: Bearer X` (an HTTP header) and `--header=Name: X` forms;
     an item starting with '-' after a secret name is the next flag, kept.
-    Items need not be strings; a dict or list item (a header pair) goes
+    An item holding whitespace (`sh -c "... --api-key X"`) is a command
+    line, redacted as one. Items need not be strings; a dict or list item (a header pair) goes
     through redact."""
     out, hide = [], False
     for arg in argv:
@@ -93,6 +96,8 @@ def redact_argv(argv):
             hide = not eq
         elif eq and _secret_header(value):
             arg = f"{name}={_secret_header(value)}"
+        elif any(c.isspace() for c in text):
+            arg = _redact_command(text)
         out.append(arg)
     return out
 
@@ -113,7 +118,7 @@ def redact(obj):
     In a mapping (an env, engine kwargs, a config) the value of every
     secret-named key, each item of it when it is a list; in a list (an argv)
     the value of every secret-named flag or NAME=; a mapping value that is a
-    command line in one string (holds ' --', as probe_args does) likewise.
+    command line in one string (holds a flag, as probe_args does) likewise.
     run.json's provenance and config, the probe argv and the launcher's
     engine.json all go through it."""
     if isinstance(obj, dict):
@@ -122,7 +127,7 @@ def redact(obj):
             if secret(k) and not isinstance(v, dict):
                 out[k] = (["REDACTED" if not isinstance(x, dict) else redact(x) for x in v]
                           if isinstance(v, (list, tuple)) else "REDACTED")
-            elif isinstance(v, str) and " --" in v:
+            elif isinstance(v, str) and FLAG.search(v):
                 out[k] = _redact_command(v)
             else:
                 out[k] = redact(v)

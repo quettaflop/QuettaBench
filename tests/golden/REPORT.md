@@ -545,3 +545,11 @@ call `QuettaBench/profiling/kernel_composed/...` paths this refactor deleted
 and fail as they stand. README.md "QuettaSim recipes that call the old probe
 paths" gives each one's replacement here plus the `kernel_tables` export;
 QuettaSim itself is unchanged.
+
+2026-10-11: no fixture changed. `redact` treats every string value that
+holds a flag (a `-` at its start or after whitespace) as a command line,
+and every argv item holding whitespace too, so `--api-key X` at the start
+of probe_args, `-H 'Authorization: Bearer X'`, a newline before the flag
+and `sh -c "... --api-key X"` are written REDACTED. `passphrase` is a
+secret word and ssh, encryption and signing name a secret key. Before,
+only a value holding ` --` was redacted as a command line.
