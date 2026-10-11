@@ -51,7 +51,7 @@ The one route to QuettaSim is the `kernel_tables` export builder:
 QuettaSim's `engine/backends/kernel_composed_cost.py` reads. Two merges: the collective
 probe's and vllm_allreduce's `ncu/collectives/{gpu}_tp{N}.csv` become one table,
 vllm_allreduce's `all_reduce` rows over the collective probe's; gemm's `fp8_act_quant`
-joins the elementwise probe's `elementwise/{gpu}.json`. `manifest.json` names the runs
+joins the elementwise probe's `elementwise/{gpu}.json`. `kernel_data/qbench_manifest.json` names the runs
 with rows in each table. The R2 mirror (`just mirror-up`, `mirror-down`) is a backup of
 `results/probes/` under `profiling/qbench_probes/`, in the same `<gpu>/<probe>/<run-id>/`
 layout; QuettaSim never reads it. Schema

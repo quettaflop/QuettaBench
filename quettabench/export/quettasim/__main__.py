@@ -18,7 +18,8 @@ def main(argv=None) -> None:
                          "manifest.json); those builders run only when it is given")
     ap.add_argument("--kernel-dest", type=Path,
                     help="QuettaSim's data root ($QUETTASIM_DATA, e.g. ../QuettaSim/data): "
-                         "kernel_tables writes its kernel_data/ there, and runs only when given")
+                         "kernel_tables writes its kernel_data/ (with qbench_manifest.json) there, "
+                         "and runs only when given")
     ap.add_argument("--only", nargs="+", choices=sorted(BUILDERS),
                     help="run just these builders (default: all)")
     a = ap.parse_args(argv)

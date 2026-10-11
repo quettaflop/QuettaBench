@@ -16,6 +16,12 @@ order the runs finished (run.json provenance.finished):
   runs that finished before them, as they once rewrote the whole file;
 - any other table is the file of the run that finished last;
 - one run's table is copied byte for byte.
+A keyed table's key columns compare as numbers (int, total_weight_gb a
+float), and within one run's table the last row on a key wins.
+Every table is built and checked in a temp dir under dest first: a row
+with too many or too few cells, an empty or unparsable key, or JSON that
+does not parse (or, for a union, is no object) stops the export with dest
+as it was; then each file replaces its dest file.
 Two probes write one dest file in two cases, and they merge:
 - collective and vllm_allreduce, ncu/collectives/<gpu>_tp<N>.csv: the
   collective probe's rows other than all_reduce (path nccl), then
@@ -29,9 +35,12 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 import shlex
 import shutil
+import tempfile
 from collections.abc import Iterable
+from datetime import datetime
 from pathlib import Path
 
 from quettabench.export.quettasim import _inputs
@@ -65,7 +74,7 @@ def _record(run_dir: Path) -> tuple[str | None, bool]:
     return probe, "--append" in shlex.split(mode.get("probe_args") or "")
 
 
-Source = tuple[str, Path, Path, bool]  # (finished, table, its run dir, ran with --append)
+Source = tuple[datetime, Path, Path, bool]  # (finished, table, its run dir, ran with --append)
 
 
 def found(results_dirs: Iterable[Path]) -> dict[Path, dict[str, list[Source]]]:
@@ -95,7 +104,7 @@ def _runs_used(probe: str, rel: Path, sources: list[Source]) -> list[Source]:
     keyed table (from the last run without --append on, for gemm and moe),
     else the run that finished last."""
     kind = rel.parts[-2]
-    if (probe, kind) in JSON_UNION:
+    if (probe, kind) in JSON_UNION and rel.suffix == ".json":
         return sources
     if (probe, kind) not in ROW_KEYS or rel.suffix != ".csv":
         return sources[-1:]
@@ -105,26 +114,51 @@ def _runs_used(probe: str, rel: Path, sources: list[Source]) -> list[Source]:
     return sources
 
 
-def _read_csv(path: Path) -> tuple[list[str], list[dict]]:
-    with path.open(newline="") as f:
+def _key(row: dict, key: tuple[str, ...]) -> tuple:
+    """row's key, numbers parsed as the old upserts' int() read them."""
+    return tuple(row[c] if c == "gpu" else float(row[c]) if c == "total_weight_gb" else int(row[c])
+                 for c in key)
+
+
+def _read_csv(rel: Path, table: Path, run: Path,
+              key: tuple[str, ...] = ()) -> tuple[list[str], list[dict]]:
+    """table's header and rows; stops the export on a row with a missing or
+    extra cell or a key that is empty or does not parse."""
+    with table.open(newline="") as f:
         reader = csv.DictReader(f)
-        return list(reader.fieldnames or []), list(reader)
+        rows = list(reader)
+    for n, row in enumerate(rows, 1):
+        try:
+            if None in row or None in row.values() or not all(row.get(c) for c in key):
+                raise ValueError
+            _key(row, key)
+        except ValueError:
+            raise SystemExit(f"{rel.as_posix()}: {run} row {n} malformed") from None
+    return list(reader.fieldnames or []), rows
 
 
-def _union_csv(sources: list[Source], key: tuple[str, ...], out: Path) -> list[Path]:
+def _read_json(rel: Path, table: Path, run: Path) -> object:
+    try:
+        return json.loads(table.read_text())
+    except ValueError:
+        raise SystemExit(f"{rel.as_posix()}: {run} malformed JSON") from None
+
+
+def _union_csv(rel: Path, sources: list[Source], key: tuple[str, ...], out: Path) -> list[Path]:
     """Rows of every source, oldest first; a source's rows replace the earlier
     rows on each key it holds. Returns the run dirs with a row kept."""
     fields: list[str] = []
     kept: list[tuple[dict, Path]] = []
     for _, table, run, _ in sources:
-        head, rows = _read_csv(table)
+        head, rows = _read_csv(rel, table, run, key)
+        if key != GEOMETRY:
+            rows = list({_key(r, key): r for r in rows}.values())
         fields += [c for c in head if c not in fields]
-        mine = {tuple(r.get(c) for c in key) for r in rows}
-        kept = [(r, d) for r, d in kept if tuple(r.get(c) for c in key) not in mine]
+        mine = {_key(r, key) for r in rows}
+        kept = [(r, d) for r, d in kept if _key(r, key) not in mine]
         kept += [(r, run) for r in rows]
     if key == ROW_KEYS[("reparallel", "reparallel")]:
-        kept.sort(key=lambda rd: (rd[0]["gpu"], int(rd[0]["world"]), int(rd[0]["tp_from"]),
-                                  int(rd[0]["tp_to"]), float(rd[0]["total_weight_gb"])))
+        kept.sort(key=lambda rd: _key(rd[0], key))
     with out.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fields, restval="")
         w.writeheader()
@@ -132,20 +166,23 @@ def _union_csv(sources: list[Source], key: tuple[str, ...], out: Path) -> list[P
     return list(dict.fromkeys(d for _, d in kept))
 
 
-def _union_json(sources: list[Source], out: Path) -> list[Path]:
+def _union_json(rel: Path, sources: list[Source], out: Path) -> list[Path]:
     """Entries of every source in finished order, the later run winning a key."""
     merged: dict[str, tuple[object, Path]] = {}
     for _, table, run, _ in sorted(sources, key=lambda s: (s[0], str(s[2]))):
-        merged.update({k: (v, run) for k, v in json.loads(table.read_text()).items()})
+        entries = _read_json(rel, table, run)
+        if not isinstance(entries, dict):
+            raise SystemExit(f"{rel.as_posix()}: {run} malformed JSON (not an object)")
+        merged.update({k: (v, run) for k, v in entries.items()})
     out.write_text(json.dumps({k: v for k, (v, _) in merged.items()}, indent=2) + "\n")
     return list(dict.fromkeys(run for _, run in merged.values()))
 
 
-def _merge_collectives(collective: Source, vllm: Source, out: Path) -> list[Path]:
-    with collective[1].open(newline="") as f:
-        kept = [r for r in csv.DictReader(f) if (r.get("op") or "all_reduce") != "all_reduce"]
-    with vllm[1].open(newline="") as f:
-        ours = [r for r in csv.DictReader(f) if (r.get("op") or "all_reduce") == "all_reduce"]
+def _merge_collectives(rel: Path, collective: Source, vllm: Source, out: Path) -> list[Path]:
+    kept = [r for r in _read_csv(rel, collective[1], collective[2])[1]
+            if (r.get("op") or "all_reduce") != "all_reduce"]
+    ours = [r for r in _read_csv(rel, vllm[1], vllm[2])[1]
+            if (r.get("op") or "all_reduce") == "all_reduce"]
     with out.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=COLLECTIVE_FIELDS, extrasaction="ignore")
         w.writeheader()
@@ -169,34 +206,50 @@ def _write(rel: Path, by_probe: dict[str, list[Source]], out: Path) -> list[Path
     used = {probe: _runs_used(probe, rel, sources) for probe, sources in by_probe.items()}
     probes = sorted(used)
     if probes == ["collective", "vllm_allreduce"]:
-        return _merge_collectives(used["collective"][-1], used["vllm_allreduce"][-1], out)
+        return _merge_collectives(rel, used["collective"][-1], used["vllm_allreduce"][-1], out)
     if probes == ["elementwise", "gemm"]:
-        return _union_json(used["elementwise"] + used["gemm"], out)
+        return _union_json(rel, used["elementwise"] + used["gemm"], out)
     (probe,) = probes
     sources = used[probe]
+    key = ROW_KEYS.get((probe, rel.parts[-2]), ())
     if len(sources) == 1:
-        shutil.copyfile(sources[0][1], out)
-        return [sources[0][2]]
+        _, table, run, _ = sources[0]
+        if rel.suffix == ".json":
+            _read_json(rel, table, run)
+        elif rel.suffix == ".csv":
+            _read_csv(rel, table, run, key)
+        shutil.copyfile(table, out)
+        return [run]
     if rel.suffix == ".json":
-        return _union_json(sources, out)
-    return _union_csv(sources, ROW_KEYS[(probe, rel.parts[-2])], out)
+        return _union_json(rel, sources, out)
+    return _union_csv(rel, sources, key, out)
 
 
 def run(results_dirs: Iterable[Path], dest: Path) -> tuple[list[Path], dict[str, list[str]]]:
-    """Write every table, after checking all of them merge, so a stop leaves
-    dest untouched. Returns the files written and, for the manifest,
-    {<method>/<kind>/<file>: the run dirs with rows in it, in finished order}."""
+    """Build every table in a temp dir under dest, then replace the dest files,
+    so a stop leaves the tables in dest as they were. Returns the files
+    written and, for the manifest, {<method>/<kind>/<file>: the run dirs
+    with rows in it, in finished order}."""
     tables = sorted(found(results_dirs).items())
     for rel, by_probe in tables:
         _check(rel, by_probe)
-    written, used = [], {}
-    for rel, by_probe in tables:
-        out = Path(dest) / "kernel_data" / rel
-        out.parent.mkdir(parents=True, exist_ok=True)
-        runs = set(_write(rel, by_probe, out))
-        order = sorted((s[0], str(s[2])) for sources in by_probe.values() for s in sources
-                       if s[2] in runs)
-        used[rel.as_posix()] = list(dict.fromkeys(run for _, run in order))
-        print(f"{rel.as_posix()} <- {', '.join(sorted(by_probe))}")
-        written.append(out)
+    if not tables:
+        return [], {}
+    used = {}
+    Path(dest).mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=dest, prefix=".kernel_tables-") as tmp:
+        for rel, by_probe in tables:
+            out = Path(tmp) / rel
+            out.parent.mkdir(parents=True, exist_ok=True)
+            runs = set(_write(rel, by_probe, out))
+            order = sorted((s[0], str(s[2])) for sources in by_probe.values() for s in sources
+                           if s[2] in runs)
+            used[rel.as_posix()] = list(dict.fromkeys(run for _, run in order))
+        written = []
+        for rel, by_probe in tables:
+            out = Path(dest) / "kernel_data" / rel
+            out.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(Path(tmp) / rel, out)
+            print(f"{rel.as_posix()} <- {', '.join(sorted(by_probe))}")
+            written.append(out)
     return written, used

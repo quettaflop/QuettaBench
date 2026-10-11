@@ -553,3 +553,30 @@ of probe_args, `-H 'Authorization: Bearer X'`, a newline before the flag
 and `sh -c "... --api-key X"` are written REDACTED. `passphrase` is a
 secret word and ssh, encryption and signing name a secret key. Before,
 only a value holding ` --` was redacted as a command line.
+
+2026-10-11: no fixture changed. `kernel_tables` builds every table in a
+temp dir under `--kernel-dest` and checks each row first: a row with an
+extra or missing cell, an empty key cell or a key that does not parse
+(gemm `M` of `1.0` included, as the old upsert's `int()` read it), JSON
+that does not parse, or a union JSON that is no object stops the export
+with `<rel>: <run dir> row N malformed` (or `malformed JSON`) and the
+dest files as they were; then each file replaces its dest file with
+`os.replace`. Before, a bad row raised halfway and left dest part
+written. Key columns compare as numbers (`total_weight_gb` 16 and 16.0
+are one key), and within one run's table the last row on a key wins
+(geometry-keyed tables keep every row). Only gemm's elementwise `.json`
+unions across runs; a `.csv` there is the latest run's.
+
+2026-10-11: no fixture changed. Export compares `provenance.finished` as
+UTC instants (`datetime.fromisoformat(...).astimezone(timezone.utc)`); a
+missing or unparsable time sorts oldest. Before, the strings were
+compared, so `01:00+01:00` sorted after `00:30+00:00`.
+
+2026-10-11: no fixture changed. The kernel tables' manifest is
+`<kernel-dest>/kernel_data/qbench_manifest.json`; before, it was
+`manifest.json` at QuettaSim's data root.
+
+2026-10-11: no fixture changed. A unioned CSV's columns come in the order
+the runs first name them, oldest run first. The old flash_attn upsert put
+the newest run's columns first, then the older runs' extra ones; a table
+whose runs name different columns comes out in a different column order.

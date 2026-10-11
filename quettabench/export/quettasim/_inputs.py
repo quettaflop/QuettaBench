@@ -4,11 +4,14 @@ from __future__ import annotations
 import functools
 import json
 from collections.abc import Iterable
+from datetime import datetime, timezone
 from pathlib import Path
 
 from quettabench.metrics.results import RUN_MARKERS
 
 TP_DEGREES = (2, 4)
+# The finish time of a run with none, or none that parses: older than any.
+NEVER = datetime.min.replace(tzinfo=timezone.utc)
 
 
 @functools.cache
@@ -70,12 +73,14 @@ def quettasim_symbol_gone(symbol: str) -> None:
                      "this builder needs a new anchor before it can run")
 
 
-def finished(run_dir: Path | None) -> str:
-    """run_dir/run.json's provenance.finished, "" for no run dir or no time."""
+def finished(run_dir: Path | None) -> datetime:
+    """run_dir/run.json's provenance.finished as a UTC instant, NEVER for no
+    run dir or no time that parses."""
     try:
-        return json.loads((Path(run_dir) / "run.json").read_text())["provenance"]["finished"] or ""
+        when = json.loads((Path(run_dir) / "run.json").read_text())["provenance"]["finished"]
+        return datetime.fromisoformat(when).astimezone(timezone.utc)
     except (OSError, ValueError, KeyError, TypeError):
-        return ""
+        return NEVER
 
 
 def find(results_dirs: Iterable[Path], name: str) -> Path | None:

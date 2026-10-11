@@ -47,8 +47,9 @@ def probe_run(results: Path, probe: str, tables: dict[str, str], at: int, fails=
 
 
 def tree(root: Path) -> dict[str, str]:
+    """{path: text} of every file under root but the export's manifest."""
     return {p.relative_to(root).as_posix(): p.read_text()
-            for p in sorted(root.rglob("*")) if p.is_file()}
+            for p in sorted(root.rglob("*")) if p.is_file() and p.name != "qbench_manifest.json"}
 
 
 def csv_text(rows):
@@ -100,7 +101,8 @@ def test_probe_runs_export_to_the_quettasim_layout(tmp_path: Path) -> None:
     assert got["ncu/gemm/H100.csv"] == "M,N,K\n"
     assert json.loads(got["ncu/elementwise/H100.json"]) == {"fp8_act_quant": {"floor_us": 2},
                                                            "rms_norm": {"floor_us": 1}}
-    manifest = json.loads((dest / "manifest.json").read_text())
+    assert not (dest / "manifest.json").exists()
+    manifest = json.loads((dest / "kernel_data" / "qbench_manifest.json").read_text())
     runs = manifest["kernel_tables"]
     assert set(runs) == set(got)
     assert [Path(r).parent.name for r in runs["ncu/collectives/H100_tp2.csv"]] == [
@@ -181,7 +183,7 @@ def test_overlapping_runs_union_their_rows(tmp_path: Path) -> None:
         list(FA_HEAD), ["64", "8", "128", "1", "20.0"],
         ["32", "8", "128", "1", "10.0"], ["32", "8", "128", "2", "11.0"],
         ["16", "2", "128", "1", "7.0"]]
-    runs = json.loads((dest / "manifest.json").read_text())["kernel_tables"]
+    runs = json.loads((dest / "kernel_data" / "qbench_manifest.json").read_text())["kernel_tables"]
     assert [Path(r).name for r in runs["ncu/flash_attn/H100.csv"]] == [
         "20261011T120001.000000Z", "20261011T120000.000000Z"]
 
@@ -266,7 +268,7 @@ def test_the_manifest_names_only_runs_whose_rows_were_copied(tmp_path: Path) -> 
     assert [Path(r).parent.name for r in used["ncu/collectives/H100_tp2.csv"]] == ["vllm_allreduce"]
     assert [Path(r).name for r in used[fa]] == ["20261011T120001.000000Z"]
     export([results], kernel_dest=dest, only=["kernel_tables"])
-    assert json.loads((dest / "manifest.json").read_text())["kernel_tables"] == used
+    assert json.loads((dest / "kernel_data" / "qbench_manifest.json").read_text())["kernel_tables"] == used
 
 
 def test_kernel_tables_go_to_their_own_dest_and_only_when_given(tmp_path: Path, capsys) -> None:
@@ -283,8 +285,82 @@ def test_kernel_tables_go_to_their_own_dest_and_only_when_given(tmp_path: Path, 
     assert "kernel_tables" not in json.loads((dest / "manifest.json").read_text())
     main(["--results", str(results), "--kernel-dest", str(data), "--only", "kernel_tables"])
     assert tree(data / "kernel_data") == {"cuda_event/gdn/H100_9b_decode.csv": "g\n"}
-    assert "kernel_tables" in json.loads((data / "manifest.json").read_text())
+    assert "kernel_tables" in json.loads(
+        (data / "kernel_data" / "qbench_manifest.json").read_text())
     for argv in (["--only", "kernel_tables", "--dest", str(dest)], ["--only", "tp_comm"],
                  ["--kernel-dest", str(data), "--only", "tp_comm"]):
         with pytest.raises(SystemExit):
             main(["--results", str(results), *argv])
+
+
+GEMM = "ncu/gemm/H100.csv"
+
+
+@pytest.mark.parametrize("bad", ["M,N,K,us\r\n2,2,2,6,99\r\n", "M,N,K,us\r\n2,2\r\n",
+                                 "M,N,K,us\r\n,2,2,6\r\n", "M,N,K,us\r\nx,2,2,6\r\n",
+                                 "M,N,K,us\r\n1.0,1,1,9\r\n"])
+def test_a_malformed_row_stops_the_export_and_leaves_dest_as_it_was(tmp_path: Path, bad) -> None:
+    """An extra column, a truncated row, an empty or unparsable key (gemm's
+    M is an int, as the old upsert's int() read it): nothing is replaced."""
+    results, dest = tmp_path / "results", tmp_path / "out"
+    probe_run(results, "gdn", {"cuda_event/gdn/H100_9b_decode.csv": "g\n"}, 0)
+    probe_run(results, "gemm", {GEMM: "M,N,K,us\r\n1,1,1,5\r\n"}, 1)
+    export([results], kernel_dest=dest, only=["kernel_tables"])
+    before = tree(dest)
+    probe_run(results, "gdn", {"cuda_event/gdn/H100_9b_decode.csv": "g2\n"}, 2)
+    probe_run(results, "gemm", {GEMM: bad}, 3, args=["--append"])
+    with pytest.raises(SystemExit, match=r"ncu/gemm/H100.csv: .*20261011T120003.000000Z row 1 malformed"):
+        export([results], kernel_dest=dest, only=["kernel_tables"])
+    assert tree(dest) == before
+
+
+@pytest.mark.parametrize("bad", ['{"y":', "[1]"])
+def test_bad_or_non_object_json_stops_the_export(tmp_path: Path, bad) -> None:
+    results, dest = tmp_path / "results", tmp_path / "out"
+    table = "ncu/elementwise/H100.json"
+    probe_run(results, "gdn", {"cuda_event/gdn/H100_9b_decode.csv": "g\n"}, 0)
+    probe_run(results, "elementwise", {table: '{"x": 1}'}, 1)
+    probe_run(results, "gemm", {table: bad}, 2)
+    with pytest.raises(SystemExit, match="ncu/elementwise/H100.json: .*malformed"):
+        export([results], kernel_dest=dest, only=["kernel_tables"])
+    assert not (dest / "kernel_data" / "cuda_event").exists()
+
+
+def test_numeric_keys_compare_as_numbers_and_a_runs_last_row_wins(tmp_path: Path) -> None:
+    """total_weight_gb 16 and 16.0 are one key; within one run's table the
+    last row on a key wins."""
+    head = ("gpu", "world", "tp_from", "tp_to", "total_weight_gb", "comm_ms")
+    results, dest = tmp_path / "results", tmp_path / "out"
+    table = "cuda_event/reparallel/H100_reshard.csv"
+    probe_run(results, "reparallel", {table: csv_text([head, ("H100", 2, 1, 2, 16, 5.0)])}, 0)
+    probe_run(results, "reparallel", {table: csv_text([head, ("H100", 2, 1, 2, 16.0, 9.0),
+                                                       ("H100", 2, 1, 2, 16.0, 8.0)])}, 1)
+    export([results], kernel_dest=dest, only=["kernel_tables"])
+    assert rows(dest / "kernel_data" / table) == [list(head), ["H100", "2", "1", "2", "16.0", "8.0"]]
+
+
+def test_a_gemm_csv_beside_the_elementwise_json_is_not_unioned(tmp_path: Path) -> None:
+    """Only gemm's elementwise .json unions across runs; any other file there
+    is the latest run's."""
+    results, dest = tmp_path / "results", tmp_path / "out"
+    probe_run(results, "gemm", {"ncu/elementwise/H100.csv": "a\n1\n"}, 0)
+    probe_run(results, "gemm", {"ncu/elementwise/H100.csv": "a\n2\n"}, 1)
+    export([results], kernel_dest=dest, only=["kernel_tables"])
+    assert tree(dest / "kernel_data") == {"ncu/elementwise/H100.csv": "a\n2\n"}
+
+
+def test_finish_times_compare_as_instants(tmp_path: Path) -> None:
+    """01:00+01:00 is 00:00Z, before 00:30Z; a missing time sorts oldest."""
+    results, dest = tmp_path / "results", tmp_path / "out"
+    probe_run(results, "gdn", {"cuda_event/gdn/H100_9b_decode.csv": "later\n"}, 0)
+    probe_run(results, "gdn", {"cuda_event/gdn/H100_9b_decode.csv": "earlier\n"}, 1)
+    probe_run(results, "gdn", {"cuda_event/gdn/H100_9b_decode.csv": "none\n"}, 2)
+    gdn = results / "probes" / "H100" / "gdn"
+    for name, finished in (("20261011T120000.000000Z", "2026-01-02T00:30:00+00:00"),
+                           ("20261011T120001.000000Z", "2026-01-02T01:00:00+01:00"),
+                           ("20261011T120002.000000Z", "not a time")):
+        doc = json.loads((gdn / name / "run.json").read_text())
+        doc["provenance"]["finished"] = finished
+        (gdn / name / "run.json").write_text(json.dumps(doc))
+    export([results], kernel_dest=dest, only=["kernel_tables"])
+    assert tree(dest / "kernel_data")["cuda_event/gdn/H100_9b_decode.csv"] == "later\n"

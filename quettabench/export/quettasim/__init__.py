@@ -66,9 +66,10 @@ def export(results_dirs: Iterable[Path], dest: Path | None = None, only: Iterabl
     kernel_tables writes under kernel_dest (QuettaSim's data root) and runs
     only when it is given; the other builders write under dest and run only
     when it is given. A builder named in only without its dest stops the
-    export. Each dest used also gets manifest.json: where the inputs came
-    from, the runs recorded there (run.json), which bench commit, when, and
-    in kernel_dest the run dirs whose rows each kernel table holds.
+    export. dest gets manifest.json, kernel_dest kernel_data/qbench_manifest.json
+    (not at QuettaSim's data root): where the inputs came from, the runs
+    recorded there (run.json), which bench commit, when, and for kernel_dest
+    the run dirs whose rows each kernel table holds.
     """
     results_dirs = [Path(d) for d in results_dirs]
     names = list(only) if only else list(BUILDERS)
@@ -103,7 +104,7 @@ def export(results_dirs: Iterable[Path], dest: Path | None = None, only: Iterabl
         Path(dest).mkdir(parents=True, exist_ok=True)
         (Path(dest) / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     if tables is not None:
-        Path(kernel_dest).mkdir(parents=True, exist_ok=True)
-        (Path(kernel_dest) / "manifest.json").write_text(
+        (Path(kernel_dest) / "kernel_data").mkdir(parents=True, exist_ok=True)
+        (Path(kernel_dest) / "kernel_data" / "qbench_manifest.json").write_text(
             json.dumps({**manifest, "kernel_tables": tables}, indent=2) + "\n")
     return written
