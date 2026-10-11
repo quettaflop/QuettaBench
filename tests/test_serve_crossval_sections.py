@@ -180,12 +180,6 @@ class GoodputSweep(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("note=no-passing-speed-within-budget", out)
 
-    def test_needs_open_load_and_a_bound(self):
-        for mode in (ModeCfg(goodput_sweep=True, sla_ttft_ms=1.0),
-                     ModeCfg(goodput_sweep=True, load="open")):
-            with self.subTest(mode=mode), self.assertRaises(ValueError):
-                serve.run(single_trace(2), FakeDriver(), mode, RunWriter(None, config(mode)))
-
 
 if __name__ == "__main__":
     unittest.main()

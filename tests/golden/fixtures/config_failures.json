@@ -36,11 +36,11 @@
  "run_yaml_missing": "<REPO>/configs/runs/nope.yaml: no such file",
  "serving_style": {
   "EP8DP2": {
-   "message": "unknown serving_style 'EP8DP2'; use aggregated, disagg:<P>p<D>d, or ep<N>dp<M>",
+   "message": "unknown serving_style 'EP8DP2'; use aggregated, disagg:<P>p<D>d, afd:<A>a<F>f, or ep<N>dp<M>",
    "type": "ValueError"
   },
   "aggregate": {
-   "message": "unknown serving_style 'aggregate'; use aggregated, disagg:<P>p<D>d, or ep<N>dp<M>",
+   "message": "unknown serving_style 'aggregate'; use aggregated, disagg:<P>p<D>d, afd:<A>a<F>f, or ep<N>dp<M>",
    "type": "ValueError"
   },
   "disagg:0p1d": {
@@ -48,15 +48,15 @@
    "type": "ValueError"
   },
   "disagg:1p1d:x": {
-   "message": "unknown serving_style 'disagg:1p1d:x'; use aggregated, disagg:<P>p<D>d, or ep<N>dp<M>",
+   "message": "unknown serving_style 'disagg:1p1d:x'; use aggregated, disagg:<P>p<D>d, afd:<A>a<F>f, or ep<N>dp<M>",
    "type": "ValueError"
   },
   "disagg:2p": {
-   "message": "unknown serving_style 'disagg:2p'; use aggregated, disagg:<P>p<D>d, or ep<N>dp<M>",
+   "message": "unknown serving_style 'disagg:2p'; use aggregated, disagg:<P>p<D>d, afd:<A>a<F>f, or ep<N>dp<M>",
    "type": "ValueError"
   },
   "ep4": {
-   "message": "unknown serving_style 'ep4'; use aggregated, disagg:<P>p<D>d, or ep<N>dp<M>",
+   "message": "unknown serving_style 'ep4'; use aggregated, disagg:<P>p<D>d, afd:<A>a<F>f, or ep<N>dp<M>",
    "type": "ValueError"
   }
  },

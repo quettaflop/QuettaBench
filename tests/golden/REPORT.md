@@ -328,3 +328,10 @@ Other current behaviour the fixtures now pin, worth knowing before the move:
 - bench.sh, vllm.sh, xval.sh, oneshot.sh, prof.sh: need a GPU, cargo or the
   engine binaries. Their python inputs (`xval_config.py` cli) are pinned.
 - greedy_agreement.py, logit_agreement.py: need vLLM and transformer models.
+
+## Fixture changes
+
+2026-10-11: `config_failures.json` and `config_trace_serve_style_error.json`
+now read `use aggregated, disagg:<P>p<D>d, afd:<A>a<F>f, or ep<N>dp<M>`.
+`parse_serving_style` accepted `afd:<A>a<F>f` but its refusal did not list
+it; only the message text changed, every spec is refused as before.

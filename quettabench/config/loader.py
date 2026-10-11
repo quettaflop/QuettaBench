@@ -111,7 +111,10 @@ def _read_grids(configs):
     path = configs / "grids.yaml"
     raw = _read_yaml(path)
     _check_keys(raw, GRIDS_KEYS, path)
-    return {k.lower(): v for k, v in raw.get("grids", {}).items()}, raw.get("step_points", [])
+    step_points = raw.get("step_points") or []
+    if not step_points:
+        raise ConfigError(f"{path}: step_points must be a non-empty list")
+    return {k.lower(): v for k, v in raw.get("grids", {}).items()}, step_points
 
 
 def parse_set(item):
@@ -202,6 +205,8 @@ def _validate(values, origins, allow_unverified, where):
             raise ConfigError(f"{where}: unknown {path.rsplit('.', 1)[-1]} {values[path]!r}; "
                               f"use {_one_of(allowed)}")
     for path, (low, high) in RANGES.items():
+        if isinstance(values[path], bool) or not isinstance(values[path], (int, float)):
+            raise ConfigError(f"{where}: {path} must be a number, got {values[path]!r}")
         if (low is not None and values[path] < low) or (high is not None and values[path] > high):
             raise ConfigError(f"{where}: {path} must be in [{low}, {high or 'inf'}], "
                               f"got {values[path]!r}")
@@ -235,6 +240,14 @@ def _validate(values, origins, allow_unverified, where):
     if values["mode.load"] == "closed" and arrival in RATE_ARRIVALS:
         raise ConfigError(f"{where}: arrival {values['workload.arrival']!r} is open-loop "
                           "offered load; set mode.load=open or arrival=steady")
+    if values["mode.goodput_sweep"] and (values["mode.load"] != "open" or not (
+            values["mode.sla_ttft_ms"] or values["mode.sla_tpot_ms"])):
+        raise ConfigError(f"{where}: goodput sweep needs open load and mode.sla_ttft_ms "
+                          "and/or sla_tpot_ms")
+    if (values["mode.grid"] and values["workload.prompt_mode"] == "corpus"
+            and values["engine.driver"] == "http"):
+        raise ConfigError(f"{where}: prompt_mode=corpus tokenizes in-process; "
+                          "engine.driver=http has no tokenizer")
 
 
 def _grid(values, grids, step_points, where):

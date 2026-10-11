@@ -1,4 +1,4 @@
 {
- "message": "unknown serving_style 'disagg:2p'; use aggregated, disagg:<P>p<D>d, or ep<N>dp<M>",
+ "message": "unknown serving_style 'disagg:2p'; use aggregated, disagg:<P>p<D>d, afd:<A>a<F>f, or ep<N>dp<M>",
  "type": "ValueError"
 }

@@ -37,7 +37,7 @@ def parse_serving_style(spec):
             raise ValueError(f"ep_dp needs >=1 expert-parallel and >=1 data-parallel: {spec!r}")
         return {"mode": "ep_dp", "ep": ep, "dp": dp}
     raise ValueError(f"unknown serving_style {spec!r}; use aggregated, "
-                     "disagg:<P>p<D>d, or ep<N>dp<M>")
+                     "disagg:<P>p<D>d, afd:<A>a<F>f, or ep<N>dp<M>")
 
 
 def device_count(engine):

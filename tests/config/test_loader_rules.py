@@ -128,7 +128,7 @@ class LoaderRules(unittest.TestCase):
         with self.assertRaises(ConfigError) as ctx:
             self.load({"engine": {"serving_style": "disagg:2p"}})
         self.assertEqual(str(ctx.exception), "unknown serving_style 'disagg:2p'; use aggregated, "
-                         "disagg:<P>p<D>d, or ep<N>dp<M>")
+                         "disagg:<P>p<D>d, afd:<A>a<F>f, or ep<N>dp<M>")
 
     def test_zero_ep_or_dp_degree_is_refused(self):
         with self.assertRaisesRegex(ConfigError, "ep_dp needs >=1 expert-parallel and >=1 "
@@ -191,6 +191,23 @@ class LoaderRules(unittest.TestCase):
         for spec in ("poisson", "poisson:0", "ramp:1", "burst:4x8", "steady:3", "uniform"):
             with self.subTest(spec), self.assertRaisesRegex(ConfigError, "arrival"):
                 self.load({"mode": {"load": "open"}, "workload": {"arrival": spec}})
+
+    def test_bad_values_are_config_errors(self):
+        with self.assertRaisesRegex(ConfigError, "mode.concurrency must be a number, got 'x'"):
+            self.load(overrides=["mode.concurrency=x"])
+        for run in ({"mode": {"goodput_sweep": True, "sla_ttft_ms": 1.0}},
+                    {"mode": {"goodput_sweep": True, "load": "open"},
+                     "workload": {"arrival": "poisson:2"}}):
+            with self.subTest(run), self.assertRaisesRegex(ConfigError, "goodput sweep needs"):
+                self.load(run)
+        with self.assertRaisesRegex(ConfigError, "engine.driver=http has no tokenizer"):
+            self.load({"mode": {"grid": "toy"}, "engine": {"driver": "http"},
+                       "workload": {"prompt_mode": "corpus"}})
+
+    def test_empty_step_points_are_refused(self):
+        self.write("grids.yaml", {**GRIDS, "step_points": []})
+        with self.assertRaisesRegex(ConfigError, "step_points must be a non-empty list"):
+            self.load()
 
     # matrix, grid, --set
 

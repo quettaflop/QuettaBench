@@ -384,8 +384,6 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
         summary = Summary(None, rows, sections={"grid": record})
         writer.finish(summary.to_dict(), steps=steps)
         return summary
-    if mode.goodput_sweep and (mode.load != "open" or not (mode.sla_ttft_ms or mode.sla_tpot_ms)):
-        raise ValueError("goodput sweep needs open load and mode.sla_ttft_ms and/or sla_tpot_ms")
     name = trace_name(trace)
 
     def request_id(session, turn, index):
