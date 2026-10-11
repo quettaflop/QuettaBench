@@ -101,6 +101,12 @@ def read_env(env=None, only=None):
     return out
 
 
+def torchrun_rank():
+    """This process's torchrun RANK, or None outside torchrun."""
+    rank = os.environ.get("RANK")
+    return int(rank) if rank not in (None, "") else None
+
+
 def export(values):
     """Put each non-empty value into the process environment, replacing what
     is there: the Config already resolved env against yaml and --set, so its

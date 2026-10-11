@@ -8,6 +8,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from quettabench.config import env_map
 from quettabench.config.schema import Config, EngineCfg, HardwareCfg, ModeCfg, WorkloadCfg
 from quettabench.metrics.results import RunWriter, exit_status, redact
 
@@ -46,10 +47,10 @@ def run_recorded(main, name: str, file_flag: str | None = None) -> None:
     """main() with its run recorded: <record_dir>/run.json through RunWriter,
     holding the probe and its argv as config (mode=probe), provenance and
     run_status ok, or failed (aborted on Ctrl-C) with the exception, which is
-    raised on. A main that returns False (a torchrun rank other than 0)
-    writes nothing."""
+    raised on. Under torchrun only RANK 0 records, whatever its main does;
+    a main that returns False writes nothing either."""
     argv = sys.argv[1:]
-    run_dir = record_dir(name, argv, file_flag)
+    run_dir = record_dir(name, argv, file_flag) if env_map.torchrun_rank() in (None, 0) else None
     started = datetime.now(timezone.utc).isoformat()
     primary, status, reason = None, "ok", None
     try:

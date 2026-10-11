@@ -4,6 +4,7 @@ adapter and launcher.start, and no probe starts a process itself."""
 
 import ast
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -62,6 +63,15 @@ class RunRecorded(unittest.TestCase):
     def test_non_zero_rank_and_no_output_write_nothing(self):
         self.assertEqual(recorded(["--gpu-label", "H100", "--out", "<TD>"], lambda: False)[2], [])
         self.assertEqual(recorded(["--gpu-label", "H100", "--out", "-"], lambda: None)[2], [])
+
+    def test_only_rank_0_records_even_when_it_raises(self):
+        argv = ["--gpu-label", "H100", "--out", "<TD>"]
+        for rank, files in (("1", []), ("0", ["gemm/run.json"]), (None, ["gemm/run.json"])):
+            env = {} if rank is None else {"RANK": rank}
+            with self.subTest(rank=rank), mock.patch.dict(os.environ, env, clear=True):
+                raised, _, found = recorded(argv, mock.Mock(side_effect=RuntimeError("nccl")))
+                self.assertIsInstance(raised, RuntimeError)
+                self.assertEqual(found, files)
 
     def test_a_probe_that_names_its_file(self):
         _, _, files = recorded(["--out-raw", "<TD>/h100/raw.jsonl.gz"], lambda: None,
