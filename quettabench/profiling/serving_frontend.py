@@ -113,7 +113,7 @@ def _conc_sweep(a, cost, model):
     one-time work (triton/moe autotune, graph shapes) that contaminated the
     first version of this sweep by up to 50x at c=2-10."""
     from engine.loaders.workload import Turn  # noqa: PLC0415
-    from engine.sim.queue_sim import predict_cell  # noqa: PLC0415
+    from engine.sim.closed_loop import predict_cell  # noqa: PLC0415
 
     def herd(c: int) -> list[tuple[float, float, int]]:
         prompts = [_prompt(512) for _ in range(c)]

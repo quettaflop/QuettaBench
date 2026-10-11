@@ -14,11 +14,13 @@ from pathlib import Path
 
 import pytest
 
+from quettabench.export.quettasim import stage_split_rates, tp_comm
 from quettabench.export.quettasim.stage_split_rates import (
     PROD_FA3,
     PROD_HOST_SUM,
     _ols,
 )
+from tests.probes.test_export_quettasim import write_leg
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RESULTS = REPO_ROOT / "results"
@@ -63,3 +65,19 @@ def test_artifact_regenerates_from_the_csvs():
     # the pre-registered validations hold on the real data
     assert abs(host1["cached"] - PROD_HOST_SUM) / PROD_HOST_SUM < 0.05   # tp1 leg ~ production
     assert 0.0 < fa3_4["fa3"] / fa3_1["fa3"] < 1.0                       # sharding signal
+
+
+
+def test_builders_stop_in_one_line_without_ttft_queue_sim(tmp_path):
+    """QuettaSim main has no simulator.ttft_queue_sim; the builders name the
+    missing constant instead of raising ImportError."""
+    x = tmp_path / "x.csv"
+    for call in (lambda: stage_split_rates.build(4, x, x, x),
+                 lambda: stage_split_rates.build_consumer("H200", 2, x, x, x, x)):
+        with pytest.raises(SystemExit, match="QuettaSim main has no "
+                           "simulator.ttft_queue_sim.PREFILL_HOST_SHARED_MS_PER_TOKEN"):
+            call()
+    write_leg(tmp_path / "tp1.csv", 1.0)
+    write_leg(tmp_path / "tp4.csv", 0.4)
+    with pytest.raises(SystemExit, match="no simulator.ttft_queue_sim.PREFILL_TP_COMM_MS_PER_TOKEN"):
+        tp_comm.build_tpn(4, tmp_path / "tp4.csv", tmp_path / "out.json", tmp_path / "tp1.csv")

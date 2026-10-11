@@ -26,7 +26,7 @@ import json
 from collections.abc import Iterable
 from pathlib import Path
 
-from quettabench.export.quettasim._inputs import stage_split_legs
+from quettabench.export.quettasim._inputs import quettasim_symbol_gone, stage_split_legs
 
 NCCL_PHYSICS_BAND_MS_PER_1K = (1.0, 3.0)  # external-lit all-reduce band, hidden=4096 bf16
 
@@ -87,7 +87,10 @@ def build_tpn(n: int, tpn_csv: Path, out_json: Path, tp1_csv: Path, gpu: str = "
                    "Regenerate: just export. Sources: "
                    f"serving_stage_split.py --tensor-parallel-size {{1,{n}}} on {host}."),
     }
-    import simulator.ttft_queue_sim as _sim
+    try:
+        import simulator.ttft_queue_sim as _sim
+    except ImportError:
+        quettasim_symbol_gone("simulator.ttft_queue_sim.PREFILL_TP_COMM_MS_PER_TOKEN")
     payload["fallback_it_replaces_ms_per_token"] = _sim.PREFILL_TP_COMM_MS_PER_TOKEN * (n - 1)
     out_json.parent.mkdir(parents=True, exist_ok=True)
     out_json.write_text(json.dumps(payload, indent=2) + "\n")

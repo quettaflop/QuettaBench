@@ -57,9 +57,9 @@ import time
 import urllib.request
 from pathlib import Path
 
+from engine.core.cost import step_host_ms
 from engine.factory import build_kernel_composed_cost
 from engine.sim.disagg import Link
-from engine.sim.queue_sim import _step_host_ms
 
 HERE = Path(__file__).resolve().parent
 
@@ -150,7 +150,7 @@ class SimSide:
         while rem > 0:
             ch = min(rem, budget)
             gpu = self.p.fused_step_ms(int(ch), 0, 0) + self.p.cross_attn_ms(int(ch), res)
-            total += gpu + _step_host_ms(self.p, gpu, ch, after_idle=first)
+            total += gpu + step_host_ms(self.p, gpu, ch, after_idle=first)
             res += ch
             rem -= ch
             first = False
@@ -158,7 +158,7 @@ class SimSide:
 
     def d_step_ms(self, ctx: int) -> float:
         gpu = self.d.fused_step_ms(0, 1, (float(ctx),))
-        return gpu + _step_host_ms(self.d, gpu, 1, after_idle=True)
+        return gpu + step_host_ms(self.d, gpu, 1, after_idle=True)
 
     def pull_ms(self, pulled_tokens: int, runs: int = 1) -> float:
         nbytes = pulled_tokens * float(self.p.model.kv_bytes_per_token)

@@ -45,8 +45,8 @@ before this builder ran):
 
 Deterministic (closed-form OLS, no RNG). Reads the serving_stage_split_<gpu>[_tpN].csv legs
 from the results dirs, writes dest/kernels/prefill_stage_rates_*.json (see ``run``). The
-simulator constants it checks against come from QuettaSim (`simulator.ttft_queue_sim`), which
-must be on PYTHONPATH.
+simulator constants it checked against lived in QuettaSim's `simulator.ttft_queue_sim`, which
+QuettaSim main removed with no replacement constant; without it both builders stop with one line.
 """
 from __future__ import annotations
 
@@ -55,7 +55,7 @@ import json
 from collections.abc import Iterable
 from pathlib import Path
 
-from quettabench.export.quettasim._inputs import find, stage_split_legs
+from quettabench.export.quettasim._inputs import find, quettasim_symbol_gone, stage_split_legs
 
 # Production constants the per-config values replace / transport (asserted against the live
 # module below so a retune cannot silently desynchronize this builder).
@@ -93,7 +93,10 @@ def _ols(rows: list[dict], ycol: str, terms: list[str]) -> dict[str, float]:
 
 
 def build(tp: int, tp1_csv: Path, tpn_csv: Path, out_json: Path) -> None:
-    import simulator.ttft_queue_sim as sim
+    try:
+        import simulator.ttft_queue_sim as sim
+    except ImportError:
+        quettasim_symbol_gone("simulator.ttft_queue_sim.PREFILL_HOST_SHARED_MS_PER_TOKEN")
     assert abs((sim.PREFILL_HOST_SHARED_MS_PER_TOKEN + sim.PREFILL_HOST_PERREQ_MS_PER_TOKEN)
                - PROD_HOST_SUM) < 1e-15, "production host SUM moved -- update this builder's anchor"
     assert sim.PREFILL_FA3_MS_PER_TOKEN2 == PROD_FA3, "production FA3 moved -- update this builder's anchor"
@@ -200,7 +203,10 @@ def build_consumer(gpu: str, tp: int, tp1_csv: Path, tpn_csv: Path, h100_tp1_csv
 
     The 3-param sensitivity values are reported in the artifact. H100 default mode
     (``build``) byte-untouched."""
-    import simulator.ttft_queue_sim as sim
+    try:
+        import simulator.ttft_queue_sim as sim
+    except ImportError:
+        quettasim_symbol_gone("simulator.ttft_queue_sim.PREFILL_HOST_SHARED_MS_PER_TOKEN")
     prod_sum_live = sim.PREFILL_HOST_SHARED_MS_PER_TOKEN + sim.PREFILL_HOST_PERREQ_MS_PER_TOKEN
     assert abs(prod_sum_live - PROD_HOST_SUM) < 1e-15, "production host SUM moved -- update anchor"
 
