@@ -357,6 +357,7 @@ class FailureRecord(unittest.TestCase):
 
     def test_a_probe_whose_gpu_pick_fails_is_recorded(self):
         with scratch_configs("p", {"mode": {"mode": "probe", "probe": "fake"}}) as (path, td), \
+                mock.patch.dict(sys.modules, {"quettabench.probes.fake": mock.Mock()}), \
                 mock.patch.object(runner.launcher, "idle_gpus", side_effect=RuntimeError("busy")):
             with self.assertRaises(RuntimeError):
                 runner.main(path, results_dir=td / "results", allow_unverified=True)
@@ -406,6 +407,7 @@ class ProbeMode(unittest.TestCase):
             run = {"mode": {"mode": "probe", "probe": "fake"}, "hardware": hardware}
             with self.subTest(gpus=gpus), scratch_configs("p", run) as (path, td), \
                     mock.patch.dict(os.environ, {}, clear=True), \
+                    mock.patch.dict(sys.modules, {"quettabench.probes.fake": mock.Mock()}), \
                     mock.patch.object(runner.importlib, "import_module", side_effect=import_probe), \
                     mock.patch.object(launcher, "idle_gpus", return_value=idle) as idle_gpus:
                 runner.main(path, results_dir=td / "results", allow_unverified=True)
@@ -441,6 +443,16 @@ class ProbeMode(unittest.TestCase):
         self.assertEqual(doc["summary"]["probe"], "fake")
         self.assertNotIn("metrics", prof)
         self.assertEqual(prof["sources_run"], ["cost"])
+
+    def test_a_name_that_is_no_probe_is_refused(self):
+        for name in ("nope", "base", "_graph", "../cli"):
+            with self.subTest(name), scratch_configs("p", {"mode": {"mode": "probe", "probe": name}}) \
+                    as (path, td):
+                _, exit_msg = qbench("run", str(path), "--allow-unverified",
+                                     "--results-dir", str(td / "results"))
+                self.assertFalse((td / "results").exists())
+            self.assertIn("is not a module under quettabench/probes/ with a main", exit_msg)
+        self.assertTrue(runner.is_probe("gemm"))
 
     def test_probe_mode_needs_a_probe(self):
         with scratch_configs("bare", {"mode": {"mode": "probe"}}) as (path, _):

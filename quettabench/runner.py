@@ -17,10 +17,13 @@ runs the server in engine.image and needs a launched server (a grid run sets
 engine.driver=http); --dry-run then also prints the docker command.
 """
 
+import ast
 import dataclasses
 import importlib
+import re
 import shlex
 import shutil
+import sys
 from pathlib import Path
 
 from quettabench import workloads
@@ -76,10 +79,29 @@ def dry_run(cfg, out):
             print(f"docker = {shlex.join(map(str, argv))}")
 
 
+def is_probe(name):
+    """Whether quettabench.probes.<name> is a module with a top-level main;
+    read from its source, so checking imports no probe (or torch)."""
+    module = sys.modules.get(f"quettabench.probes.{name}")
+    if module is not None:
+        return callable(getattr(module, "main", None))
+    if not re.fullmatch(r"[a-z][a-z0-9_]*", name or ""):
+        return False
+    path = Path(probes_base.__file__).with_name(f"{name}.py")
+    if not path.is_file():
+        return False
+    return any(isinstance(node, ast.FunctionDef) and node.name == "main"
+               for node in ast.parse(path.read_text()).body)
+
+
 def check_probe(cfg):
-    """Refuse a probe `mode: probe` cannot run: one that needs torchrun ranks,
-    or one whose output flag names a file rather than the run dir."""
+    """Refuse a probe `mode: probe` cannot run: a name that is no probe
+    module with a main, one that needs torchrun ranks, or one whose output
+    flag names a file rather than the run dir."""
     name = cfg.mode.probe
+    if not is_probe(name):
+        raise ConfigError(f"{cfg.run_name}: mode.probe {name!r} is not a module under "
+                          "quettabench/probes/ with a main")
     if name in TORCHRUN_PROBES:
         raise ConfigError(f"{cfg.run_name}: probe {name} runs one process per rank under "
                           "torchrun; launch it with `just probe` or torchrun, not mode: probe")
