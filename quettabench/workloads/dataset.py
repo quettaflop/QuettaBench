@@ -5,8 +5,6 @@ import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
-import numpy as np
-
 
 @dataclass
 class BenchmarkRequest:
@@ -224,218 +222,6 @@ class ShareGPTDataset(BaseDataset):
                 self._rng.shuffle(self._available)
             messages, osl = self._available.pop()
         return BenchmarkRequest(messages=messages, max_tokens=osl)
-
-
-def _uniform_len_bounds(input_len: int, range_ratio: float) -> tuple[int, int]:
-    """InferenceX sample_uniform bounds."""
-    return max(1, int(input_len * range_ratio)), input_len
-
-
-class RandomTokenDataset(BaseDataset):
-    """
-    Replicates InferenceX's random token workload for cross-validation.
-
-    Generates random token IDs using the same algorithm as InferenceX
-    (SemiAnalysisAI/InferenceX utils/bench_serving/benchmark_serving.py),
-    decodes them to text via the tokenizer, and wraps in a chat message.
-
-    Purpose: verify inference-benchmark produces the same TTFT/TPOT/E2EL
-    as InferenceX when given identical inputs. Not for production benchmarking
-    -- random tokens trigger EOS early and give unreliable output lengths.
-    """
-
-    def __init__(
-        self,
-        tokenizer_name: str,
-        input_len: int = 1024,
-        output_len: int = 1024,
-        num_prompts: int = 500,
-        range_ratio: float = 1.0,
-        seed: int = 0,
-    ):
-        self.output_len = output_len
-        self._prompts: list[str] | None = None
-        self._idx = 0
-        self._lock = threading.Lock()
-        self._tokenizer_name = tokenizer_name
-        self._input_len = input_len
-        self._num_prompts = num_prompts
-        self._range_ratio = range_ratio
-        self._seed = seed
-
-    def _load(self):
-        if self._prompts is not None:
-            return
-        with self._lock:
-            if self._prompts is not None:
-                return
-            from transformers import AutoTokenizer
-            tokenizer = AutoTokenizer.from_pretrained(self._tokenizer_name)
-            rng = np.random.default_rng(self._seed)
-
-            lo, hi = _uniform_len_bounds(self._input_len, self._range_ratio)
-            input_lens = rng.integers(lo, hi + 1, size=self._num_prompts)
-            offsets = rng.integers(0, tokenizer.vocab_size, size=self._num_prompts)
-
-            prompts = []
-            for i in range(self._num_prompts):
-                tgt_len = int(input_lens[i])
-                token_ids = [(int(offsets[i]) + i + j) % tokenizer.vocab_size
-                             for j in range(tgt_len)]
-                prompt = tokenizer.decode(token_ids)
-                # Re-encode and trim/pad to hit exact target length (InferenceX does this too)
-                re_encoded = tokenizer.encode(prompt, add_special_tokens=False)
-                if len(re_encoded) > tgt_len:
-                    re_encoded = re_encoded[:tgt_len]
-                elif len(re_encoded) < tgt_len:
-                    extras = rng.integers(0, tokenizer.vocab_size,
-                                         size=tgt_len - len(re_encoded)).tolist()
-                    re_encoded.extend(extras)
-                prompts.append(tokenizer.decode(re_encoded))
-
-            self._prompts = prompts
-
-    def get_next_request(self) -> BenchmarkRequest:
-        self._load()
-        with self._lock:
-            prompt = self._prompts[self._idx % len(self._prompts)]
-            self._idx += 1
-        return BenchmarkRequest(
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=self.output_len,
-        )
-
-
-class RandomTokenDatasetLegacy(BaseDataset):
-    """
-    Exact replication of InferenceX's random token generation using legacy numpy RNG.
-
-    Uses np.random.seed(seed) + np.random.randint (same as InferenceX's
-    sample_random_requests), with the identical token formula:
-      token_ids[j] = (offsets[i] + i + j) % vocab_size
-
-    If TTFT matches InferenceX with this dataset, it confirms the TTFT gap
-    between inference-benchmark and InferenceX is purely due to RNG differences
-    producing different prefix cache hit rates.
-    """
-
-    def __init__(
-        self,
-        tokenizer_name: str,
-        input_len: int = 1024,
-        output_len: int = 1024,
-        num_prompts: int = 500,
-        range_ratio: float = 1.0,
-        prefix_len: int = 0,
-        seed: int = 0,
-    ):
-        self.output_len = output_len
-        self._tokenizer_name = tokenizer_name
-        self._input_len = input_len
-        self._num_prompts = num_prompts
-        self._range_ratio = range_ratio
-        self._prefix_len = prefix_len
-        self._seed = seed
-        self._prompts: list[str] | None = None
-        self._idx = 0
-        self._lock = threading.Lock()
-
-    def _load(self):
-        if self._prompts is not None:
-            return
-        with self._lock:
-            if self._prompts is not None:
-                return
-            from transformers import AutoTokenizer
-            tokenizer = AutoTokenizer.from_pretrained(self._tokenizer_name)
-            vocab_size = tokenizer.vocab_size
-
-            # Match InferenceX exactly: np.random.seed then legacy randint
-            np.random.seed(self._seed)
-            prefix_token_ids = np.random.randint(0, vocab_size, size=self._prefix_len).tolist()
-
-            lo, hi = _uniform_len_bounds(self._input_len, self._range_ratio)
-            input_lens = np.random.randint(lo, hi + 1, size=self._num_prompts).tolist()
-            _output_lens = np.random.randint(
-                int(self.output_len * self._range_ratio),
-                self.output_len + 1,
-                size=self._num_prompts,
-            ).tolist()
-            offsets = np.random.randint(0, vocab_size, size=self._num_prompts)
-
-            prompts = []
-            for i in range(self._num_prompts):
-                tgt_len = self._prefix_len + input_lens[i]
-                token_ids = prefix_token_ids + [
-                    (int(offsets[i]) + i + j) % vocab_size
-                    for j in range(input_lens[i])
-                ]
-                prompt = tokenizer.decode(token_ids)
-                # Re-encode and trim/pad (same as InferenceX)
-                for _ in range(10):
-                    re_encoded = tokenizer.encode(prompt, add_special_tokens=False)
-                    if len(re_encoded) < tgt_len:
-                        extras = np.random.randint(0, vocab_size, size=tgt_len - len(re_encoded)).tolist()
-                        re_encoded.extend(extras)
-                    elif len(re_encoded) > tgt_len:
-                        re_encoded = re_encoded[:tgt_len]
-                    else:
-                        break
-                    prompt = tokenizer.decode(re_encoded)
-                prompts.append(prompt)
-
-            self._prompts = prompts
-
-    def get_next_request(self) -> BenchmarkRequest:
-        self._load()
-        with self._lock:
-            prompt = self._prompts[self._idx % len(self._prompts)]
-            self._idx += 1
-        return BenchmarkRequest(
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=self.output_len,
-        )
-
-
-class RandomTokenDatasetDoubleWrap(RandomTokenDataset):
-    """
-    Replicates InferenceX's double-chat-template bug for comparison.
-
-    InferenceX with --backend openai-chat --use-chat-template pre-applies
-    the chat template in sample_random_requests(), then sends the resulting
-    formatted string as the 'content' of a user message to /v1/chat/completions.
-    vLLM then applies the template a second time, making the effective prefill
-    longer than intended.
-
-    This class reproduces that exact behavior so we can measure the TTFT
-    increase caused by the double-wrap vs our correct single-wrap approach.
-    Use alongside random-1k profile to confirm the theory.
-    """
-
-    def _load(self):
-        super()._load()
-        # Cache tokenizer for chat template application
-        if not hasattr(self, '_tokenizer_obj'):
-            from transformers import AutoTokenizer
-            self._tokenizer_obj = AutoTokenizer.from_pretrained(self._tokenizer_name)
-
-    def get_next_request(self) -> BenchmarkRequest:
-        self._load()
-        with self._lock:
-            prompt = self._prompts[self._idx % len(self._prompts)]
-            self._idx += 1
-
-        # Pre-apply chat template exactly as InferenceX does
-        pre_formatted = self._tokenizer_obj.apply_chat_template(
-            [{"role": "user", "content": prompt}],
-            add_generation_prompt=True,
-            tokenize=False,
-        )
-        # Send pre-formatted string as user content → vLLM wraps it again
-        return BenchmarkRequest(
-            messages=[{"role": "user", "content": pre_formatted}],
-            max_tokens=self.output_len,
-        )
 
 
 def turn_wait_metadata(turn: dict) -> dict:
@@ -805,30 +591,6 @@ def make_dataset(
             context_safety_margin_tokens=context_safety_margin_tokens,
             tokenizer_name=tokenizer_name or profile.tokenizer_name,
         )
-    elif profile.dataset == "random":
-        return RandomTokenDataset(
-            tokenizer_name=profile.tokenizer_name,
-            input_len=profile.isl_tokens,
-            output_len=profile.osl_tokens,
-            num_prompts=500,
-            seed=random_seed,
-        )
-    elif profile.dataset == "random-legacy":
-        return RandomTokenDatasetLegacy(
-            tokenizer_name=profile.tokenizer_name,
-            input_len=profile.isl_tokens,
-            output_len=profile.osl_tokens,
-            num_prompts=500,
-            seed=random_seed,
-        )
-    elif profile.dataset == "random-doublewrap":
-        return RandomTokenDatasetDoubleWrap(
-            tokenizer_name=profile.tokenizer_name,
-            input_len=profile.isl_tokens,
-            output_len=profile.osl_tokens,
-            num_prompts=500,
-            seed=random_seed,
-        )
     elif profile.dataset == "sharegpt-multi-turn":
         return ShareGPTMultiTurnDataset(
             min_turns=profile.min_turns,
@@ -850,12 +612,6 @@ def make_dataset(
             max_osl_tokens=profile.osl_tokens,
             context_safety_margin_tokens=context_safety_margin_tokens,
         )
-    elif profile.dataset == "distributional-multi-turn":
-        raise ValueError(
-            f"profile {profile.name!r} samples synthetic sessions from a trace distribution; "
-            "synthetic traces are not a quettabench workload. The sampler lives in "
-            "analysis/synthetic/ (distributional.py, trace_distributions.py); replay a real "
-            "trace instead (workload.kind=sessions with a trajectory profile, or a jsonl file).")
     elif profile.dataset == "jsonl":
         return JsonlDataset(
             filepath=profile.file_path,

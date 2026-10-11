@@ -6,7 +6,7 @@ import sys
 import unittest
 from pathlib import Path
 
-from quettabench.workloads.dataset import _uniform_len_bounds
+from quettabench.workloads.base import uniform_len_bounds
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -59,13 +59,13 @@ class TestFlagValidation(unittest.TestCase):
 
 class TestUniformLenBounds(unittest.TestCase):
     def test_default_ratio_is_exact(self):
-        self.assertEqual(_uniform_len_bounds(1024, 1.0), (1024, 1024))
+        self.assertEqual(uniform_len_bounds(1024, 1.0), (1024, 1024))
 
     def test_partial_ratio(self):
-        self.assertEqual(_uniform_len_bounds(1024, 0.5), (512, 1024))
+        self.assertEqual(uniform_len_bounds(1024, 0.5), (512, 1024))
 
     def test_tiny_input_floors_at_one(self):
-        self.assertEqual(_uniform_len_bounds(1, 0.1), (1, 1))
+        self.assertEqual(uniform_len_bounds(1, 0.1), (1, 1))
 
 
 if __name__ == "__main__":
