@@ -141,7 +141,6 @@ class Kernels(unittest.TestCase):
         self.assertAlmostEqual(dev["busy_pct"], 100.0 * 1200 / 3000)
         self.assertEqual(dev["gaps_per_step"], 0.0)
 
-
     def test_a_stale_partial_export_is_removed_first(self):
         def export(argv, check):
             part = Path(argv[argv.index("-o") + 1])
@@ -156,6 +155,7 @@ class Kernels(unittest.TestCase):
             self.assertEqual(sorted(p.name for p in Path(tmp).iterdir()),
                              ["nsys.nsys-rep", "nsys.sqlite"])
         self.assertEqual(out["launches_per_step"], 2.5)
+
     def test_subtract_takes_the_prefill_off(self):
         with tempfile.TemporaryDirectory() as tmp:
             fake_nsys_export(Path(tmp) / "nsys.sqlite")
