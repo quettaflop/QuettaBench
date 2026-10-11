@@ -655,12 +655,12 @@ class BenchDriver(Driver):
                     passed = passed or bool(ok.search(line))
             rc = proc.wait()
         finally:
-            # Ctrl-C or a failed write must not leave the bench, or a child it
-            # started (cargo's), holding the GPUs: kill its whole group.
-            if proc.poll() is None:
-                with contextlib.suppress(ProcessLookupError):
-                    os.killpg(proc.pid, signal.SIGKILL)
-                proc.wait()
+            # Ctrl-C, a failed write, or a bench that exited on its own must
+            # not leave a child it started (cargo's) holding the GPUs: kill
+            # its whole group every time; a group already gone is fine.
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(proc.pid, signal.SIGKILL)
+            proc.wait()
         if rc != 0:
             self._log(f"FAIL ctx={ctx} bs={bs} (bench exited {rc}; see {self.log_path})")
             raise BenchFailed(f"bench exited {rc}")

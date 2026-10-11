@@ -103,5 +103,19 @@ class CellLoop(unittest.TestCase):
             time.sleep(0.05)
         self.assertFalse(alive(pid))
 
+    def test_a_finished_cell_leaves_no_bench_child(self):
+        """A bench that exits on its own can leave a child (cargo's bench
+        binary) holding the GPUs; its group is killed all the same."""
+        pid_file = self.log.with_name("child.pid")
+        rows = list(BenchDriver(self.log).run(
+            [(1, 1, cell_spec(1, 1, FAKE_BENCH_CHILD=str(pid_file)))]))
+        self.assertEqual(len(rows), 1)
+        pid = int(pid_file.read_text())
+        deadline = time.monotonic() + 5
+        while alive(pid) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertFalse(alive(pid))
+
+
 if __name__ == "__main__":
     unittest.main()

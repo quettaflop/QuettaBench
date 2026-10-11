@@ -3,7 +3,8 @@
 
 FAKE_BENCH_EXIT sets the exit code; FAKE_BENCH_SILENT=1 prints no LOOP line;
 FAKE_BENCH_SLEEP=<s> sleeps that long before exiting; FAKE_BENCH_CHILD=<file>
-starts a sleeping child first and writes its pid there.
+starts a sleeping child first, its output to /dev/null so it does not hold
+the bench's stdout open, and writes its pid there.
 """
 
 import os
@@ -12,7 +13,8 @@ import sys
 import time
 
 if os.environ.get("FAKE_BENCH_CHILD"):
-    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     with open(os.environ["FAKE_BENCH_CHILD"], "w") as fh:
         fh.write(str(child.pid))
 
