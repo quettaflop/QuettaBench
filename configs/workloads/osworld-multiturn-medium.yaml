@@ -1,0 +1,19 @@
+# Turns are agent steps (browser actions), not conversation rounds.
+isl_tokens: 65536
+osl_tokens: 500
+isl_stddev: 0.0
+description: 'Real OSWorld computer-use agent: 10-20 step sessions'
+dataset: osworld-multi-turn
+file_path: data/osworld_trajectories.jsonl
+system_prompt: ''
+tokenizer_name: ''
+mode: multi-turn
+prefix_caching_required: true
+min_turns: 10
+max_turns: 20
+num_sessions: 30
+agent_type: computer-use
+turn_style: multi-turn
+serving_style: not-disaggregated
+data_source: osworld
+active: false

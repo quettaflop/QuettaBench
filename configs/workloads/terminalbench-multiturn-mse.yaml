@@ -1,0 +1,20 @@
+# Synthetic sampler profile: kept for its tags; runs only under analysis/synthetic/.
+isl_tokens: 32768
+osl_tokens: 2000
+isl_stddev: 0.0
+description: 'MSE: filtered terminalbench distribution, ISL=32768 (matches legacy -short)'
+dataset: distributional-multi-turn
+file_path: data/distributions/terminalbench_multiturn_filtered.json
+system_prompt: You are a helpful assistant.
+tokenizer_name: ''
+mode: multi-turn
+prefix_caching_required: true
+min_turns: 1
+max_turns: 30
+num_sessions: 100
+agent_type: terminal
+turn_style: multi-turn
+serving_style: not-disaggregated
+data_source: distributional
+active: false
+sampler: analysis.synthetic

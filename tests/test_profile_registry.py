@@ -1,10 +1,31 @@
+import tempfile
 import unittest
+from pathlib import Path
 
-from quettabench.workloads.profiles import filter_profiles, get_profile, resolve_profile_name
+from quettabench.workloads.profiles import (
+    PROFILES,
+    filter_profiles,
+    get_profile,
+    load_profiles,
+    resolve_profile_name,
+)
 from quettabench.workloads.sessions import resolve_multi_turn_num_sessions
 
 
 class ProfileRegistryTests(unittest.TestCase):
+    def test_profiles_are_the_yaml_files(self):
+        self.assertEqual(len(PROFILES), 39)
+        self.assertEqual(sum(1 for p in PROFILES.values() if p.sampler), 16)
+        self.assertTrue(all(p.sampler == "analysis.synthetic" for p in PROFILES.values()
+                            if p.dataset == "distributional-multi-turn"))
+
+    def test_unknown_key_is_an_error(self):
+        with tempfile.TemporaryDirectory() as td:
+            (Path(td) / "x.yaml").write_text("isl_tokens: 1\nosl_tokens: 1\nisl_stddev: 0.0\n"
+                                             "description: d\ndataset: test\nisl: 3\n")
+            with self.assertRaisesRegex(ValueError, r"x.yaml: unknown profile key\(s\) \['isl'\]"):
+                load_profiles(td)
+
     def test_coding_agent_is_alias_for_coding_singleturn(self):
         self.assertEqual(resolve_profile_name("coding-agent"), "coding-singleturn")
         self.assertEqual(get_profile("coding-agent").name, "coding-singleturn")

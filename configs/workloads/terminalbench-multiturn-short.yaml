@@ -1,0 +1,19 @@
+# Turns are agent steps (tool calls), not conversation rounds.
+isl_tokens: 32768
+osl_tokens: 2000
+isl_stddev: 0.0
+description: 'Real TerminalBench CLI agent: 2-20 step sessions (shortest available)'
+dataset: terminalbench-multi-turn
+file_path: data/terminalbench_trajectories.jsonl
+system_prompt: ''
+tokenizer_name: ''
+mode: multi-turn
+prefix_caching_required: true
+min_turns: 2
+max_turns: 20
+num_sessions: 100
+agent_type: terminal
+turn_style: multi-turn
+serving_style: not-disaggregated
+data_source: terminalbench
+active: false

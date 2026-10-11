@@ -1,0 +1,20 @@
+# Real SWE-Bench planning prompts; the JSONL drives token lengths, isl/osl are caps.
+# The system prompt is embedded in the JSONL.
+isl_tokens: 17000
+osl_tokens: 800
+isl_stddev: 0.0
+description: Real coding single-turn prompts captured from SWE-Bench-style planning calls
+dataset: jsonl
+file_path: data/coding_agent_prompts.jsonl
+system_prompt: ''
+tokenizer_name: ''
+mode: single-turn
+prefix_caching_required: true
+min_turns: 1
+max_turns: 1
+num_sessions: 200
+agent_type: coding
+turn_style: single-turn
+serving_style: not-disaggregated
+data_source: swebench
+active: true

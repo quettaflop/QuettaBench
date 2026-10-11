@@ -1,0 +1,18 @@
+isl_tokens: 10
+osl_tokens: 20
+isl_stddev: 0.0
+description: Quick smoke test
+dataset: test
+file_path: ''
+system_prompt: You are a helpful assistant.
+tokenizer_name: ''
+mode: single-turn
+prefix_caching_required: false
+min_turns: 1
+max_turns: 1
+num_sessions: 200
+agent_type: chat
+turn_style: single-turn
+serving_style: not-disaggregated
+data_source: test
+active: false

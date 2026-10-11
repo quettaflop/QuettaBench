@@ -39,7 +39,7 @@ in one results layer, `results/<run>/`, and leaves the repo by one route,
 - `quettabench/export/`: the only code that writes outside the repo.
 - `configs/`: `models/` holds per-model facts, once. `runs/` reference a model
   and never restate its facts. `grids.yaml` holds the grids and step points,
-  `hardware/` the link profiles.
+  `hardware/` the link profiles, `workloads/` one yaml per workload profile.
 - `data/` and `analysis/`: fetch scripts and one-off studies. Never imported by
   `quettabench/`, enforced by `tests/test_analysis_is_leaf.py`.
 - `tests/golden/`: characterization fixtures captured from the pre-refactor
