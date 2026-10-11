@@ -79,5 +79,6 @@ def test_builders_stop_in_one_line_without_ttft_queue_sim(tmp_path):
             call()
     write_leg(tmp_path / "tp1.csv", 1.0)
     write_leg(tmp_path / "tp4.csv", 0.4)
-    with pytest.raises(SystemExit, match="no simulator.ttft_queue_sim.PREFILL_TP_COMM_MS_PER_TOKEN"):
-        tp_comm.build_tpn(4, tmp_path / "tp4.csv", tmp_path / "out.json", tmp_path / "tp1.csv")
+    tp_comm.build_tpn(4, tmp_path / "tp4.csv", tmp_path / "out.json", tmp_path / "tp1.csv")
+    out = json.loads((tmp_path / "out.json").read_text())
+    assert out["fallback_it_replaces_ms_per_token"] is None
