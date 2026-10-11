@@ -5,8 +5,10 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from quettabench.crossval import reader
+from quettabench.engines import drivers
 from quettabench.engines.base import LaunchSpec
 from quettabench.engines.drivers import BenchDriver, BenchFailed
 from tests.golden._harness import FIXTURES
@@ -65,6 +67,20 @@ class CellLoop(unittest.TestCase):
                                             (2, 1, cell_spec(2, 1))]))
         self.assertNotIn("ctx=2", self.log.read_text())
 
+    def test_an_interrupted_cell_kills_its_bench(self):
+        started, real = [], drivers.subprocess.Popen
+
+        def popen(*args, **kwargs):
+            started.append(real(*args, **kwargs))
+            return started[-1]
+
+        with mock.patch.object(drivers.subprocess, "Popen", side_effect=popen), \
+                mock.patch.object(drivers.sys, "stdout") as out, \
+                self.assertRaises(KeyboardInterrupt):
+            out.write.side_effect = KeyboardInterrupt
+            list(BenchDriver(self.log).run([(1, 1, cell_spec(1, 1, FAKE_BENCH_SLEEP="60"))]))
+        (proc,) = started
+        self.assertIsNotNone(proc.poll())  # killed and reaped, not left sleeping
 
 if __name__ == "__main__":
     unittest.main()

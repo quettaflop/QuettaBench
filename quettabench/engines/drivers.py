@@ -641,12 +641,18 @@ class BenchDriver(Driver):
         passed = False
         proc = subprocess.Popen(spec.child_argv(spec.bench_argv), cwd=spec.cwd, text=True,
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        with self.log_path.open("a") as fh:
-            for line in proc.stdout:
-                sys.stdout.write(line)
-                fh.write(line)
-                passed = passed or bool(ok.search(line))
-        rc = proc.wait()
+        try:
+            with self.log_path.open("a") as fh:
+                for line in proc.stdout:
+                    sys.stdout.write(line)
+                    fh.write(line)
+                    passed = passed or bool(ok.search(line))
+            rc = proc.wait()
+        finally:
+            # Ctrl-C or a failed write must not leave the bench holding the GPUs.
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
         if rc != 0:
             self._log(f"FAIL ctx={ctx} bs={bs} (bench exited {rc}; see {self.log_path})")
             raise BenchFailed(f"bench exited {rc}")
