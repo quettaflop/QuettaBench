@@ -115,8 +115,10 @@ def _conc_sweep(a, cost, model):
     measured herd: the first concurrent burst at a new batch shape triggers
     one-time work (triton/moe autotune, graph shapes) that contaminated the
     first version of this sweep by up to 50x at c=2-10."""
-    from engine.loaders.workload import Turn  # noqa: PLC0415
-    from engine.sim.closed_loop import predict_cell  # noqa: PLC0415
+    # Imported here: only this sweep needs them, and QuettaSim main has no engine.sim,
+    # so a top-level import would stop the single-stream sweeps too.
+    from engine.loaders.workload import Turn
+    from engine.sim.closed_loop import predict_cell
 
     def herd(c: int) -> list[tuple[float, float, int]]:
         prompts = [_prompt(512) for _ in range(c)]
@@ -179,6 +181,8 @@ def probe(a):
     """Run the sweeps against a.base_url; prints the blocks and returns them as
     {frontend, serving, conc} (conc: [c, median ttft ms, sim frontend-off ms])."""
 
+    # Imported here: QuettaSim main has no kernel_composed.types, so a top-level
+    # import would stop main() and --help as well as this probe.
     from kernel_composed.types import FrontendParams
     gpu = load_kernel_gpu(HERE / ".." / ".." / "device_spec" / f"{a.gpu_label.lower()}.yaml")
     # The residual decomposition needs the COMPUTE-ONLY prediction: strip any

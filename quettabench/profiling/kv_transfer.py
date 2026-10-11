@@ -112,6 +112,7 @@ def main() -> None:
     dev = torch.device("cuda", local)
     dist.init_process_group("gloo", rank=rank, world_size=world)
 
+    # nixl is imported here, under torchrun on the PD hosts that have it; the module imports without it.
     from nixl._api import nixl_agent, nixl_agent_config
     os.environ.setdefault("UCX_RCACHE_MAX_UNRELEASED", "1024")   # as vllm/distributed/nixl_utils.py
     agent = nixl_agent(f"{'P' if rank == 0 else 'D'}{rank}",

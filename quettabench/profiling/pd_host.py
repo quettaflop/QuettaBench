@@ -75,6 +75,7 @@ class Prompter:
     """Random-word prompts of a target token length, checked with the model tokenizer."""
 
     def __init__(self, tokenizer_name: str, seed: int = 1234):
+        # transformers is imported here: only a Prompter needs the tokenizer.
         from transformers import AutoTokenizer
         self.tok = AutoTokenizer.from_pretrained(tokenizer_name)
         self.rng = random.Random(seed)

@@ -118,9 +118,8 @@ def load_gsm8k(path, tokenizer_name, n, tokenizer=None):
     ({question, answer}). Gold is the number after #### in each answer.
     tokenizer, when given, replaces loading tokenizer_name."""
     if tokenizer is None:
-        from transformers import (
-            AutoTokenizer,  # optional dependency, as in workloads/tokenize.py
-        )
+        # transformers is imported here: an optional dependency, as in workloads/tokenize.py.
+        from transformers import AutoTokenizer
 
         tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, trust_remote_code=True)
     with open(path) as fh:

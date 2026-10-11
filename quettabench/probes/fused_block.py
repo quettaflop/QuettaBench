@@ -40,6 +40,7 @@ from pathlib import Path
 
 import torch
 import yaml
+from vllm.vllm_flash_attn.flash_attn_interface import flash_attn_varlen_func
 
 from quettabench.probes._graph import graph_time_us
 from quettabench.probes.base import add_output_args, out_root, run_recorded
@@ -59,6 +60,7 @@ class Block:
     """
 
     def __init__(self, spec: dict, tp: int, fp8: bool, dev, block=(128, 128)):
+        # Imported where the layers are built, after main has entered the vLLM config they read.
         from vllm.model_executor.layers.fused_moe import fused_experts, fused_topk
         from vllm.model_executor.layers.fused_moe.config import fp8_w8a8_moe_quant_config
         from vllm.model_executor.layers.quantization.utils.fp8_utils import W8A8BlockFp8LinearOp
@@ -139,7 +141,6 @@ class Block:
 
     def forward(self, x, ab):
         """One block over `x` (tokens, hidden); `ab` from attn_buffers."""
-        from vllm.vllm_flash_attn.flash_attn_interface import flash_attn_varlen_func
         m = x.shape[0]
         # rmsnorm (fused add+norm in vLLM) x2 around the two sub-layers
         h1 = torch.nn.functional.rms_norm(x, (self.h,))
@@ -178,6 +179,7 @@ def main(argv=None) -> None:
     add_output_args(ap)
     a = ap.parse_args(argv)
 
+    # Imported here, once the flags parse: the config is entered before Block imports its layers.
     from vllm.config import VllmConfig, set_current_vllm_config
     # Hold the context manager for the process lifetime. Calling __enter__() on a
     # temporary lets it be garbage-collected, and closing a @contextmanager generator

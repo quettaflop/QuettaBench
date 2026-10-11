@@ -282,6 +282,47 @@ def test_probes_import_their_siblings_at_the_top():
                     f"{probe.name}:{node.name}"
 
 
+def inline_imports_without_a_reason(path: Path) -> list[str]:
+    """Function-level imports in path whose reason is stated nowhere: neither a
+    comment line just above the import (or its run of imports) nor the
+    enclosing function's docstring mentions the import."""
+    text = path.read_text()
+    lines = text.splitlines()
+    bare = []
+    for fn in ast.walk(ast.parse(text)):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        doc = (ast.get_docstring(fn) or "").lower()
+        for node in ast.walk(fn):
+            if not isinstance(node, (ast.Import, ast.ImportFrom)):
+                continue
+            above = node.lineno - 2
+            while above >= 0 and lines[above].strip().startswith(("from ", "import ")):
+                above -= 1
+            comment = [ln.lower() for ln in lines[node.lineno - 1:node.end_lineno] if "#" in ln]
+            while above >= 0 and lines[above].strip().startswith("#"):
+                comment.append(lines[above].lower())
+                above -= 1
+            if not any("import" in c for c in comment) and "import" not in doc:
+                bare.append(f"{path.name}:{node.lineno}")
+    return bare
+
+
+def test_every_inline_import_states_why():
+    """An import inside a function says why it is not at the top, in a
+    comment above it or in the function's docstring; never a noqa."""
+    bare = []
+    for path in sorted([*PROBES_DIR.glob("*.py"), *PROFILING_DIR.rglob("*.py")]):
+        assert "noqa: PLC0415" not in path.read_text(), path.name
+        bare += inline_imports_without_a_reason(path)
+    assert bare == []
+
+
+def test_moe_docstrings_name_only_real_backends():
+    text = (PROBES_DIR / "moe.py").read_text()
+    assert set(re.findall(r"--backend (\w+)", text)) <= {"triton", "flashinfer"}
+
+
 QUETTASIM_RECIPES = ("collectives", "cross-attn", "vllm-allreduce", "reparallel-probe",
                      "reparallel-probe-val")
 

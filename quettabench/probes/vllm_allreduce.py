@@ -56,6 +56,7 @@ def main(argv=None):
     a = ap.parse_args(argv)
     rank, world, local = int(os.environ["RANK"]), int(os.environ["WORLD_SIZE"]), int(os.environ["LOCAL_RANK"])
     torch.cuda.set_device(local)
+    # Imported after set_device, the order a vLLM worker uses before it builds its communicator.
     from vllm.config import ParallelConfig, VllmConfig, set_current_vllm_config
     from vllm.distributed import get_tp_group, init_distributed_environment, initialize_model_parallel
     # The device communicator reads parallel_config (custom-all-reduce enablement)

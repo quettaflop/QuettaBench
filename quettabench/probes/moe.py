@@ -119,7 +119,7 @@ _BACKEND = "triton"
 
 
 def _flashinfer_moe():
-    """flashinfer is imported here: only --backend cutlass needs it."""
+    """flashinfer is imported here: only --backend flashinfer needs it."""
     from flashinfer.fused_moe import cutlass_fused_moe
     return cutlass_fused_moe
 
