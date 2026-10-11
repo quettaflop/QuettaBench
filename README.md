@@ -70,7 +70,9 @@ engines.
 -d`, the GPUs, the port, and the repo, `hardware.hf_home` and an absolute
 `engine.model` dir mounted read-only at their host paths, and `results/<run>/`
 read-write so nsys output lands there); `configs/runs/llama-tp1-docker.yaml` is the
-example. Provision never pulls; pull the image yourself:
+example. Provision never pulls; pull the image yourself. The docker backend
+is tested against mocks only, by owner decision; validate it on a docker
+host before relying on it.
 
 ```bash
 docker pull vllm/vllm-openai:v0.30.0

@@ -52,6 +52,7 @@ in one results layer, `results/<run>/`, and leaves the repo by
   and `pool_capacity`, and the profiling sources `serving_frontend`,
   `pd_host` and gsm8k (`wrapped.py`). Their `--out` paths are the caller's;
   nothing checks that they stay under results/.
+- Docker launch backend ships tested against mocks only, by owner decision; validate on a docker host before relying on it.
 - `quettabench/crossval/`: reads run files; its only write is the report json
   (default `results/xval/`).
 - `quettabench/export/`: the only measurement code that writes outside the
