@@ -20,7 +20,7 @@ RANDOM_TRACES = {"random": RandomTokenTrace, "random-legacy": LegacyRandomTokenT
 CONTEXT_SAFETY_MARGIN = 256
 
 
-def single_turn_trace(profile, seed, model):
+def single_turn_trace(profile, seed):
     """The undrawn single-turn trace a profile's dataset names."""
     d = profile.dataset
     if d == "test":
@@ -32,8 +32,7 @@ def single_turn_trace(profile, seed, model):
     if d == "sharegpt":
         return ShareGPTTrace(num_prompts=1000, seed=seed, system_prompt=profile.system_prompt,
                              max_isl_tokens=profile.isl_tokens, max_osl_tokens=profile.osl_tokens,
-                             context_safety_margin_tokens=CONTEXT_SAFETY_MARGIN,
-                             tokenizer_name=model or profile.tokenizer_name)
+                             context_safety_margin_tokens=CONTEXT_SAFETY_MARGIN)
     if d in RANDOM_TRACES:
         return RANDOM_TRACES[d](profile.tokenizer_name, profile.isl_tokens, profile.osl_tokens,
                                 seed=seed)
@@ -83,5 +82,5 @@ def build(cfg, tokenizer=None):
         sessions, _ = resolve_multi_turn_num_sessions(profile, cfg.mode.concurrency)
         return session_trace(profile, sessions, w.seed, warmup=cfg.mode.warmup, pacing=pacing,
                              max_turn_index=w.max_turn_index)
-    trace = single_turn_trace(profile, w.seed, cfg.engine.model or "")
+    trace = single_turn_trace(profile, w.seed)
     return trace.draw(w.num_requests, cfg.mode.warmup, profile)

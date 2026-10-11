@@ -273,14 +273,12 @@ def prompt_token_count(tokenizer, messages):
 
 
 def load_chat_tokenizer(name):
-    """The model's tokenizer for prompt counts, or None when it cannot load."""
+    """The model's tokenizer for prompt counts; None without a name. A
+    tokenizer that fails to load raises."""
     if not name:
         return None
-    try:
-        from transformers import AutoTokenizer  # optional dependency
-        return AutoTokenizer.from_pretrained(name)
-    except Exception:
-        return None
+    from transformers import AutoTokenizer  # optional dependency
+    return AutoTokenizer.from_pretrained(name)
 
 
 class ShareGPTTrace(SampledChatTrace):
@@ -288,14 +286,15 @@ class ShareGPTTrace(SampledChatTrace):
     is the estimated length of the recorded reply, so the server sees
     ShareGPT's own ISL/OSL spread. Pairs outside the ISL/OSL bounds are
     skipped, and with max_total_tokens so is a pair whose prompt (counted by
-    the tokenizer when one loads), reply and safety margin overflow it. Loads
+    tokenizer_name's tokenizer when given, else estimated), reply and safety
+    margin overflow it. Loads
     up to 3x num_prompts pairs, shuffles, keeps num_prompts."""
 
     def __init__(self, num_prompts=1000, seed=42, system_prompt="You are a helpful assistant.",
                  max_isl_tokens=8192, max_osl_tokens=2048, min_osl_tokens=50,
                  max_total_tokens=None, context_safety_margin_tokens=0, tokenizer_name=""):
         ds = load_sharegpt()
-        tokenizer = load_chat_tokenizer(tokenizer_name)
+        tokenizer = load_chat_tokenizer(tokenizer_name) if max_total_tokens is not None else None
         samples = []
         for item in ds:
             convs = item["conversations"]
