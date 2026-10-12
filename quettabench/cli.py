@@ -1,23 +1,6 @@
-"""qbench: the one command line.
+"""qbench: the one command line. `run` is parsed here; profile, xval and export pass the rest of argv to that module's main(argv).
 
-  qbench run <run.yaml> [--set k=v ...] [--dry-run] [--results-dir DIR] [--allow-unverified]
-             [--overwrite]
-                                                      quettabench.runner
-  qbench profile  --run results/<run> --source ...   quettabench.profiler
-  qbench xval     ...                                 quettabench.crossval
-  qbench export   --results ... --dest DIR            quettabench.export.quettasim
-                  [--kernel-dest QUETTASIM_DATA [--replace-tables]]
-
-run is parsed here: --set is repeatable and its values are yaml scalars,
---results-dir is the parent of results/<run>/. A config the loader refuses,
-or a value the engine adapter has no flag for (UnsupportedField, such as an
-afd serving_style, which no adapter launches), exits 1 with that one-line
-message; every config error shares exit 1. Every other door hands the rest of argv
-unchanged to its module's main(argv); the module owns its own flags and
---help, and is imported only when chosen, so `qbench export` never imports
-the profiler. `python3 -m quettabench.cli` works from a checkout without
-installing.
-"""
+Config errors exit 1 with a one-line message."""
 
 import argparse
 import importlib
@@ -27,7 +10,6 @@ from quettabench import runner
 from quettabench.config.schema import ConfigError
 from quettabench.engines.base import UnsupportedField
 
-# door -> module whose main(argv) takes the remaining arguments
 DOORS = {
     "profile": "quettabench.profiler",
     "xval": "quettabench.crossval",

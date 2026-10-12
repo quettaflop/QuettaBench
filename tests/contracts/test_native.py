@@ -89,8 +89,7 @@ class Traces(unittest.TestCase):
 
 
 def fake_nsys_export(db):
-    """An nsys sqlite export: two decode steps of 1000 ns each on device 0,
-    a 400 ns prefill-only range, and one memcpy."""
+    """An nsys sqlite export: two 1000 ns decode steps on device 0, a 400 ns prefill-only range and one memcpy."""
     con = sqlite3.connect(db)
     con.executescript("""
         CREATE TABLE StringIds (id INTEGER, value TEXT);
@@ -221,9 +220,7 @@ class LiveProbes(unittest.TestCase):
                 self.assertTrue({f"{name}_probe", f"{name}_main"} <= set(funcs))
 
     def test_kv_transfer_records_a_probe_run(self):
-        """kv_transfer takes the probes' output args and records its run
-        through run_recorded, so its table lands in its run dir and only
-        `qbench export` carries it into QuettaSim's kernel_data."""
+        """kv_transfer records its run through run_recorded with the probes' output args; only `qbench export` moves it to kernel_data."""
         text = (Path(native.__file__).parent / "kv_transfer.py").read_text()
         calls = {(n.func.id, tuple(getattr(a, "id", getattr(a, "value", None)) for a in n.args))
                  for n in ast.walk(ast.parse(text))
@@ -234,8 +231,7 @@ class LiveProbes(unittest.TestCase):
         self.assertNotIn("data/kernel_data", text)
 
     def test_kv_transfer_fails_its_run_on_a_hang_or_sigterm(self):
-        """The gloo group times out after five minutes, and SIGTERM raises
-        SystemExit(143), so run_recorded records the run as failed."""
+        """The gloo group times out after five minutes and SIGTERM raises SystemExit(143), so the run is recorded as failed."""
         tree = ast.parse((Path(native.__file__).parent / "kv_transfer.py").read_text())
         (init,) = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
                    and getattr(n.func, "attr", "") == "init_process_group"]
@@ -253,11 +249,7 @@ class LiveProbes(unittest.TestCase):
         self.assertEqual(results.exit_status(stop.exception)[0], "failed")
 
     def test_frontend_sources_take_quettasims_device_yaml(self):
-        """The frontend and pd_host sources load the GPU from --device-yaml, a
-        required path into QuettaSim's device_spec/; a default under this
-        repo named a file that does not exist. QuettaSim main has
-        engine.sim.closed_loop and kernel_composed.types, so they import at
-        the top."""
+        """The frontend and pd_host sources take a required --device-yaml into QuettaSim's device_spec/."""
         here = Path(native.__file__).parent
         text = (here / "frontend.py").read_text()
         tree = ast.parse(text)

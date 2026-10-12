@@ -1,17 +1,6 @@
-"""Native profiler sources: what the engine itself exposes.
+"""Native profiler sources: the /metrics scrape, armed trace files, nsys kernel tables, and the frontend, pd_host and kv_transfer probes.
 
-  /metrics   the Prometheus text a vLLM server serves, scraped once
-  traces     nsys / torch files the launcher armed at start; listed, never run
-  kernels    per-kernel GPU time from the armed nsys trace (nsys_kernels.py)
-  frontend, pd_host
-             the live-server probes, run against the attached endpoint
-  kv_transfer
-             the NIXL hand-off probe's CSV; it needs its own torchrun ranks,
-             so it is read here, never started
-
-Counters on /metrics are cumulative since the server started, so a scrape
-after a run covers everything the server did, warmup included.
-"""
+Counters on /metrics are cumulative since the server started, so a scrape after a run includes warmup."""
 
 import csv
 import importlib
@@ -27,12 +16,10 @@ from quettabench.metrics.core import counter_total, parse_prometheus, spec_count
 HITS = "vllm:gpu_prefix_cache_hits"
 QUERIES = "vllm:gpu_prefix_cache_queries"
 
-# The live sources import QuettaSim's `engine` package at the top, so they are
-# loaded by name only when asked for; the GPU-free profiler must import without QuettaSim.
+# imported by name when asked for: it needs QuettaSim, which the GPU-free profiler must not
 FRONTEND = "quettabench.profiling.frontend"
 
-# File names the instrumentation leaves in results/<run>/, by kind. nsys
-# writes <out>.nsys-rep (<out>.qdrep before 2021.4); the adapters pass out=nsys.
+# nsys writes <out>.nsys-rep, or <out>.qdrep before 2021.4; the adapters pass out=nsys
 TRACE_FILES = {
     "nsys": ("nsys.nsys-rep", "nsys.qdrep", "nsys.rep"),
     "torch": ("torch_trace.json",),
@@ -62,8 +49,7 @@ def spec_decode_counters(endpoint, timeout_s=10):
 
 
 def metrics_section(metrics):
-    """profile.json `metrics`: every sample keyed by its exposition text
-    (name or name{k="v",...}) plus the derived prefix_cache_hit_rate."""
+    """profile.json `metrics`: every sample keyed by name or name{k="v",...}, plus prefix_cache_hit_rate."""
     samples = {}
     for key, value in metrics.items():
         if isinstance(key, tuple):
@@ -74,20 +60,14 @@ def metrics_section(metrics):
 
 
 def collect_armed_traces(results_dir, instrumentation):
-    """profile.json `traces`: the files the launch-time instrumentation left
-    in results_dir. Only looks; missing means the arming did not produce
-    its file (or the server has not exited and flushed it yet)."""
+    """profile.json `traces`: files the launch-time instrumentation left in results_dir; missing is true when none exist yet."""
     names = TRACE_FILES.get(instrumentation, ())
     found = [n for n in names if (Path(results_dir) / n).exists()]
     return {"instrumentation": instrumentation, "files": found,
             "missing": bool(names) and not found}
 
 
-# nsys_kernels.py's family list, unchanged: first match wins, and one list
-# covers both engines so a row means the same work whichever engine ran it.
-# The kimi_* patterns are QuettaServe kernel symbols. one_shot and the
-# underscored all_reduce are listed explicitly: before 2026-09-02 llama's
-# one-shot NVLink all-reduce fell through to "reduce / norm".
+# first match wins; the kimi_* patterns are QuettaServe kernel symbols
 KERNEL_FAMILIES = [
     (r"kimi_moe_gemv", "expert MXFP4 GEMV (ours, fused)"),
     (r"Marlin", "expert MXFP4 GEMM (vLLM MARLIN)"),
@@ -125,14 +105,9 @@ def _merged(intervals):
 
 def kernel_summary(results_dir, steps, window=None, subtract=None, top=25, gap_us=20.0,
                    nsys="nsys"):
-    """profile.json `kernels`: nsys_kernels.py's tables from the run's armed
-    nsys trace, exported once to <results_dir>/nsys.sqlite with `nsys export
-    --type sqlite`. window is an NVTX range name (default the whole capture);
-    subtract is a second range whose totals come off first, how a vLLM window
-    drops its prefill; steps is the decode step count left. Every number is
-    per step. Each kernel's sum of durations is the work; the union of their
-    intervals per device is the wall time it covers; the two differ by the
-    overlap, so both are reported."""
+    """profile.json `kernels` per decode step from the armed nsys trace, exported once to <results_dir>/nsys.sqlite.
+
+    window is an NVTX range (default the whole capture); subtract is a range whose totals come off first. Per device, both the summed duration and the union of intervals are reported."""
     results_dir = Path(results_dir)
     db = results_dir / "nsys.sqlite"
     if not db.exists():
@@ -140,8 +115,7 @@ def kernel_summary(results_dir, steps, window=None, subtract=None, top=25, gap_u
                     if (results_dir / n).exists()), None)
         if rep is None:
             raise ValueError(f"no armed nsys trace in {results_dir}")
-        # Into a temp file first, so an interrupted export leaves no db to trust.
-        # An earlier interrupted export's leftover makes nsys refuse the -o path.
+        # export to a temp file so an interrupted export leaves no db; nsys refuses an existing -o path
         part = db.with_name("nsys.partial.sqlite")
         part.unlink(missing_ok=True)
         subprocess.run([nsys, "export", "--type", "sqlite", "-o", str(part), str(rep)], check=True)
@@ -240,8 +214,7 @@ def with_defaults(argv, defaults):
 
 
 def serving_frontend(endpoint, model, argv=()):
-    """profile.json `frontend`: frontend.frontend_probe() against endpoint/v1;
-    argv carries the probe's own flags (--gpu-label, --model-yaml, ...)."""
+    """profile.json `frontend`: frontend_probe() against endpoint/v1; argv carries the probe's own flags."""
     probe = importlib.import_module(FRONTEND)
     a = probe.frontend_parser().parse_args(with_defaults(argv, {"--base-url": f"{endpoint}/v1",
                                                                 "--model": model}))
@@ -257,7 +230,6 @@ def pd_host(endpoint, model, argv=()):
 
 
 def kv_transfer(csv_path):
-    """profile.json `kv_transfer`: the rows kv_transfer's torchrun run wrote
-    (csv strings, as written). Read directly: the probe module needs torch."""
+    """profile.json `kv_transfer`: the csv rows as written, read directly because the probe module needs torch."""
     with Path(csv_path).open() as fh:
         return {"csv": str(csv_path), "rows": list(csv.DictReader(fh))}

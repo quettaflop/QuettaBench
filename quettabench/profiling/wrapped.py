@@ -1,11 +1,6 @@
 """Wrapped profiler sources: board energy, dollar cost and gsm8k accuracy.
 
-Each wraps a tool or a dataset outside the engine. The numbers are
-legacy/trace_serve.py's functions moved unchanged; what changed is where
-inputs come from: devices from engine.json or the Config, never os.environ,
-and gsm8k answers from any `generate(prompt_ids, max_tokens) -> text`
-callable instead of a vLLM engine object.
-"""
+Devices come from engine.json or the Config; gsm8k answers come from any `generate(prompt_ids, max_tokens) -> text` callable."""
 
 import json
 import re
@@ -19,15 +14,12 @@ GSM8K_MAX_TOKENS = 256
 
 
 def integrate_power(samples_w, interval_s):
-    """Rectangle-rule joules from per-sample total board watts. A missed sample
-    shrinks the integral rather than crashing the run, so joules is a floor."""
+    """Rectangle-rule joules from per-sample total board watts; a missed sample makes it a floor."""
     return sum(samples_w) * interval_s
 
 
 def energy_devices(engine_json, config):
-    """CUDA_VISIBLE_DEVICES the engine was launched with: engine.json's
-    launch_spec env first, then the Config's hardware.visible_devices; ""
-    means every GPU on the box."""
+    """CUDA_VISIBLE_DEVICES from engine.json's launch_spec, else the Config's hardware.visible_devices; "" means every GPU."""
     env = ((engine_json or {}).get("launch_spec") or {}).get("env") or {}
     return env.get("CUDA_VISIBLE_DEVICES") or \
         ((config or {}).get("hardware") or {}).get("visible_devices") or ""
@@ -39,14 +31,7 @@ def device_label(ids):
 
 
 class PowerSampler:
-    """Total board power over `devices` every interval_s, on a daemon thread.
-
-    One nvidia-smi call per tick, summed across the listed GPUs. Board scope
-    includes idle draw and everything colocated on those devices, which is
-    why the energy section is labeled gpu_board. A failed call or an
-    unparsable reply (OSError, ValueError) skips that tick on purpose: a
-    missing sample makes joules a floor instead of killing the run.
-    """
+    """Total board power over `devices` every interval_s on a daemon thread; a failed or unparsable nvidia-smi call skips that tick."""
 
     def __init__(self, devices, nvidia_smi="nvidia-smi", interval_s=1.0):
         self.devices, self.interval_s = devices or "", interval_s
@@ -87,24 +72,20 @@ def energy_section(samples_w, interval_s, out_tokens, devices):
 
 
 def cost_per_m_tokens(gpu_cost_hr, devices, wall_s, out_tokens):
-    """(run USD, USD per million output tokens) at a flat per-GPU-hour rate.
-    Wall time is the replay window, so model-load time is excluded; including
-    it would price the benchmark harness, not the serving."""
+    """(run USD, USD per million output tokens) at a flat per-GPU-hour rate over the replay window, excluding model load."""
     usd = gpu_cost_hr * devices * wall_s / 3600.0
     return usd, usd * 1e6 / max(out_tokens, 1)
 
 
 def cost_section(gpu_cost_hr, devices, wall_s, out_tokens):
-    """profile.json `cost`; devices is tp * pp, as COSTSUM always used."""
+    """profile.json `cost`; devices is tp * pp."""
     usd, per_m = cost_per_m_tokens(gpu_cost_hr, devices, wall_s, out_tokens)
     return {"usd": usd, "usd_per_m_out_tokens": per_m, "gpu_cost_hr": float(gpu_cost_hr),
             "devices": devices, "wall_s": wall_s, "out_tokens": out_tokens}
 
 
 def gsm8k_answer(text):
-    """Final numeric answer: the last number in the text, comma and dollar
-    stripped; gold answers sit after '####'. Returns None when no number
-    appears, which scores as wrong rather than crashing mid-benchmark."""
+    """Last number in the text with commas and dollar signs stripped; gold answers sit after '####'. None when no number appears."""
     if "####" in text:
         text = text.rsplit("####", 1)[-1]
     nums = re.findall(r"-?\d[\d,]*\.?\d*", text.replace("$", ""))
@@ -114,11 +95,9 @@ def gsm8k_answer(text):
 
 
 def load_gsm8k(path, tokenizer_name, n, tokenizer=None):
-    """[(prompt_ids, gold_answer)] for the first n items of a GSM8k JSONL
-    ({question, answer}). Gold is the number after #### in each answer.
-    tokenizer, when given, replaces loading tokenizer_name."""
+    """[(prompt_ids, gold_answer)] for the first n items of a GSM8k JSONL ({question, answer}); tokenizer replaces loading tokenizer_name."""
     if tokenizer is None:
-        # transformers is imported here: an optional dependency, as in workloads/tokenize.py.
+        # optional dependency, imported only when needed
         from transformers import AutoTokenizer
 
         tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, trust_remote_code=True)
@@ -128,10 +107,7 @@ def load_gsm8k(path, tokenizer_name, n, tokenizer=None):
 
 
 def gsm8k_accuracy(generate, items, max_tokens=GSM8K_MAX_TOKENS):
-    """Greedy answers through generate(prompt_ids, max_tokens) -> text, scored
-    by exact match of gsm8k_answer against gold. Returns profile.json
-    `accuracy`. Task-level accuracy beside the token-level FIDELITY gate is
-    the accuracy story: either alone can hide a fast-but-wrong config."""
+    """profile.json `accuracy`: greedy answers through generate(prompt_ids, max_tokens) -> text, exact match against gold."""
     correct = 0
     for ids, gold in items:
         got = gsm8k_answer(generate(ids, max_tokens))
@@ -142,8 +118,7 @@ def gsm8k_accuracy(generate, items, max_tokens=GSM8K_MAX_TOKENS):
 
 
 def http_generate(endpoint, model, timeout_s=600):
-    """generate(prompt_ids, max_tokens) -> text over a server's /v1/completions,
-    greedy and non-streaming: the gsm8k callable for an attached server."""
+    """generate(prompt_ids, max_tokens) -> text over a server's /v1/completions, greedy and non-streaming."""
     def generate(prompt_ids, max_tokens):
         body = json.dumps({"model": model, "prompt": list(prompt_ids), "max_tokens": max_tokens,
                            "temperature": 0.0}).encode()

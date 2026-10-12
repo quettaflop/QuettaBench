@@ -30,8 +30,7 @@ def _scripts(suffix):
 
 
 def _load_workloads():
-    """The merged records, grids and step points the retired workloads.json
-    held, as the config golden pins them for the loader."""
+    """The merged records, grids and step points of workloads.json, as the config golden pins them."""
     fixtures = REPO / "tests" / "golden" / "fixtures"
     records = json.loads((fixtures / "config_workloads.json").read_text())
     glob = json.loads((fixtures / "config_global.json").read_text())["cleared"]
@@ -60,7 +59,6 @@ class CrossvalScripts(unittest.TestCase):
             ast.parse(script.read_text(), filename=str(script))
 
     def test_no_shell_entry_points_left(self):
-        # qbench, provision and the justfile replaced every crossval shell script.
         self.assertEqual(_scripts(".sh"), [])
 
     def test_serve_wires_the_identity_gate(self):
@@ -69,16 +67,14 @@ class CrossvalScripts(unittest.TestCase):
         self.assertIn("WORKLOADSUM", (QB / "metrics" / "results.py").read_text())
 
     def test_backend_detection_and_no_hard_nvidia_smi(self):
-        # XVAL_BACKEND wins; with no accel tooling on PATH detection says cpu, and
-        # link detection on a non-cuda backend never calls nvidia-smi.
+        # XVAL_BACKEND wins; with no accel tooling on PATH detection says cpu, and non-cuda never calls nvidia-smi.
         with mock.patch("shutil.which", return_value=None):
             self.assertEqual(_config("llama").hardware.backend, "cpu")
             self.assertEqual(_config("llama").hardware.link_profile, "nvlink")
         self.assertEqual(_config("llama", env={"XVAL_BACKEND": "tpu"}).hardware.backend, "tpu")
 
     def test_pp_wired_in_grid_and_device_count(self):
-        # A grid run passes pipeline_parallel_size (from XVAL_PP or the workload's pp),
-        # and the device count the orchestrator provisions is tp * pp.
+        # pipeline_parallel_size comes from XVAL_PP or the workload's pp; devices provisioned are tp * pp.
         src = (QB / "config" / "env_map.py").read_text() + (QB / "engines" / "vllm.py").read_text()
         self.assertIn("pipeline_parallel_size", src)
         self.assertIn("XVAL_PP", src)
@@ -91,8 +87,7 @@ class CrossvalScripts(unittest.TestCase):
         self.assertEqual(ds.tp * ds.pp, 16)  # tp8 * pp2
 
     def test_link_profile_detection(self):
-        # One detection for both engines: caller override wins, non-cuda backends
-        # take the no-pins nvlink profile.
+        # a caller override wins; non-cuda backends take the no-pins nvlink profile.
         self.assertEqual(_config("llama", env={"XVAL_LINK_PROFILE": "pcie"}).hardware.link_profile,
                          "pcie")
         self.assertEqual(_config("llama", env={"XVAL_BACKEND": "tpu"}).hardware.link_profile,
@@ -104,8 +99,7 @@ class CrossvalScripts(unittest.TestCase):
                          "/workspace/.xval-cache")
 
     def test_lss_export_covers_or_fails_loudly(self):
-        # Full probe coverage reproduces the reference key set; one missing cell
-        # must exit 2 with a MISSING line, never an interpolated row.
+        # a missing probe cell must exit 2 with a MISSING line, never an interpolated row.
         with tempfile.TemporaryDirectory() as td:
             ref = Path(td) / "H200" / "meta-llama" / "Llama-3.1-8B" / "bf16"
             (ref / "tp1").mkdir(parents=True)
@@ -144,9 +138,7 @@ class CrossvalScripts(unittest.TestCase):
             self.assertIn("MISSING", (out / "gaps.txt").read_text())
 
     def test_lss_first_token_fit(self):
-        # A constant live-minus-sim offset must be recovered exactly and the
-        # corrected TTFT error must collapse; the join is by request id, not row
-        # order, and rides on matching input token counts.
+        # a constant live-minus-sim offset is recovered exactly; the join is by request id.
         with tempfile.TemporaryDirectory() as td:
             live = Path(td) / "bench_dir"
             live.mkdir()
@@ -176,8 +168,7 @@ class CrossvalScripts(unittest.TestCase):
             self.assertIn("first_token_overhead_us: 6300", meta.read_text())
 
     def test_goodput_search_and_verdict(self):
-        # The sweep must bracket the PASS/FAIL boundary within its probe cap;
-        # an uncapped search would double forever on a flat SLA response.
+        # the sweep must bracket the PASS/FAIL boundary within its probe cap.
         from quettabench.metrics.core import sla_verdict
         from quettabench.modes.serve import goodput_search
         gen = goodput_search(start=1.0)
@@ -199,9 +190,7 @@ class CrossvalScripts(unittest.TestCase):
         self.assertIn("GOODPUTSUM", (QB / "metrics" / "results.py").read_text())
 
     def test_injected_arrivals(self):
-        # Injected schedules must be deterministic, must match their spec, and
-        # must change the workload hash (arrival_ts is a hash input), so a
-        # trace-paced and an injected run can never be conflated.
+        # injected schedules are deterministic, match their spec and change the workload hash.
         from quettabench.workloads import arrival
         from quettabench.workloads.base import workload_hash
         from quettabench.workloads.grid import synth_requests
@@ -242,13 +231,11 @@ class CrossvalScripts(unittest.TestCase):
         self.assertEqual(f("so the total is $1,234."), "1234")
         self.assertEqual(f("the answer is 3.5 apples"), "3.5")
         self.assertIsNone(f("no numbers here"))
-        # ACCSUM prints from the profile's own accuracy section, so SPECSUM's
-        # records can no longer clobber it the way trace_serve's shared `acc` could.
+        # ACCSUM prints from the profile's own accuracy section, not from SPECSUM's records.
         self.assertIn("ACCSUM", (QB / "profiler.py").read_text())
 
     def test_serving_style_contract(self):
-        # Item 1a: serving topology parses, disagg GPU pools are disjoint, ep must
-        # divide the expert count, and disagg rows never pair with aggregated.
+        # serving topology parses, disagg GPU pools are disjoint, ep divides the expert count.
         sys.path.insert(0, str(REPO))
         try:
             from quettabench.config import schema
@@ -285,8 +272,7 @@ class CrossvalScripts(unittest.TestCase):
             engine = SimpleNamespace(serving_style="aggregated", tp=4, pp=2)
             self.assertEqual(schema.device_count(engine), 8)
             self.assertTrue(schema.serving_style_compatible("aggregated", "aggregated"))
-            # disagg KV config: prefill producer and decode consumer share the port
-            # and pool size, take distinct ranks; a wrong role raises.
+            # the prefill producer and decode consumer share port and pool size with distinct ranks; a wrong role raises.
             pre = schema.disagg_kv_config("kv_producer", 0, "P2pConnector")
             dec = schema.disagg_kv_config("kv_consumer", 1, "P2pConnector")
             self.assertEqual(pre["kv_role"], "kv_producer")
@@ -299,11 +285,7 @@ class CrossvalScripts(unittest.TestCase):
             sys.path.pop(0)
 
     def test_glm53_workload_contract(self):
-        # GLM-5.3 is MLA + DSA, so kv_bytes must be the latent formula; the dense
-        # per-head formula in the grid run would overestimate KV several-fold and skew
-        # the capacity gate. The checkpoint is pre-quantized fp8, recorded as quant
-        # so the table flags any pairing against a bf16 baseline. No bench section:
-        # QuettaServe has no GLM crate, this workload is vLLM-side only for now.
+        # GLM-5.3 is MLA + DSA, so kv_bytes uses the latent formula; the checkpoint is fp8, recorded as quant; no bench section.
         wl = _load_workloads()["workloads"]["glm53"]
         layers, kv_lora_rank, rope, bf16 = 78, 512, 64, 2  # zai-org/GLM-5.3 config.json
         self.assertEqual(wl["kv_bytes"], layers * (kv_lora_rank + rope) * bf16)
@@ -319,11 +301,7 @@ class CrossvalScripts(unittest.TestCase):
         self.assertEqual(cfg.engine.tp * cfg.engine.pp, 8)
 
     def test_glm53flash_workload_contract(self):
-        # GLM-5.3-Flash is a hybrid: 34 KDA linear-attention layers keep fixed-size
-        # recurrent state, only the 11 sparse-MLA layers hold per-token KV (rope-free
-        # latent 512). Its config even has head_dim 0, so the grid run's dense formula
-        # would be garbage; kv_bytes is mandatory. A different model from glm53,
-        # engine branch kev/glm53flash, and never comparable across the pair.
+        # GLM-5.3-Flash is a hybrid: only the 11 sparse-MLA layers hold per-token KV, so kv_bytes is mandatory.
         wl = _load_workloads()["workloads"]["glm53flash"]
         mla_layers, kv_lora_rank, rope, bf16 = 11, 512, 0, 2  # zai-org/GLM-5.3-Flash text_config
         self.assertEqual(wl["kv_bytes"], mla_layers * (kv_lora_rank + rope) * bf16)
@@ -394,8 +372,7 @@ class CrossvalScripts(unittest.TestCase):
     )
 
     def test_bench_qwen_defaults_exact_to_eager(self):
-        # exact has no graph wiring, so with cubins present the driver must
-        # pick the eager step and stamp kern/mode into every cell.
+        # exact has no graph wiring: with cubins present the driver picks the eager step and stamps kern/mode.
         out, log = self._bench("qwen3", self.QWEN_LINE, ["engine.extra.gdn_dir=/dev/null"])
         self.assertEqual(out.returncode, 0, out.stderr)
         cfg = _load_workloads()
@@ -464,8 +441,7 @@ class WorkloadsConfig(unittest.TestCase):
         qw = _load_workloads()["workloads"]["qwen3"]
         self.assertNotIn("expert_parallel", qw)
         self.assertEqual(qw.get("tp"), 4)
-        # Hybrid stack: KV lives only in the 16 full-attention layers:
-        # 16 layers x 2 (K+V) x 4 kv heads x 256 head_dim x 2 bytes (bf16).
+        # hybrid stack: KV lives only in the 16 full-attention layers x 2 (K+V) x 4 kv heads x 256 head_dim x 2 bytes (bf16).
         self.assertEqual(qw.get("kv_bytes"), 16 * 2 * 4 * 256 * 2)
         self.assertEqual(qw.get("dtype"), "bfloat16")
         self.assertEqual(qw.get("weights_gib"), 54)
@@ -492,10 +468,7 @@ class WorkloadsConfig(unittest.TestCase):
 
 
 class EngineBenchContract(unittest.TestCase):
-    """Cells frozen from QuettaServe llama/benches/latency.rs: the batch
-    groups sweep ctx {100, 1024, 4096} x bs {1, 8, 16, 32, 64}; the
-    tensor-parallel groups sweep ctx {100, 1024, 4096, 8192} at bs 1. Every
-    cell the bench times needs a vLLM cell, or the table drops the row."""
+    """Cells of QuettaServe llama/benches/latency.rs: every cell the bench times needs a vLLM cell, or the table drops the row."""
 
     def test_llama_grid_covers_the_batch_bench_cells(self):
         grid = {tuple(c) for c in _load_workloads()["grids"]["llama"]}
@@ -515,10 +488,7 @@ class EngineBenchContract(unittest.TestCase):
 
 
 class TableParity(unittest.TestCase):
-    """crossval prints ratios only when both sides timed the same quantity:
-    the engine's pipelined decode_loop against the baseline's slope. A
-    criterion per-step log gets its cells printed with ratios withheld, and
-    rows whose KV formats differ carry a KV flag."""
+    """crossval prints ratios only when both sides timed the same quantity; criterion logs withhold ratios and differing KV formats carry a KV flag."""
 
     def _table(self, bench_text, kv="float16", env=None, expect_rc=0,
                serving_style="aggregated", quant="bf16"):
@@ -553,8 +523,7 @@ class TableParity(unittest.TestCase):
         self.assertNotIn("withheld", out)
 
     def test_quant_mismatch_flags_and_withholds(self):
-        # An nvfp4 engine row against a bf16 baseline is flagged QUANT and withheld;
-        # The grid run passes quantization through and records META quant.
+        # an nvfp4 engine row against a bf16 baseline is flagged QUANT and withheld
         out = self._table(
             "LOOP ctx=1024 bs=1 kv=fp16 ms_per_step=10.000 k=100\n",
             quant="bf16", env={"XVAL_QUANT": "nvfp4"})
@@ -675,8 +644,7 @@ class TableParity(unittest.TestCase):
         self.assertIn("tp mismatch", out)
 
     def test_comm_bound_cell_is_flagged(self):
-        # comm_bound_bs comes from the workload record (deepseek sets 64);
-        # the model field carries the display name, matched via workloads().
+        # comm_bound_bs comes from the workload record (deepseek sets 64).
         import sys
         import time
 
@@ -704,8 +672,7 @@ class TableParity(unittest.TestCase):
         self.assertIn("COMM", out.stdout)
 
     def test_no_comm_flag_without_workload_comm_bound(self):
-        # Absent comm_bound_bs means never comm-bound: a tp1 llama-class row
-        # at bs=64 must keep its ratio instead of inventing a threshold.
+        # absent comm_bound_bs means never comm-bound: a tp1 llama row at bs=64 keeps its ratio.
         import sys
         import time
 
@@ -734,8 +701,7 @@ class TableParity(unittest.TestCase):
         self.assertIn("0.50x", out.stdout)
 
     def test_grid_prompt_modes(self):
-        # clone must reproduce the engine's synthetic prompt so both sides
-        # route alike; all three regimes must be selectable.
+        # clone reproduces the engine's synthetic prompt so both sides route alike; all three regimes are selectable.
         self.assertIn("(i * 137 + 11) % 100_000", (QB / "workloads" / "grid.py").read_text())
         src = (QB / "workloads" / "grid.py").read_text() + (QB / "config" / "schema.py").read_text()
         self.assertIn("prompt_mode", src)
@@ -754,10 +720,7 @@ class TableParity(unittest.TestCase):
 
 
     def test_hash_canonicalization(self):
-        # The gate hashes the completed set, not the completion order: a true
-        # random shuffle of the done-list must not move the hash, while touching
-        # one prompt token or one arrival must. Without order-invariance the
-        # gate would void every run whose scheduler finished out of order.
+        # the gate hashes the completed set, so completion order must not move the hash.
         import random
 
         from quettabench.workloads.base import workload_hash
@@ -780,8 +743,7 @@ class TableParity(unittest.TestCase):
         self.assertNotEqual(h, workload_hash(arrival_mut))
 
     def test_workload_identity_hash(self):
-        # The gate: same requests -> same hash regardless of order; a dropped or
-        # altered request changes it. This is what proves systems saw equal work.
+        # the same requests give the same hash in any order; a dropped or altered request changes it.
         from quettabench.workloads.base import workload_hash
         from quettabench.workloads.grid import synth_requests
         reqs = synth_requests(12, 64, seed=2)
@@ -830,9 +792,7 @@ class TableParity(unittest.TestCase):
         self.assertIsNone(burst_recovery(never, 1000.0, 5.0)[0])
 
     def test_r2_tokenize_and_output_ids_survive_load(self):
-        # The real-text path: agent-bench turns -> requests carrying output_token_ids
-        # (reasoning+content), and load_trace must preserve them or SPECSUM can never
-        # fire. encode is stubbed so the test needs no tokenizer or GPU.
+        # load_trace must preserve output_token_ids from agent-bench turns; encode is stubbed.
         from quettabench.workloads import tokenize as trace_tokenize
         importlib.reload(trace_tokenize)
         recs = [{"model": "DS", "session_id": "s0", "turns": [
@@ -851,8 +811,7 @@ class TableParity(unittest.TestCase):
         self.assertEqual(loaded[0]["output_token_ids"], [99, 100])
 
     def test_synth_requests_distinct_and_trace(self):
-        # The synthetic runner must produce DISTINCT per-request streams (so MoE
-        # routing spreads, unlike clone) and parse the three trace shapes.
+        # distinct per-request streams so MoE routing spreads, unlike clone; three trace shapes parse.
         from quettabench.workloads.grid import synth_requests, take
         reqs = synth_requests(4, 32, seed=3)
         ids = [tuple(r["prompt_token_ids"]) for r in reqs]
@@ -906,8 +865,7 @@ class ConfigTree(unittest.TestCase):
 
     def test_qwen3_resolves_dense_hybrid_kv(self):
         e = _config("qwen3").engine
-        # Hybrid stack: KV lives only in the 16 full-attention layers:
-        # 16 layers x 2 (K+V) x 4 kv heads x 256 head_dim x 2 bytes (bf16).
+        # hybrid stack: KV lives only in the 16 full-attention layers x 2 (K+V) x 4 kv heads x 256 head_dim x 2 bytes (bf16).
         self.assertEqual((e.tp, e.kv_bytes, e.dtype, e.ep, e.verified),
                          (4, 16 * 2 * 4 * 256 * 2, "bfloat16", False, False))
 
@@ -920,8 +878,7 @@ class ConfigTree(unittest.TestCase):
                          ("allreduce:tree;allgather:ring", "Simple", "SYS"))
 
     def test_nvlink_exports_only_ib(self):
-        # nvlink: pins come back empty (= not exported) so NCCL keeps NVLS/LL128
-        # and the engine keeps peer-allreduce; only IB stays off.
+        # nvlink: pins come back empty so NCCL keeps NVLS/LL128 and the engine keeps peer-allreduce; only IB stays off.
         coll = _config("llama", "hardware.link_profile=nvlink").hardware.collective
         self.assertEqual({k: v for k, v in coll.items() if v}, {"NCCL_IB_DISABLE": "1"})
 

@@ -1,55 +1,8 @@
 #!/usr/bin/env python3
-"""PD KV hand-off through NIXL/UCX, laid out exactly as vLLM's NixlConnector does it.
+"""Times a prefill to decode KV hand-off between two GPUs through NIXL/UCX, laid out as vLLM's NixlConnector does.
 
-A device-level PD system YAML prices the P->D KV move as ``links.intra_node`` --
-bandwidth + a per-transfer floor. Writing the NVLink datasheet there (900 GB/s) is
-wrong by an order of magnitude: the consumer does not memcpy one buffer, it issues ONE
-NIXL READ over a descriptor list with one entry per (layer, block) -- 94 layers x
-ctx/16 blocks of 8 KB each at tp4 (the per-rank K+V of a block, "K/V packed into the
-content dim", base_worker._build_fa_local) -- and UCX moves those small pieces over
-cuda_ipc. The effective rate is set by the descriptor size and count, not by the link.
-Against the E6 GT (Qwen3-235B-FP8, tp4 <-> tp4) the client-side D-first-token time
-fitted 31 GB/s of UNSHARDED bytes, i.e. ~8 GB/s per GPU pair.
+Run under torchrun with two ranks (rank 0 = P, rank 1 = D). Writes results/probes/<gpu>/kv_transfer/<run-id>/cuda_event/kv_transfer/<gpu>_nixl.csv and prints the floor + per-byte fit per (kv_heads_per_rank, layout)."""
 
-This probe reproduces that transfer between two GPUs of this box and times it:
-
-  * P (rank 0) allocates a paged KV pool -- one tensor per layer, blocks contiguous,
-    ``page_bytes = 2 * block_size * kv_heads_per_rank * head_dim * 2`` per block -- and
-    registers every layer with NIXL. D (rank 1) does the same, adds P as a remote agent,
-    and preps both descriptor lists once (as the connector does at handshake).
-  * Per context length: D picks the request's blocks, builds the desc ids
-    (region * num_blocks + block, all layers), make_prepped_xfer("READ") + transfer(),
-    then polls check_xfer_state until DONE -- the connector's _read_blocks +
-    _pop_done_transfers path. Prep time (host, descriptor build) and xfer time are
-    recorded separately.
-  * Block layouts: ``contig`` (a fresh server hands out consecutive block ids, and NIXL
-    merges adjacent descriptors into one), ``runsN`` (contiguous runs of N blocks with a
-    gap between runs -- a partially churned pool; one merged descriptor per run per
-    layer) and ``scattered`` (a fully churned pool; nothing merges). The per-run cost is
-    what a block-allocator model of the paged pool needs to price fragmentation.
-
-Run (two GPUs, same node -> NVLink):
-
-    CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 -m quettabench.profiling.kv_transfer \
-        --gpu-label H200
-
-Like every probe run, rank 0 records the run (run_recorded) and writes the rows D
-measured, sent over from rank 1, to
-results/probes/<gpu>/kv_transfer/<run-id>/cuda_event/kv_transfer/<gpu>_nixl.csv (each
-run holds only its own rows), then prints, per (kv_heads_per_rank, layout), the floor +
-per-byte fit to paste into a system YAML's ``links.intra_node`` (per GPU PAIR: the
-replay divides the unsharded bytes by the reader tp, see
-engine/sim/disagg.py::Link.transfer_ms). `qbench export --only kernel_tables` carries
-the runs into QuettaSim's eager/kv_transfer/<gpu>_nixl.csv, unioned on KEY.
-A rank whose peer never joins the gloo group fails after five minutes, and a
-SIGTERM raises SystemExit(143), so run_recorded records either run as failed.
-
-Not an attach source: it needs its own two torchrun ranks, which the
-profiler never starts. `qbench profile --source kv_transfer --kv-transfer-csv <csv>`
-reads one run's CSV into profile.json.
-RANK / WORLD_SIZE / LOCAL_RANK are torchrun's launch protocol,
-read here as the kernel probes do.
-"""
 from __future__ import annotations
 
 import argparse
@@ -81,7 +34,7 @@ def _fit(rows):
 
 
 def _write(path: Path, rows: list[dict]) -> None:
-    """This run's rows, sorted as the old upsert kept the shared file."""
+    """This run's rows, sorted by heads, layout and tokens."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=list(COLS))
@@ -98,17 +51,19 @@ def main(argv=None) -> bool:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     add_output_args(ap)
-    ap.add_argument("--layers", type=int, default=94)
+    ap.add_argument("--layers", type=int, default=94, help="one KV tensor and one descriptor per layer and block")
     ap.add_argument("--block-size", type=int, default=16)
     ap.add_argument("--head-dim", type=int, default=128)
     ap.add_argument("--kv-heads-per-rank", type=int, nargs="+", default=[1, 2],
                     help="4 kv heads / tp: tp4 -> 1, tp2 -> 2")
-    ap.add_argument("--tokens", type=int, nargs="+",
+    ap.add_argument("--tokens", type=int, nargs="+", help="context lengths to transfer",
                     default=[16, 1024, 4096, 8192, 16384, 32768, 65536, 131072])
     ap.add_argument("--scattered-max-tokens", type=int, default=16384,
                     help="cap the fully-scattered sweep (it runs at ~20 us/descriptor)")
-    ap.add_argument("--iters", type=int, default=11)
-    ap.add_argument("--layouts", nargs="+", default=["contig", "runs64", "runs8", "scattered"])
+    ap.add_argument("--iters", type=int, default=11, help="timed transfers per cell, after one warm-up")
+    ap.add_argument("--layouts", nargs="+", default=["contig", "runs64", "runs8", "scattered"],
+                    help="block placement: contig (consecutive ids, NIXL merges descriptors), runsN (runs of N blocks "
+                         "with gaps), scattered (nothing merges)")
     a = ap.parse_args(argv)
 
     rank = int(os.environ["RANK"])
@@ -118,21 +73,20 @@ def main(argv=None) -> bool:
     torch.cuda.set_device(local)
     dev = torch.device("cuda", local)
     signal.signal(signal.SIGTERM, _on_sigterm)
-    # A peer that never joins fails the run after five minutes instead of hanging it.
+    # a peer that never joins fails the run after five minutes
     dist.init_process_group("gloo", rank=rank, world_size=world, timeout=timedelta(minutes=5))
 
-    # nixl is imported here, under torchrun on the PD hosts that have it; the module imports without it.
+    # only hosts with nixl can import it
     from nixl._api import nixl_agent, nixl_agent_config
-    os.environ.setdefault("UCX_RCACHE_MAX_UNRELEASED", "1024")   # as vllm/distributed/nixl_utils.py
+    os.environ.setdefault("UCX_RCACHE_MAX_UNRELEASED", "1024")
     agent = nixl_agent(f"{'P' if rank == 0 else 'D'}{rank}",
                        nixl_agent_config(backends=["UCX"]))
 
-    # Pool = 2x the largest request so `scattered` never degenerates into `contig`.
+    # twice the largest request so `scattered` never degenerates into `contig`
     max_blocks = 2 * (-(-max(a.tokens) // a.block_size))
     out_rows: list[dict] = []
     for heads in a.kv_heads_per_rank:
-        # vLLM's per-layer KV tensor for a FlashAttention backend (HND layout): a block's
-        # K and V sit next to each other, so one descriptor per (layer, block).
+        # FlashAttention HND layout: a block's K and V are adjacent, one descriptor per (layer, block)
         page_bytes = 2 * a.block_size * heads * a.head_dim * 2
         pool = [torch.empty(max_blocks * page_bytes, dtype=torch.uint8, device=dev)
                 for _ in range(a.layers)]
@@ -144,7 +98,6 @@ def main(argv=None) -> bool:
         caches = [(t.data_ptr(), t.numel(), dev_id, "") for t in pool]
         reg = agent.register_memory(agent.get_reg_descs(caches, "VRAM"))
 
-        # handshake: P's agent metadata + base addresses -> D  (connector: NixlAgentMetadata)
         meta = [None]
         if rank == 0:
             meta = [(agent.get_agent_metadata(), [t.data_ptr() for t in pool], dev_id)]
@@ -179,7 +132,7 @@ def main(argv=None) -> bool:
                     return np.sort(perm[side * nb:(side + 1) * nb])
                 run = int(layout[4:])
                 n_runs = -(-nb // run)
-                # runs placed every 2*run blocks, so consecutive runs never touch
+                # a gap of one run between runs so they never touch
                 starts = (np.arange(n_runs) * 2 * run + side * run) % (max_blocks - run)
                 ids = (starts[:, None] + np.arange(run)[None, :]).flatten()[:nb]
                 return np.sort(ids)
@@ -189,7 +142,6 @@ def main(argv=None) -> bool:
                     if layout == "scattered" and tokens > a.scattered_max_tokens:
                         continue
                     nb = -(-tokens // a.block_size)
-                    # region*num_blocks + block, all layers -- base_worker._compute_desc_ids
                     ids = (region_ids * max_blocks + _block_ids(layout, nb, 1)[None, :]).flatten()
                     lids = (region_ids * max_blocks + _block_ids(layout, nb, 0)[None, :]).flatten()
                     prep, xfer = [], []
@@ -202,7 +154,7 @@ def main(argv=None) -> bool:
                             pass
                         t2 = time.perf_counter()
                         agent.release_xfer_handle(h)
-                        if it > 0:                      # first is warm-up (UCX rkey cache)
+                        if it > 0:
                             prep.append((t1 - t0) * 1e3)
                             xfer.append((t2 - t1) * 1e3)
                     nbytes = int(len(ids)) * page_bytes
@@ -226,7 +178,6 @@ def main(argv=None) -> bool:
         torch.cuda.empty_cache()
         dist.barrier()
 
-    # D measured the rows; rank 0 owns the run dir run_recorded made.
     sent = [out_rows]
     dist.broadcast_object_list(sent, src=1)
     out_rows = sent[0]
@@ -244,7 +195,7 @@ def main(argv=None) -> bool:
                     print(f"  kv_heads_per_rank={heads} ({2 * a.block_size * heads * a.head_dim * 2 // 1024} KB/desc) "
                           f"{layout:9s}: floor {floor:7.2f} ms   bw {bw / 1e9:6.1f} GB/s")
     dist.destroy_process_group()
-    return rank == 0  # run_recorded: only rank 0 records the run
+    return rank == 0
 
 
 if __name__ == "__main__":

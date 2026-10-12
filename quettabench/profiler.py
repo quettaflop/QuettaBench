@@ -1,27 +1,6 @@
-"""Attach-only profiler: read results/<run>/, run the asked-for sources, and
-merge their sections into results/<run>/profile.json.
+"""Attach-only profiler: reads results/<run>/ (engine.json, run.json), runs the asked-for sources and merges their sections into profile.json.
 
-It never launches an engine and never drives the measured load. It finds
-the server through engine.json {endpoint, pid, launch_spec, instrumentation}
-and the run through run.json {config, summary}; run.json is only read.
-
-  metrics      native: one scrape of <endpoint>/metrics + prefix_cache_hit_rate
-  energy       wrapped: board power from attach until run.json appears (the
-               run finished), or for energy_s seconds; joules per output token
-               only for the run window
-  cost         wrapped: USD at gpu_cost_hr over run.json's wall time, tp * pp GPUs
-  gsm8k        wrapped: greedy GSM8k exact match through the endpoint (its own
-               sidecar requests, sent after energy stops, as trace_serve did)
-  frontend, pd_host
-               native: the live-server probes against the endpoint
-  kv_transfer  native: the NIXL probe's CSV, written by its own torchrun run
-  kernels      native: per-kernel GPU time per decode step from the armed nsys
-               trace, optionally inside an NVTX window less another
-  traces       always: the nsys / torch files instrumentation armed at launch
-
-A source that fails is recorded under `errors` and the others still run.
-A later profile of the same run replaces sections of the same name.
-"""
+Never launches an engine or drives load. A source that fails is recorded under `errors` and the others still run."""
 
 import argparse
 import json
@@ -35,7 +14,7 @@ from quettabench.metrics.results import write_atomic
 from quettabench.profiling import native, wrapped
 
 SOURCES = ("metrics", "energy", "cost", "gsm8k", "frontend", "pd_host", "kv_transfer", "kernels")
-# energy first (it waits for the run to end), sidecar requests next, file reads last
+# energy first: it waits for the run to end
 ORDER = ("energy", "metrics", "gsm8k", "frontend", "pd_host", "cost", "kv_transfer", "kernels")
 SECTION = {"gsm8k": "accuracy"}
 
@@ -66,8 +45,7 @@ def check_args(sources, args):
 
 def measure_energy(results_dir, engine, config, nvidia_smi="nvidia-smi", interval_s=1.0,
                    energy_s=None, poll_s=0.5, timeout_s=86400):
-    """Sample until run.json appears, or for energy_s seconds when given.
-    Returns (samples, window): window "run" or "fixed"."""
+    """Sample until run.json appears, or for energy_s seconds. Returns (samples, window "run" or "fixed")."""
     run_json = Path(results_dir) / "run.json"
     if energy_s is None and run_json.exists():
         raise ValueError("run.json already exists: the run is over; pass energy_s "
@@ -87,7 +65,7 @@ def _endpoint(engine):
 
 
 def run_source(source, results_dir, engine, args, energy):
-    """One source's section. Reads run.json fresh: energy may have waited for it."""
+    """One source's section; run.json is read fresh because energy may have waited for it."""
     run = read_json(Path(results_dir) / "run.json") or {}
     config = run.get("config") or {}
     model = args.get("served_model") or (config.get("engine") or {}).get("model")
@@ -97,7 +75,7 @@ def run_source(source, results_dir, engine, args, energy):
         section = wrapped.energy_section(samples, args.get("interval_s", 1.0),
                                          run_totals(run)[0], devices)
         if window == "fixed":
-            section["joules_per_token"] = None  # the window is not the run's
+            section["joules_per_token"] = None
         return {**section, "window": window}
     if source == "metrics":
         return native.metrics_section(native.scrape_metrics(_endpoint(engine)))
@@ -126,14 +104,7 @@ def run_source(source, results_dir, engine, args, energy):
 
 
 def profile(results_dir, sources, **source_args):
-    """Run sources against results_dir's run; merge into profile.json and return it.
-
-    source_args: nvidia_smi, interval_s, energy_s (energy); gpu_cost_hr (cost);
-    gsm8k_file, gsm8k_n, tokenizer, gsm8k_tokenizer, gsm8k_generate (gsm8k);
-    served_model (overrides config engine.model for requests); frontend_argv,
-    pd_host_argv (the probes' own flags); kv_transfer_csv; kernel_steps,
-    kernel_window, kernel_subtract (kernels).
-    """
+    """Run sources against results_dir's run, merge into profile.json and return it. source_args are the flags in get_args, underscored."""
     check_args(sources, source_args)
     results_dir = Path(results_dir)
     engine = read_json(results_dir / "engine.json") or {}
@@ -161,8 +132,7 @@ def profile(results_dir, sources, **source_args):
 
 
 def legacy_profile_lines(profile):
-    """ENERGYSUM, ACCSUM and COSTSUM in trace_serve's formats and order, for
-    the sections profile has (ENERGYSUM only for a run window)."""
+    """ENERGYSUM, ACCSUM and COSTSUM lines for the sections present (ENERGYSUM only for a run window)."""
     lines = []
     e = profile.get("energy")
     if e is not None and e.get("joules_per_token") is not None:
@@ -188,7 +158,11 @@ def get_args(argv=None):
     ap = argparse.ArgumentParser(prog="qbench profile", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--run", required=True, help="results/<run> directory")
-    ap.add_argument("--source", action="append", required=True, choices=SOURCES)
+    ap.add_argument("--source", action="append", required=True, choices=SOURCES,
+                    help="repeatable. metrics: one scrape of the endpoint; energy: board power until run.json "
+                         "appears; cost: USD over the run's wall time; gsm8k: exact match through the endpoint; "
+                         "frontend, pd_host: live-server probes; kv_transfer: a NIXL probe CSV; "
+                         "kernels: per-kernel GPU time per decode step from the armed nsys trace")
     ap.add_argument("--nvidia-smi", default="nvidia-smi")
     ap.add_argument("--interval-s", type=float, default=1.0)
     ap.add_argument("--energy-s", type=float, help="fixed energy window instead of the run's")

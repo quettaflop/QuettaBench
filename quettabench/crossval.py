@@ -69,11 +69,8 @@ def age_days(side, now):
     return (now - calendar.timegm(time.strptime(side.header["timestamp"], UTC_FORMAT))) / 86400
 
 
-# Engine bench logs; parser messages are returned as notes.
-
 def _loop_points(text, notes):
-    """(ctx, bs, tp) -> (ms, group, kv) from the engine's LOOP lines.
-    mode=eager rows get their own group so graph and eager never share a column."""
+    """(ctx, bs, tp) -> (ms, group, kv) from the engine's LOOP lines; mode=eager rows get their own group."""
     pts = {}
     gdns = set()
     for line in text.splitlines():
@@ -91,9 +88,7 @@ def _loop_points(text, notes):
 
 
 def _batch_bench_points(text, notes):
-    """(ctx, bs, tp) -> (ms, "batch_bench", kv) from the deepseek engine's
-    stock bench summary: the median of the graph-replay decode steps, the
-    same marginal quantity as the baseline slope. kv is "?" (unstated)."""
+    """(ctx, bs, tp) -> (ms, "batch_bench", kv) from the deepseek engine's bench summary (median graph-replay decode step); kv is "?"."""
     pts = {}
     truncated = unparsed = 0
     for line in text.splitlines():
@@ -119,13 +114,7 @@ def _batch_bench_points(text, notes):
 def bench_log_points(path):
     """((ctx, bs, tp) -> (ms, group, kv), method, notes) from a bench log.
 
-    LOOP lines and batch_bench summaries both report steady-state marginal
-    decode (method "loop"), and a LOOP line supersedes the summary on the
-    same cell. The criterion decode groups synchronize inside every step, a
-    different quantity from the slope (method "criterion"), so ratios
-    against those are withheld. Tensor-parallel criterion groups are named
-    decode_tp{N} / decode_graph_tp{N}; bare names are tp 1.
-    """
+    LOOP lines and batch_bench summaries are method "loop" and a LOOP line wins on the same cell. Criterion groups synchronize every step (method "criterion"), so ratios against them are withheld; bare group names are tp 1."""
     text = Path(path).read_text()
     notes = []
     bench = _batch_bench_points(text, notes)
@@ -142,20 +131,19 @@ def bench_log_points(path):
         tp = int(tp_suffix) if tp_suffix else 1
         ms = float(m.group("mid")) * MS[m.group("unit")]
         prev = by_key.get((ctx, bs, tp))
-        # Ties go to the later entry so an appended log supersedes stale runs.
+        # ties go to the later entry so an appended log supersedes stale runs
         if prev is None or pref[base] <= pref.get(prev[1].partition("_tp")[0], 99):
             by_key[(ctx, bs, tp)] = (ms, group, None)
     return by_key, "criterion", notes
 
 
 def measured_row(key, ms, group, kv):
-    """A row the engine timed itself; eager rows carry their own group."""
+    """A row the engine timed itself."""
     ctx, bs, tp = key
     return row(ctx, bs, tp, ms, group=group, kv=kv, measured=True,
                mode="eager" if group == "decode_loop_eager" else "graph")
 
 
-# Config path -> header key for the engine facts a bench log does not state.
 ENGINE_FACTS = {"engine.quant": "quant", "engine.serving_style": "serving_style",
                 "hardware.collective.NCCL_ALGO": "nccl_algo",
                 "hardware.collective.NCCL_PROTO": "nccl_proto"}
@@ -167,21 +155,15 @@ def engine_facts(values):
 
 
 def read_bench_log(path, engine_facts=None):
-    """The engine side from a bench log. The log states no NCCL, quant or
-    serving topology, so those come from engine_facts (Config values from
-    the environment), None when not given."""
+    """The engine side from a bench log; NCCL, quant and serving style come from engine_facts, else None."""
     points, method, notes = bench_log_points(path)
     rows = [measured_row(key, *point) for key, point in points.items()]
     facts = engine_facts or {}
     return Side(rows, header(engine="quettaserve", method=method, **facts), notes)
 
 
-# Old baselines/*.json.
-
 def comm_bound_bs(model):
-    """comm_bound_bs of the run (configs/runs/<name>.yaml) whose name or model
-    display name is model, from its model yaml. Absent means never
-    comm-bound (tp1 has no TP allreduce); there is no default."""
+    """comm_bound_bs from the model yaml of the run whose name or model display name is model; None means never comm-bound."""
     for run in sorted((CONFIGS / "runs").glob("*.yaml")):
         raw = yaml.safe_load(run.read_text())
         spec = yaml.safe_load((CONFIGS / "models" / f"{raw['model']}.yaml").read_text())
@@ -192,8 +174,7 @@ def comm_bound_bs(model):
 
 
 def read_baseline(path):
-    """The vLLM side from a baseline json. A point without
-    ms_at_eval is a pre-normalization raw slope and keeps ms_at_eval None."""
+    """The vLLM side from a baseline json; a point without ms_at_eval keeps it None."""
     b = json.loads(Path(path).read_text())
     rows = [row(p["ctx"], p["bs"], p.get("tp", 1), p["ms_per_step"], group="slope",
                 kv=p.get("kv", b.get("dtype", "?")), measured=False,
@@ -213,16 +194,13 @@ def read_baseline(path):
         comm_bound_bs=comm_bound_bs(b.get("model", ""))))
 
 
-# results/<run>/ dirs.
-
 def _utc(iso):
     """run.json's isoformat time as the baseline's second-resolution Z form."""
     return datetime.fromisoformat(iso).strftime(UTC_FORMAT) if iso else None
 
 
 def _fitted_row(step, kv, mode):
-    """A step-section cell, rounded as the grid RESULT line printed it, so a
-    run dir and the baseline packed from its log read the same."""
+    """A step-section cell, rounded as the grid RESULT line prints it."""
     ms_eval = step.get("ms_at_eval")
     return row(step["ctx"], step["bs"], step["tp"], round(step["ms_per_step"], 3),
                group="slope", kv=kv, measured=False,
@@ -239,15 +217,9 @@ def read_rows(results_dir):
 
 
 def read_run(results_dir):
-    """A Side from run.json + requests.jsonl.
+    """A Side from run.json and requests.jsonl.
 
-    Fitted cells come from run.json's steps section; measured cells (the
-    step section passes a bench number through as measured) take their
-    group, kv and method from the BenchDriver rows in requests.jsonl, and
-    their notes from the run's bench.log when it is there. A grid run's
-    header facts are its META record (summary.grid.meta), the same values
-    the old baseline recorded.
-    """
+    Measured cells take group, kv and method from the BenchDriver rows; header facts come from summary.grid.meta."""
     d = Path(results_dir)
     run = json.loads((d / "run.json").read_text())
     prov, cfg = run["provenance"], run["config"]
@@ -295,9 +267,7 @@ def read_run(results_dir):
         notes)
 
 
-# Reference top-2 gap at or below which an argmax flip is a near tie: one
-# bf16 step for logits in [16, 32), where the 2026-09-13 llama check found
-# its two flips (V13, docs/runbooks/slice_verification.md).
+# reference top-2 gap at or below which an argmax flip counts as a near tie: one bf16 step for logits in [16, 32)
 NEAR_TIE_GAP = 0.125
 AGREE_MIN = 4        # leading tokens counted as "agrees" in the greedy summary
 
@@ -387,9 +357,7 @@ def flips(rows, anchor_rows):
 
 
 def band(ours_rows, anchor_rows, floor_runs):
-    """Slice acceptance: ours' argmax flips against the anchor are
-    at most the worst floor run's. Withheld when the runs score different
-    position counts, since the counts would not be comparable."""
+    """Slice acceptance: ours' argmax flips against the anchor are at most the worst floor run's; withheld when position counts differ."""
     positions, ours = flips(ours_rows, anchor_rows)
     floors = [flips(rows, anchor_rows) for rows in floor_runs]
     comparable = positions > 0 and all(p == positions for p, _ in floors)
@@ -439,12 +407,9 @@ def render_agreement(rows):
     return lines
 
 
-# Age past which the baseline draws a warning: drivers and kernels move, and
-# ratios against a stale vLLM capture mislead.
-STALE_DAYS = 14
+STALE_DAYS = 14        # a vLLM capture older than this draws a warning
 LOW_R2 = 0.999
-# Steady-state marginal decode: the engine's pipelined loop and vLLM's slope
-# time the same quantity; the criterion per-step groups do not.
+# methods that time steady-state marginal decode; criterion groups do not
 MARGINAL = ("loop", "slope")
 KV_SHORT = {"float16": "fp16", "bfloat16": "bf16", "half": "fp16"}
 
@@ -490,15 +455,13 @@ def pair_row(a, b, report):
     """One paired cell: ours row a against theirs row b."""
     bs = a["bs"]
     ms_a = a["ms_at_eval"] or a["ms_per_step"]
-    # Pair against the KV-position-normalized number when present, so both
-    # columns are decode cost at the same resident KV (ctx+eval_pos).
+    # prefer the KV-position-normalized number so both columns are at the same resident KV
     ms_b = b["ms_at_eval"] or b["ms_per_step"]
     r2 = b["r2"] if b["r2"] is not None else float("nan")
     flags, withheld = [], []
     if r2 < LOW_R2:
         flags.append("LOW R2")
-    # Pre-normalization baseline: ms is the raw slope at the fit centroid, not
-    # eval_pos. Marked so a mixed table is never read as matched-KV.
+    # pre-normalization baseline: ms is the raw slope at the fit centroid, not eval_pos
     if not b["ms_at_eval"]:
         flags.append("RAW")
     if a["kv"] and _short(a["kv"]) != _short(b["kv"]):
@@ -510,7 +473,6 @@ def pair_row(a, b, report):
     if report.comm_bound_bs is not None and bs >= report.comm_bound_bs:
         flags.append("COMM")
         withheld.append("comm")
-    # Eager rows include per-step host enqueue; the flag keeps that visible.
     if a["mode"] == "eager":
         flags.append("EAGER")
     if not report.method_matched:
@@ -538,11 +500,7 @@ def pair(ours, theirs, allow_method_mismatch=False, now=0.0):
     report = Report(
         ours=ours, theirs=theirs, age_days=age_days(theirs, now),
         nccl_mismatch=_nccl_mismatch(ours, theirs), serving=serving, quant=quant,
-        # Serving topology must match on both sides; a disaggregated engine row
-        # against an aggregated baseline is a category error, never a ratio.
         serving_mismatch=not serving_style_compatible(serving[1], serving[0]),
-        # Quantization must match; an fp4 engine row against a bf16 baseline is
-        # not a fair ratio, so it is flagged per row and withheld, like KV.
         quant_mismatch=quant[0] != quant[1],
         method_matched=(o["method"] in MARGINAL and t["method"] in MARGINAL)
         or bool(allow_method_mismatch),
@@ -620,8 +578,7 @@ def render_table(report):
 
 
 def render(report):
-    """The comparison text for report, then the agreement rows; the table is
-    left out when no cell pairs."""
+    """The comparison text for report, then the agreement rows; no table when no cell pairs."""
     lines = render_preamble(report)
     if report.rows:
         lines += render_table(report)

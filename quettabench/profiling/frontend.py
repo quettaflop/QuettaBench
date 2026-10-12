@@ -1,8 +1,6 @@
-"""The live-server profiler sources that price against QuettaSim: the device-YAML frontend/serving blocks, and a PD pair's host cost.
+"""Live-server profiler sources that price against QuettaSim: the device-YAML frontend and serving blocks, and a PD pair's host cost.
 
-Both import QuettaSim's engine package at the top, so native.py imports this module only when one of these sources is asked for.
-Run one by hand: python -m quettabench.profiling.frontend {frontend|pd_host} --device-yaml <QuettaSim device_spec yaml> ...
-"""
+Imports QuettaSim's engine package, so native.py loads it only when one of these sources is asked for. Standalone: python -m quettabench.profiling.frontend {frontend|pd_host} --device-yaml <yaml> ..."""
 from __future__ import annotations
 
 import argparse
@@ -29,10 +27,10 @@ from kernel_composed.types import FrontendParams
 
 from quettabench.engines import launcher
 
-_SWEEP_PROMPTS = [128, 256, 512, 1024, 2048]   # single-stream prompt lengths (tokens)
+_SWEEP_PROMPTS = [128, 256, 512, 1024, 2048]  # tokens
 _CONC_SWEEP = [1, 2, 5, 10, 20, 40]
-_SAMPLES = 3                                    # medians over this many repeats
-_DECODE_TOKENS = 64                             # output tokens for a stable TPOT
+_SAMPLES = 3  # repeats per point, median taken
+_DECODE_TOKENS = 64  # enough output tokens for a stable TPOT
 
 
 def _stream_once(base_url: str, model: str, prompt: str,
@@ -55,7 +53,7 @@ def _stream_once(base_url: str, model: str, prompt: str,
                 continue
             payload = json.loads(line[5:])
             usage = payload.get("usage")
-            if usage:                       # final usage-only chunk: no token
+            if usage:  # the final usage-only chunk carries no token
                 prompt_tokens = int(usage.get("prompt_tokens", 0))
                 continue
             if not payload.get("choices"):
@@ -82,25 +80,19 @@ def _linfit(xs: list[float], ys: list[float]) -> tuple[float, float]:
 
 
 def _conc_sweep(a, cost, model):
-    """TRUE concurrent herds (unique ~512-token prompts). mult reference =
-    (measured median - sim frontend-off median) / the c=1 residual; the sim
-    prediction absorbs engine queueing (chunked-prefill serialization), so the
-    ratio isolates the FRONTEND's load scaling.
+    """Concurrent herds of unique ~512-token prompts; returns (mult_curve points, rows).
 
-    Each concurrency point runs an UNMEASURED warmup herd first, then the
-    measured herd: the first concurrent burst at a new batch shape triggers
-    one-time work (triton/moe autotune, graph shapes) that contaminated the
-    first version of this sweep by up to 50x at c=2-10."""
+    mult is (measured median - sim frontend-off median) over the c=1 residual. Each point runs an unmeasured herd first because a new batch shape triggers one-time autotune work."""
     def herd(c: int) -> list[tuple[float, float, int]]:
         prompts = [_prompt(512) for _ in range(c)]
         with ThreadPoolExecutor(max_workers=c) as ex:
             return list(ex.map(lambda pr: _stream_once(a.base_url, a.model, pr), prompts))
 
     print("# concurrent herd sweep (512-token prompts; warmup herd per point)", flush=True)
-    herd(max(_CONC_SWEEP))                          # global warmup at the largest shape
+    herd(max(_CONC_SWEEP))
     conc_rows = []
     for c in _CONC_SWEEP:
-        herd(c)                                     # unmeasured per-point warmup
+        herd(c)
         res = herd(c)
         meas = st.median([r[0] for r in res])
         ptok = int(st.median([r[2] for r in res]))
@@ -124,8 +116,7 @@ _SEED = [0]
 
 
 def _prompt(tokens: int, *, reuse: str | None = None) -> str:
-    """~`tokens` tokens with a UNIQUE leading seed (no shared APC prefix across
-    sweep prompts). ``reuse`` returns exactly the given prompt (APC-hit pairs)."""
+    """~`tokens` tokens behind a unique seed so sweep prompts share no cached prefix; `reuse` returns that prompt unchanged."""
     if reuse is not None:
         return reuse
     _SEED[0] += 1
@@ -151,22 +142,18 @@ def frontend_parser():
 
 
 def frontend_probe(a):
-    """Run the sweeps against a.base_url; prints the device-YAML blocks and returns them as
-    {frontend, serving, conc} (conc: [c, median ttft ms, sim frontend-off ms]).
-    Each block is measured latency minus the kernel-composed compute prediction: a single-stream
-    prompt sweep (TTFT and TPOT residuals), APC pairs (cached TTFT) and a concurrent herd sweep."""
+    """Sweep a.base_url and return {frontend, serving, conc}; conc rows are [c, median ttft ms, sim frontend-off ms].
+
+    Each value is measured latency minus the compute-only prediction."""
     gpu = load_kernel_gpu(Path(a.device_yaml))
-    # The residual decomposition needs the COMPUTE-ONLY prediction: strip any
-    # frontend block / host floors the YAML already carries (ported or measured),
-    # or the sim side would double-count exactly the thing being measured.
+    # strip the host terms the yaml already carries, or the residual would count them twice
     gpu = dataclasses.replace(gpu, frontend=FrontendParams(),
                               kernel_ttft_overhead_ms=0.0, kernel_step_overhead_ms=0.0,
                               kernel_step_overlap_per_ms=0.0,
                               decode_overhead_ms=0.0, decode_overhead_ms_per_layer=0.0)
     model = load_kernel_model(Path(a.model_yaml))
-    cost = KernelComposedCost(model, gpu, tp=a.tp)   # compute-only prediction
+    cost = KernelComposedCost(model, gpu, tp=a.tp)
 
-    # warmup (loads tokenizer caches, CUDA graphs already captured at server start)
     _stream_once(a.base_url, a.model, _prompt(64))
 
     if a.only_conc:
@@ -174,8 +161,6 @@ def frontend_probe(a):
         return {"frontend": {"mult_curve": [[c, m] for c, m in mult_pts]},
                 "conc": [[c, m, p] for c, m, p, _ in conc_rows]}
 
-    # 1. single-stream: TTFT residual vs prompt length -> floor + new rate;
-    #    TPOT residual -> per-step host floor (whole-step and per-layer forms).
     X, y_ttft, step_resid = [], [], []
     print("# single-stream sweep (miss)", flush=True)
     for p in _SWEEP_PROMPTS:
@@ -195,17 +180,16 @@ def frontend_probe(a):
     step_over = max(0.0, st.median(step_resid))
     dov = step_over / max(1, int(model.n_layers))
 
-    # 2. APC pairs: same prompt twice -> hit-TTFT residual vs cached tokens.
     print("# APC-hit sweep (cached)", flush=True)
     Xc, y_hit = [], []
     for p in _SWEEP_PROMPTS:
         prompt = _prompt(p)
-        _stream_once(a.base_url, a.model, prompt)          # prime the cache
+        _stream_once(a.base_url, a.model, prompt)
         tt, _tp, ptoks = zip(*[
             _stream_once(a.base_url, a.model, _prompt(0, reuse=prompt))
             for _ in range(_SAMPLES)])
         ttft, ptok = st.median(tt), int(st.median(ptoks))
-        # vLLM re-prefills the last block of a full-hit prompt; compute is ~one block.
+        # vLLM re-prefills the last block of a full hit
         compute_hit = cost.prefill_step_ms([max(1, int(model.cache_block_size))])
         Xc.append(float(ptok))
         y_hit.append(ttft - compute_hit)
@@ -213,7 +197,6 @@ def frontend_probe(a):
     _c0, slope_c = _linfit(Xc, y_hit)
     rate_c = max(0.0, slope_c)
 
-    # 3. concurrency sweep (see _conc_sweep).
     if a.skip_conc:
         mult_pts, conc_rows = [(1, 1.0)], []
     else:
@@ -261,16 +244,15 @@ COLS = ("gpu", "phase", "conc", "tokens_total", "tokens_new_p", "tokens_cached_d
         "d_first_ms", "sim_d_step_ms", "sim_pull_ms", "d_resid_ms", "client_ttft_ms")
 
 
-# ── prompts ───────────────────────────────────────────────────────────────────
 class Prompter:
     """Random-word prompts of a target token length, checked with the model tokenizer."""
 
     def __init__(self, tokenizer_name: str, seed: int = 1234):
-        # transformers is imported here: only a Prompter needs the tokenizer.
+        # optional dependency, imported only when needed
         from transformers import AutoTokenizer
         self.tok = AutoTokenizer.from_pretrained(tokenizer_name)
         self.rng = random.Random(seed)
-        # single-token, space-prefixed alphabetic words -> ~1 token per word
+        # single-token alphabetic words, ~1 token each
         words = []
         for i in range(1000, min(len(self.tok), 60000)):
             s = self.tok.decode([i])
@@ -289,10 +271,10 @@ class Prompter:
         return len(ids)
 
     def make(self, target_tokens: int, tag: str) -> str:
-        n = max(8, target_tokens - 24)                      # leave room for the template
+        n = max(8, target_tokens - 24)
         text = f"probe {tag} " + " ".join(self.rng.choice(self.words) for _ in range(n))
         got = self.count([{"role": "user", "content": text}])
-        # random words tokenize near 1:1; trim/pad once to land within a block
+        # trim until the prompt fits the target
         while got > target_tokens and len(text) > 64:
             cut = int(len(text) * (1 - (got - target_tokens) / got * 0.9)) - 8
             text = text[:max(64, cut)]
@@ -300,7 +282,6 @@ class Prompter:
         return text
 
 
-# ── requests ──────────────────────────────────────────────────────────────────
 def chat_stream(proxy_url: str, model: str, text: str, rid: str, max_tokens: int = 4) -> dict:
     body = json.dumps({"model": model, "messages": [{"role": "user", "content": text}],
                        "max_tokens": max_tokens, "temperature": 0.0, "stream": True,
@@ -329,7 +310,6 @@ def proxy_rows(path: Path, since: int) -> list[dict]:
     return [json.loads(x) for x in lines if x.strip()]
 
 
-# ── sim-side prediction of the same request ───────────────────────────────────
 class SimSide:
     def __init__(self, device_yaml: str, model: str, tp: int, link: Link):
         self.p = build_kernel_composed_cost(device_yaml, model, tp=tp, gpu_mem_util=0.92)
@@ -360,7 +340,7 @@ class SimSide:
 
 
 def lstsq(xs, ys):
-    """y = a + b x by least squares (pure python; tiny n)."""
+    """(a, b) of the least-squares line y = a + b x."""
     n = len(xs)
     mx = sum(xs) / n
     my = sum(ys) / n
@@ -397,9 +377,9 @@ def pd_host_parser() -> argparse.ArgumentParser:
 
 
 def pd_host_probe(a) -> list[dict]:
-    """Run the cold / warm / turn / herd phases through a.proxy_url; one row per
-    scored request (COLS). Each row is the proxy log's latency minus the sim's engine-side
-    prediction: P_host = prefill_s - sim prefill, D_host = d_first - sim first step - sim pull."""
+    """Run the cold, warm, turn and herd phases through a.proxy_url; one COLS row per scored request.
+
+    Residuals are the proxy log's latency minus the sim prediction: P is prefill_s - sim prefill, D is d_first - sim first step - sim pull."""
     bw, lat, pdu = (float(x) for x in a.link.split(","))
     sim = SimSide(a.device_yaml, a.model_yaml, a.tp, Link(bw, lat, pdu))
     pr = Prompter(a.tokenizer)
@@ -413,7 +393,7 @@ def pd_host_probe(a) -> list[dict]:
         new_p = total - cached_p
         prefill_ms = prox["prefill_s"] * 1e3
         d_first = (prox["first_token_at"] - prox["decode_start"]) * 1e3
-        # D holds the previous turn of this prompt only in the warm phases
+        # D holds the previous turn only in the warm phases
         cached_d = total if phase == "cold" else int(prox.get("_cached_d", 0))
         pulled = max(0, total - (cached_d if phase != "cold" else 0))
         sp = sim.prefill_ms(new_p, cached_p)
@@ -431,7 +411,7 @@ def pd_host_probe(a) -> list[dict]:
               f"(step {sd:5.1f} + pull {spull:5.1f}, resid {r['d_resid_ms']:8.1f})", flush=True)
         return r
 
-    # warm the pair once (NIXL handshake, cudagraph paths) -- not scored
+    # unscored warmup: NIXL handshake and cudagraph paths
     chat_stream(a.proxy_url, a.model, pr.make(512, "warmup0"), "probe-warmup")
     time.sleep(1.0)
 
@@ -444,20 +424,16 @@ def pd_host_probe(a) -> list[dict]:
             px = proxy_rows(log, since)
             rows.append(score("cold", 1, c, px[-1]))
             cold_total = int(px[-1]["prefill_usage"]["prompt_tokens"])
-            # same session, one more sentence: P prefix hit, D holds the cold turn's KV
             since = len(_loglines(log))
             c = chat_stream(a.proxy_url, a.model, text + " Now reply with the single word OK.",
                             f"probe-warm-L{L}-r{rep}")
             time.sleep(0.3)
             px = proxy_rows(log, since)
-            px[-1]["_cached_d"] = cold_total + 4          # cold prompt + its 4 generated tokens
+            px[-1]["_cached_d"] = cold_total + 4  # cold prompt plus its 4 generated tokens
             rows.append(score("warm", 1, c, px[-1]))
 
     if a.turns > 0:
-        # One growing session: turn t sends (running context + turn-new fresh words), so the
-        # server sees a UNIQUE, lengthening prefix each turn -- APC hits all but the last
-        # turn's tail, exactly the pd_sweep regime. This measures host over a real growing
-        # context, not the identical-resend best case the `warm` phase captures.
+        # one growing session: each turn extends the previous context with fresh words
         ctx = pr.make(a.turn_new, "T0")
         prev_total = 0
         for t in range(a.turns):
@@ -475,7 +451,7 @@ def pd_host_probe(a) -> list[dict]:
     if a.herd > 1:
         texts = [pr.make(a.herd_tokens, f"H{i}") for i in range(a.herd)]
         totals = []
-        for i, t in enumerate(texts):                      # seed every session at c1
+        for i, t in enumerate(texts):
             since = len(_loglines(log))
             chat_stream(a.proxy_url, a.model, t, f"probe-herdseed-{i}")
             time.sleep(0.2)

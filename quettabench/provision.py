@@ -1,36 +1,6 @@
-"""One idempotent provisioning pass for a GPU box. It replaced bootstrap.sh
-and oneshot.sh, retired in 73aec89.
+"""One idempotent provisioning pass for a GPU box: cache dirs, vLLM python, NCCL, QuettaServe checkout, per-run binary, checkpoint and weights.
 
-  python3 -m quettabench.provision <run.yaml>... [--set [<run>:]k=v ...]
-                                   [--backend local|docker] [--dry-run] [--env-file FILE]
-
-Inputs are the hardware yaml's provision: block and --set; a `<run>:`
-prefix scopes a --set to the run yaml of that stem. Every step checks
-before it acts, so a second pass changes nothing:
-
-  1. cache dirs under provision.cache_root, off the small container root
-  2. a python with vLLM: provision.py, else pip install provision.vllm_spec
-  3. NCCL: provision.nccl_lib must exist when given; without it a
-     Blackwell GPU (compute capability >= 10) needs the python's NCCL
-     >= 2.28
-  4. a QuettaServe checkout at provision.qs_dir (default
-     <cache_root>/QuettaServe), cloned from provision.qs_repo at qs_commit
-  5. per run: the bench binary (provision.bench_bin, else built in the
-     checkout), the engine checkpoint (qs_ckpt), the moe config (qs_cfg)
-     and the vLLM weights (weights, else hf_id downloaded to
-     <cache_root>/models/<run>)
-
---backend docker (hardware.launcher=docker) replaces steps 2 and 3, since
-vLLM and its NCCL live in the image: docker must be on PATH and each run's
-engine.image must exist locally (`docker image inspect`). A missing image
-prints `MISSING: docker image <image>; pull it with: docker pull <image>`;
-pulling is the user's action, never provision's.
-
-What it cannot resolve prints `MISSING: <what>`; after listing them all
-the pass exits 1, nothing guessed. --dry-run prints the plan and writes
-nothing. A complete pass writes the env file (the justfile loads it as
-.env) and prints each run's `qbench run` lines for both engines.
-"""
+Reads the hardware yaml's provision: block and --set. Anything unresolved prints `MISSING: <what>` and the pass exits 1. Writes the env file and prints each run's `qbench run` lines."""
 
 import argparse
 import os
@@ -225,11 +195,13 @@ def main(argv=None):
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("run_yaml", nargs="+", help="configs/runs/<name>.yaml to provision for")
     ap.add_argument("--set", dest="overrides", action="append", default=[],
-                    metavar="[RUN:]K=V")
+                    metavar="[RUN:]K=V",
+                    help="override a Config path; a RUN: prefix scopes it to the run yaml of that stem")
     ap.add_argument("--backend", choices=("local", "docker"),
-                    help="sets hardware.launcher for every run")
+                    help="sets hardware.launcher for every run; docker skips the vLLM and NCCL steps "
+                         "and only checks that each engine.image exists locally")
     ap.add_argument("--dry-run", action="store_true", help="print the plan; write nothing")
-    ap.add_argument("--env-file", default=str(REPO / ".env"))
+    ap.add_argument("--env-file", default=str(REPO / ".env"), help="where a complete pass writes the environment")
     a = ap.parse_args(argv)
     common, scoped = split_sets(a.overrides)
     if a.backend:

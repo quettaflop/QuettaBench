@@ -318,8 +318,7 @@ class RunDir(unittest.TestCase):
             return out
 
         for log in ("bench_loop.log", "bench_criterion.log"):
-            # Clock and commit frozen in the writer's own module (the golden
-            # harness re-imports quettabench): a commit mid-test changes bench_sha.
+            # clock and commit frozen in the writer's module: a commit mid-test changes bench_sha
             with self.subTest(log=log), tempfile.TemporaryDirectory() as td, \
                     mock.patch.dict(RunWriter.finish.__globals__, {
                         "_now": lambda: "2026-10-09T00:00:00+00:00",
