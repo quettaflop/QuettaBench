@@ -58,7 +58,7 @@ vllm installed, no pin to check against).
 | 6 | `golden/test_crossval.py` | `vmin_fit_llama.log`, `baseline_llama.json` | the log is byte-equal to what vmin_fit prints (vllm.sh filter); the baseline json cache.py writes, byte for byte (clock and git sha frozen) |
 | 7 | `golden/test_crossval.py` | `bench_loop.log`, `bench_criterion.log`, `table_loop.txt`, `table_criterion.txt` | exact table.py stdout for both logs against item 6's baseline |
 | 8 | `golden/test_provision.py` | `bootstrap_plan.json` | `XVAL_DRYRUN=1` plan text, exit code, and that no file is left behind, for a run with gaps and a complete run |
-| 9 | `golden/test_workloads.py` | `mooncake_5.jsonl`, `mooncake_readers.json` | the one reader (`workloads/live.py`) through `RealTrace.from_jsonl`, `RealTrace.from_mooncake` and `MooncakeTraceDataset`, with and without `hash_ids` and with a zero `output_length` (resolved, see item 9 below) |
+| 9 | `golden/test_workloads.py` | `mooncake_5.jsonl`, `mooncake_readers.json` | the one reader (`workloads/live.py`) through `RealTrace.from_jsonl` and `MooncakeTrace`, with and without `hash_ids` and with a zero `output_length` (resolved, see item 9 below) |
 | 10 | this file | | SPECSUM/SERVESUM/WORKLOADSUM formats, below |
 
 ## Where the logs came from
@@ -191,14 +191,13 @@ Same file, `mooncake_5.jsonl` (5 lines: `timestamp` in ms, `input_length`,
 Lengths and `max_tokens` / `output_length` agree on every line.
 
 Resolved by the owner: one reader, `quettabench/workloads/live.py`.
-`RealTrace.from_jsonl`, `RealTrace.from_mooncake` and the runner's
-`MooncakeTraceDataset` all go through it. Token ids: `hash_ids` expand into
+`RealTrace.from_jsonl` and the runner's `MooncakeTrace` both go through it. Token ids: `hash_ids` expand into
 shared 512-id blocks exactly as `src/workloads/mooncake.py` did (seed 42,
 tail fill, truncation; the ids are byte-identical to that column above), so
 prefix sharing is preserved; a line without `hash_ids` falls back to
 `synth_ids(input_length, line index)`, the crossval column above.
 `arrival_ts = timestamp / 1e3` always. A zero `output_length` is kept.
-`from_mooncake` takes `limit`. `request_index` and the tail-fill index are
+`MooncakeTrace` takes `limit`. `request_index` and the tail-fill index are
 the file line index (the old src reader counted non-blank lines; the two
 differ only on a file with blank lines).
 
@@ -756,3 +755,7 @@ points at `just run configs/runs/<wl>.yaml` instead of the removed
 `just vllm`.
 
 2026-10-12: no fixture changed; the workload profiles moved into one `configs/workloads.yaml` and these unused profiles were deleted with their `tests/test_profile_hashes.py` pins: `chat-medium`, `chat-multiturn`, `chat-multiturn-long`, `chat-multiturn-medium`, `chat-multiturn-synth`, `chat-short`, `chat-singleturn-synth`, `claweval-multiturn-synth`, `decode-heavy`, `fixed-seq128`, `osworld-multiturn`, `osworld-multiturn-long`, `osworld-multiturn-medium`, `osworld-multiturn-mse`, `osworld-multiturn-short`, `osworld-multiturn-synth`, `prefill-heavy`, `swebench-multiturn`, `swebench-multiturn-long`, `swebench-multiturn-medium`, `swebench-multiturn-mse`, `swebench-multiturn-mse-medium`, `swebench-multiturn-mse-short`, `swebench-multiturn-synth`, `terminalbench-multiturn`, `terminalbench-multiturn-long`, `terminalbench-multiturn-medium`, `terminalbench-multiturn-mse`, `terminalbench-multiturn-mse-medium`, `terminalbench-multiturn-mse-short`, `terminalbench-multiturn-short`, `terminalbench-multiturn-synth`. The `cut` pin now truncates `swebench-multiturn-short` instead of the deleted `swebench-multiturn-medium`: `0e8b8a8de4442ecb` / `c8f75cbcdd1e78dc`, the same values that profile gives at 51b18a1.
+
+2026-10-12: `bootstrap_plan.json` changed. A model yaml without a `quettaserve:` block no longer counts as MISSING: provision logs `llama: no quettaserve: block in its model yaml; vLLM side only` and resolves the vLLM side, so the gaps record shows llama's weights gap in place of the old block gap. Exit code and every other line are unchanged.
+
+2026-10-12: no fixture changed. `RealTrace.from_mooncake` is deleted (only tests called it); `test_workloads.py` reads the Mooncake fixtures through `RealTrace.from_jsonl` and `MooncakeTrace`, which give the same requests.

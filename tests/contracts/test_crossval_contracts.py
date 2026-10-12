@@ -18,13 +18,12 @@ from quettabench.config.schema import ConfigError, check_ep_legal
 from quettabench.workloads.live import RealTrace
 
 REPO = Path(__file__).resolve().parents[2]
-CROSSVAL = REPO / "scripts" / "crossval"
 QB = REPO / "quettabench"
 VERIFIED_CRATE = "llama"
 
 
 def _scripts(suffix):
-    roots = (CROSSVAL, QB, REPO / "analysis")
+    roots = (QB, REPO / "analysis")
     return sorted(p for root in roots for p in root.rglob(f"*{suffix}")
                   if "__pycache__" not in p.parts)
 
@@ -54,7 +53,7 @@ class CrossvalScripts(unittest.TestCase):
     def test_python_scripts_parse(self):
         # Parse only: importing would pull in vllm, which CI does not have.
         scripts = _scripts(".py")
-        self.assertTrue(scripts, "no python scripts under scripts/crossval")
+        self.assertTrue(scripts, "no python scripts under quettabench or analysis")
         for script in scripts:
             ast.parse(script.read_text(), filename=str(script))
 
@@ -313,11 +312,6 @@ class CrossvalScripts(unittest.TestCase):
         self.assertNotIn("comm_bound_bs", wl)
         check_ep_legal(wl["tp"], 288)  # 288 routed experts shard on tp4
         self.assertEqual(_config("glm53flash").mode.grid, wl["grid"])
-
-    def test_agreement_inputs_present(self):
-        for name in ("prompts.txt", "texts.txt"):
-            lines = [line for line in (REPO / "data" / name).read_text().splitlines() if line.strip()]
-            self.assertTrue(lines, f"{name} is empty")
 
     def test_grid_run_supports_moe_bringup(self):
         # expert parallel on vLLM, plus an opt-in to run before certified.
@@ -715,7 +709,6 @@ class TableParity(unittest.TestCase):
 
     def test_corpus_mode_requires_an_explicit_corpus(self):
         # No experimental text ships in the repo; corpus mode takes XVAL_CORPUS.
-        self.assertFalse((CROSSVAL / "routing_corpus.txt").exists())
         self.assertIn("XVAL_CORPUS", (QB / "modes" / "serve.py").read_text())
 
 

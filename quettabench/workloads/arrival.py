@@ -3,8 +3,6 @@
 import math
 import random
 
-ARRIVAL_PATTERNS = ["steady", "poisson", "ramp"]
-
 
 def poisson_arrivals(num_requests: int, target_rate: float, seed: int = 42) -> list[float]:
     """Cumulative arrival times in seconds of a Poisson process at target_rate requests per second."""
@@ -84,28 +82,6 @@ def offered_rate(spec: str) -> float:
     if kind == "ramp":
         return float(rest.split(":")[1])
     return 0.0
-
-
-def arrival_spec(pattern: str, target_rate: float) -> str:
-    """The --arrival/--target-rate pair as a parse_arrival spec; ramp climbs from a tenth of the rate to the rate."""
-    if pattern == "steady":
-        return "steady"
-    if pattern == "poisson":
-        return f"poisson:{target_rate}"
-    if pattern == "ramp":
-        return f"ramp:{target_rate * 0.1}:{target_rate}"
-    raise ValueError(f"Unknown arrival pattern: '{pattern}'. Use 'steady', 'poisson', or 'ramp'.")
-
-
-def make_arrival_times(
-    pattern: str,
-    num_requests: int,
-    concurrency: int = 10,
-    target_rate: float = 10.0,
-    seed: int = 42,
-) -> list[float]:
-    """Arrival offsets for a pattern and rate; concurrency is unused because steady paces by semaphore."""
-    return parse_arrival(arrival_spec(pattern, target_rate), num_requests, seed)
 
 
 def rebase_arrivals(ts: list, speed: float) -> list[float]:

@@ -56,23 +56,6 @@ class Scrape(unittest.TestCase):
         self.assertEqual(section["samples"]["process_open_fds"], 42.0)
 
 
-class SpecCounters(unittest.TestCase):
-    def test_summed_over_engines(self):
-        text = ('vllm:spec_decode_num_drafts_total{engine="0"} 10\n'
-                'vllm:spec_decode_num_drafts_total{engine="1"} 5\n'
-                'vllm:spec_decode_num_drafts_created{engine="0"} 1.7e9\n'
-                'vllm:spec_decode_num_draft_tokens_total{engine="0"} 45\n'
-                'vllm:spec_decode_num_accepted_tokens_total{engine="0"} 20\n')
-        with helpers.serve(text) as (endpoint, _):
-            self.assertEqual(native.spec_decode_counters(endpoint),
-                             {"accepted_tokens": 20.0, "draft_tokens": 45.0, "drafts": 15.0})
-
-    def test_none_without_spec_decoding_or_metrics(self):
-        with helpers.serve() as (endpoint, _):
-            self.assertIsNone(native.spec_decode_counters(endpoint))
-            self.assertIsNone(native.spec_decode_counters(endpoint + "/nowhere"))
-
-
 class Traces(unittest.TestCase):
     def test_lists_what_the_arming_left(self):
         with tempfile.TemporaryDirectory() as tmp:

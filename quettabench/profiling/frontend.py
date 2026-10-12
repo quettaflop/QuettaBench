@@ -132,7 +132,6 @@ def frontend_parser():
                     help="QuettaSim's device_spec/<gpu>.yaml, e.g. ../QuettaSim/device_spec/h200.yaml")
     ap.add_argument("--base-url", default="http://localhost:8000/v1")
     ap.add_argument("--tp", type=int, default=1)
-    ap.add_argument("--out-dir", default=None, help="unused (kept for run_probe.sh parity)")
     ap.add_argument("--skip-conc", action="store_true",
                     help="skip the concurrent herd sweep (parts 1-2 only)")
     ap.add_argument("--only-conc", action="store_true",

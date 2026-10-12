@@ -1,6 +1,5 @@
 """Aggregates request results into BenchmarkSummary: TTFT, TPOT, ITL and E2EL percentiles over successful requests, failures counted separately, input and output token throughput reported apart."""
 
-import json
 import re
 import statistics
 from dataclasses import dataclass, field
@@ -262,9 +261,6 @@ class BenchmarkSummary:
         d = {k: v for k, v in self.__dict__.items() if k != "errors"}
         d["errors"] = self.errors[:10]  # cap error list in JSON
         return d
-
-    def to_json(self) -> str:
-        return json.dumps(self.to_dict(), indent=2)
 
 
 def _busy_time_and_load(results) -> tuple[float, float, int]:

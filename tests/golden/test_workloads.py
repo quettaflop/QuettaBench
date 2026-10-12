@@ -32,17 +32,13 @@ def describe_ids(ids, first_ids):
 
 
 def read_all(case, path):
-    """The trace through every entry point; ids must agree across all three."""
+    """The trace through both entry points; ids must agree across them."""
     with crossval_path(), mock.patch.dict(os.environ, {}, clear=True):
         live = fresh_import("quettabench.workloads.live")
         trace = live.RealTrace.from_jsonl(str(path))
-        strict = live.RealTrace.from_mooncake(str(path))
-        limited = live.RealTrace.from_mooncake(str(path), limit=2)
         ds = live.MooncakeTrace(str(path))
         served = [ds.get_next_request() for _ in range(6)]  # five lines, then the wrap
     reqs = [r.to_dict() for r in trace.requests()]
-    case.assertEqual(reqs, [r.to_dict() for r in strict.requests()])
-    case.assertEqual(reqs[:2], [r.to_dict() for r in limited.requests()])
     case.assertEqual([r["prompt_token_ids"] for r in reqs] + [reqs[0]["prompt_token_ids"]],
                      [s.metadata["prompt_token_ids"] for s in served])
     first = reqs[0]["prompt_token_ids"]

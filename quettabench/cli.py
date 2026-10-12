@@ -39,11 +39,8 @@ def parser():
 
 
 def delegate(door, argv):
-    """module.main(argv) for a door; a module without main() says so and exits."""
-    main = getattr(importlib.import_module(DOORS[door]), "main", None)
-    if main is None:
-        sys.exit(f"qbench {door}: {DOORS[door]} has no main() yet")
-    return main(argv)
+    """module.main(argv) for a door."""
+    return importlib.import_module(DOORS[door]).main(argv)
 
 
 def main(argv=None):

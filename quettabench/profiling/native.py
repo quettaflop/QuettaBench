@@ -11,7 +11,7 @@ from contextlib import closing
 from pathlib import Path
 
 from quettabench.engines import launcher
-from quettabench.metrics.core import counter_total, parse_prometheus, spec_counts
+from quettabench.metrics.core import counter_total, parse_prometheus
 
 HITS = "vllm:gpu_prefix_cache_hits"
 QUERIES = "vllm:gpu_prefix_cache_queries"
@@ -38,14 +38,6 @@ def scrape_metrics(endpoint, timeout_s=10):
     """GET <endpoint>/metrics and parse it."""
     with launcher.urlopen(f"{endpoint}/metrics", timeout=timeout_s) as resp:
         return parse_prometheus(resp.read().decode())
-
-
-def spec_decode_counters(endpoint, timeout_s=10):
-    """spec_counts of one /metrics scrape; None when /metrics does not answer."""
-    try:
-        return spec_counts(scrape_metrics(endpoint, timeout_s))
-    except OSError:
-        return None
 
 
 def metrics_section(metrics):

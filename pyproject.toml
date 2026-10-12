@@ -47,7 +47,7 @@ combine-as-imports = true
 [tool.ruff.lint.per-file-ignores]
 # Timing lambdas close over tensors the probe then `del`s to free GPU
 # memory; pyflakes reads the del as making the name undefined.
-"quettabench/probes/{cross_attn,flash_attn,fused_block,gemm,moe,reparallel}.py" = ["F821"]
+"quettabench/probes/{cross_attn,flash_attn,gemm,moe,reparallel}.py" = ["F821"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

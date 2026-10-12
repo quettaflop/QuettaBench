@@ -16,9 +16,11 @@ from quettabench.metrics.core import (
     annotate_request_observability,
     burst_recovery,
     first_error,
+    parse_prometheus,
     pcts,
     percentile,
     sla_verdict,
+    spec_counts,
     success_rate_gate,
     summarize_serve,
     transient_gate,
@@ -104,6 +106,20 @@ class ServeSummaryTest(unittest.TestCase):
     def test_no_records_raises(self):
         with self.assertRaisesRegex(ValueError, "no completed requests"):
             summarize_serve([], 1.0, "nearest")
+
+
+class SpecCountsTest(unittest.TestCase):
+    def test_summed_over_engines(self):
+        text = ('vllm:spec_decode_num_drafts_total{engine="0"} 10\n'
+                'vllm:spec_decode_num_drafts_total{engine="1"} 5\n'
+                'vllm:spec_decode_num_drafts_created{engine="0"} 1.7e9\n'
+                'vllm:spec_decode_num_draft_tokens_total{engine="0"} 45\n'
+                'vllm:spec_decode_num_accepted_tokens_total{engine="0"} 20\n')
+        self.assertEqual(spec_counts(parse_prometheus(text)),
+                         {"accepted_tokens": 20.0, "draft_tokens": 45.0, "drafts": 15.0})
+
+    def test_none_without_spec_decoding(self):
+        self.assertIsNone(spec_counts(parse_prometheus("process_open_fds 42\n")))
 
 
 class SlaVerdictTest(unittest.TestCase):

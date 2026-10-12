@@ -157,16 +157,6 @@ class RealTrace(Trace):
         reqs = [_line_request(path, row, i, seed, cache) for i, row in _rows(path)]
         return cls(reqs, path, "jsonl")
 
-    @classmethod
-    def from_mooncake(cls, path, seed=42, limit=None):
-        """Mooncake lines only (input_length required), first `limit` of them."""
-        cache, reqs = {}, []
-        for i, row in _rows(path):
-            reqs.append(_mooncake_request(row, i, seed, cache))
-            if limit and len(reqs) >= limit:
-                break
-        return cls(reqs, path, "mooncake")
-
     def requests(self):
         return self._requests
 

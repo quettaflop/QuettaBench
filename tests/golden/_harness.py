@@ -15,7 +15,6 @@ from pathlib import Path
 from unittest import mock
 
 REPO = Path(__file__).resolve().parents[2]
-CROSSVAL = REPO / "scripts" / "crossval"
 STUBS = REPO / "tests" / "_stubs"
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 REGEN = os.environ.get("QBENCH_GOLDEN_REGEN") == "1"
