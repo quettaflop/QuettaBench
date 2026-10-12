@@ -21,7 +21,8 @@ order the runs finished (run.json provenance.finished):
 - any other table is the file of the run that finished last;
 - one run's table is copied byte for byte.
 A keyed table's key columns compare as numbers (int, total_weight_gb a
-float), and within one run's table the last row on a key wins.
+float; gpu and layout as text), and within one run's table the last row on
+a key wins.
 Every table is built and checked in a temp dir under dest first: a row
 with too many or too few cells, an empty or unparsable key, or JSON that
 does not parse (or, for a union, is no object) stops the export with dest
@@ -69,7 +70,13 @@ ROW_KEYS = {
     ("gemm", "gemm_wide"): ("M", "N", "K"),
     ("moe", "moe"): ("tokens", "n_experts", "top_k", "intermediate", "hidden"),
     ("reparallel", "reparallel"): ("gpu", "world", "tp_from", "tp_to", "total_weight_gb"),
+    ("kv_transfer", "kv_transfer"): ("gpu", "kv_heads_per_rank", "head_dim", "block_size", "layers",
+                                     "layout", "tokens"),
 }
+# Keyed tables whose union is sorted on the key, as their old upserts wrote them.
+SORTED = {("reparallel", "reparallel"), ("kv_transfer", "kv_transfer")}
+# Probes that live outside quettabench/probes/, by their sidecar tool.
+TOOLS = {"kv_transfer": "quettabench.profiling.kv_transfer"}
 # Probes whose run without --append replaced the whole table.
 RESET_WITHOUT_APPEND = ("gemm", "moe")
 # (probe, kind) whose JSON entries union across runs (gemm's fp8_act_quant).
@@ -123,7 +130,7 @@ def _sidecar(rel: Path, by_probe: dict[str, list[Source]], runs: set[Path]) -> d
     return {"schema": 1, "table": rel.as_posix(), "dir": rel.parts[0],
             "gpu": gpus.pop() if len(gpus) == 1 else None,
             "mode": modes.pop() if len(modes) == 1 else "unknown",
-            "tool": " + ".join(f"quettabench.probes.{p}" for p in sorted(probes)),
+            "tool": " + ".join(TOOLS.get(p, f"quettabench.probes.{p}") for p in sorted(probes)),
             "reduce": reduces.pop() if len(reduces) == 1 else None,
             "measured": max(days, default="") or None,
             "notes": "" if len(modes) <= 1 else f"rows timed as {', '.join(sorted(modes))}",
@@ -172,8 +179,8 @@ def _runs_used(probe: str, rel: Path, sources: list[Source]) -> list[Source]:
 
 def _key(row: dict, key: tuple[str, ...]) -> tuple:
     """row's key, numbers parsed as the old upserts' int() read them."""
-    return tuple(row[c] if c == "gpu" else float(row[c]) if c == "total_weight_gb" else int(row[c])
-                 for c in key)
+    return tuple(row[c] if c in ("gpu", "layout") else float(row[c]) if c == "total_weight_gb"
+                 else int(row[c]) for c in key)
 
 
 def _read_csv(rel: Path, table: Path, run: Path,
@@ -216,7 +223,7 @@ def _union_csv(rel: Path, sources: list[Source], key: tuple[str, ...], out: Path
         mine = {_key(r, key) for r in rows}
         kept = [(r, d) for r, d in kept if _key(r, key) not in mine]
         kept += [(r, run) for r in rows]
-    if key == ROW_KEYS[("reparallel", "reparallel")]:
+    if key in (ROW_KEYS[k] for k in SORTED):
         kept.sort(key=lambda rd: _key(rd[0], key))
     with out.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fields, restval="")

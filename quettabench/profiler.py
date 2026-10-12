@@ -201,7 +201,9 @@ def get_args(argv=None):
                     help='serving_frontend flags, e.g. '
                          '"--gpu-label H200 --device-yaml ../QuettaSim/device_spec/h200.yaml"')
     ap.add_argument("--pd-host-args", default="", help="pd_host flags")
-    ap.add_argument("--kv-transfer-csv", help="the CSV kv_transfer's torchrun run wrote")
+    ap.add_argument("--kv-transfer-csv",
+                    help="the CSV one kv_transfer torchrun run wrote, results/probes/<gpu>/"
+                         "kv_transfer/<run-id>/cuda_event/kv_transfer/<gpu>_nixl.csv")
     ap.add_argument("--kernel-steps", type=int, help="decode steps the kernels window holds")
     ap.add_argument("--kernel-window", help="NVTX range the kernels source reads (default all)")
     ap.add_argument("--kernel-subtract", help="NVTX range whose kernel totals come off first")

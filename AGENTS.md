@@ -93,8 +93,9 @@ Every writer and every process starter, exactly:
   the pulled run under `results/probes/<gpu>/` and stamps its `run.json`
   `provenance.pulled` through `metrics/results.py` `stamp_pulled`.
 - `profiler.py`: `profile.json` (and the nsys export) in the run dir.
-- `profiling/kv_transfer.py`: its CSV under `--out-dir`, run under its own
-  torchrun ranks.
+- `profiling/kv_transfer.py`: its table and `run.json` in its probe run dir
+  (`results/probes/<gpu>/kv_transfer/<run-id>/`), run under its own torchrun
+  ranks.
 - `profiling/serving_frontend.py`: its JSON at `--out`, when given.
 - `profiling/pd_host.py`: its CSV at `--out`.
 - `workloads/tokenize.py`: the tokenized request jsonl at `--out`.

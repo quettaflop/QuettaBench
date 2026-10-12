@@ -5,6 +5,7 @@ root's kernel_data/)."""
 from __future__ import annotations
 
 import argparse
+import ast
 import contextlib
 import csv
 import json
@@ -425,6 +426,47 @@ def test_each_probe_exports_to_a_quettasim_table_path(tmp_path: Path, probe, gpu
         assert (meta["schema"], meta["table"], meta["dir"], meta["gpu"]) == (1, rel, rel.split("/")[0], gpu)
         assert meta["tool"] == f"quettabench.probes.{probe}"
         assert meta["measured"] == "2026-10-11"
+
+
+KV_HEAD = ("gpu", "kv_heads_per_rank", "head_dim", "block_size", "layers", "layout", "tokens",
+           "n_descs", "bytes", "prep_ms", "xfer_ms", "total_ms", "eff_gbps")
+KV_TABLE = "cuda_event/kv_transfer/H200_nixl.csv"
+
+
+def test_kv_transfer_run_exports_to_eager_with_a_host_wallclock_sidecar(tmp_path: Path) -> None:
+    results, dest = tmp_path / "results", tmp_path / "out"
+    probe_run(results, "kv_transfer", {KV_TABLE: csv_text([KV_HEAD, ("H200", 1, 128, 16, 94, "contig", 16,
+                                                                     94, 770048, 0.008, 0.491, 0.499, 1.54)])},
+              0, gpu="H200", finished=0)
+    export([results], kernel_dest=dest, only=["kernel_tables"])
+    rel = "eager/kv_transfer/H200_nixl.csv"
+    assert sorted(tree(dest / "kernel_data")) == [rel]
+    assert rel in QUETTASIM["tables"]
+    meta = json.loads((dest / "kernel_data" / f"{rel}.meta.json").read_text())
+    assert (meta["mode"], meta["dir"], meta["gpu"]) == ("host_wallclock", "eager", "H200")
+    assert QUETTASIM["modes"]["host_wallclock"] == "eager"
+    assert meta["tool"] == "quettabench.profiling.kv_transfer"
+
+
+def test_kv_transfer_rows_union_on_the_old_upsert_key(tmp_path: Path) -> None:
+    """The row key is kv_transfer.py's KEY, the columns its upsert replaced on;
+    layout stays a string, and the union is sorted on the key."""
+    source = (Path(kernel_tables.__file__).parents[2] / "profiling" / "kv_transfer.py").read_text()
+    (key,) = [ast.literal_eval(n.value) for n in ast.parse(source).body
+              if isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") == "KEY"]
+    assert kernel_tables.ROW_KEYS[("kv_transfer", "kv_transfer")] == key
+    results, dest = tmp_path / "results", tmp_path / "out"
+    row = ("H200", 1, 128, 16, 94)
+    probe_run(results, "kv_transfer", {KV_TABLE: csv_text([KV_HEAD, (*row, "runs8", 16, 0, 0, 0, 0, 2.0, 0),
+                                                         (*row, "contig", 1024, 0, 0, 0, 0, 1.0, 0)])},
+              0, gpu="H200")
+    probe_run(results, "kv_transfer", {KV_TABLE: csv_text([KV_HEAD, (*row, "contig", 1024, 0, 0, 0, 0, 0.5, 0),
+                                                         (*row, "contig", 16, 0, 0, 0, 0, 0.4, 0)])},
+              1, gpu="H200")
+    export([results], kernel_dest=dest, only=["kernel_tables"])
+    got = rows(dest / "kernel_data" / "eager/kv_transfer/H200_nixl.csv")
+    assert [(r[5], r[6], r[11]) for r in got[1:]] == [("contig", "16", "0.4"), ("contig", "1024", "0.5"),
+                                                      ("runs8", "16", "2.0")]
 
 
 def test_a_table_from_runs_timed_two_ways_has_mode_unknown(tmp_path: Path) -> None:

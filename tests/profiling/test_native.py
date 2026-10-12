@@ -211,8 +211,7 @@ class LiveProbes(unittest.TestCase):
 
     def test_moved_probes_keep_a_runnable_main_with_out(self):
         here = Path(native.__file__).parent
-        for name, flag in (("serving_frontend", "--out"), ("pd_host", "--out"),
-                           ("kv_transfer", "--out-dir")):
+        for name, flag in (("serving_frontend", "--out"), ("pd_host", "--out")):
             with self.subTest(name):
                 tree = ast.parse((here / f"{name}.py").read_text())
                 funcs = {n.name for n in tree.body if isinstance(n, ast.FunctionDef)}
@@ -221,8 +220,20 @@ class LiveProbes(unittest.TestCase):
                          and getattr(n.func, "attr", "") == "add_argument"
                          for a in n.args if isinstance(a, ast.Constant)}
                 self.assertIn(flag, flags)
-                if name != "kv_transfer":
-                    self.assertTrue({"parser", "probe"} <= funcs)
+                self.assertTrue({"parser", "probe"} <= funcs)
+
+    def test_kv_transfer_records_a_probe_run(self):
+        """kv_transfer takes the probes' output args and records its run
+        through run_recorded, so its table lands in its run dir and only
+        `qbench export` carries it into QuettaSim's kernel_data."""
+        text = (Path(native.__file__).parent / "kv_transfer.py").read_text()
+        calls = {(n.func.id, tuple(getattr(a, "id", getattr(a, "value", None)) for a in n.args))
+                 for n in ast.walk(ast.parse(text))
+                 if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
+        self.assertIn(("add_output_args", ("ap",)), calls)
+        self.assertIn(("out_root", ("a", "kv_transfer")), calls)
+        self.assertIn(("run_recorded", ("main", "kv_transfer")), calls)
+        self.assertNotIn("data/kernel_data", text)
 
     def test_frontend_sources_take_quettasims_device_yaml(self):
         """serving_frontend and pd_host load the GPU from --device-yaml, a

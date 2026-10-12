@@ -31,16 +31,20 @@ This probe reproduces that transfer between two GPUs of this box and times it:
 Run (two GPUs, same node -> NVLink):
 
     CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 -m quettabench.profiling.kv_transfer \
-        --gpu-label H200 --out-dir data/kernel_data
+        --gpu-label H200
 
-Writes cuda_event/kv_transfer/<gpu>_nixl.csv (upsert on the key columns) and prints,
-per (kv_heads_per_rank, layout), the floor + per-byte fit to paste into a system YAML's
-``links.intra_node`` (per GPU PAIR: the replay divides the unsharded bytes by the
-reader tp, see engine/sim/disagg.py::Link.transfer_ms).
+Like every probe run, rank 0 records the run (run_recorded) and writes the rows D
+measured, sent over from rank 1, to
+results/probes/<gpu>/kv_transfer/<run-id>/cuda_event/kv_transfer/<gpu>_nixl.csv (each
+run holds only its own rows), then prints, per (kv_heads_per_rank, layout), the floor +
+per-byte fit to paste into a system YAML's ``links.intra_node`` (per GPU PAIR: the
+replay divides the unsharded bytes by the reader tp, see
+engine/sim/disagg.py::Link.transfer_ms). `qbench export --only kernel_tables` carries
+the runs into QuettaSim's eager/kv_transfer/<gpu>_nixl.csv, unioned on KEY.
 
 Not an attach source: it needs its own two torchrun ranks, which the
-profiler never starts. main() runs it as before and writes the CSV;
-`qbench profile --source kv_transfer` reads that CSV into profile.json.
+profiler never starts. `qbench profile --source kv_transfer --kv-transfer-csv <csv>`
+reads one run's CSV into profile.json.
 RANK / WORLD_SIZE / LOCAL_RANK are torchrun's launch protocol,
 read here as the kernel probes do.
 """
@@ -56,6 +60,8 @@ import numpy as np
 import torch
 import torch.distributed as dist
 
+from quettabench.probes.base import add_output_args, out_root, run_recorded
+
 KEY = ("gpu", "kv_heads_per_rank", "head_dim", "block_size", "layers", "layout", "tokens")
 COLS = KEY + ("n_descs", "bytes", "prep_ms", "xfer_ms", "total_ms", "eff_gbps")
 
@@ -70,27 +76,19 @@ def _fit(rows):
     return b0, bw
 
 
-def _upsert(path: Path, rows: list[dict]) -> None:
-    old = {}
-    if path.exists():
-        with path.open() as fh:
-            for r in csv.DictReader(fh):
-                old[tuple(r[k] for k in KEY)] = r
-    for r in rows:
-        old[tuple(str(r[k]) for k in KEY)] = {k: str(r[k]) for k in COLS}
+def _write(path: Path, rows: list[dict]) -> None:
+    """This run's rows, sorted as the old upsert kept the shared file."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=list(COLS))
         w.writeheader()
-        for k in sorted(old, key=lambda t: (t[0], int(t[1]), t[5], int(t[6]))):
-            w.writerow(old[k])
+        w.writerows(sorted(rows, key=lambda r: (r["kv_heads_per_rank"], r["layout"], r["tokens"])))
 
 
-def main() -> None:
+def main(argv=None) -> bool:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--gpu-label", required=True)
-    ap.add_argument("--out-dir", required=True, help="kernel_data root")
+    add_output_args(ap)
     ap.add_argument("--layers", type=int, default=94)
     ap.add_argument("--block-size", type=int, default=16)
     ap.add_argument("--head-dim", type=int, default=128)
@@ -102,7 +100,7 @@ def main() -> None:
                     help="cap the fully-scattered sweep (it runs at ~20 us/descriptor)")
     ap.add_argument("--iters", type=int, default=11)
     ap.add_argument("--layouts", nargs="+", default=["contig", "runs64", "runs8", "scattered"])
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
 
     rank = int(os.environ["RANK"])
     world = int(os.environ["WORLD_SIZE"])
@@ -217,9 +215,13 @@ def main() -> None:
         torch.cuda.empty_cache()
         dist.barrier()
 
-    if rank == 1:
-        path = Path(a.out_dir) / "cuda_event" / "kv_transfer" / f"{a.gpu_label}_nixl.csv"
-        _upsert(path, out_rows)
+    # D measured the rows; rank 0 owns the run dir run_recorded made.
+    sent = [out_rows]
+    dist.broadcast_object_list(sent, src=1)
+    out_rows = sent[0]
+    if rank == 0:
+        path = out_root(a, "kv_transfer") / "cuda_event" / "kv_transfer" / f"{a.gpu_label}_nixl.csv"
+        _write(path, out_rows)
         print(f"\nwrote {path}")
         print("\nfit total_ms = floor + bytes/bw   (per GPU pair; system YAML links.intra_node)")
         for heads in a.kv_heads_per_rank:
@@ -231,7 +233,8 @@ def main() -> None:
                     print(f"  kv_heads_per_rank={heads} ({2 * a.block_size * heads * a.head_dim * 2 // 1024} KB/desc) "
                           f"{layout:9s}: floor {floor:7.2f} ms   bw {bw / 1e9:6.1f} GB/s")
     dist.destroy_process_group()
+    return rank == 0  # run_recorded: only rank 0 records the run
 
 
 if __name__ == "__main__":
-    main()
+    run_recorded(main, "kv_transfer")

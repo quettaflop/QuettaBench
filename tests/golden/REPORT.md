@@ -653,3 +653,16 @@ line, rejoined by `shlex.join`, so the `;` stuck to the value goes with
 it. An argv item that is a JSON object or list (`--hf-overrides
 '{"api_key": "sk"}'`) is parsed, redacted and dumped again, and kept as
 written when it holds no secret.
+
+2026-10-12: no fixture changed. `profiling/kv_transfer.py` records its
+run like every probe: it takes `add_output_args` and runs through
+`run_recorded`, rank 1 sends the rows it measured to rank 0, and rank 0
+writes them to
+`results/probes/<gpu>/kv_transfer/<run-id>/cuda_event/kv_transfer/<gpu>_nixl.csv`;
+before, rank 1 upserted them into `<out-dir>/cuda_event/kv_transfer/`,
+and the docstring pointed `--out-dir` at QuettaSim's `data/kernel_data`.
+`qbench export --only kernel_tables` carries the runs to
+`kernel_data/eager/kv_transfer/<gpu>_nixl.csv` with a `host_wallclock`
+sidecar whose tool is `quettabench.profiling.kv_transfer`, unioned on the
+old upsert key (`layout` compared as text) and sorted on it, the run that
+finished last winning a key.
