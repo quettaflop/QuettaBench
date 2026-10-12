@@ -395,7 +395,7 @@ class TestDiscardFirst(unittest.TestCase):
 
 
 class TestLoadModeDiagnostics(unittest.TestCase):
-    """Under closed loop concurrency is the in-flight cap; under open loop it only sizes warmup, so the question is whether the server kept up with the offered rate."""
+    """Closed loop concurrency is the in-flight cap; open loop it only sizes warmup, so the question is whether the server kept up."""
 
     def test_open_loop_records_mode_and_offered_rate(self):
         s = aggregate(
@@ -442,7 +442,7 @@ class TestOpenLoopUnits(unittest.TestCase):
 
 
 class TestSaturationVerdict(unittest.TestCase):
-    """Saturation needs both signals: in-flight always falls once the last session has arrived, so only the served/offered rate ratio catches a server far behind. Cases are measured swebench rungs, 80s arrival window."""
+    """Saturation needs both signals: in-flight falls once the last session arrives, so only the served/offered ratio catches a slow server."""
 
     @staticmethod
     def _verdict(offered, served, first, second):

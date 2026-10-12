@@ -1,4 +1,4 @@
-"""Golden test plumbing: fixture compare, crossval imports and a CPU grid run through `qbench run` on the stubs; QBENCH_GOLDEN_REGEN=1 rewrites the fixtures."""
+"""Golden test plumbing: fixture compare and a CPU grid run through `qbench run` on the stubs; QBENCH_GOLDEN_REGEN=1 rewrites fixtures."""
 
 import asyncio
 import contextlib
@@ -106,7 +106,7 @@ def fake_generate_seconds(prompt_len, batch, max_tokens, call_no):
 
 
 class StandInServer:
-    """`vllm serve` on the stubs, reached through the aiohttp session HttpDriver opens: the requests a grid batch posts together run as one vllm.run_batch on the fake clock, as in-process generate() ran them."""
+    """`vllm serve` on the stubs, reached through the aiohttp session HttpDriver opens; a grid batch runs as one vllm.run_batch."""
 
     URL = "http://stand-in:8000"
 

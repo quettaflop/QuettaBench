@@ -1,4 +1,4 @@
-"""Offline contract checks for the cross-validation path, across config, workloads, serve and metrics, and crossval.py's readers, pairing and withhold rules, agreement rows and main."""
+"""Offline contract checks for the cross-validation path: crossval.py's readers, pairing and withhold rules, agreement rows and main."""
 
 import ast
 import calendar

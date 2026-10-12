@@ -185,7 +185,7 @@ class Redaction(unittest.TestCase):
         self.assertEqual({n: results.secret(n) for n in names}, names)
 
     def test_each_listed_name_is_pinned(self):
-        """camelCase splits into words; authorization and oauth are secret words; a tokenizer's special-token names are not secrets; key or keys as the last word is a secret only after api, secret, private, access or auth, so cache_key and routing_key are not."""
+        """Secret-name rules: camelCase splits into words, and key or keys is secret only after api, secret, private, access or auth."""
         names = {
             "api_key": True,
             "hf_token": True,

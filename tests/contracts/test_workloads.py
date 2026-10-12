@@ -1,4 +1,4 @@
-"""Traces, arrivals, grid prompts, multi-turn pacing, the profile registry, profile sources, real-trace datasets and every runnable profile's pinned content hash."""
+"""Traces, arrivals, grid prompts, multi-turn pacing, the profile registry, real-trace datasets and each profile's pinned content hash."""
 
 import contextlib
 import dataclasses

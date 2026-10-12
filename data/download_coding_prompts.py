@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Download coding-singleturn prompts from GCS and write data/coding_agent_prompts.jsonl (system prompt, task description, osl estimate, deduplicated by task name)."""
+"""Download coding-singleturn prompts from GCS into data/coding_agent_prompts.jsonl."""
 
 import argparse
 import json

@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""Build a 13-layer HF model dir from the downloaded Kimi-K3 slice (layers 0-12) and check that it loads.
-Usage: PYTHONPATH=<fla-dir> python3 data/slice_checkpoint.py <slice-dir>/model <slice-dir>/truncated
-"""
+"""Build a 13-layer HF model dir from the downloaded Kimi-K3 slice and check that it loads."""
 
 import importlib
 import json
@@ -131,7 +129,7 @@ def gate_b_shards_exist(dst: str) -> dict:
 
 
 def meta_text_model(model_dir: str, tmp_root: str):
-    """(model, config): the 13-layer text model on the meta device with expert w1/w2/w3 swapped for packed MXFP4 buffers (weight_packed, weight_scale, uint8)."""
+    """(model, config): the 13-layer text model on meta with expert weights swapped for packed MXFP4 buffers."""
     import torch
     import transformers.utils.generic as generic
     from torch import nn

@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""Build the trajectory JSONL that the session traces read, one session per line.
-
-`chat` tokenizes ShareGPT conversations with --tokenizer; `claweval` converts Claw-Eval event-stream traces using the server-reported usage.
-"""
+"""Build the session trajectory JSONL from ShareGPT chats or Claw-Eval traces."""
 
 from __future__ import annotations
 
@@ -247,10 +244,7 @@ def convert_trace(path: Path) -> dict[str, Any] | None:
 
 def write_llmservingsim(sessions: list[dict[str, Any]], out: Path,
                         arrival: str, rate: float, seed: int) -> None:
-    """Write LLMServingSim agentic JSONL; only the session carries an arrival time, sub-requests chain on tool_duration_ns.
-
-    input_tok_ids are not written because the traces store text, so the simulator falls back to count-only prefix handling.
-    """
+    """Write LLMServingSim agentic JSONL; only the session carries an arrival time, sub-requests chain on tool_duration_ns."""
     rng = random.Random(seed)
 
     # the capture ran at fixed 16-way parallelism, so "real" is not an open-loop arrival process

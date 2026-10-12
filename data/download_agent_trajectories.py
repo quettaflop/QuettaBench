@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""Download harbor job trajectories from GCS and write per-source session JSONL (growing message history per turn, osl_tokens estimate).
-
-Usage: python data/download_agent_trajectories.py [--source swebench|terminalbench|all]
-"""
+"""Download harbor job trajectories from GCS and write per-source session JSONL."""
 
 import argparse
 import json

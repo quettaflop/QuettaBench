@@ -162,7 +162,7 @@ def test_a_killed_probe_run_leaves_its_tables_out(tmp_path: Path) -> None:
 
 
 def test_a_second_run_into_one_dir_is_refused(tmp_path: Path) -> None:
-    """A probe that names its output file records the dir that file is in; a second run there would make one run.json stand for both, so it is refused and the first run's record is kept."""
+    """A second run into a dir an earlier probe run recorded is refused, and the first run's record is kept."""
     out = tmp_path / "h100" / "raw.jsonl.gz"
     with mock.patch.object(sys, "argv", ["probe", "--out-raw", str(out)]):
         run_recorded(lambda argv: None, "serving_decode_grid", file_flag="--out-raw")
@@ -531,7 +531,7 @@ def probe_run(
     finished: int | None = None,
     args=(),
 ) -> None:
-    """One `python -m quettabench.probes.<probe>` run through run_recorded: emits tables {<dir>/<kind>/<file>: CSV or JSON text} as ProbeRows, timed as the probe would for that dir and args; any other path is a plain file in the run dir. It starts at T0+at and, given finished, finishes at T0+finished."""
+    """One `python -m quettabench.probes.<probe>` run through run_recorded, emitting tables {path: CSV or JSON text} as ProbeRows."""
 
     def main(argv):
         ap = argparse.ArgumentParser()
@@ -737,7 +737,7 @@ FA_HEAD = ("n_heads", "n_kv_heads", "head_dim", "q_len", "latency_us")
 
 
 def test_overlapping_runs_union_their_rows(tmp_path: Path) -> None:
-    """Run A starts first and finishes last, run B starts later and finishes first; each measured its own head config, so the export holds both, and the head config both measured comes from A, the run that finished last."""
+    """Overlapping runs export the union of their rows; the head config both measured comes from the run that finished last."""
     results, dest = tmp_path / "results", tmp_path / "out"
     a = csv_text([FA_HEAD, (32, 8, 128, 1, 10.0), (32, 8, 128, 2, 11.0), (16, 2, 128, 1, 7.0)])
     b = csv_text([FA_HEAD, (64, 8, 128, 1, 20.0), (16, 2, 128, 1, 9.0), (16, 2, 128, 2, 9.5)])
@@ -1261,7 +1261,7 @@ def test_a_dest_json_table_is_the_oldest_source(tmp_path: Path) -> None:
     ],
 )
 def test_dropping_dest_rows_stops_unless_replace_tables(tmp_path: Path, capsys, probe, rel, old, new) -> None:
-    """A gemm run without --append, or a table with no row key, would drop rows dest holds: the export stops naming the file and the row counts, and --replace-tables (through the qbench export door) replaces it."""
+    """An export that would drop rows dest holds stops naming the file and counts; --replace-tables replaces it."""
     from quettabench import cli
 
     results, dest = tmp_path / "results", tmp_path / "data"
@@ -1524,7 +1524,7 @@ TP4_HEAD = ("op", "world", "bytes", "latency_us", "dtype_bytes")
 
 
 def test_a_collective_rerun_over_dest_updates_its_all_reduce_rows(tmp_path: Path) -> None:
-    """With no vllm_allreduce run beside it, a collective run's all_reduce rows are its own measurement and replace dest's; a dest table with no path column gets none."""
+    """With no vllm_allreduce run beside it, a collective run's all_reduce rows replace dest's."""
     results, dest = tmp_path / "results", tmp_path / "data"
     old = [TP4_HEAD, ("all_reduce", 4, 2048, 26.0, 2), ("all_gather", 4, 2048, 13.0, 2)]
     table = seed(dest, "graph/collectives/H200_tp4.csv", csv_text(old))
@@ -1685,7 +1685,7 @@ def exported(work: Path) -> dict[str, bytes]:
 
 
 def test_rows_export_matches_the_per_probe_tables_export(tmp_path: Path) -> None:
-    """Every probe at TABLES_BASE and here, on the same mocked timings, over QuettaSim's own H200 tables (cut to 40 rows) and into an empty dest, exports byte-identical kernel_data: every table, sidecar and manifest entry."""
+    """Every probe on the same mocked timings exports byte-identical kernel_data through the rows and per-probe routes."""
     archive = subprocess.run(["git", "-C", str(ROOT), "archive", TABLES_BASE, "quettabench"], capture_output=True)
     if archive.returncode:
         pytest.skip(f"no {TABLES_BASE} in this clone")

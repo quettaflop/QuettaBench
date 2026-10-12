@@ -894,9 +894,7 @@ def test_probes_import_their_siblings_at_the_top():
 
 
 def inline_imports_without_a_reason(path: Path) -> list[str]:
-    """Function-level imports in path whose reason is stated nowhere: neither a
-    comment line just above the import (or its run of imports) nor the
-    enclosing function's docstring mentions the import."""
+    """Function-level imports in path with no comment above them and no mention in the enclosing function's docstring."""
     text = path.read_text()
     lines = text.splitlines()
     bare = []
@@ -938,7 +936,7 @@ RUNBOOKS = sorted((ROOT / "docs" / "runbooks").glob("*.md"))
 
 
 def runbook_drift(path: Path) -> list[str]:
-    """Commands in a runbook that no longer run here: a probe flag it does not define, a just recipe that is gone, a cited script that is not in the repo, or --api-key test."""
+    """Commands in a runbook that no longer run here: an undefined probe flag, a gone just recipe, a missing script, or --api-key test."""
     found = []
     recipes = {b.split()[0].rstrip(":") for b in recipe_blocks(JUSTFILE)}
     text = path.read_text().replace("\\\n", " ")

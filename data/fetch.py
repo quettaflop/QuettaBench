@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""Pull the gitignored trajectory datasets from R2 into data/.
-
-Run it as `just fetch`, which sets R2_ENDPOINT from the justfile. Needs an aws profile with R2 credentials (default r2); override with AWS_PROFILE, R2_BUCKET.
-"""
+"""Pull the gitignored trajectory datasets from R2 into data/; run it as `just fetch`."""
 
 import os
 import subprocess

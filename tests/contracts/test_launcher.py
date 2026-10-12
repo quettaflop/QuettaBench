@@ -47,7 +47,7 @@ class LocalLauncher(unittest.TestCase):
         self.port = free_port()
 
     def start(self, **kw):
-        """launcher.start of the fake server; a port taken between free_port and the bind (the server exits 98) is retried on a fresh one, and the server that answered must be ours."""
+        """launcher.start of the fake server; a port taken before the bind (exit 98) is retried on a fresh one."""
         for _ in range(5):
             try:
                 handle = launcher.start(self.spec(**kw), self.dir / "run", timeout_s=30, poll_s=0.1)

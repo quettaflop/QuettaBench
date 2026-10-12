@@ -1,4 +1,4 @@
-"""CPU stand-in for the torch.cuda calls and tensor ops the drivers use, on nested lists; toy_logits is the one model the transformers and vllm stubs share."""
+"""CPU stand-in for the torch.cuda calls and tensor ops the drivers use; toy_logits is the one model the stubs share."""
 
 import contextlib
 import math

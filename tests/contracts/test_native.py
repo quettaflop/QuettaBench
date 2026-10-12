@@ -1,4 +1,4 @@
-"""profiling/native.py sources, the frontend and kv_transfer sources' contracts, and profiling/wrapped.py's energy, cost and gsm8k numbers on fixed inputs."""
+"""Contracts for profiling/native.py sources, the frontend and kv_transfer sources, and profiling/wrapped.py numbers on fixed inputs."""
 
 import argparse
 import ast
