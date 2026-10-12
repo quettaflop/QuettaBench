@@ -27,9 +27,11 @@ SECRET_WORD = (
 SECRET_LAST = r"token|apikey|pat"
 # ... or key(s) as its last word after one of these, so OPENAI_API_KEY and private_key are secrets while cache_keys and --num-keys are not.
 KEY_OWNER = r"api|secret|private|access|auth|ssh|encryption|signing"
+# AWS_ACCESS_KEY_ID names the key pair.
+KEY_ID = r"access[_.-]key[_.-]id"
 SECRET_NAME = re.compile(
     rf"(?:^|[_.-])(?:{SECRET_WORD})(?:$|[_.-])|(?:^|[_.-])(?:{SECRET_LAST})$"
-    rf"|(?:^|[_.-])(?:{KEY_OWNER})[_.-]keys?$",
+    rf"|(?:^|[_.-])(?:{KEY_OWNER})[_.-]keys?$|(?:^|[_.-]){KEY_ID}$",
     re.IGNORECASE,
 )
 # ... except a tokenizer's special tokens, which name a vocabulary entry.

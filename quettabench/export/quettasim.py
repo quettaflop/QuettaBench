@@ -297,6 +297,8 @@ def found(results_dirs: Iterable[Path]) -> dict[Path, dict[str, list[Source]]]:
             args = _record(run)[1]
             mine: dict[Path, Rows] = {}
             for row in _rows(run):
+                if Path(row["table"]).is_absolute() or ".." in Path(row["table"]).parts:
+                    raise SystemExit(f"{path}: table {row['table']!r} leaves kernel_data")
                 rows = mine.setdefault(Path(DIRS[row["timing"]], row["table"]), Rows(row["probe"], set(), []))
                 rows.timings.add(row["timing"])
                 rows.cells.append({**row["key"], **row["value"]})

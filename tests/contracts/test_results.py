@@ -119,6 +119,10 @@ class RoundTrip(unittest.TestCase):
 
 
 class Redaction(unittest.TestCase):
+    def test_an_access_key_id_is_secret(self):
+        self.assertTrue(results.secret("AWS_ACCESS_KEY_ID"))
+        self.assertFalse(results.secret("key_id"))
+
     def test_secret_keys_are_redacted(self):
         env = {
             "HF_TOKEN": "t",

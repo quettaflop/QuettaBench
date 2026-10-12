@@ -133,8 +133,8 @@ def _read_grids(configs):
     raw = _read_yaml(path)
     _check_keys(raw, GRIDS_KEYS, path)
     step_points = raw.get("step_points") or []
-    if not step_points:
-        raise ConfigError(f"{path}: step_points must be a non-empty list")
+    if len(set(step_points)) < 2:
+        raise ConfigError(f"{path}: step_points needs at least two distinct values to fit a slope")
     return {k.lower(): v for k, v in raw.get("grids", {}).items()}, step_points
 
 
@@ -298,6 +298,10 @@ def _grid(values, grids, step_points, where):
         return None
     if name.lower() not in grids:
         raise ConfigError(f"{where}: unknown grid {name!r}; grids: {', '.join(grids)}")
+    if values["engine.weights_gib"] is None:
+        raise ConfigError(
+            f"{where}: a grid run needs engine.weights_gib (the model yaml sets it) for the KV share of each step"
+        )
     cells = tuple(tuple(c) for c in grids[name.lower()])
     maxlen = values["engine.max_model_len"]
     over = tuple(c for c in cells if maxlen is not None and c[0] + max(step_points) + 2 > maxlen)

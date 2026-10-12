@@ -273,7 +273,7 @@ class LoaderRules(unittest.TestCase):
 
     def test_empty_step_points_are_refused(self):
         self.write("grids.yaml", {**GRIDS, "step_points": []})
-        with self.assertRaisesRegex(ConfigError, "step_points must be a non-empty list"):
+        with self.assertRaisesRegex(ConfigError, "step_points needs at least two distinct values"):
             self.load()
 
     # matrix, grid, --set
@@ -312,6 +312,11 @@ class LoaderRules(unittest.TestCase):
         self.assertIsNone(self.one().grid)
         with self.assertRaisesRegex(ConfigError, "unknown grid 'nope'"):
             self.load({"mode": {"grid": "nope"}})
+
+    def test_a_grid_run_needs_weights_gib(self):
+        with self.assertRaisesRegex(ConfigError, "a grid run needs engine.weights_gib"):
+            self.load({"mode": {"grid": "toy"}}, model={"weights_gib": None})
+        self.assertIsNone(self.one(model={"weights_gib": None}).engine.weights_gib)
 
     def test_set_parses_scalars_the_yaml_way(self):
         self.assertEqual(parse_set("engine.tp=2"), ("engine.tp", 2))
