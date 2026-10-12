@@ -76,29 +76,31 @@ class CompareScripts(unittest.TestCase):
         self.assertIn("WORKLOAD_CHECK", (QB / "metrics" / "results.py").read_text())
 
     def test_backend_detection_and_no_hard_nvidia_smi(self):
-        # XVAL_BACKEND wins; with no accel tooling on PATH detection says cpu.
+        # QBENCH_BACKEND wins; with no accel tooling on PATH detection says cpu.
         with mock.patch("shutil.which", return_value=None):
             self.assertEqual(_config("llama").hardware.backend, "cpu")
             self.assertEqual(_config("llama").hardware.link_profile, "nvlink")
-        self.assertEqual(_config("llama", "engine.dtype=bfloat16", env={"XVAL_BACKEND": "tpu"}).hardware.backend, "tpu")
+        self.assertEqual(
+            _config("llama", "engine.dtype=bfloat16", env={"QBENCH_BACKEND": "tpu"}).hardware.backend, "tpu"
+        )
 
     def test_pp_wired_in_grid_and_device_count(self):
-        # pipeline_parallel_size comes from XVAL_PP or the workload's pp.
+        # pipeline_parallel_size comes from QBENCH_PP or the workload's pp.
         src = (QB / "config" / "env_map.py").read_text() + (QB / "engines" / "vllm.py").read_text()
         self.assertIn("pipeline_parallel_size", src)
-        self.assertIn("XVAL_PP", src)
+        self.assertIn("QBENCH_PP", src)
         self.assertIn('"pp": e.pp', (QB / "modes" / "serve.py").read_text())
         self.assertIn('f"META {k}={v}"', (QB / "metrics" / "results.py").read_text())
         ds = _config("deepseek").engine
         self.assertEqual(ds.tp * ds.pp, 8)
-        ds = _config("deepseek", env={"XVAL_PP": "2"}).engine
+        ds = _config("deepseek", env={"QBENCH_PP": "2"}).engine
         self.assertEqual(ds.tp * ds.pp, 16)
 
     def test_link_profile_detection(self):
         # A caller override wins; non-cuda backends take the no-pins nvlink profile.
-        self.assertEqual(_config("llama", env={"XVAL_LINK_PROFILE": "pcie"}).hardware.link_profile, "pcie")
+        self.assertEqual(_config("llama", env={"QBENCH_LINK_PROFILE": "pcie"}).hardware.link_profile, "pcie")
         self.assertEqual(
-            _config("llama", "engine.dtype=bfloat16", env={"XVAL_BACKEND": "tpu"}).hardware.link_profile, "nvlink"
+            _config("llama", "engine.dtype=bfloat16", env={"QBENCH_BACKEND": "tpu"}).hardware.link_profile, "nvlink"
         )
 
     def test_provision_defaults(self):
@@ -263,7 +265,11 @@ class CompareScripts(unittest.TestCase):
             for item in sets:
                 argv += ["--set", item]
             out = subprocess.run(
-                argv, capture_output=True, text=True, cwd=REPO, env={**os.environ, "XVAL_BACKEND": "cpu", **(env or {})}
+                argv,
+                capture_output=True,
+                text=True,
+                cwd=REPO,
+                env={**os.environ, "QBENCH_BACKEND": "cpu", **(env or {})},
             )
             log = Path(td) / workload / "bench.log"
             return out, log.read_text() if log.exists() else ""
@@ -380,7 +386,7 @@ class TableParity(unittest.TestCase):
     def test_quant_mismatch_flags_and_withholds(self):
         # nvfp4 engine vs bf16 baseline: flagged QUANT, withheld.
         out = self._table(
-            "LOOP ctx=1024 bs=1 kv=fp16 ms_per_step=10.000 k=100\n", quant="bf16", env={"XVAL_QUANT": "nvfp4"}
+            "LOOP ctx=1024 bs=1 kv=fp16 ms_per_step=10.000 k=100\n", quant="bf16", env={"QBENCH_QUANT": "nvfp4"}
         )
         self.assertIn("QUANT MISMATCH", out)
         self.assertIn("QUANT bf16/nvfp4", out)
@@ -393,14 +399,14 @@ class TableParity(unittest.TestCase):
         out = self._table(
             "LOOP ctx=1024 bs=1 kv=fp16 ms_per_step=10.000 k=100\n",
             serving_style="disagg:1p1d",
-            env={"XVAL_SERVING_STYLE": "aggregated"},
+            env={"QBENCH_SERVING_STYLE": "aggregated"},
         )
         self.assertIn("SERVING MISMATCH", out)
         self.assertNotIn("0.50x", out)
         out2 = self._table(
             "LOOP ctx=1024 bs=1 kv=fp16 ms_per_step=10.000 k=100\n",
             serving_style="aggregated",
-            env={"XVAL_SERVING_STYLE": "aggregated"},
+            env={"QBENCH_SERVING_STYLE": "aggregated"},
         )
         self.assertIn("0.50x", out2)
 
@@ -591,8 +597,8 @@ class TableParity(unittest.TestCase):
         self.assertIn("prompt_mode", (QB / "compare.py").read_text())
 
     def test_corpus_mode_requires_an_explicit_corpus(self):
-        # No experimental text ships in the repo; corpus mode takes XVAL_CORPUS.
-        self.assertIn("XVAL_CORPUS", (QB / "modes" / "serve.py").read_text())
+        # No experimental text ships in the repo; corpus mode takes QBENCH_CORPUS.
+        self.assertIn("QBENCH_CORPUS", (QB / "modes" / "serve.py").read_text())
 
     def test_hash_canonicalization(self):
         # The gate hashes the completed set, so completion order must not move the hash.
@@ -724,7 +730,7 @@ class TableParity(unittest.TestCase):
     def test_grid_knows_the_trace_mode(self):
         src = (QB / "workloads" / "grid.py").read_text() + (QB / "config" / "env_map.py").read_text()
         self.assertIn('"trace"', src)
-        self.assertIn("XVAL_TRACE", src)
+        self.assertIn("QBENCH_TRACE", src)
 
     def test_baseline_age_ignores_local_timezone(self):
         out = self._table(
@@ -1027,7 +1033,7 @@ class Subcommand(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             argv = [FIXTURES / "bench_criterion.log", BASELINE, "--json", Path(td) / "r.json"]
             self.assertIn("ratios are withheld", run(argv))
-            for forced in (run(argv + ["--allow-method-mismatch"]), run(argv, {"XVAL_ALLOW_METHOD_MISMATCH": "1"})):
+            for forced in (run(argv + ["--allow-method-mismatch"]), run(argv, {"QBENCH_ALLOW_METHOD_MISMATCH": "1"})):
                 self.assertNotIn("ratios are withheld", forced)
                 self.assertIn("1.04x", forced)
 
@@ -1035,7 +1041,7 @@ class Subcommand(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             text = run(
                 [FIXTURES / "bench_loop.log", BASELINE, "--json", Path(td) / "r.json"],
-                {"NCCL_ALGO": "Ring", "XVAL_QUANT": "nvfp4"},
+                {"NCCL_ALGO": "Ring", "QBENCH_QUANT": "nvfp4"},
             )
         self.assertIn("NCCL MISMATCH engine=Ring/None vllm=auto/auto", text)
         self.assertIn("QUANT MISMATCH engine=nvfp4 vllm=float16; ratios withheld", text)

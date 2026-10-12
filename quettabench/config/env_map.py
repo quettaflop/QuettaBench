@@ -22,26 +22,26 @@ def _attn_ffn(raw):
 
 
 # Two vars for one field with different values are refused.
-CLASHES = {"XVAL_TRACE": "XVAL_CORPUS", "XVAL_AFD": "XVAL_SERVING_STYLE"}
+CLASHES = {"QBENCH_TRACE": "QBENCH_CORPUS", "QBENCH_AFD": "QBENCH_SERVING_STYLE"}
 
 
 # env var -> (Config path, converter, description).
 ENV_MAP = {
-    "XVAL_LINK_PROFILE": ("hardware.link_profile", str, "interconnect profile name"),
-    "XVAL_BACKEND": ("hardware.backend", str, "GPU backend override"),
-    "XVAL_PP": ("engine.pp", int, "pipeline-parallel size"),
-    "XVAL_EVAL_POS": ("mode.eval_pos", int, "decode position where ms/step is evaluated"),
-    "XVAL_CORPUS": ("workload.source", str, "prompt source: text corpus"),
-    "XVAL_TRACE": ("workload.source", str, "prompt source: trace"),
-    "XVAL_QUANT": ("engine.quant", str, "weight quantization"),
-    "XVAL_SERVING_STYLE": ("engine.serving_style", str, "serving style"),
-    "XVAL_AFD": ("engine.serving_style", _attn_ffn, "attention/FFN disaggregated pools"),
-    "XVAL_ALLOW_METHOD_MISMATCH": (
+    "QBENCH_LINK_PROFILE": ("hardware.link_profile", str, "interconnect profile name"),
+    "QBENCH_BACKEND": ("hardware.backend", str, "GPU backend override"),
+    "QBENCH_PP": ("engine.pp", int, "pipeline-parallel size"),
+    "QBENCH_EVAL_DECODE_POS": ("mode.eval_decode_pos", int, "decode position where ms/step is evaluated"),
+    "QBENCH_CORPUS": ("workload.source", str, "prompt source: text corpus"),
+    "QBENCH_TRACE": ("workload.source", str, "prompt source: trace"),
+    "QBENCH_QUANT": ("engine.quant", str, "weight quantization"),
+    "QBENCH_SERVING_STYLE": ("engine.serving_style", str, "serving style"),
+    "QBENCH_AFD": ("engine.serving_style", _attn_ffn, "attention/FFN disaggregated pools"),
+    "QBENCH_ALLOW_METHOD_MISMATCH": (
         "compare.allow_method_mismatch",
         _nonempty,
         "accept a table whose method differs from the header",
     ),
-    "VMIN_ATTEMPTS": ("mode.vmin_attempts", int, "min-batch fit attempts"),
+    "QBENCH_FIT_ATTEMPTS": ("mode.fit_attempts", int, "fit passes per grid cell, best r2 kept"),
     "PROMPT_MODE": ("workload.prompt_mode", str, "how prompts are built"),
     "GPU_UTIL": ("engine.gpu_util", float, "engine GPU memory fraction"),
     "ENABLE_EP": ("engine.ep", _truthy, "expert parallelism on"),

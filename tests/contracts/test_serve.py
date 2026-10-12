@@ -537,7 +537,7 @@ class GridRunOverHttp(unittest.TestCase):
                 [
                     f"engine.model={td}",
                     "mode.grid=smoke",
-                    "mode.vmin_attempts=1",
+                    "mode.fit_attempts=1",
                     "hardware.visible_devices=0",
                     "hardware.backend=cpu",
                     "hardware.link_profile=nvlink",

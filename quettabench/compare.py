@@ -20,7 +20,7 @@ from quettabench.config.schema import serving_style_compatible
 REPO = Path(__file__).resolve().parents[1]
 CONFIGS = REPO / "configs"
 COMPARE_DIR = REPO / "results" / "compare"
-ENV = ("XVAL_QUANT", "XVAL_SERVING_STYLE", "NCCL_ALGO", "NCCL_PROTO", "XVAL_ALLOW_METHOD_MISMATCH")
+ENV = ("QBENCH_QUANT", "QBENCH_SERVING_STYLE", "NCCL_ALGO", "NCCL_PROTO", "QBENCH_ALLOW_METHOD_MISMATCH")
 
 
 GROUP_PREF = ("decode_batch_paged", "decode_batch", "decode_graph", "decode")
@@ -653,7 +653,7 @@ def render_preamble(report):
         lines.append(
             "engine log times one synchronized step per iteration; the baseline "
             "is a pipelined slope. Not the same quantity, so ratios are withheld "
-            "(XVAL_ALLOW_METHOD_MISMATCH=1 to force)."
+            "(QBENCH_ALLOW_METHOD_MISMATCH=1 to force)."
         )
     lines.append("")
     if report.tps_without_theirs:

@@ -19,12 +19,12 @@ class ReadEnv(unittest.TestCase):
     def test_values_are_typed_per_var(self):
         got = read_env(
             {
-                "XVAL_PP": "2",
+                "QBENCH_PP": "2",
                 "GPU_UTIL": "0.85",
                 "ENABLE_EP": "Yes",
                 "QS_SHA": "1234567",
                 "CUDA_VISIBLE_DEVICES": "0",
-                "XVAL_ALLOW_METHOD_MISMATCH": "0",
+                "QBENCH_ALLOW_METHOD_MISMATCH": "0",
                 "TPU_NAME": "v5",
             }
         )
@@ -42,7 +42,7 @@ class ReadEnv(unittest.TestCase):
         )
 
     def test_unset_and_empty_vars_are_skipped(self):
-        self.assertEqual(read_env({"XVAL_PP": "", "UNRELATED": "1"}), {})
+        self.assertEqual(read_env({"QBENCH_PP": "", "UNRELATED": "1"}), {})
 
     def test_enable_ep_falsy_values_turn_ep_off(self):
         self.assertEqual(read_env({"ENABLE_EP": "0"}), {"engine.ep": False})
@@ -58,23 +58,23 @@ class ReadEnv(unittest.TestCase):
         self.assertNotIn("bench_sha", cfg.provenance)
 
     def test_bad_number_names_the_var(self):
-        with self.assertRaisesRegex(ConfigError, "XVAL_PP='two'"):
-            read_env({"XVAL_PP": "two"})
+        with self.assertRaisesRegex(ConfigError, "QBENCH_PP='two'"):
+            read_env({"QBENCH_PP": "two"})
 
     def test_corpus_and_trace_both_set_is_refused(self):
-        with self.assertRaisesRegex(ConfigError, "XVAL_CORPUS and XVAL_TRACE"):
-            read_env({"XVAL_CORPUS": "a.txt", "XVAL_TRACE": "b.jsonl"})
-        self.assertEqual(read_env({"XVAL_TRACE": "b.jsonl"}), {"workload.source": "b.jsonl"})
+        with self.assertRaisesRegex(ConfigError, "QBENCH_CORPUS and QBENCH_TRACE"):
+            read_env({"QBENCH_CORPUS": "a.txt", "QBENCH_TRACE": "b.jsonl"})
+        self.assertEqual(read_env({"QBENCH_TRACE": "b.jsonl"}), {"workload.source": "b.jsonl"})
 
     def test_afd_pools_become_a_serving_style(self):
-        self.assertEqual(read_env({"XVAL_AFD": "attn=2,ffn=6"}), {"engine.serving_style": "afd:2a6f"})
+        self.assertEqual(read_env({"QBENCH_AFD": "attn=2,ffn=6"}), {"engine.serving_style": "afd:2a6f"})
         for bad in ("attn=2", "attn=2,ffn=6,moe=1", "attn=x,ffn=1", "2,6"):
-            with self.subTest(bad), self.assertRaisesRegex(ConfigError, "XVAL_AFD"):
-                read_env({"XVAL_AFD": bad})
+            with self.subTest(bad), self.assertRaisesRegex(ConfigError, "QBENCH_AFD"):
+                read_env({"QBENCH_AFD": bad})
 
     def test_afd_beside_another_serving_style_is_refused(self):
-        with self.assertRaisesRegex(ConfigError, "XVAL_SERVING_STYLE and XVAL_AFD"):
-            read_env({"XVAL_SERVING_STYLE": "aggregated", "XVAL_AFD": "attn=1,ffn=1"})
+        with self.assertRaisesRegex(ConfigError, "QBENCH_SERVING_STYLE and QBENCH_AFD"):
+            read_env({"QBENCH_SERVING_STYLE": "aggregated", "QBENCH_AFD": "attn=1,ffn=1"})
 
 
 ROOTS = ("quettabench",)

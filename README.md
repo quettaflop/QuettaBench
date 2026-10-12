@@ -97,7 +97,7 @@ Grid runs write no `results/baselines/*.json`; `qbench compare` reads the run di
 
 ### Measurement contract
 
-Both columns time the same quantity: steady-state decode ms per token at a resident batch, pipelined, synchronized only at the ends, at matched (context, batch, tp). The vLLM side is the slope of batch wall time over the step points (`configs/grids.yaml`), refit up to `mode.vmin_attempts` times until r2 >= 0.999; the engine side is the bench's pipelined loop (K steps, one sync). `max_seq = ctx + timing_steps + max_seq_headroom` changes only the engine number; the vLLM side uses the model's `max_model_len`. A cell needing more than 80% of the KV tokens left after weights and a 5 GiB per-GPU reserve is skipped, as is one with ctx + max(step_points) + 2 > max_model_len.
+Both columns time the same quantity: steady-state decode ms per token at a resident batch, pipelined, synchronized only at the ends, at matched (context, batch, tp). The vLLM side is the slope of batch wall time over the step points (`configs/grids.yaml`), refit up to `mode.fit_attempts` times until r2 >= 0.999; the engine side is the bench's pipelined loop (K steps, one sync). `max_seq = ctx + timing_steps + max_seq_headroom` changes only the engine number; the vLLM side uses the model's `max_model_len`. A cell needing more than 80% of the KV tokens left after weights and a 5 GiB per-GPU reserve is skipped, as is one with ctx + max(step_points) + 2 > max_model_len.
 
 ### Withhold rules
 
@@ -109,8 +109,8 @@ The table prints a ratio only for like with like. It is withheld when the method
 
 - `distinct` (default): per-slot synthetic seeds, spread routing
 - `clone`: the engine benches' exact ids on every slot, identical routing
-- `corpus`: sliding windows over the text at `workload.source` (`XVAL_CORPUS`); in-process, so `mode.returns` runs only
-- `trace`: prompts from the replay JSONL at `workload.source` (`XVAL_TRACE`)
+- `corpus`: sliding windows over the text at `workload.source` (`QBENCH_CORPUS`); in-process, so `mode.returns` runs only
+- `trace`: prompts from the replay JSONL at `workload.source` (`QBENCH_TRACE`)
 
 The baseline records the mode and the table prints it.
 

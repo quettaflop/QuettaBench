@@ -540,7 +540,7 @@ def measure_cell(driver, writer, mode, steps, prompts, cell):
         score(driver, writer, prompts, cell)
     batch(max(steps), "warm")
     out = []
-    for attempt in range(mode.vmin_attempts):
+    for attempt in range(mode.fit_attempts):
         walls = []
         for step in steps:
             rows = batch(step, "fit", attempt)
@@ -604,7 +604,7 @@ def run_grid(trace, driver, cfg, writer):
     if getattr(driver, "scores_only", False):
         return score_grid(trace, driver, cfg, writer)
     mode, engine = cfg.mode, cfg.engine
-    eval_pos = mode.eval_pos if mode.eval_pos is not None else cfg.hardware.timing_steps // 2
+    eval_pos = mode.eval_decode_pos if mode.eval_decode_pos is not None else cfg.hardware.timing_steps // 2
     steps = trace.step_points
     kv_label = engine.kv_dtype if engine.kv_dtype != "auto" else engine.dtype
     gpu, gpu_bytes = driver.device()
@@ -644,7 +644,7 @@ def run_grid(trace, driver, cfg, writer):
         else:
             # Checked at the first cell that needs it, so an all-SKIP run never asks.
             if trace.prompt_mode == "corpus" and not trace.corpus_path:
-                reason = "prompt_mode=corpus needs XVAL_CORPUS pointing at a text file"
+                reason = "prompt_mode=corpus needs QBENCH_CORPUS pointing at a text file"
                 writer.finish(None, status="aborted", reason=reason)
                 sys.exit(reason)
             prompts, cycled = trace.cell_prompts(ctx, bs)

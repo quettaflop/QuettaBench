@@ -49,7 +49,7 @@ class LoaderRules(unittest.TestCase):
     def load(self, run=None, overrides=(), env=None, model=None):
         self.write("models/toy.yaml", {**MODEL, **(model or {})})
         path = self.write("runs/r.yaml", {"model": "toy", **(run or {})})
-        return load(path, overrides, env={"XVAL_LINK_PROFILE": "pcie", **(env or {})})
+        return load(path, overrides, env={"QBENCH_LINK_PROFILE": "pcie", **(env or {})})
 
     def one(self, *args, **kwargs):
         configs = self.load(*args, **kwargs)
@@ -74,13 +74,13 @@ class LoaderRules(unittest.TestCase):
 
     def test_cli_beats_env_beats_run_beats_model_beats_hardware(self):
         run = {"engine": {"pp": 2, "dtype": "float16"}, "hardware": {"collective": {"NCCL_PROTO": "LL"}}}
-        cfg = self.one(run, ["engine.pp=4"], {"XVAL_PP": "3", "NCCL_ALGO": "tree"})
+        cfg = self.one(run, ["engine.pp=4"], {"QBENCH_PP": "3", "NCCL_ALGO": "tree"})
         self.assertEqual(cfg.engine.pp, 4)
         self.assertEqual(cfg.engine.dtype, "float16")
         self.assertEqual(cfg.origins["engine.dtype"], "run")
         self.assertEqual(cfg.hardware.collective["NCCL_ALGO"], "tree")
         self.assertEqual(cfg.hardware.collective["NCCL_PROTO"], "LL")
-        self.assertEqual(self.one(run, env={"XVAL_PP": "3"}).engine.pp, 3)
+        self.assertEqual(self.one(run, env={"QBENCH_PP": "3"}).engine.pp, 3)
 
     def test_caller_env_wins_for_each_collective_pin(self):
         pins = {
@@ -102,7 +102,7 @@ class LoaderRules(unittest.TestCase):
                 self.assertEqual(cfg.origins[f"hardware.collective.{key}"], "env")
 
     def test_link_profile_picks_the_hardware_yaml(self):
-        cfg = self.one(env={"XVAL_LINK_PROFILE": "nvlink"})
+        cfg = self.one(env={"QBENCH_LINK_PROFILE": "nvlink"})
         self.assertEqual(cfg.hardware.collective, {"NCCL_ALGO": ""})
 
     def test_auto_link_profile_detects_like_captured_config(self):
@@ -358,7 +358,7 @@ class LoaderRules(unittest.TestCase):
                 self.load(overrides=[f"run_name={name}"])
         with self.assertRaisesRegex(ConfigError, "run_name"):
             self.write("runs/probes.yaml", {"model": "toy"})
-            load(self.root / "runs" / "probes.yaml", env={"XVAL_LINK_PROFILE": "pcie"})
+            load(self.root / "runs" / "probes.yaml", env={"QBENCH_LINK_PROFILE": "pcie"})
         self.assertEqual(self.one(overrides=["run_name=a.b_c-1"]).run_name, "a.b_c-1")
         self.assertEqual(self.one(overrides=[f"run_name={'x' * 200}"]).run_name, "x" * 200)
 

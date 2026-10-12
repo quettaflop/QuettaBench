@@ -87,7 +87,7 @@ def check_record(case, cfg, old, env):
         (e.model_name, e.dtype, e.weights_gib, e.max_model_len),
         (wl["name"], wl["dtype"], wl["weights_gib"], wl["maxlen"]),
     )
-    case.assertEqual((e.tp, e.pp), (int(wl.get("tp", 1)), int(env.get("XVAL_PP", wl.get("pp", 1)))))
+    case.assertEqual((e.tp, e.pp), (int(wl.get("tp", 1)), int(env.get("QBENCH_PP", wl.get("pp", 1)))))
     case.assertEqual(
         (e.ep, e.kv_dtype, e.kv_bytes, e.quant, e.verified),
         (
@@ -127,7 +127,7 @@ def resolve_global(env):
     cfg = resolve("llama", env)
     grids, step_points = loader._read_grids(REPO / "configs")
     h = cfg.hardware
-    default = env.get("XVAL_LINK_PROFILE", "pcie")
+    default = env.get("QBENCH_LINK_PROFILE", "pcie")
     by_profile = {
         p: dict(resolve("llama", env, f"hardware.link_profile={p}").hardware.collective) for p in ("pcie", "nvlink")
     }

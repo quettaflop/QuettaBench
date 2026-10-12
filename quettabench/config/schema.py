@@ -100,7 +100,7 @@ class EngineCfg:
 @dataclass(frozen=True)
 class WorkloadCfg:
     kind: str = "live"
-    source: str = ""  # trace path, profile name, or XVAL_CORPUS/XVAL_TRACE file
+    source: str = ""  # trace path, profile name, or QBENCH_CORPUS/QBENCH_TRACE file
     # steady | trace | poisson:<rate> | ramp:<start>:<end> | burst:<n>x<size>@<gap_s>
     arrival: str = "steady"
     speed: float = 1.0
@@ -140,9 +140,9 @@ class ModeCfg:
     goodput_sweep: bool = False
     returns: str = "none"  # none | text | logits
     grid: str | None = None  # name in grids.yaml; set => step metrics
-    vmin_attempts: int = 4  # grid: fit passes per cell, best r2 kept
+    fit_attempts: int = 4  # grid: fit passes per cell, best r2 kept
     fit_r2_stop: float = 0.999  # grid: a pass fitting at least this r2 ends the cell
-    eval_pos: int | None = None  # None => hardware.timing_steps // 2
+    eval_decode_pos: int | None = None  # None => hardware.timing_steps // 2
     cap_frac: float = 0.80
     probe: str | None = None  # mode=probe: module under quettabench/probes/
     probe_args: str = ""  # mode=probe: that probe's own flags, shell-quoted

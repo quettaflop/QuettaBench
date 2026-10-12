@@ -33,13 +33,13 @@ DENSE_CONFIG = {
 }
 
 ENV_OVERRIDE = {
-    "XVAL_LINK_PROFILE": "pcie",
-    "XVAL_PP": "2",
-    "XVAL_BACKEND": "cuda",
+    "QBENCH_LINK_PROFILE": "pcie",
+    "QBENCH_PP": "2",
+    "QBENCH_BACKEND": "cuda",
     "GPU_UTIL": "0.85",
     "PROMPT_MODE": "clone",
-    "VMIN_ATTEMPTS": "2",
-    "XVAL_EVAL_POS": "25",
+    "QBENCH_FIT_ATTEMPTS": "2",
+    "QBENCH_EVAL_DECODE_POS": "25",
 }
 
 RUNS = REPO / "configs" / "runs"
