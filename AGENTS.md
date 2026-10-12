@@ -17,9 +17,9 @@ in one results layer, `results/<run>/`, and leaves the repo by
 
 - `quettabench/cli.py`, `runner.py`, `provision.py`: the command, the run
   sequence, and box setup. `runner.py` is the only code that starts a run.
-- `quettabench/config/`: schema, loader, validate, env_map. The only place
-  `os.environ` is read is `config/env_map.py`, enforced by
-  `tests/config/test_no_environ.py`; its allowlist only shrinks.
+- `quettabench/config/`: schema (with the serving-topology rules), loader,
+  env_map. The only place `os.environ` is read is `config/env_map.py`,
+  enforced by `tests/config/test_no_environ.py`; its allowlist only shrinks.
 - `quettabench/workloads/`: every request source is a `Trace` with a
   `workload_hash`. A source without a hash does not belong here.
 - `quettabench/engines/`: adapters translate a Config to a LaunchSpec from a
@@ -43,8 +43,8 @@ in one results layer, `results/<run>/`, and leaves the repo by
   an engine.
 - `quettabench/probes/`: kernel microbenchmarks and live-server probes. Each
   run records itself in `run.json` through `metrics/results.py`
-  (`probes/base.py` `run_recorded`). Their runbooks are in
-  `probes/runbooks/`.
+  (`probes/base.py` `run_recorded`). `probes/_timing.py` holds the shared
+  CUDA-graph and NCU timing. Their runbooks are in `probes/runbooks/`.
 - Owner decision (2026-10-11): probes and profiler sources may send requests
   to an engine that launcher.py started, to measure engine-level behaviour;
   they never start an engine or a server and never write outside results/
@@ -84,7 +84,7 @@ Every writer and every process starter, exactly:
 - `metrics/results.py` `RunWriter`: `run.json` and `requests.jsonl`.
 - probes: their tables and their `run.json` in one dir under `results/`
   (default `results/probes/<gpu>/<probe>/<run-id>/`); `serving_decode_grid` also starts its request
-  shards as `multiprocessing` processes, and `probes/_ncu.py` (gemm, flash_attn,
+  shards as `multiprocessing` processes, and `probes/_timing.py` (gemm, flash_attn,
   gdn `--ncu`) starts `ncu` with a `python -c` child per timed point.
 - `justfile` `remote-probe` (`probes/base.py` `remote_probe`): starts `ssh`
   and `rsync`; on `REMOTE_HOST`, makes its own `mktemp -d

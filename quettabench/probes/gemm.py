@@ -38,8 +38,8 @@ import os
 
 import torch
 
-from quettabench.probes import _ncu
-from quettabench.probes._graph import graph_time_us
+from quettabench.probes import _timing
+from quettabench.probes._timing import graph_time_us
 from quettabench.probes.base import add_output_args, out_root, run_recorded
 
 M_AXIS = [1, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
@@ -87,11 +87,11 @@ GEMM_KERNELS = ("gemm", "nvjet", "cutlass", "xmma", "wgmma")
 
 def ncu_gemm_us(m, n, k, ncu_bin, reps=NCU_REPS) -> float | None:
     """NCU pure-kernel gpu__time_duration (us) for one GEMM, min over `reps` warm
-    launches of its GEMM-family kernels (_ncu.ncu_kernel_durations parses the CSV)."""
+    launches of its GEMM-family kernels (_timing.ncu_kernel_durations parses the CSV)."""
     inner = (f"import torch;a=torch.randn({m},{k},device='cuda',dtype=torch.bfloat16);"
              f"b=torch.randn({k},{n},device='cuda',dtype=torch.bfloat16);"
              f"[torch.matmul(a,b) for _ in range({reps})];torch.cuda.synchronize()")
-    durs = [us for name, us in _ncu.ncu_kernel_durations(inner, ncu_bin)
+    durs = [us for name, us in _timing.ncu_kernel_durations(inner, ncu_bin)
             if any(tok in name.lower() for tok in GEMM_KERNELS)]
     return min(durs) if durs else None
 

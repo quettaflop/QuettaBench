@@ -18,8 +18,7 @@ import statistics as st
 import torch
 from vllm.vllm_flash_attn.flash_attn_interface import flash_attn_varlen_func
 
-from quettabench.probes._graph import graph_median_us
-from quettabench.probes._ncu import ncu_op_us
+from quettabench.probes._timing import graph_median_us, ncu_op_us
 from quettabench.probes.base import add_output_args, out_root, run_recorded
 
 KV_AXIS = [128, 256, 512, 1024, 2048, 4096, 8192, 16384]

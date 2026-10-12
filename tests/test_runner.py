@@ -578,7 +578,7 @@ class ProbeMode(unittest.TestCase):
                                      "old\n" if refused else "")
 
     def test_a_name_that_is_no_probe_is_refused(self):
-        for name in ("nope", "base", "_graph", "../cli"):
+        for name in ("nope", "base", "_timing", "../cli"):
             with self.subTest(name), scratch_configs("p", {"mode": {"mode": "probe", "probe": name}}) \
                     as (path, td):
                 _, exit_msg = qbench("run", str(path), "--allow-unverified",

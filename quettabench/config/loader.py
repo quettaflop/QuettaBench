@@ -17,10 +17,11 @@ from quettabench.config.schema import (
     Config,
     ConfigError,
     GridCfg,
+    check_ep_legal,
     default_values,
     dict_field,
+    parse_serving_style,
 )
-from quettabench.config.validate import check_ep_legal, parse_serving_style
 from quettabench.workloads import arrival, profiles
 
 # model yaml key -> Config path
@@ -225,7 +226,7 @@ def _validate(values, origins, allow_unverified, where):
         if (low is not None and values[path] < low) or (high is not None and values[path] > high):
             raise ConfigError(f"{where}: {path} must be in [{low}, {high or 'inf'}], "
                               f"got {values[path]!r}")
-    # validate.py raises ValueError; as ConfigError the CLI prints one line, message unchanged.
+    # The schema rules raise ValueError; as ConfigError the CLI prints one line, message unchanged.
     try:
         parse_serving_style(values["engine.serving_style"])
         # num_experts None (no MoE fact recorded) skips the check.

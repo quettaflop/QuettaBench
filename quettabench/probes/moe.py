@@ -48,7 +48,7 @@ import statistics as st
 
 import torch
 
-from quettabench.probes._graph import graph_time_us
+from quettabench.probes._timing import graph_time_us
 from quettabench.probes.base import add_output_args, out_root, run_recorded
 
 # Per-expert geometry of every MoE model in engine/device_spec/models/.

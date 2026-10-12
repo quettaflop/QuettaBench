@@ -194,7 +194,7 @@ vLLM **CUDA-graphs MoE decode**, so the decode-faithful grid is dispatch-free.
 Use `--graph` (CUDA-graph-replay timing -> `ncu/moe/`, preferred by the loader);
 the eager default (`cuda_event/moe/`) overpriced H200 graphed decode 2.3x
 (188us vs 80.8us/layer at 8 tokens). `--graph` works on hosts where NCU counters
-are locked (`RmProfilingAdminOnly: 1`) -- see `_graph.py`. Loading a
+are locked (`RmProfilingAdminOnly: 1`) -- see `_timing.py`. Loading a
 measured MoE grid also retires the `_decode_host_floor_us` patch automatically.
 
 **MXFP4-expert models (gpt-oss) are swept for shape coverage but deliberately are not

@@ -15,7 +15,7 @@ render(report) is table.py's text, byte for byte, with the agreement rows
 
 from dataclasses import dataclass, field
 
-from quettabench.config.validate import serving_style_compatible
+from quettabench.config.schema import serving_style_compatible
 from quettabench.crossval import agreement
 from quettabench.crossval.reader import Side, age_days
 

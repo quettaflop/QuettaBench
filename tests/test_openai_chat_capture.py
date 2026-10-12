@@ -4,7 +4,9 @@ import asyncio
 import json
 import unittest
 
-from quettabench.engines.openai_chat import send_request
+from quettabench.engines.drivers import HttpDriver
+
+send_request = HttpDriver("chat", "openai").send_request
 
 
 def _sse(chunks: list[dict]) -> list[bytes]:

@@ -15,8 +15,8 @@ ttft_rule:
   completions  first_nonempty_text  the first SSE chunk whose choices[0].text
                                     is non-empty
 
-The stream bodies are openai_chat.send_request and
-openai_completions.send_request moved unchanged; only the header and payload
+The stream bodies are the former openai_chat and openai_completions
+send_request, moved unchanged; only the header and payload
 building they shared byte for byte is factored out.
 
 vllm, torch and transformers are optional dependencies (GPU boxes only), so

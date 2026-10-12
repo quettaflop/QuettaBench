@@ -31,8 +31,7 @@ from pathlib import Path
 
 from quettabench import workloads
 from quettabench.config import env_map, loader
-from quettabench.config.schema import ConfigError
-from quettabench.config.validate import device_count
+from quettabench.config.schema import ConfigError, device_count
 from quettabench.engines import base, launcher
 from quettabench.metrics.results import RUN_MARKERS, RunWriter, redact
 from quettabench.modes import serve

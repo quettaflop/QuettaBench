@@ -1,20 +1,13 @@
-"""Shared CUDA-graph-replay timing -- the graphed-decode-faithful method when NCU
-counters are unavailable (e.g. hosts with RmProfilingAdminOnly=1, where no
-container setting can unlock them).
-
-vLLM's decode is CUDA-graphed: kernels replay with no per-launch CPU dispatch,
-so the faithful decode number is pure kernel time. NCU measures that by
-counter; capturing the op into a torch.cuda.CUDAGraph and timing replay()
-measures the same thing by construction (H200 spot-check, vLLM fused_experts
-at 8 decode tokens: eager cuda_event 182us -> graph replay 78.5us -- the 57%
-delta is exactly the dispatch cost graphs eliminate). Replay timing even keeps
-real back-to-back kernel behaviour that per-kernel NCU isolation loses.
-
-Prefill stays eager in serving, so prefill grids keep plain cuda_event timing.
-"""
+"""Kernel timing shared by the probes: CUDA-graph replay, and NCU per-kernel durations.
+Graph replay matches vLLM's graphed decode (no per-launch CPU dispatch) where NCU counters are locked (RmProfilingAdminOnly=1).
+NCU sums the op's kernels per invocation and drops the `at::` tensor-setup kernels."""
 from __future__ import annotations
 
+import csv
+import io
 import statistics as st
+import subprocess
+import sys
 
 import torch
 
@@ -76,3 +69,37 @@ def graph_time_us(fn, *, warmup: int = 10, reps: int = 50, reduce=min) -> float:
 
 def graph_median_us(fn, **kw) -> float:
     return graph_time_us(fn, reduce=st.median, **kw)
+
+
+def ncu_kernel_durations(inner: str, ncu_bin: str) -> list[tuple[str, float]]:
+    """[(kernel_name, us)] for every profiled kernel launch, in launch order."""
+    cmd = [ncu_bin, "--csv", "--metrics", "gpu__time_duration.sum",
+           "--target-processes", "all", sys.executable, "-c", inner]
+    out = subprocess.run(cmd, capture_output=True, text=True).stdout
+    lines = out.splitlines()
+    hdr = next((i for i, line in enumerate(lines) if line.startswith('"ID"')), None)
+    if hdr is None:
+        return []
+    res: list[tuple[str, float]] = []
+    for r in csv.DictReader(io.StringIO("\n".join(lines[hdr:]))):
+        if r.get("Metric Name") != "gpu__time_duration.sum":
+            continue
+        v = float(r["Metric Value"].replace(",", ""))
+        us = v / 1000.0 if r.get("Metric Unit") == "ns" else v
+        res.append((r.get("Kernel Name", ""), us))
+    return res
+
+
+def ncu_op_us(inner: str, ncu_bin: str, reps: int,
+              exclude: tuple[str, ...] = ("at::",)) -> float | None:
+    """Pure-kernel us of ONE op call: the snippet calls the op `reps` times; sum
+    the op's kernels (drop `exclude` setup kernels) per invocation, min over the
+    invocations (the warmest = steady state). None if NCU produced no table or the
+    op-kernel count isn't a clean multiple of reps (autotune leak -> tune filter)."""
+    durs = [us for kn, us in ncu_kernel_durations(inner, ncu_bin)
+            if not any(t in kn for t in exclude)]
+    if not durs or reps <= 0 or len(durs) % reps != 0:
+        return None
+    n = len(durs) // reps               # op sub-kernels per invocation
+    groups = [sum(durs[i * n:(i + 1) * n]) for i in range(reps)]
+    return min(groups)

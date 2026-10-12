@@ -294,7 +294,7 @@ just export --only kernel_tables --results results/probes --kernel-dest ../Quett
 quettabench/cli.py        qbench: run | profile | crossval | export, and provision
 quettabench/runner.py     run: load, translate, launch, drive, serve, write
 quettabench/provision.py  box setup, --dry-run plan, MISSING: and stop
-quettabench/config/       schema, loader (yaml + --set + env), env_map, validate
+quettabench/config/       schema (with topology rules), loader (yaml + --set + env), env_map
 quettabench/workloads/    traces: live, sessions, grid; arrival schedules; profiles
 quettabench/engines/      adapters (vllm, quettaserve), drivers, launcher
 quettabench/modes/serve.py  the one measurement procedure

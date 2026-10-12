@@ -30,7 +30,7 @@ from vllm.model_executor.layers.fla.ops import (
     fused_recurrent_gated_delta_rule,
 )
 
-from quettabench.probes._ncu import ncu_op_us
+from quettabench.probes._timing import ncu_op_us
 from quettabench.probes.base import add_output_args, out_root, run_recorded
 
 # chunk_gated_delta_rule's solve_tril merge kernel autotunes on a fresh host (no

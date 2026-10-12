@@ -353,7 +353,7 @@ def test_the_r2_mirror_has_its_own_prefix_and_never_deletes():
 
 
 def test_probes_import_their_siblings_at_the_top():
-    """_graph and _ncu ship with every probe, so no probe imports them inside a
+    """_timing ships with every probe, so no probe imports them inside a
     function; an inline import names its reason in a docstring, not a noqa."""
     for probe in sorted(PROBES_DIR.glob("*.py")):
         text = probe.read_text()

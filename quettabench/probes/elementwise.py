@@ -16,7 +16,7 @@ import statistics as st
 import torch
 import torch.nn.functional as F
 
-from quettabench.probes._graph import graph_median_us
+from quettabench.probes._timing import graph_median_us
 from quettabench.probes.base import add_output_args, out_root, run_recorded
 
 # (reads, writes) per kernel -- MUST match kernel_composed/elementwise.py::_IO

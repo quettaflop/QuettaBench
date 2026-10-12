@@ -6,7 +6,7 @@ collapsing whole reasoning phases into single ITL gaps, and mean(ITL) then
 inflated tpot by up to ~13x (QuettaSim tools/GT_QUALITY_FLAGS.md, Finding 1).
 
 Covers both halves of the fix:
-  1. engines/openai_chat.py counts reasoning and tool-call deltas as token
+  1. HttpDriver's chat stream counts reasoning and tool-call deltas as token
      events (verified against a local SSE server).
   2. metrics.RequestResult.tpot falls back to the wall-clock formula when ITL
      chunk coverage is incomplete, and is byte-identical to the old
@@ -78,7 +78,8 @@ def _chunk(delta, finish_reason=None):
 async def _serve_and_request(chunks):
     """Stream the given SSE chunk payloads from a local server through
     send_request and return the RequestResult."""
-    from quettabench.engines.openai_chat import send_request
+    from quettabench.engines.drivers import HttpDriver
+    send_request = HttpDriver("chat", "openai").send_request
 
     async def handler(request):
         resp = web.StreamResponse(

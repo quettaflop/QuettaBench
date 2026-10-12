@@ -20,8 +20,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from quettabench.config import loader
-from quettabench.config.schema import ConfigError
-from quettabench.config.validate import check_ep_legal
+from quettabench.config.schema import ConfigError, check_ep_legal
 
 REPO = Path(__file__).resolve().parents[1]
 CROSSVAL = REPO / "scripts" / "crossval"
@@ -256,51 +255,50 @@ class CrossvalScripts(unittest.TestCase):
         # divide the expert count, and disagg rows never pair with aggregated.
         sys.path.insert(0, str(REPO))
         try:
-            from quettabench.config import validate
-            importlib.reload(validate)
-            self.assertEqual(validate.parse_serving_style("aggregated"), {"mode": "aggregated"})
-            self.assertEqual(validate.parse_serving_style(None), {"mode": "aggregated"})
-            self.assertEqual(validate.parse_serving_style("disagg:2p2d"),
+            from quettabench.config import schema
+            self.assertEqual(schema.parse_serving_style("aggregated"), {"mode": "aggregated"})
+            self.assertEqual(schema.parse_serving_style(None), {"mode": "aggregated"})
+            self.assertEqual(schema.parse_serving_style("disagg:2p2d"),
                              {"mode": "disagg", "prefill": 2, "decode": 2})
-            self.assertEqual(validate.parse_serving_style("ep8dp2"),
+            self.assertEqual(schema.parse_serving_style("ep8dp2"),
                              {"mode": "ep_dp", "ep": 8, "dp": 2})
-            self.assertEqual(validate.parse_serving_style("afd:2a6f"),
+            self.assertEqual(schema.parse_serving_style("afd:2a6f"),
                              {"mode": "afd", "attn": 2, "ffn": 6})
             for bad in ("disagg:0p1d", "disagg:2p", "ep8", "wideEP", "disagg:xp1d",
                         "ep0dp2", "ep8dp0", "afd:0a1f", "afd:2a", "afd:2f6a"):
                 with self.assertRaises(ValueError):
-                    validate.parse_serving_style(bad)
-            pre, dec = validate.disagg_gpu_sets(
-                validate.parse_serving_style("disagg:2p2d"), [0, 1, 2, 3])
+                    schema.parse_serving_style(bad)
+            pre, dec = schema.disagg_gpu_sets(
+                schema.parse_serving_style("disagg:2p2d"), [0, 1, 2, 3])
             self.assertEqual((pre, dec), ([0, 1], [2, 3]))
             self.assertFalse(set(pre) & set(dec))
             with self.assertRaises(ValueError):
-                validate.disagg_gpu_sets(
-                    validate.parse_serving_style("disagg:2p2d"), [0, 1, 2])
-            validate.check_ep_legal(8, 256)  # DeepSeek-V4-Flash: 256 experts
+                schema.disagg_gpu_sets(
+                    schema.parse_serving_style("disagg:2p2d"), [0, 1, 2])
+            schema.check_ep_legal(8, 256)  # DeepSeek-V4-Flash: 256 experts
             with self.assertRaises(ValueError):
-                validate.check_ep_legal(7, 256)
-            self.assertFalse(validate.serving_style_compatible("disagg:1p1d", "aggregated"))
-            self.assertFalse(validate.serving_style_compatible("afd:1a1f", "aggregated"))
-            self.assertFalse(validate.serving_style_compatible("afd:1a1f", "disagg:1p1d"))
+                schema.check_ep_legal(7, 256)
+            self.assertFalse(schema.serving_style_compatible("disagg:1p1d", "aggregated"))
+            self.assertFalse(schema.serving_style_compatible("afd:1a1f", "aggregated"))
+            self.assertFalse(schema.serving_style_compatible("afd:1a1f", "disagg:1p1d"))
             # Pools are sized in GPUs: afd needs attn + ffn, not tp * pp.
             engine = SimpleNamespace(serving_style="afd:2a6f", tp=4, pp=1)
-            self.assertEqual(validate.device_count(engine), 8)
+            self.assertEqual(schema.device_count(engine), 8)
             engine = SimpleNamespace(serving_style="disagg:2p2d", tp=8, pp=1)
-            self.assertEqual(validate.device_count(engine), 4)
+            self.assertEqual(schema.device_count(engine), 4)
             engine = SimpleNamespace(serving_style="aggregated", tp=4, pp=2)
-            self.assertEqual(validate.device_count(engine), 8)
-            self.assertTrue(validate.serving_style_compatible("aggregated", "aggregated"))
+            self.assertEqual(schema.device_count(engine), 8)
+            self.assertTrue(schema.serving_style_compatible("aggregated", "aggregated"))
             # disagg KV config: prefill producer and decode consumer share the port
             # and pool size, take distinct ranks; a wrong role raises.
-            pre = validate.disagg_kv_config("kv_producer", 0, "P2pConnector")
-            dec = validate.disagg_kv_config("kv_consumer", 1, "P2pConnector")
+            pre = schema.disagg_kv_config("kv_producer", 0, "P2pConnector")
+            dec = schema.disagg_kv_config("kv_consumer", 1, "P2pConnector")
             self.assertEqual(pre["kv_role"], "kv_producer")
             self.assertEqual(dec["kv_rank"], 1)
             self.assertEqual(pre["kv_port"], dec["kv_port"])
             self.assertEqual(pre["kv_parallel_size"], dec["kv_parallel_size"])
             with self.assertRaises(ValueError):
-                validate.disagg_kv_config("decode", 1, "P2pConnector")
+                schema.disagg_kv_config("decode", 1, "P2pConnector")
         finally:
             sys.path.pop(0)
 

@@ -25,7 +25,7 @@ from unittest import mock
 import yaml
 
 from quettabench.config import loader
-from quettabench.config.validate import (
+from quettabench.config.schema import (
     check_ep_legal,
     disagg_gpu_sets,
     disagg_kv_config,

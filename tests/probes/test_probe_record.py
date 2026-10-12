@@ -341,15 +341,15 @@ def import_without_torch(name):
 
 
 def test_gemm_ncu_reads_kernels_through_the_shared_parser():
-    """gemm --ncu takes its kernel times from _ncu.ncu_kernel_durations, the one
+    """gemm --ncu takes its kernel times from _timing.ncu_kernel_durations, the one
     NCU CSV parser, and keeps the GEMM family's fastest launch."""
     gemm = import_without_torch("gemm")
     launches = [("distribution_elementwise_kernel", 1.0), ("nvjet_tst_64x8", 5.0),
                 ("ampere_bf16_s16816gemm", 4.0), ("at::fill", 0.5)]
-    with mock.patch.object(gemm._ncu, "ncu_kernel_durations", return_value=launches) as durs:
+    with mock.patch.object(gemm._timing, "ncu_kernel_durations", return_value=launches) as durs:
         assert gemm.ncu_gemm_us(1, 4096, 4096, "/opt/ncu") == 4.0
     assert durs.call_args.args[1] == "/opt/ncu"
-    with mock.patch.object(gemm._ncu, "ncu_kernel_durations", return_value=[("at::fill", 1.0)]):
+    with mock.patch.object(gemm._timing, "ncu_kernel_durations", return_value=[("at::fill", 1.0)]):
         assert gemm.ncu_gemm_us(1, 4096, 4096, "/opt/ncu") is None
     assert "Metric Value" not in (PROBES / "gemm.py").read_text()
 
