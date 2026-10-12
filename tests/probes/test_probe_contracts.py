@@ -434,7 +434,7 @@ def test_readme_maps_each_old_quettasim_probe_recipe_to_a_working_command():
             assert not missing, (probe, missing)
 
 
-RUNBOOKS = sorted((PROBES_DIR / "runbooks").glob("*.md"))
+RUNBOOKS = sorted((ROOT / "docs" / "runbooks").glob("*.md"))
 
 
 def runbook_drift(path: Path) -> list[str]:
@@ -462,7 +462,7 @@ def runbook_drift(path: Path) -> list[str]:
         for recipe in re.findall(r"`just (?:gpu=\S+ )?([a-z][a-z0-9-]*)", line):
             if recipe not in recipes and not dated:
                 found.append(f"{where} no recipe {recipe}")
-        for script in re.findall(r"((?:profiling|scripts|slice_tf)/[\w./-]+\.py)", line):
+        for script in re.findall(r"((?:quettabench/)?(?:profiling|scripts|slice_tf)/[\w./-]+\.py)", line):
             if not (ROOT / script).exists() and not dated:
                 found.append(f"{where} no {script}")
     return found

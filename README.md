@@ -110,7 +110,7 @@ e.g. `20261011T120000.000000Z`) and records itself beside its tables in
 run measured. `just export` unions every ok run's rows per table on the key
 the probe's old upsert used, the run that finished last winning a key, and
 takes a table with no row key from the run that finished last
-(`quettabench/probes/README.md`). It merges into the tables QuettaSim already
+(`docs/runbooks/probes.md`). It merges into the tables QuettaSim already
 holds, keeping their rows unless a run supersedes them, and stops where it
 would drop one unless given `--replace-tables`, which replaces just the tables
 that would stop. It is the only route to QuettaSim.
@@ -220,7 +220,7 @@ A floor run is trusted once it is deterministic: the same run twice crossvals
 to argmax_agree equal to positions and delta max 0. `qbench profile --source kernels` gives per-kernel
 GPU time per decode step from an nsys-armed run, and `just moe-routing
 <model>` dumps one MoE block for an engine-side diff. The verdict log of the
-original harness is `quettabench/probes/runbooks/slice_verification.md`.
+original harness is `docs/runbooks/slice_verification.md`.
 
 ### Model notes
 
@@ -314,6 +314,7 @@ quettabench/probes/       kernel probes
 quettabench/export/quettasim.py  the one route to QuettaSim: tp_comm, stage_split_rates, roofline_utils,
                           serving_decode_grid, kernel_tables
 configs/                  models, runs, grids, hardware
+docs/runbooks/            the probe guide (probes.md) and the GPU and verification runbooks
 analysis/, data/          one-off studies and data fetch; not imported by the package
 ```
 

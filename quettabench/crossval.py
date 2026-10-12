@@ -297,7 +297,7 @@ def read_run(results_dir):
 
 # Reference top-2 gap at or below which an argmax flip is a near tie: one
 # bf16 step for logits in [16, 32), where the 2026-09-13 llama check found
-# its two flips (V13, probes/runbooks/slice_verification.md).
+# its two flips (V13, docs/runbooks/slice_verification.md).
 NEAR_TIE_GAP = 0.125
 AGREE_MIN = 4        # leading tokens counted as "agrees" in the greedy summary
 

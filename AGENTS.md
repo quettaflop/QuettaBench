@@ -46,7 +46,7 @@ in one results layer, `results/<run>/`, and leaves the repo by
 - `quettabench/probes/`: kernel microbenchmarks and live-server probes. Each
   run records itself in `run.json` through `metrics/results.py`
   (`probes/base.py` `run_recorded`). `probes/_timing.py` holds the shared
-  CUDA-graph and NCU timing. Their runbooks are in `probes/runbooks/`.
+  CUDA-graph and NCU timing. Their guide and runbooks are in `docs/runbooks/`.
 - Owner decision (2026-10-11): probes and profiler sources may send requests
   to an engine that launcher.py started, to measure engine-level behaviour;
   they never start an engine or a server and never write outside results/
@@ -70,6 +70,8 @@ in one results layer, `results/<run>/`, and leaves the repo by
   `hardware/` the link profiles, `workloads.yaml` every workload profile by name.
 - `data/` and `analysis/`: fetch scripts and one-off studies. Never imported by
   `quettabench/`, enforced by `tests/test_analysis_is_leaf.py`.
+- `docs/runbooks/`: the probe guide and runbooks; with README.md and AGENTS.md
+  the only docs.
 - `tests/golden/`: characterization fixtures captured from the pre-refactor
   code. Change a fixture only with a dated line in `tests/golden/REPORT.md`
   saying why.

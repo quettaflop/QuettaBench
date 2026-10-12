@@ -32,7 +32,7 @@ GPU_ID=6 PYTHON_BIN=~/miniconda3/envs/vllm/bin/python \
 
 Each run writes `results/probes/H100/<probe>/<run-id>/`; from another box,
 `REMOTE_HOST=h100 GPU_ID=6 PYTHON_BIN=... just remote-probe <probe> H100 <flags...>`
-runs it there and pulls the run back (`quettabench/probes/README.md`).
+runs it there and pulls the run back (`docs/runbooks/probes.md`).
 
 ## The old profiling scripts (historical)
 
