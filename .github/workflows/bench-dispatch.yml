@@ -25,7 +25,8 @@ jobs:
         run: |
           git diff --name-only --diff-filter=AM "${{ github.event.before }}" "${{ github.sha }}" -- 'configs/runs/*.yaml' > changed.txt
           echo "runs=$(jq -R . changed.txt | jq -sc .)" >> "$GITHUB_OUTPUT"
-      - run: sed 's#^#python3 -m quettabench.cli run #' changed.txt > checklist.txt
+      - run: |
+          sed 's#^#python3 -m quettabench.cli run #' changed.txt > checklist.txt
       - uses: actions/upload-artifact@v4
         with:
           name: bench-checklist

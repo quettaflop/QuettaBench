@@ -17,7 +17,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pre-commit"]
+# shellcheck: actionlint lints workflow run steps with it when it is on PATH, as on CI runners.
+dev = ["pre-commit", "shellcheck-py"]
 
 [project.scripts]
 qbench = "quettabench.cli:main"
