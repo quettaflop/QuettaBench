@@ -10,7 +10,7 @@ import urllib.request
 
 from quettabench.engines import launcher
 
-GSM8K_MAX_TOKENS = 256
+GSM8K_MAX_TOKENS = 256  # reply length cap per gsm8k question
 
 
 def integrate_power(samples_w, interval_s):

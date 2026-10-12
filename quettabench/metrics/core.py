@@ -777,13 +777,13 @@ def print_summary(s: BenchmarkSummary) -> None:
     print(
         f" Total token throughput:   {s.total_token_throughput:.0f} tok/s (busy: {s.busy_total_token_throughput:.0f})"
     )
-    # Mean in-flight against --concurrency only means something under closed loop; open loop asks whether the server kept up with the offered rate.
+    # Open loop: did the server keep up with the offered rate.
     if s.load_mode == "open-loop" and s.target_rate > 0:
         if s.sessions_completed:
             served, unit = s.session_throughput, "sess/s"
         else:
             served, unit = s.request_throughput, "req/s"
-        # Two signals: in-flight growth catches overload only while arrivals continue, and the served/offered ratio reads slightly low from the final drain, so 0.75 leaves room for a healthy run.
+        # Overload shows as in-flight growth or served under 0.75x offered (the final drain reads slightly low).
         growing = s.mean_inflight_first_half > 0.5 and s.mean_inflight_second_half > 1.5 * s.mean_inflight_first_half
         rate_short = served < 0.75 * s.target_rate
         print(

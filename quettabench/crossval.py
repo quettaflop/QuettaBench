@@ -522,7 +522,7 @@ def render_agreement(rows):
 
 
 STALE_DAYS = 14  # older vLLM captures draw a warning
-LOW_R2 = 0.999
+LOW_R2 = 0.999  # a step fit below this r2 is flagged LOW R2
 # Methods that time steady-state marginal decode; criterion groups do not.
 MARGINAL = ("loop", "slope")
 KV_SHORT = {"float16": "fp16", "bfloat16": "bf16", "half": "fp16"}

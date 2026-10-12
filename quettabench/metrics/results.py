@@ -1,7 +1,4 @@
-"""The one results writer: RunWriter owns results/<run>/, appending requests.jsonl (and a probe run's rows.jsonl) as rows finish and writing run.json once at the end: {schema_version, provenance, config, origins, summary, steps, run_status}.
-
-A grid run's rows carry `cell` and `batch_wall_s`, and steps is step_fit.fit_run over them. Secrets are written as REDACTED in the provenance's launch env and the config.
-"""
+"""RunWriter owns results/<run>/: requests.jsonl and rows.jsonl as rows finish, run.json once at the end."""
 
 import dataclasses
 import json
@@ -67,10 +64,8 @@ def _secret_header(text):
 
 
 def redact_argv(argv, command=False):
-    """argv with every secret-named item's value replaced by REDACTED, across the flag, NAME=X, header, comma-list and URL forms; an item starting with '-' after a secret name is the next flag and is kept.
-
-    In a command line only a flag, bearer or authorization hides the next item, so a bare "pass" in free text hides nothing. An item holding whitespace is redacted as a command line unless it is a secret --flag=value, and a JSON item as JSON.
-    """
+    """argv with every secret-named item's value replaced by REDACTED, across flag, NAME=X, header, comma-list and URL forms."""
+    # In a command line only a flag, bearer or authorization hides the next item, so a bare "pass" in free text hides nothing.
     out, hide = [], False
     for arg in argv:
         if isinstance(arg, (dict, list, tuple)):
@@ -194,8 +189,7 @@ def _ms(seconds, digits=2):
     return round(seconds * 1000, digits)
 
 
-# RequestResult field -> jsonl key, written only when not None.
-# Seconds become milliseconds; rates keep four digits.
+# RequestResult field -> jsonl key, written only when not None; seconds become milliseconds, rates keep four digits.
 OPTIONAL_MS = (
     "scheduled_at",
     "dispatch_started_at",

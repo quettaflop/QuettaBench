@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""Times a prefill to decode KV hand-off between two GPUs through NIXL/UCX, laid out as vLLM's NixlConnector does.
-
-Run under torchrun with two ranks (rank 0 = P, rank 1 = D). Rank 0 emits kv_transfer/<gpu>_nixl.csv ProbeRows and prints the floor + per-byte fit per (kv_heads_per_rank, layout).
-A peer that never joins fails the run after five minutes; SIGTERM raises SystemExit(143) so the run is recorded as failed."""
+"""Times a prefill to decode KV hand-off between two GPUs through NIXL/UCX, laid out as vLLM's NixlConnector does; run under torchrun with two ranks.
+Rank 0 writes kv_transfer/<gpu>_nixl.csv and prints the floor + per-byte fit per (kv_heads_per_rank, layout).
+"""
 
 from __future__ import annotations
 

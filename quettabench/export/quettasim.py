@@ -1,6 +1,5 @@
 """qbench export: results dirs in, QuettaSim's files out; the one route out of QuettaBench.
-
-kernel_tables builds QuettaSim's kernel tables from the probe runs' rows.jsonl into its data root (--kernel-dest). The other builders write fitted constants and grids under --dest; every export writes a manifest of the runs it read.
+kernel_tables writes the kernel tables under --kernel-dest; the other builders write under --dest.
 """
 
 from __future__ import annotations
@@ -446,10 +445,7 @@ def _json_style(table: Path | Rows) -> tuple[int | None, str]:
 def _merge_collectives(
     rel: Path, collective: Source | None, vllm: Source | None, out: Path, old: Source | None = None
 ) -> list[Path]:
-    """Collectives table: old's rows, then the collective run's replacing on COLLECTIVE_KEY, then vllm_allreduce's all_reduce rows replacing every earlier all_reduce row of their world.
-
-    Beside a vllm_allreduce run the collective run's all_reduce rows are left out. Collective rows fill an empty dtype_bytes (2) and path (nccl).
-    """
+    """Collectives table: old's rows, then the collective run's, then vllm_allreduce's all_reduce rows replacing earlier ones of their world."""
     sources = [(s, _read_csv(rel, s[1], s[2], COLLECTIVE_KEY)) for s in (old, collective, vllm) if s]
     fields: list[str] = []
     for _, (head, _) in sources:
@@ -560,10 +556,7 @@ def _write(rel: Path, by_probe: dict[str, list[Source]], out: Path, old: Source 
 def run_kernel_tables(
     results_dirs: Iterable[Path], dest: Path, replace: bool = False
 ) -> tuple[list[Path], dict[str, list[str]]]:
-    """Build every table and sidecar in a temp dir under dest, then replace the dest files, so a stop leaves dest as it was. With replace, tables that would stop with Lost are rebuilt without dest's rows.
-
-    Returns the files written and {<dir>/<kind>/<file>: run dirs with rows in it, in finished order} for the manifest.
-    """
+    """Build every kernel table in a temp dir under dest, then replace the dest files; returns the files written and the run dirs behind each table."""
     tables = sorted(found(results_dirs).items())
     for rel, by_probe in tables:
         _check(rel, by_probe)
@@ -735,12 +728,12 @@ TRACES = [
 
 # Fixed before measuring; SCHED_PRIOR only gates eligibility and never enters the output.
 SCHED_PRIOR_MS = 5.7
-FULL_BATCH_FRAC = 0.9
-WARMUP_STEP_ID = 5
+FULL_BATCH_FRAC = 0.9  # a decode step counts only at >= 90% of max_batch
+WARMUP_STEP_ID = 5  # steps up to this id are warmup
 BW_DOMINANCE = 2.0  # bw_roofline_ms >= BW_DOMINANCE * SCHED_PRIOR_MS
 WALL_TRIM = (0.5, 2.0)  # vs per-trace median of the candidate set
-PREFILL_MIN_TOKENS = 1024
-UTIL_FLOPS_MIN_N = 5
+PREFILL_MIN_TOKENS = 1024  # smallest pure-prefill step used for util_flops
+UTIL_FLOPS_MIN_N = 5  # fewer flops ratios than this leave util_flops null
 
 
 def _f(v) -> float:
@@ -926,8 +919,8 @@ def build_roofline_utils(gpu: str, params_path: Path, trace_paths: dict[str, Pat
 
     out = {
         "gpu": gpu,
-        "recipe": "profiling/docs/defit_log_entries/L6-utils.md (pre-registered 2026-06-10; "
-        "implemented by quettabench/export/quettasim/roofline_utils.py)",
+        "recipe": "util_bw: median roofline/measured step ratio on full-batch decode steps; "
+        "util_flops: the same on pure-prefill steps",
         "params_source": params_path.name,
         "util_bw": round(util_bw, 4) if util_bw is not None else None,
         "util_flops": round(util_flops, 4) if util_flops is not None else None,
@@ -1004,18 +997,7 @@ LAG_UPGRADE_FIELD = "lag_reproducibility_upgrade"
 
 
 def build_decode_grid(inputs: list[Path], snap_tolerance: float = 0.02, lag_upgrade: bool = False) -> list[dict]:
-    """Merge runs (latest wins per cell) and summarize.
-
-    snap_tolerance: measured effective contexts land within ~1.5% of nominal T but are unique floats per cell, which would make every load_grid t-axis column ragged. Within the tolerance context_len snaps to T and the measured value goes to effective_context_len; beyond it the cell is flagged check.
-
-    lag_upgrade (default off): load_grid drops non-ok rows, so a marginal loop-lag flag (2.01 vs a 2.0 ms limit) replaces a reproducible measured cell with the analytic fill. A lag-only flagged cell becomes ok when all hold:
-      * measured in >= 2 input passes (independent client topologies);
-      * every pass is otherwise hygiene-clean (no empty-stream drops, enough in-window samples, positive steady window);
-      * the latest row's flag is lag-only and its snap check passes;
-      * cross-pass decode_step_ms spread <= 0.5% of the adopted value;
-      * the adopted pass's p99 loop lag <= 1.5x the flag limit.
-    Upgraded rows carry the evidence in lag_reproducibility_upgrade.
-    """
+    """Merge decode-grid runs (latest wins per cell) and summarize one row per cell; lag_upgrade lets a reproducible lag-only flag pass as ok."""
     sig = inspect.signature(summarize_cell)
     min_samples = sig.parameters["min_samples"].default
     lag_limit_ms = sig.parameters["lag_limit_ms"].default
@@ -1039,6 +1021,7 @@ def build_decode_grid(inputs: list[Path], snap_tolerance: float = 0.02, lag_upgr
         eff = row["context_len"]
         nominal = row["nominal_T"]
         row["effective_context_len"] = eff
+        # Snap context_len to nominal T so load_grid's t-axis is not ragged; beyond the tolerance the cell is flagged check.
         snap_ok = nominal > 0 and abs(eff - nominal) / nominal <= snap_tolerance
         if snap_ok:
             row["context_len"] = nominal
@@ -1048,6 +1031,7 @@ def build_decode_grid(inputs: list[Path], snap_tolerance: float = 0.02, lag_upgr
                 f"cell {key}: effective context {eff} deviates >{snap_tolerance:.0%} "
                 f"from nominal {nominal} -> kept + check"
             )
+        # A lag-only flag becomes ok when >= 2 clean passes agree on decode_step_ms and the adopted pass's lag is near the limit.
         if (
             lag_upgrade
             and row["validation_status"] == "check"
@@ -1161,9 +1145,7 @@ def export(
     replace_tables: bool = False,
 ) -> list[Path]:
     """Run the builders (all, or the named ones) over the results dirs; return the files written.
-
-    kernel_tables writes under kernel_dest (QuettaSim's data root) and merges into its tables unless replace_tables; the other builders write under dest. Each runs only when its dest is given, and naming one without its dest stops the export.
-    dest gets manifest.json, and kernel_dest gets kernel_data/qbench_manifest.json when kernel_tables found a table: inputs, runs, bench commit and time, and per kernel table the run dirs behind it. Tables this export did not write keep their entries; a table that kept dest rows names the old manifest's runs first, else "adopted from dest". A kernel manifest that does not parse, or lacks a kernel_tables object, stops the export with kernel_dest as it was.
+    kernel_tables needs kernel_dest and the others need dest; each writes a manifest of the runs it read.
     """
     results_dirs = [Path(d) for d in results_dirs]
     names = list(only) if only else list(BUILDERS)

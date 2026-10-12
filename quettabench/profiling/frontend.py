@@ -1,6 +1,6 @@
 """Live-server profiler sources that price against QuettaSim: the device-YAML frontend and serving blocks, and a PD pair's host cost.
-
-Imports QuettaSim's engine package, so native.py loads it only when one of these sources is asked for. Standalone: python -m quettabench.profiling.frontend {frontend|pd_host} --device-yaml <yaml> ..."""
+Standalone: python -m quettabench.profiling.frontend {frontend|pd_host} --device-yaml <yaml> ...
+"""
 
 from __future__ import annotations
 

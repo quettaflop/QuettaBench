@@ -28,9 +28,7 @@ def _get(row, name):
 
 
 def fit_run(rows, eval_pos, kv_bytes, weights_gib):
-    """One step entry per grid cell, in order of first appearance.
-
-    A row with measured_ms_per_step passes through as {ctx, bs, tp, ms_per_step, measured: True}. Other rows count only in phase "fit": per attempt the first row's batch wall at each step point is fit against the step points, and the highest r2 wins, the earliest on a tie."""
+    """One step entry per grid cell in order of first appearance; fit rows are fit per attempt and the highest r2 wins."""
     cells = {}
     for row in rows:
         cell = _get(row, "cell")
