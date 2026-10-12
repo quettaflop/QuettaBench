@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pull the gitignored trajectory datasets from R2 into data/; run it as `just fetch`."""
+"""Pull the gitignored trajectory datasets from R2 into data/ (`just fetch`)."""
 
 import os
 import subprocess

@@ -87,7 +87,7 @@ grids:
   - [16384, 64]
   smoke:
   - [100, 1]
-  # decode step vs batch at one long context
+  # decode step vs batch at one context
   decode_batch:
   - [20000, 1]
   - [20000, 2]

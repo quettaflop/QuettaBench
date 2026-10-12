@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a 13-layer HF model dir from the downloaded Kimi-K3 slice and check that it loads."""
+"""Build a 13-layer HF model dir from the downloaded Kimi-K3 slice; check it loads."""
 
 import importlib
 import json
@@ -8,8 +8,8 @@ import shutil
 import struct
 import sys
 
-N_LAYERS = 13  # layers 0-12 sit in the 16 downloaded shards
-# the checkpoint dir name is not a Python identifier, so its modeling code is copied into this package
+N_LAYERS = 13  # Layers 0-12 sit in the 16 downloaded shards.
+# The checkpoint dir name is not a Python identifier, so its modeling code is copied into this package.
 PKG = "kimi_k3_slice_mod"
 PKG_FILES = ("configuration_kimi_k3.py", "modeling_kimi_linear.py")
 
@@ -129,12 +129,12 @@ def gate_b_shards_exist(dst: str) -> dict:
 
 
 def meta_text_model(model_dir: str, tmp_root: str):
-    """(model, config): the 13-layer text model on meta with expert weights swapped for packed MXFP4 buffers."""
+    """Expert weights swapped for packed MXFP4 buffers."""
     import torch
     import transformers.utils.generic as generic
     from torch import nn
 
-    if not hasattr(generic, "OutputRecorder"):  # moved in transformers 5.x
+    if not hasattr(generic, "OutputRecorder"):  # transformers 5.x has no OutputRecorder here.
         from transformers.utils.output_capturing import OutputRecorder
         generic.OutputRecorder = OutputRecorder
 
@@ -198,7 +198,7 @@ def gate_c_name_diff(dst: str, wm: dict) -> None:
         want = expected[name]
         if got != want:
             if name.endswith("self_attn.A_log") and want == (num_heads,):
-                continue  # zero-padded to head_dim; loader slices (verified there)
+                continue  # Zero-padded to head_dim; the loader slices (verified there).
             mismatches.append((name, want, got))
     assert not mismatches, f"shape mismatches: {mismatches[:8]}"
     print(f"gate C: name-level diff clean -- {len(expected)} text tensors all "

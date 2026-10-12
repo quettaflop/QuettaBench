@@ -1,10 +1,10 @@
-# QuettaBench recipes: each is one command line; the logic lives in quettabench/.
+# Each recipe is one command line; the logic lives in quettabench/.
 
 set dotenv-load := true
-# Recipe args reach the shell as $1, $2, ... too, so "$@" passes them on unsplit.
+# "$@" passes recipe args on unsplit.
 set positional-arguments
 
-# The label the kernel tables are keyed by; name it per run: just gpu=<gpu> <recipe>
+# Kernel table label: just gpu=<gpu> <recipe>
 gpu := ""
 gpu_id := env_var_or_default("GPU_ID", "0")
 py := env_var_or_default("PYTHON_BIN", "python3")
@@ -14,7 +14,7 @@ gpu_ids := env_var_or_default("GPU_IDS", "")
 nproc := env_var_or_default("NPROC", "1")
 ncu_bin := env_var_or_default("NCU_BIN", "")
 kdata := "results/probes"
-# Head config for flash and gdn, set per run: just nh=64 nkv=8 flash <gpu> --ncu
+# Head config for flash and gdn: just nh=64 nkv=8 flash <gpu> --ncu
 tag := "tp1"
 nh := "32"
 nkv := "8"
@@ -29,14 +29,14 @@ mode := "full"
 
 r2_endpoint := env_var_or_default("R2_ENDPOINT", "")
 r2_bucket := env_var_or_default("R2_BUCKET", "")
-# The probes' own prefix: a backup of results/probes/, never QuettaSim's profiling/kernel_data/.
+# Backup of results/probes/ only, never QuettaSim's kernel_data.
 r2_prefix := "profiling/qbench_probes"
 r2_profile := env_var_or_default("AWS_PROFILE", "r2")
 
 default:
     @just --list
 
-# Check and set up this box for the given run yamls (--dry-run prints the plan; writes .env)
+# Set up this box for the run yamls (--dry-run prints the plan; writes .env)
 provision *args:
     {{py}} -m quettabench.provision {{args}}
 
@@ -44,26 +44,26 @@ provision *args:
 run cfg *args:
     {{py}} -m quettabench.cli run {{cfg}} {{args}}
 
-# The run's resolved Config (with origins) and LaunchSpec; starts nothing
+# Resolved Config (with origins) and LaunchSpec; starts nothing
 dry cfg *args:
     {{py}} -m quettabench.cli run {{cfg}} --dry-run {{args}}
 
-# Same as run: a sweep is the matrix: block in the run yaml, one results/<run>/ per point
+# Same as run; the matrix: block in the run yaml makes one results/<run>/ per point
 sweep cfg *args:
     {{py}} -m quettabench.cli run {{cfg}} {{args}}
 
-# Attach to a finished or running results/<run>/ and append profile.json
+# Attach to a results/<run>/ and append profile.json
 profile *args:
     {{py}} -m quettabench.cli profile {{args}}
 
-# Compare results dirs (QuettaServe vs vLLM at matched cells)
+# Compare results dirs at matched cells
 xval *args:
     {{py}} -m quettabench.cli xval {{args}}
 
 test:
     python3 -m pytest tests -q
 
-# The CI hooks when pre-commit is installed, else ruff alone. mypy is not part of the gate yet.
+# CI hooks when pre-commit is installed, else ruff alone.
 lint:
     if command -v pre-commit >/dev/null; then pre-commit run --all-files --hook-stage manual; else ruff check quettabench tests; fi
 
@@ -71,7 +71,7 @@ lint:
 hooks:
     pre-commit install
 
-# Show the GPU(s) the probes will target (local, or REMOTE_HOST if set).
+# The GPUs the probes will target (local, or REMOTE_HOST).
 gpu-info:
     #!/usr/bin/env bash
     if [ -n "${REMOTE_HOST:-}" ]; then
@@ -80,23 +80,23 @@ gpu-info:
         nvidia-smi --query-gpu=index,name,memory.used,utilization.gpu --format=csv
     fi
 
-# Any probe by module name, its flags in one quoted argument: just probe gemm "--gpu-label <gpu> --ncu"
+# Any probe by module name: just probe gemm "--gpu-label <gpu> --ncu"
 probe name *args:
     CUDA_VISIBLE_DEVICES={{gpu_id}} {{py}} -m quettabench.probes.{{name}} {{args}}
 
-# Run a probe on REMOTE_HOST in its own mktemp dir (probes/base.py remote_probe): ship the probes package and what its run.json needs, run it (NPROC>1 = one rank per GPU in GPU_IDS through torchrun) with --run-id from this machine's clock, always pull the run into results/probes/<gpu>/<probe>/<run-id>/, then remove that remote dir. The probe's flags follow the GPU as they are: just remote-probe gemm <gpu> --ncu --model-shapes llama8b
+# Run a probe on REMOTE_HOST and pull the run back (NPROC>1: torchrun): just remote-probe gemm <gpu> --ncu
 remote-probe name gpu=gpu *args:
     python3 -m quettabench.probes.base remote-probe --host "{{remote_host}}" --py "{{py}}" --gpu-id "{{gpu_id}}" --gpu-ids "{{gpu_ids}}" --nproc "{{nproc}}" --ncu-bin "{{ncu_bin}}" -- "$@"
 
-# qbench and vLLM in one image, qbench:<short sha>: just image [<platform vLLM image, see README>] [docker build args]
+# qbench and vLLM in one image, qbench:<short sha>: just image [<vLLM image>] [build args]
 image base="" *args:
     base="$1"; shift; docker build --network host ${base:+--build-arg "VLLM_IMAGE=$base"} ${HTTPS_PROXY:+--build-arg HTTPS_PROXY} ${HTTP_PROXY:+--build-arg HTTP_PROXY} ${NO_PROXY:+--build-arg NO_PROXY} --build-arg QBENCH_SHA=$(git rev-parse --short HEAD) "$@" -f docker/Dockerfile -t qbench:$(git rev-parse --short HEAD) .
 
-# QuettaSim tables from results dirs: just export --results results/<run> --dest <dir> [--kernel-dest <QuettaSim data root>]
+# QuettaSim tables from results dirs: just export --results results/<run> --dest <dir>
 export *args:
     {{py}} -m quettabench.cli export {{args}}
 
-# CUDA-event timing; --ncu times with NCU (needs a real ncu in NCU_BIN), --wide adds the wide shapes
+# CUDA-event timing; --ncu needs a real ncu in NCU_BIN, --wide adds the wide shapes
 gemm gpu=gpu *args:
     CUDA_VISIBLE_DEVICES={{gpu_id}} {{py}} -m quettabench.probes.gemm --gpu-label {{gpu}} {{args}}
 
@@ -109,32 +109,32 @@ flash gpu=gpu *args:
 moe gpu=gpu geoms="qwen3-30b-a3b,mixtral-8x7b,gpt-oss-20b,gpt-oss-120b" tp="1,2,4":
     CUDA_VISIBLE_DEVICES={{gpu_id}} {{py}} -m quettabench.probes.moe --gpu-label {{gpu}} --geometries {{geoms}} --tp {{tp}}
 
-# One MoE block's input, output and routing decision -> results/probes/<gpu>/moe_routing/<run-id>/ (slice verification)
+# One MoE block's input, output and routing decision, for slice verification
 moe-routing model gpu=gpu layer="1" *args:
     CUDA_VISIBLE_DEVICES={{gpu_id}} {{py}} -m quettabench.probes.moe --routing --gpu-label {{gpu}} --model {{model}} --layer {{layer}} {{args}}
 
 gdn gpu=gpu *args:
     CUDA_VISIBLE_DEVICES={{gpu_id}} {{py}} -m quettabench.probes.gdn --gpu-label {{gpu}} --geometry-tag {{geom}} --hv {{hv}} --dk {{dk}} --dv {{dv}} --n-linear {{nlin}} --mode {{mode}} {{args}}
 
-# NCCL grid -> results/probes/<gpu>/collective/<run-id>/rows.jsonl. Also prints tp_comm scalars as a YAML block.
+# NCCL grid; also prints tp_comm scalars as a YAML block.
 collectives gpu=gpu world="2" hidden="4096" layers="32" ops="all_reduce,all_gather,reduce_scatter,all_to_all" gpu_ids="0,1":
     CUDA_VISIBLE_DEVICES={{gpu_ids}} {{py}} -m torch.distributed.run --nproc_per_node={{world}} -m quettabench.probes.collective --gpu-label {{gpu}} --hidden {{hidden}} --layers {{layers}} --ops {{ops}}
 
-# Chunked-prefill (q over resident) attention grid, one head config per run.
+# Chunked-prefill attention grid, one head config per run.
 cross-attn gpu=gpu nh="16" nkv="2" hd="128":
     CUDA_VISIBLE_DEVICES={{gpu_id}} {{py}} -m quettabench.probes.cross_attn --gpu-label {{gpu}} --n-heads {{nh}} --n-kv-heads {{nkv}} --head-dim {{hd}}
 
-# TP all-reduce through vLLM's OWN GroupCoordinator (custom allreduce on), next to plain NCCL.
+# TP all-reduce through vLLM's GroupCoordinator next to plain NCCL.
 vllm-allreduce gpu=gpu world="2" gpu_ids="0,1":
     CUDA_VISIBLE_DEVICES={{gpu_ids}} {{py}} -m torch.distributed.run --nproc_per_node={{world}} -m quettabench.probes.vllm_allreduce --gpu-label {{gpu}}
 
-# In-place parallelism-switch cost (mode: tp | dp | ep | xnode | plan); xnode needs a 2-node torchrun, see the probe header.
+# Parallelism-switch cost (mode: tp | dp | ep | xnode | plan); xnode needs 2-node torchrun.
 reparallel gpu=gpu world="8" mode="tp" gpu_ids="0,1,2,3,4,5,6,7":
     CUDA_VISIBLE_DEVICES={{gpu_ids}} {{py}} -m torch.distributed.run --nproc_per_node={{world}} -m quettabench.probes.reparallel --gpu-label {{gpu}} --mode {{mode}}
 
 _default_model_yaml := sim_root / "device_spec/models/qwen3.5-9b.yaml"
 
-# The live vLLM server of a results/<run>/ -> its profile.json frontend section, through qbench profile
+# Frontend section of profile.json from the run's live vLLM server
 serving-profile run gpu=gpu model_yaml=_default_model_yaml tp="1" *args:
     {{py}} -m quettabench.cli profile --run {{run}} --source frontend --frontend-args "--gpu-label {{gpu}} --device-yaml {{sim_root}}/device_spec/{{lowercase(gpu)}}.yaml --model-yaml {{model_yaml}} --tp {{tp}}" {{args}}
 
@@ -147,7 +147,7 @@ profile-gpu gpu=gpu:
     @echo "  just gdn {{gpu}}     # Qwen3.5 hybrids only"
     @echo "Then route the tables to QuettaSim: just export --only kernel_tables --results results/probes --kernel-dest <QuettaSim data root, e.g. ../QuettaSim/data>"
 
-# The trajectory datasets from R2 into data/ (gitignored)
+# Trajectory datasets from R2 into data/
 fetch:
     R2_ENDPOINT={{r2_endpoint}} AWS_PROFILE={{r2_profile}} {{py}} data/fetch.py
 

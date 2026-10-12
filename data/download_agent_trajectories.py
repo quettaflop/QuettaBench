@@ -33,12 +33,11 @@ OUTPUT_DIR = Path(__file__).resolve().parent.parent / "data"
 
 
 def estimate_tokens(text: str) -> int:
-    """Rough token estimate: words * 1.35."""
     return max(1, int(len(text.split()) * 1.35))
 
 
 def extract_turns_from_trajectory(trajectory: dict) -> list[dict]:
-    """Turns of an ATIF trajectory: input messages so far plus an osl estimate of the agent's raw_arguments."""
+    """osl is estimated from the agent's raw_arguments."""
     steps = trajectory.get("steps", [])
     if not steps:
         return []
@@ -60,7 +59,7 @@ def extract_turns_from_trajectory(trajectory: dict) -> list[dict]:
                 messages.append({"role": "user", "content": content})
 
         elif source == "agent":
-            # raw_arguments is the real model output, message is a stub
+            # raw_arguments is the real model output; message is a stub.
             raw_args = step.get("extra", {}).get("raw_arguments", "")
             if not raw_args:
                 raw_args = step.get("message", "")
@@ -91,15 +90,13 @@ def extract_turns_from_trajectory(trajectory: dict) -> list[dict]:
 
 
 def list_task_prefixes(client: storage.Client, run_prefix: str) -> list[str]:
-    """Task directory prefixes under a run prefix."""
     bucket = client.bucket(BUCKET_NAME)
     it = bucket.list_blobs(prefix=run_prefix, delimiter="/")
-    list(it)  # prefixes fill only once the iterator is consumed
+    list(it)  # Prefixes fill only once the iterator is consumed.
     return [p for p in sorted(it.prefixes) if not p.endswith("config.json")]
 
 
 def download_trajectory(client: storage.Client, task_prefix: str) -> dict | None:
-    """Parsed trajectory.json of a task, or None if the download fails."""
     bucket = client.bucket(BUCKET_NAME)
     blob_path = task_prefix + "agent/trajectory.json"
     blob = bucket.blob(blob_path)
@@ -111,7 +108,7 @@ def download_trajectory(client: storage.Client, task_prefix: str) -> dict | None
 
 
 def fetch_run_trajectories(client: storage.Client, run_prefix: str, source: str) -> list[dict]:
-    """Session dicts for the first copy of each task in a run, skipping tasks under 2 turns."""
+    """Skips tasks under 2 turns."""
     run_name = run_prefix.rstrip("/").split("/")[-1]
     print(f"\n--- Run: {run_name} ---")
 
@@ -125,7 +122,7 @@ def fetch_run_trajectories(client: storage.Client, run_prefix: str, source: str)
         parts = task_prefix.rstrip("/").split("/")
         task_name = parts[-1]
 
-        # the same task can appear in several runs
+        # The same task can appear in several runs.
         base_task = task_name.rsplit("__", 1)[0] if "__" in task_name else task_name
         if base_task in seen_tasks:
             continue

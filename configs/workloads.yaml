@@ -1,14 +1,14 @@
-# Workload profiles by name; keys are WorkloadProfile's fields and omitted keys take its defaults.
+# Keys are WorkloadProfile's fields; omitted keys take its defaults.
 
 chat-singleturn:
-  # Caps are natural-chat sized so the profile is safe for 4K-context cells.
+  # Chat-sized caps, safe for 4K-context cells.
   isl_tokens: 2048
   osl_tokens: 1024
   dataset: sharegpt
   prefix_caching_required: true
 
 coding-singleturn:
-  # The JSONL drives token lengths and embeds the system prompt; isl/osl are caps.
+  # The JSONL sets token lengths and the system prompt; isl/osl are caps.
   isl_tokens: 17000
   osl_tokens: 800
   dataset: jsonl
@@ -17,7 +17,7 @@ coding-singleturn:
   prefix_caching_required: true
 
 mooncake-trace:
-  # Tokens expand from hash_ids so prefix sharing survives replay; needs a completions backend.
+  # Tokens expand from hash_ids so prefix sharing survives replay; needs completions.
   isl_tokens: 131072
   osl_tokens: 4096
   dataset: mooncake-trace
@@ -36,7 +36,7 @@ chat-multiturn-short:
   active: false
 
 swebench-multiturn-short:
-  # Turns are agent steps (tool calls), not conversation rounds.
+  # Turns are agent steps, not conversation rounds.
   isl_tokens: 32768
   osl_tokens: 2000
   dataset: swebench-multi-turn

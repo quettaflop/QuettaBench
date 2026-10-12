@@ -11,21 +11,21 @@ dependencies = [
     "aiohttp>=3.9",
     "numpy>=1.24",
     "datasets>=2.18",
-    "transformers>=4.40",  # tokenizers for ShareGPT profiles and the reference driver
+    "transformers>=4.40",  # ShareGPT tokenizers and the reference driver
     "pyyaml>=6",
-    "huggingface_hub>=0.25",  # first release with HFValidationError and LocalEntryNotFoundError in huggingface_hub.errors
+    "huggingface_hub>=0.25",  # first release with HFValidationError and LocalEntryNotFoundError
 ]
 
 [project.optional-dependencies]
-# shellcheck: actionlint lints workflow run steps with it when it is on PATH, as on CI runners.
+# shellcheck: actionlint lints workflow run steps with it when on PATH.
 dev = ["pre-commit", "shellcheck-py"]
-# Pin torch and vllm to the versions the serving stack runs: the probes call vLLM's own kernels, so the numbers match production only then.
+# Pin torch and vllm to the serving stack's versions: probes time vLLM's own kernels.
 probe = ["torch>=2.1", "vllm>=0.6"]
 
 [project.scripts]
 qbench = "quettabench.cli:main"
 
-# Only the package installs: data/ and tests/ are not importable names to put on site-packages next to the stdlib.
+# Only the package installs; data/ and tests/ must not land in site-packages.
 [tool.setuptools.packages.find]
 include = ["quettabench*"]
 
@@ -34,16 +34,15 @@ line-length = 120
 target-version = "py310"
 
 [tool.ruff.lint]
-# pycodestyle, pyflakes, import order, pyupgrade. Not B: its loop-closure and zip(strict=) findings are deliberate in the timing loops.
+# Not B: its loop-closure and zip(strict=) findings are deliberate in the timing loops.
 select = ["E", "F", "I", "UP"]
-# Line length is not enforced.
 ignore = ["E501"]
 
 [tool.ruff.lint.isort]
 combine-as-imports = true
 
 [tool.ruff.lint.per-file-ignores]
-# Timing lambdas close over tensors the probe then `del`s to free GPU memory; pyflakes reads the del as making the name undefined.
+# Timing lambdas close over tensors the probe then `del`s; pyflakes reads that as undefined.
 "quettabench/probes/{cross_attn,flash_attn,gemm,moe,reparallel}.py" = ["F821"]
 
 [tool.pytest.ini_options]

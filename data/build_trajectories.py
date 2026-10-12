@@ -26,8 +26,8 @@ def _load_tokenizer(name: str):
 
 
 def _count(tok, messages: list[dict[str, str]]) -> int:
-    """Token length of `messages` via the chat template, else role-prefixed concatenation."""
-    # tokenize=True returns a BatchEncoding on transformers 5.x, so render to text first
+    """Via the chat template, else role-prefixed concatenation."""
+    # tokenize=True returns a BatchEncoding on transformers 5.x, so render to text first.
     try:
         text = tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         return len(tok(text, add_special_tokens=False)["input_ids"])
@@ -37,7 +37,7 @@ def _count(tok, messages: list[dict[str, str]]) -> int:
 
 
 def _pairs(convs: list[dict[str, Any]]) -> list[tuple[str, str]]:
-    """ShareGPT conversations to (human, assistant) pairs; leading assistant turns are dropped."""
+    """Leading assistant turns are dropped."""
     human_keys = {"human", "user"}
     out: list[tuple[str, str]] = []
     pending: str | None = None
@@ -48,7 +48,7 @@ def _pairs(convs: list[dict[str, Any]]) -> list[tuple[str, str]]:
             continue
         if role in human_keys:
             pending = text
-        elif pending is not None:            # assistant reply closes the pair
+        elif pending is not None:
             out.append((pending, text))
             pending = None
     return out
@@ -82,13 +82,13 @@ def build_chat(args: argparse.Namespace) -> int:
             turns: list[dict[str, Any]] = []
             for idx, (human, assistant) in enumerate(pairs):
                 new_msgs = [{"role": "user", "content": human}]
-                # full replayed context, readers difference it per turn
+                # Full replayed context; readers difference it per turn.
                 input_tokens = _count(tok, history + new_msgs)
                 output_tokens = len(tok(assistant, add_special_tokens=False)["input_ids"])
                 if input_tokens <= 0 or output_tokens <= 0:
                     continue
                 if args.max_context_tokens and input_tokens > args.max_context_tokens:
-                    break               # stop the session at the context cap
+                    break
                 turns.append({
                     "turn_idx": idx,
                     "messages": new_msgs,
@@ -120,7 +120,7 @@ def build_chat(args: argparse.Namespace) -> int:
         print("[chat-traj] FAIL: no sessions written", file=sys.stderr)
         return 1
 
-    # a flat input_tokens series means the token counter is broken
+    # A flat input_tokens series means the token counter is broken.
     grew = flat = 0
     with out_path.open(encoding="utf-8") as fh:
         for line in fh:
@@ -142,7 +142,6 @@ def build_chat(args: argparse.Namespace) -> int:
 
 
 def iter_records(path: Path) -> Iterator[dict[str, Any]]:
-    """Yield parsed JSON records, skipping blank and malformed lines."""
     with path.open("r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
@@ -155,7 +154,7 @@ def iter_records(path: Path) -> Iterator[dict[str, Any]]:
 
 
 def convert_trace(path: Path) -> dict[str, Any] | None:
-    """One Claw-Eval trace file to a session row, or None if no assistant turn has usage."""
+    """None if no assistant turn has usage."""
     task_id: str | None = None
     model: str | None = None
     tool_time_s = 0.0
@@ -163,7 +162,7 @@ def convert_trace(path: Path) -> dict[str, Any] | None:
     turns: list[dict[str, Any]] = []
     thinking_turns = 0
     thinking_chars = 0
-    # tool calls run serially, so latencies are summed (matches trace_end.tool_time_s)
+    # Tool calls run serially, so latencies are summed (matches trace_end.tool_time_s).
     pending_tool_ms = 0.0
 
     for rec in iter_records(path):
@@ -188,14 +187,13 @@ def convert_trace(path: Path) -> dict[str, Any] | None:
 
         msg = rec.get("message") or {}
         if msg.get("role") != "assistant":
-            # only assistant turns are LLM calls
             continue
 
         usage = rec.get("usage") or {}
         in_tok = usage.get("input_tokens")
         out_tok = usage.get("output_tokens")
         if in_tok is None or out_tok is None:
-            # estimating would mix measured and guessed counts in one set
+            # Estimating would mix measured and guessed counts in one set.
             continue
 
         in_tok = int(in_tok)
@@ -203,13 +201,13 @@ def convert_trace(path: Path) -> dict[str, Any] | None:
         if in_tok <= 0:
             continue
 
-        # reasoning is already inside output_tokens
+        # Reasoning is already inside output_tokens.
         reasoning = msg.get("reasoning_content") or msg.get("reasoning") or ""
         if reasoning:
             thinking_turns += 1
             thinking_chars += len(reasoning)
 
-        # tool time seen since the previous assistant turn belongs to that turn
+        # Tool time since the previous assistant turn belongs to that turn.
         if turns:
             turns[-1]["tool_ms"] = round(pending_tool_ms, 3)
         pending_tool_ms = 0.0
@@ -217,7 +215,7 @@ def convert_trace(path: Path) -> dict[str, Any] | None:
         turns.append(
             {
                 "turn_idx": len(turns),
-                # total context, not a delta
+                # Total context, not a delta.
                 "input_tokens": in_tok,
                 "output_tokens": max(1, out_tok),
                 "tool_ms": 0.0,
@@ -244,10 +242,10 @@ def convert_trace(path: Path) -> dict[str, Any] | None:
 
 def write_llmservingsim(sessions: list[dict[str, Any]], out: Path,
                         arrival: str, rate: float, seed: int) -> None:
-    """Write LLMServingSim agentic JSONL; only the session carries an arrival time, sub-requests chain on tool_duration_ns."""
+    """Only the session carries an arrival time; sub-requests chain on tool_duration_ns."""
     rng = random.Random(seed)
 
-    # the capture ran at fixed 16-way parallelism, so "real" is not an open-loop arrival process
+    # The capture ran at fixed 16-way parallelism: "real" is not an open-loop arrival process.
     base_ns: int | None = None
     if arrival == "real":
         stamps = []
@@ -296,7 +294,7 @@ def build_claweval(args: argparse.Namespace) -> int:
         print(f"[error] not a directory: {trace_dir}")
         return 1
 
-    # batch_* files are run metadata
+    # batch_* files are run metadata.
     files = sorted(p for p in trace_dir.rglob("*.jsonl") if not p.name.startswith("batch_"))
     if not files:
         print(f"[error] no *.jsonl traces under {trace_dir}")
