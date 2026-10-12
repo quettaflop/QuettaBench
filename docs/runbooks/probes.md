@@ -9,7 +9,7 @@ All probes time the production kernels (vLLM's `flash_attn_varlen_func`, `torch.
 ```bash
 # from the QuettaBench repo root:
 just gpu=<gpu> profile-gpu
-just gpu=<gpu> flash tag=tp1 nh=32 nkv=8 hd=128
+just flash <gpu> tp1 32 8 128
 
 # any probe, flags in one quoted argument
 just probe gemm "--gpu-label <gpu> --ncu"
@@ -31,9 +31,9 @@ The one route to QuettaSim is the `kernel_tables` export builder: `just export -
 2. Collect tables, from the repo root:
    ```
    just gpu=X profile-gpu                         # gemm + elementwise (GPU-generic)
-   just gpu=X flash tag=tp1 nh=<Hq> nkv=<Hkv> hd=<head_dim>   # per model head config
-   just gpu=X flash tag=tp2 nh=<Hq/2> nkv=<Hkv/2> hd=<head_dim>   # sharded, if you run tp2
-   just gpu=X gdn geom=9b                         # only for Qwen3.5-style hybrids
+   just flash X tp1 <Hq> <Hkv> <head_dim>       # per model head config
+   just flash X tp2 <Hq/2> <Hkv/2> <head_dim>   # sharded, if you run tp2
+   just gdn X 9b                                # only for Qwen3.5-style hybrids
    just gpu=X moe                                 # only if you serve MoE models
    ```
    Rows land in `results/probes/X/<probe>/<run-id>/rows.jsonl`; the export builds QuettaSim's layout from them (`graph/` = graphed-decode-faithful, `eager/` = eager-prefill-faithful): `graph/gemm/X.csv`, `eager/elementwise/X.json`, `{graph,eager}/flash_attn/X[_tpN].csv` (decode; graph with `--ncu`), `eager/fa3_prefill/X[_tpN].csv` (prefill), `{graph,eager}/gdn/X_<geom>_{decode,prefill}.csv`, `eager/moe/X.csv` + `eager/moe/X_routing.json`.

@@ -542,7 +542,7 @@ class ProfileRegistryTests(unittest.TestCase):
         self.assertIn(str(active_profiles()), str(e.exception))
         self.assertNotIn("random-1k", str(e.exception))
 
-    def test_legacy_multiturn_profiles_remain_explicitly_runnable(self):
+    def test_multiturn_profiles_remain_explicitly_runnable(self):
         self.assertEqual(get_profile("swebench-multiturn-short").dataset, "swebench-multi-turn")
 
     def test_multi_turn_num_sessions_uses_concurrency_floor(self):

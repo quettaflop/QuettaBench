@@ -1,4 +1,4 @@
-"""Every quettabench module imports on its own, and the package never imports analysis/ or data/."""
+"""Every quettabench module imports on its own, and the package never imports data/."""
 
 import ast
 import os
@@ -62,11 +62,11 @@ def imported_modules(tree):
             yield node.module
 
 
-def test_package_never_imports_analysis_or_data():
+def test_package_never_imports_data():
     offenders = []
     for path in sorted(PACKAGE.rglob("*.py")):
         tree = ast.parse(path.read_text(), filename=str(path))
         for module in imported_modules(tree):
-            if module.split(".")[0] in ("analysis", "data"):
+            if module.split(".")[0] == "data":
                 offenders.append(f"{path.relative_to(PACKAGE.parent)}: {module}")
     assert not offenders, offenders

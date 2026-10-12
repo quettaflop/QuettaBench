@@ -10,7 +10,7 @@ repos:
   hooks:
   - id: ruff-check
     args: [--output-format, github]
-    # Same scope as `just lint`; analysis/ and data/ are one-off studies.
+    # Same scope as `just lint`; data/ holds one-off dataset tools.
     files: ^(quettabench|tests|tools)/
   - id: ruff-format
     files: ^(quettabench|tests|tools)/

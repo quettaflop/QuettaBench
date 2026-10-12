@@ -131,8 +131,8 @@ profile-gpu gpu=gpu:
     just gpu={{gpu}} elementwise
     @echo ""
     @echo "GPU-generic tables done for {{gpu}}. Head-config-specific next:"
-    @echo "  just gpu={{gpu}} flash tag=tp1 nh=<Hq> nkv=<Hkv> hd=<head_dim>"
-    @echo "  just gpu={{gpu}} gdn  geom=9b     # Qwen3.5 hybrids only"
+    @echo "  just flash {{gpu}} tp1 <Hq> <Hkv> <head_dim>"
+    @echo "  just gdn {{gpu}} 9b     # Qwen3.5 hybrids only"
     @echo "Then route the tables to QuettaSim: just export --only kernel_tables --results results/probes --kernel-dest <QuettaSim data root, e.g. ../QuettaSim/data>"
 
 # The trajectory datasets from R2 into data/ (gitignored)

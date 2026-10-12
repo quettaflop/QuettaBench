@@ -1087,7 +1087,7 @@ def test_kv_transfer_run_exports_to_eager_with_a_host_wallclock_sidecar(tmp_path
     assert meta["tool"] == "quettabench.profiling.kv_transfer"
 
 
-def test_kv_transfer_rows_union_on_the_old_upsert_key(tmp_path: Path) -> None:
+def test_kv_transfer_rows_union_on_the_row_key(tmp_path: Path) -> None:
     """The row key is kv_transfer.py's KEY; layout stays a string, and the union is sorted on the key."""
     source = (Path(quettasim.__file__).parents[1] / "profiling" / "kv_transfer.py").read_text()
     (key,) = [

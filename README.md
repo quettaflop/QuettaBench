@@ -192,7 +192,7 @@ Canonical data lives on the `agent-bench` R2 bucket:
 |---|---|
 | `data/` | raw trajectory datasets (fetched by `just fetch`) |
 | `results/` | benchmark ground truth (synthetic_distributional, trace_replay, archived) |
-| `archive/` | pre-2026-05 result snapshots |
+| `archive/` | earlier result snapshots |
 
 ## Known open items
 
