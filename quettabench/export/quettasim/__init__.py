@@ -18,6 +18,7 @@ from quettabench.export.quettasim import (
     stage_split_rates,
     tp_comm,
 )
+from quettabench.metrics.results import write_atomic
 
 BUILDERS = {
     "tp_comm": tp_comm,
@@ -80,10 +81,13 @@ def export(results_dirs: Iterable[Path], dest: Path | None = None, only: Iterabl
     when kernel_tables found a table (not at QuettaSim's data root): where the inputs came from, the runs
     recorded there (run.json), which bench commit, when, and for kernel_dest
     per kernel table the run dirs whose rows it holds, the bench commit and
-    when, kept for the tables this export did not write. dest's manifest
-    reads the runs after its builders; kernel_dest's reads them, and the old
-    kernel manifest, before kernel_tables builds, so one that does not parse
-    stops the export with kernel_dest as it was.
+    when, kept for the tables this export did not write; a table that kept
+    dest rows names the runs the old manifest recorded for it first, else
+    "adopted from dest". The old kernel manifest's other keys stay. dest's
+    manifest reads the runs after its builders; kernel_dest's reads them,
+    and the old kernel manifest, before kernel_tables builds, so one that
+    does not parse, or is no object with a kernel_tables object, stops the
+    export with kernel_dest as it was.
     """
     results_dirs = [Path(d) for d in results_dirs]
     names = list(only) if only else list(BUILDERS)
@@ -101,7 +105,12 @@ def export(results_dirs: Iterable[Path], dest: Path | None = None, only: Iterabl
     if "kernel_tables" in names:
         path = Path(kernel_dest) / "kernel_data" / "qbench_manifest.json"
         kernel = manifest(results_dirs)
-        old = json.loads(path.read_text()).get("kernel_tables", {}) if path.is_file() else {}
+        try:
+            prior = json.loads(path.read_text()) if path.is_file() else {"kernel_tables": {}}
+        except ValueError:
+            prior = None
+        if not isinstance(prior, dict) or not isinstance(prior.get("kernel_tables"), dict):
+            raise SystemExit(f"{path}: malformed manifest")
     written: list[Path] = []
     tables = None
     for name in names:
@@ -116,7 +125,13 @@ def export(results_dirs: Iterable[Path], dest: Path | None = None, only: Iterabl
         Path(dest).mkdir(parents=True, exist_ok=True)
         (Path(dest) / "manifest.json").write_text(json.dumps(manifest(results_dirs), indent=2) + "\n")
     if tables:
-        new = {rel: {"runs": runs, "bench_sha": kernel["bench_sha"],
-                     "exported_at": kernel["exported_at"]} for rel, runs in tables.items()}
-        path.write_text(json.dumps({**kernel, "kernel_tables": {**old, **new}}, indent=2) + "\n")
+        old = prior["kernel_tables"]
+        new = {}
+        for rel, runs in tables.items():
+            entry = old.get(rel)
+            before = entry.get("runs") if isinstance(entry, dict) else None
+            if runs[:1] == ["adopted from dest"] and isinstance(before, list) and before:
+                runs = list(dict.fromkeys(before + runs[1:]))
+            new[rel] = {"runs": runs, "bench_sha": kernel["bench_sha"], "exported_at": kernel["exported_at"]}
+        write_atomic(path, json.dumps({**prior, **kernel, "kernel_tables": {**old, **new}}, indent=2) + "\n")
     return written

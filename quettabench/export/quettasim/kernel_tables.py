@@ -21,28 +21,37 @@ order the runs finished (run.json provenance.pulled, else provenance.finished):
 - any other table is the file of the run that finished last;
 - one run's table is copied byte for byte.
 A keyed table's key columns compare as numbers (int, total_weight_gb a
-float; gpu and layout as text), and within one run's table the last row on
-a key wins.
+float; gpu and layout as text; an empty op is all_reduce), and within one
+run's table the last row on a key wins.
 A table dest already holds is the oldest source, so its rows stay unless
 a run holds their key (QuettaSim's tables were upserted in place); its
-header's columns join the union, and a JSON table's entries join it too.
-Where its rows would be dropped (a table with no row key, or a gemm or moe
-run without --append), the export stops naming the file and its row
-counts, unless replace is given (--replace-tables), which replaces dest's
-tables and sidecars as built. The manifest names a table that kept dest
-rows "adopted from dest" before its runs. Its sidecar keeps the fields qbench does not
-write (notes and any other), and a mode its kept rows were timed in that
-differs from the runs' makes mode unknown.
+repeated rows on a key all stay (QuettaSim's gemm and moe loaders reduce
+them), but for reparallel and kv_transfer, whose upserts held a dict, its
+last row on a key wins. Its header's columns join the union, a JSON
+table's entries join it too, and a merged table keeps its line ending
+(JSON its indent and final newline).
+Every merge over a dest CSV is checked: each dest row is in the output
+cell for cell or a run re-measured its key, and each dest column is in
+the output. Where that fails (a table with no row key, a gemm or moe run
+without --append, a run's table without a dest column), the export stops
+naming the file and its row or column counts, unless replace is given
+(--replace-tables), which replaces just those tables and their sidecars as
+built; every other table still merges. Its sidecar keeps the fields qbench
+does not write and the ones qbench leaves null, joins qbench's notes to
+its own, and, when its rows were kept, spans measured over both
+("<old> .. <new>"), names both tools (" + ") and, timed in another mode
+than the runs, makes mode unknown.
 Every table is built and checked in a temp dir under dest first: a row
 with too many or too few cells, an empty or unparsable key, or JSON that
 does not parse (or, for a union, is no object) stops the export with dest
 as it was; then each file replaces its dest file.
 Two probes write one dest file in two cases, and they merge:
 - collective and vllm_allreduce, graph/collectives/<gpu>_tp<N>.csv: the
-  collective probe's rows other than all_reduce (path nccl), then
-  vllm_allreduce's all_reduce rows, as vllm_allreduce's upsert did; over a
-  dest table each replaces its rows on (op, world, bytes), and either probe
-  alone merges over it;
+  collective probe's rows (path nccl), without its all_reduce rows when a
+  vllm_allreduce run is there too, replacing earlier rows on (op, world,
+  bytes); then vllm_allreduce's all_reduce rows, which replace every
+  all_reduce row of their world, as its upsert did; the header is dest's
+  and the runs' columns, so an export over its own table changes nothing;
 - gemm and elementwise, <dir>/elementwise/<gpu>.json: the elementwise
   probe's latest table, with every gemm run's entries (fp8_act_quant)
   unioned over it, the later finished run winning a key.
@@ -57,6 +66,7 @@ import os
 import shlex
 import shutil
 import tempfile
+from collections import Counter
 from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
@@ -70,7 +80,6 @@ HOST_KINDS = ("reparallel", "kv_transfer")
 # The reduce each probe takes over its timings, for graph_replay and eager tables.
 REDUCE = {"gemm": "min", "moe": "min", "elementwise": "median", "flash_attn": "median",
           "cross_attn": "median", "gdn": "median"}
-COLLECTIVE_FIELDS = ("op", "world", "bytes", "latency_us", "dtype_bytes", "path")
 # The key a collectives row replaces a dest row on.
 COLLECTIVE_KEY = ("op", "world", "bytes")
 GEOMETRY = ("n_heads", "n_kv_heads", "head_dim")
@@ -156,8 +165,10 @@ def _sidecar(rel: Path, by_probe: dict[str, list[Source]], runs: set[Path]) -> d
 
 
 def _keep_sidecar(meta: dict, table: Path, kept: bool) -> dict:
-    """meta over the sidecar dest has beside table: its other fields and notes
-    stay; when its rows were kept and were timed in another mode, mode is unknown."""
+    """meta over the sidecar dest has beside table: its other fields stay, a
+    field meta leaves null keeps its value and meta's notes join its notes.
+    When its rows were kept, measured spans both, tool names both, and a mode
+    other than meta's makes mode unknown."""
     path = table.with_name(table.name + ".meta.json")
     try:
         prior = json.loads(path.read_text()) if path.is_file() else {}
@@ -165,11 +176,23 @@ def _keep_sidecar(meta: dict, table: Path, kept: bool) -> dict:
         prior = None
     if not isinstance(prior, dict):
         raise SystemExit(f"{path}: malformed JSON (not an object)")
-    mode = "unknown" if kept and prior.get("mode") not in (None, meta["mode"]) else meta["mode"]
-    return {**prior, **meta, "mode": mode, "notes": prior.get("notes", meta["notes"])}
+    notes = "; ".join(n for n in dict.fromkeys((prior.get("notes"), meta["notes"])) if n)
+    meta = {k: v for k, v in meta.items() if v is not None or prior.get(k) is None}
+    if not kept:
+        return {**prior, **meta, "notes": notes}
+    days = sorted(d for d in (*str(prior.get("measured") or "").split(" .. "), meta.get("measured")) if d)
+    tools = [t for t in (*str(prior.get("tool") or "").split(" + "), *meta["tool"].split(" + ")) if t]
+    mode = meta["mode"] if prior.get("mode") in (None, meta["mode"]) else "unknown"
+    return {**prior, **meta, "mode": mode, "notes": notes, "tool": " + ".join(dict.fromkeys(tools)),
+            "measured": " .. ".join(dict.fromkeys(days[:1] + days[-1:])) or None}
 
 
 Source = tuple[datetime, Path, Path, bool]  # (finished, table, its run dir, ran with --append)
+
+
+class Lost(SystemExit):
+    """The export would drop a dest row or column; replace (--replace-tables)
+    replaces just the tables that stop with it."""
 
 
 def found(results_dirs: Iterable[Path]) -> dict[Path, dict[str, list[Source]]]:
@@ -210,9 +233,24 @@ def _runs_used(probe: str, rel: Path, sources: list[Source]) -> list[Source]:
 
 
 def _key(row: dict, key: tuple[str, ...]) -> tuple:
-    """row's key, numbers parsed as the old upserts' int() read them."""
-    return tuple(row[c] if c in ("gpu", "layout", "op") else float(row[c]) if c == "total_weight_gb"
-                 else int(row[c]) for c in key)
+    """row's key, numbers parsed as the old upserts' int() read them; an
+    empty op is all_reduce, as QuettaSim's collectives loader reads it."""
+    return tuple((row.get("op") or "all_reduce") if c == "op" else row[c] if c in ("gpu", "layout")
+                 else float(row[c]) if c == "total_weight_gb" else int(row[c]) for c in key)
+
+
+def _newline(table: Path) -> str:
+    """The line ending of table's first line."""
+    with table.open("rb") as f:
+        return "\r\n" if f.readline().endswith(b"\r\n") else "\n"
+
+
+def _write_csv(out: Path, fields: list[str], rows: Iterable[dict], like: Path) -> None:
+    """rows under fields, with like's line ending."""
+    with out.open("w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=fields, restval="", lineterminator=_newline(like))
+        w.writeheader()
+        w.writerows(rows)
 
 
 def _read_csv(rel: Path, table: Path, run: Path,
@@ -227,7 +265,7 @@ def _read_csv(rel: Path, table: Path, run: Path,
         raise SystemExit(f"{rel.as_posix()}: {run} has no header (empty CSV)")
     for n, row in enumerate(rows, 1):
         try:
-            if None in row or None in row.values() or not all(row.get(c) for c in key):
+            if None in row or None in row.values() or not all(row.get(c) for c in key if c != "op"):
                 raise ValueError
             _key(row, key)
         except ValueError:
@@ -242,66 +280,90 @@ def _read_json(rel: Path, table: Path, run: Path) -> object:
         raise SystemExit(f"{rel.as_posix()}: {run} malformed JSON") from None
 
 
-def _union_csv(rel: Path, sources: list[Source], key: tuple[str, ...], out: Path) -> list[Path]:
-    """Rows of every source, oldest first; a source's rows replace the earlier
-    rows on each key it holds. Returns the run dirs with a row kept."""
+def _union_csv(rel: Path, sources: list[Source], key: tuple[str, ...], out: Path,
+               old: Source | None = None) -> list[Path]:
+    """Rows of the dest table old, then of every source, oldest first; a
+    source's rows replace the earlier rows on each key it holds. Within a
+    run's table the last row on a key wins; old keeps its repeated rows on a
+    key (QuettaSim's loaders reduce them) unless the table's old upsert held
+    its rows in a dict (SORTED). Returns the run dirs with a row kept."""
+    order = next((cols for k, cols in SORTED.items() if ROW_KEYS[k] == key), None)
     fields: list[str] = []
     kept: list[tuple[dict, Path]] = []
-    for _, table, run, _ in sources:
+    olds: list[dict] = []
+    newer: set[tuple] = set()
+    for source in [old, *sources] if old else sources:
+        _, table, run, _ = source
         head, rows = _read_csv(rel, table, run, key)
-        if key != GEOMETRY:
+        if key != GEOMETRY and (source is not old or order):
             rows = list({_key(r, key): r for r in rows}.values())
         fields += [c for c in head if c not in fields]
         mine = {_key(r, key) for r in rows}
+        if source is old:
+            olds = rows
+        else:
+            newer |= mine
         kept = [(r, d) for r, d in kept if _key(r, key) not in mine]
         kept += [(r, run) for r in rows]
-    order = next((cols for k, cols in SORTED.items() if ROW_KEYS[k] == key), None)
     if order:
         kept.sort(key=lambda rd: _key(rd[0], order))
-    with out.open("w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=fields, restval="")
-        w.writeheader()
-        w.writerows(r for r, _ in kept)
+    _write_csv(out, fields, (r for r, _ in kept), (old or sources[0])[1])
+    if old:
+        _lost(rel, old, out, key, newer, olds)
     return list(dict.fromkeys(d for _, d in kept))
 
 
 def _union_json(rel: Path, sources: list[Source], out: Path) -> list[Path]:
     """Entries of every source in finished order, the later run winning a key."""
     merged: dict[str, tuple[object, Path]] = {}
-    for _, table, run, _ in sorted(sources, key=lambda s: (s[0], str(s[2]))):
+    sources = sorted(sources, key=lambda s: (s[0], str(s[2])))
+    for _, table, run, _ in sources:
         entries = _read_json(rel, table, run)
         if not isinstance(entries, dict):
             raise SystemExit(f"{rel.as_posix()}: {run} malformed JSON (not an object)")
         merged.update({k: (v, run) for k, v in entries.items()})
-    out.write_text(json.dumps({k: v for k, (v, _) in merged.items()}, indent=2) + "\n")
+    text = sources[0][1].read_text()
+    lines = text.splitlines()
+    indent = len(lines[1]) - len(lines[1].lstrip(" ")) if len(lines) > 1 else None
+    out.write_text(json.dumps({k: v for k, (v, _) in merged.items()}, indent=indent)
+                   + "\n" * text.endswith("\n"))
     return list(dict.fromkeys(run for _, run in merged.values()))
 
 
 def _merge_collectives(rel: Path, collective: Source | None, vllm: Source | None, out: Path,
                        old: Source | None = None) -> list[Path]:
-    """The dest table old's rows, then the collective run's other ops (path
-    nccl), then vllm_allreduce's all_reduce rows, each replacing the earlier
-    rows on its COLLECTIVE_KEY."""
-    parts = []
-    if old:
-        parts.append((old[2], _read_csv(rel, old[1], old[2], COLLECTIVE_KEY)[1]))
-    if collective:
-        parts.append((collective[2], [{**r, "dtype_bytes": r.get("dtype_bytes") or 2,
-                                       "path": r.get("path") or "nccl"}
-                                      for r in _read_csv(rel, collective[1], collective[2])[1]
-                                      if (r.get("op") or "all_reduce") != "all_reduce"]))
-    if vllm:
-        parts.append((vllm[2], [r for r in _read_csv(rel, vllm[1], vllm[2])[1]
-                                if (r.get("op") or "all_reduce") == "all_reduce"]))
+    """The dest table old's rows, then the collective run's, each replacing
+    the earlier rows on its COLLECTIVE_KEY, then vllm_allreduce's all_reduce
+    rows, which replace every earlier all_reduce row of their world, as its
+    upsert did. Beside a vllm_allreduce run the collective run's all_reduce
+    rows are left out. The header is old's and the runs' columns; the
+    collective run's rows fill an empty dtype_bytes (2) and path (nccl)."""
+    sources = [(s, _read_csv(rel, s[1], s[2], COLLECTIVE_KEY)) for s in (old, collective, vllm) if s]
+    fields: list[str] = []
+    for _, (head, _) in sources:
+        fields += [c for c in head if c not in fields]
+    fill = {c: v for c, v in (("dtype_bytes", "2"), ("path", "nccl")) if c in fields}
     kept: list[tuple[dict, Path]] = []
-    for run, rows in parts:
-        mine = {_key(r, COLLECTIVE_KEY) for r in rows} if old else set()
+    newer: set[tuple] = set()
+    for source, (_, rows) in sources:
+        if source is collective:
+            rows = [{**r, **{c: r.get(c) or v for c, v in fill.items()}} for r in rows
+                    if not (vllm and _key(r, ("op",)) == ("all_reduce",))]
+        if source is vllm:
+            rows = [r for r in rows if _key(r, ("op",)) == ("all_reduce",)]
+            worlds = {_key(r, ("world",)) for r in rows}
+            mine = {_key(r, COLLECTIVE_KEY) for r, _ in kept
+                    if _key(r, ("op",)) == ("all_reduce",) and _key(r, ("world",)) in worlds}
+        else:
+            mine = set()
+        mine |= {_key(r, COLLECTIVE_KEY) for r in rows}
+        if source is not old:
+            newer |= mine
         kept = [(r, d) for r, d in kept if _key(r, COLLECTIVE_KEY) not in mine]
-        kept += [(r, run) for r in rows]
-    with out.open("w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=COLLECTIVE_FIELDS, extrasaction="ignore")
-        w.writeheader()
-        w.writerows(r for r, _ in kept)
+        kept += [(r, source[2]) for r in rows]
+    _write_csv(out, fields, (r for r, _ in kept), sources[0][0][1])
+    if old:
+        _lost(rel, old, out, COLLECTIVE_KEY, newer)
     return list(dict.fromkeys(d for _, d in kept))
 
 
@@ -314,24 +376,30 @@ def _check(rel: Path, by_probe: dict[str, list[Source]]) -> None:
                          "merges only collective+vllm_allreduce and elementwise+gemm")
 
 
-def _lost(rel: Path, old: Source, out: Path, key: tuple[str, ...]) -> None:
-    """Stop when out drops a row of the dest table old: a row whose key out
-    lacks or, with no key, a row out does not hold."""
-    rows = _read_csv(rel, old[1], old[1], key)[1]
-    kept = _read_csv(rel, out, out, key)[1]
-    if key:
-        have = {_key(r, key) for r in kept}
-        left = sum(_key(r, key) in have for r in rows)
-    else:
-        left = sum(any(_same(r, k) for k in kept) for r in rows)
+def _lost(rel: Path, old: Source, out: Path, key: tuple[str, ...], newer: set[tuple],
+          rows: list[dict] | None = None) -> None:
+    """Stop (Lost) when out lacks a column of the dest table old, or drops one
+    of its rows (rows, else all of old's): each must be in out, cell for
+    cell, unless a run re-measured its key (newer)."""
+    head, olds = _read_csv(rel, old[1], old[1], key)
+    fields, kept = _read_csv(rel, out, out, key)
+    stop = "; give --replace-tables to replace each table that stops this way"
+    gone = [c for c in head if c not in fields]
+    if gone:
+        raise Lost(f"{rel.as_posix()}: the export would drop column {', '.join(gone)} of {old[1]}{stop}")
+    cols = sorted({*head, *fields})
+    have = Counter(tuple(r.get(c) or "" for c in cols) for r in kept)
+    rows = olds if rows is None else rows
+    left = 0
+    for row in rows:
+        cells = tuple(row.get(c) or "" for c in cols)
+        if key and _key(row, key) in newer:
+            left += 1
+        elif have[cells]:
+            have[cells] -= 1
+            left += 1
     if left < len(rows):
-        raise SystemExit(f"{rel.as_posix()}: the export would keep {left} of its {len(rows)} rows in "
-                         f"{old[1]}; give --replace-tables to replace it")
-
-
-def _same(row: dict, other: dict) -> bool:
-    """row and other hold the same cells, a column one lacks being empty."""
-    return all((row.get(c) or "") == (other.get(c) or "") for c in {*row, *other})
+        raise Lost(f"{rel.as_posix()}: the export would keep {left} of its {len(rows)} rows in {old[1]}{stop}")
 
 
 def _write(rel: Path, by_probe: dict[str, list[Source]], out: Path,
@@ -341,8 +409,8 @@ def _write(rel: Path, by_probe: dict[str, list[Source]], out: Path,
     used = {probe: _runs_used(probe, rel, sources) for probe, sources in by_probe.items()}
     probes = sorted(used)
     olds = [old] if old else []
-    tp_table = rel.parts[-2] == "collectives" and not rel.stem.endswith("_nccl_vs_vllm")
-    if probes == ["collective", "vllm_allreduce"] or (old and tp_table):
+    tp_table = rel.parts[-2] == "collectives" and not rel.stem.endswith("_nccl_vs_vllm") and rel.suffix == ".csv"
+    if tp_table and set(probes) <= {"collective", "vllm_allreduce"}:
         return _merge_collectives(rel, *(used[p][-1] if p in used else None
                                          for p in ("collective", "vllm_allreduce")), out, old)
     if probes == ["elementwise", "gemm"]:
@@ -355,9 +423,10 @@ def _write(rel: Path, by_probe: dict[str, list[Source]], out: Path,
     if old and rel.suffix == ".csv":
         reset = probe in RESET_WITHOUT_APPEND and not all(s[3] for s in sources)
         if key and not reset:
-            return _union_csv(rel, olds + sources, key, out)
+            return _union_csv(rel, sources, key, out, old)
         runs = _write(rel, by_probe, out)
-        _lost(rel, old, out, key)
+        newer = {_key(r, key) for s in sources if key for r in _read_csv(rel, s[1], s[2], key)[1]}
+        _lost(rel, old, out, key, newer)
         return runs
     if len(sources) == 1:
         _, table, run, _ = sources[0]
@@ -375,7 +444,8 @@ def _write(rel: Path, by_probe: dict[str, list[Source]], out: Path,
 def run(results_dirs: Iterable[Path], dest: Path,
         replace: bool = False) -> tuple[list[Path], dict[str, list[str]]]:
     """Build every table and its sidecar in a temp dir under dest, over the
-    tables dest holds unless replace, then replace the dest files, so a stop
+    tables dest holds (or, given replace, without the ones that would stop
+    with Lost), then replace the dest files, so a stop
     leaves the tables in dest as they were (and no dest when this run made
     it). Returns the files written and, for
     the manifest, {<dir>/<kind>/<file>: the run dirs with rows in it, in
@@ -395,8 +465,14 @@ def run(results_dirs: Iterable[Path], dest: Path,
                 out = Path(tmp) / rel
                 out.parent.mkdir(parents=True, exist_ok=True)
                 table = dest / "kernel_data" / rel
-                old = None if replace or not table.is_file() else (OLDEST, table, table, True)
-                runs = set(_write(rel, by_probe, out, old))
+                old = (OLDEST, table, table, True) if table.is_file() else None
+                try:
+                    runs = set(_write(rel, by_probe, out, old))
+                except Lost:
+                    if not replace:
+                        raise
+                    old = None
+                    runs = set(_write(rel, by_probe, out))
                 meta = _sidecar(rel, by_probe, runs)
                 if old:
                     meta = _keep_sidecar(meta, table, table in runs)

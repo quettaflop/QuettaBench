@@ -153,7 +153,7 @@ def render_preamble(report):
         + (f"  eval_pos {t['eval_pos']}" if t["eval_pos"] else "")
         + (f"  nccl={t['nccl_algo']}/{t['nccl_proto']}" if nccl else ""))
     if report.age_days > STALE_DAYS:
-        lines.append(f"WARNING: baseline older than {STALE_DAYS}d; re-run `just vllm`")
+        lines.append(f"WARNING: baseline older than {STALE_DAYS}d; re-run `just run configs/runs/<wl>.yaml`")
     if report.nccl_mismatch:
         lines.append(f"NCCL MISMATCH engine={o['nccl_algo']}/{o['nccl_proto']} "
                      f"vllm={t['nccl_algo']}/{t['nccl_proto']}")

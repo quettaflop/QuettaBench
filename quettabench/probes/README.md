@@ -52,17 +52,23 @@ The one route to QuettaSim is the `kernel_tables` export builder:
 `engine/backends/kernel_composed_cost.py` reads, each with the `<file>.meta.json`
 sidecar QuettaSim's `tools/kernel_manifest.py check` requires (mode, tool, reduce,
 gpu, measured). Two merges: the collective
-probe's and vllm_allreduce's `ncu/collectives/{gpu}_tp{N}.csv` become one table,
-vllm_allreduce's `all_reduce` rows over the collective probe's; gemm's `fp8_act_quant`
-joins the elementwise probe's `elementwise/{gpu}.json`. A table QuettaSim already holds is
-the oldest source: its rows stay unless a run holds their key (collectives on `op, world,
-bytes`), a JSON table's entries likewise, and its sidecar keeps its `notes` and other fields.
-Where its rows would be dropped (a table with no row key, a gemm or moe run without `--append`)
-the export stops naming the file and its row counts; `--replace-tables` replaces the tables
-and sidecars instead. `kernel_data/qbench_manifest.json` names the runs with rows in each
-table (`adopted from dest` first when dest rows stayed), with the bench commit and export
-time, and keeps the entries of tables this export did not write; with no table found it is
-not written. The R2 mirror (`just mirror-up`, `mirror-down`) is a backup of
+probe's and vllm_allreduce's `ncu/collectives/{gpu}_tp{N}.csv` become one table: the
+collective probe's rows (its `all_reduce` rows only when no vllm_allreduce run is there),
+then vllm_allreduce's `all_reduce` rows, which replace every `all_reduce` row of their
+world; gemm's `fp8_act_quant` joins the elementwise probe's `elementwise/{gpu}.json`. A
+table QuettaSim already holds is the oldest source: its rows stay unless a run holds their
+key (collectives on `op, world, bytes`, an empty `op` read as `all_reduce`), its repeated
+samples on a key included (but reparallel and kv_transfer keep the last), a JSON table's
+entries likewise, and the merge keeps its line ending, JSON indent and final newline. Its
+sidecar keeps its other fields, joins qbench's notes to its own and, when its rows stayed,
+spans `measured` over both and names both tools. Where its rows or columns would be dropped
+(a table with no row key, a gemm or moe run without `--append`, a run's table without a dest
+column) the export stops naming the file; `--replace-tables` replaces just those tables and
+their sidecars, and every other table still merges. `kernel_data/qbench_manifest.json` names
+the runs with rows in each table (when dest rows stayed, the runs its old entry named first,
+else `adopted from dest`), with the bench commit and export time, keeps the entries of
+tables this export did not write and its other keys, and stops the export when it is not
+an object with a `kernel_tables` object; with no table found it is not written. The R2 mirror (`just mirror-up`, `mirror-down`) is a backup of
 `results/probes/` under `profiling/qbench_probes/`, in the same `<gpu>/<probe>/<run-id>/`
 layout; QuettaSim never reads it. Schema
 contract: filenames `{gpu}[_tpN].csv`, method split `ncu/` (graphed decode) vs

@@ -707,3 +707,50 @@ gloo group a five-minute timeout and turns SIGTERM into SystemExit(143), so
 `run_recorded` records the run as failed. Known and left: a short flag
 (`-k sk`) is not a secret name, and free text such as
 `my password is hunter2` or `aws_secret_access_key = abc` is kept.
+
+2026-10-12: no fixture changed. A dest table's repeated rows on a key all
+stay through a kernel_tables merge (QuettaSim's `graph/gemm/H100.csv` holds
+63 rows over 38 (M, N, K) keys, which `load_gemm_table` reduces by min); a
+run that holds the key supersedes every one of them. A run's own table
+still keeps its last row on a key, and a dest reparallel or kv_transfer
+table, whose old upserts held a dict, keeps its last row on a key too.
+
+2026-10-12: every kernel_tables merge over a dest CSV is checked after it
+is built: each dest row must be in the output cell for cell or have its
+key re-measured by a run, and each dest column must be in the output,
+else the export stops naming the file. `--replace-tables` now replaces
+only the tables that stop this way; every other table, a gemm or moe
+`--append` merge included, still merges.
+
+2026-10-12: a collective run's `all_reduce` rows are dropped only when a
+vllm_allreduce run writes the same table, so a collective re-run over a
+dest tp4 or tp8 table updates its `all_reduce` rows, as the old
+collective_probe did by rewriting the file. vllm_allreduce's `all_reduce`
+rows replace every `all_reduce` row of their world, dest's included, as its
+old upsert did. An empty `op` keys as `all_reduce`, as QuettaSim's
+collectives loader reads it. The merged header is dest's and the runs'
+columns, so no `path` column is added to a table that had none, and a
+fresh export and one over the same tables give the same rows.
+
+2026-10-12: a merged kernel table keeps its source's format: a CSV the
+line ending of dest (or of the oldest run), a JSON table its indent and
+final newline (or none). Re-exporting the same runs, or exporting runs
+that hold what QuettaSim's tables hold, leaves the tables byte-identical.
+
+2026-10-12: a dest sidecar keeps a field qbench would write as null (the
+collectives `reduce`), and qbench's note is joined to its notes with `; `.
+When dest rows stay, `measured` spans both (`<old> .. <new>`) and `tool`
+names both, joined with ` + `.
+
+2026-10-12: `qbench_manifest.json` must be an object whose `kernel_tables`
+is an object, else the export stops with `malformed manifest` before any
+table moves; its other top-level keys stay, and it is written atomically.
+A table that kept dest rows lists the runs the old manifest recorded for
+it first, then the new runs; `adopted from dest` only when there were none.
+
+2026-10-12: redaction replaces a non-empty list or mapping under a secret
+name with REDACTED whole; a secret NAME=value after a comma
+(`A=1,HF_TOKEN=sk`) is redacted, and in a command line a quoted value
+(`export HF_TOKEN='sk x'`) is replaced whole. The stale-baseline warning
+points at `just run configs/runs/<wl>.yaml` instead of the removed
+`just vllm`.

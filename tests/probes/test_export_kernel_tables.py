@@ -603,8 +603,8 @@ def test_the_dest_sidecar_keeps_its_notes(tmp_path: Path) -> None:
     export([results], kernel_dest=dest, only=["kernel_tables"])
     meta = json.loads(table.with_name(table.name + ".meta.json").read_text())
     assert (meta["notes"], meta["reviewed_by"]) == ("NCU counters locked", "kw")
-    assert (meta["tool"], meta["measured"], meta["mode"]) == ("quettabench.probes.gemm", "2026-10-11",
-                                                               "graph_replay")
+    assert (meta["tool"], meta["measured"], meta["mode"]) == (
+        "gemm_probe.py --graph + quettabench.probes.gemm", "2026-08-20 .. 2026-10-11", "graph_replay")
 
 
 def test_kept_dest_rows_timed_another_way_make_mode_unknown(tmp_path: Path) -> None:
@@ -653,8 +653,9 @@ def test_a_flash_attn_run_over_quettasim_keeps_the_other_head_configs(tmp_path: 
 
 
 def test_a_vllm_allreduce_run_over_quettasim_collectives_keeps_the_nccl_ops(tmp_path: Path) -> None:
-    """QuettaSim's <gpu>_tp<N>.csv holds every op; a vllm_allreduce run adds its
-    all_reduce rows over the ones on its (op, world, bytes) and the other ops stay."""
+    """QuettaSim's <gpu>_tp<N>.csv holds every op; a vllm_allreduce run's
+    all_reduce rows replace every all_reduce row of its world, as its upsert
+    did, and the other ops stay."""
     results, dest = tmp_path / "results", tmp_path / "data"
     head = ("op", "world", "bytes", "latency_us", "dtype_bytes", "path")
     old = [(op, 2, b, 10.0, 2, "nccl") for op in ("all_gather", "all_to_all", "reduce_scatter")
@@ -666,9 +667,8 @@ def test_a_vllm_allreduce_run_over_quettasim_collectives_keeps_the_nccl_ops(tmp_
     got = rows(table)
     assert got[0] == list(head)
     assert sorted({r[0] for r in got[1:]}) == ["all_gather", "all_reduce", "all_to_all", "reduce_scatter"]
-    assert [r for r in got if r[0] == "all_reduce"] == [["all_reduce", "2", "2048", "8.0", "2", "vllm"],
-                                                         ["all_reduce", "2", "4096", "7.0", "2", "vllm"]]
-    assert len(got) == 9
+    assert [r for r in got if r[0] == "all_reduce"] == [["all_reduce", "2", "4096", "7.0", "2", "vllm"]]
+    assert len(got) == 8
 
 
 def test_a_gemm_append_run_over_quettasim_keeps_its_rows(tmp_path: Path) -> None:
@@ -705,3 +705,185 @@ def test_an_unreadable_source_run_stops_before_a_table_moves(tmp_path: Path) -> 
     with pytest.raises(KeyError):
         export([results], kernel_dest=dest, only=["kernel_tables"])
     assert not dest.exists()
+
+
+def test_repeated_dest_samples_survive_an_append_on_another_key(tmp_path: Path) -> None:
+    """QuettaSim's gemm tables repeat (M, N, K) samples, which its loader
+    reduces by min: an --append run on another key keeps every one."""
+    results, dest = tmp_path / "results", tmp_path / "data"
+    old = [GEMM_HEAD, (1, 1, 1, 2, 3.0), (1, 1, 1, 2, 2.5), (2, 2, 2, 2, 4.0)]
+    table = seed(dest, "graph/gemm/H100.csv", csv_text(old))
+    probe_run(results, "gemm", {GEMM: csv_text([GEMM_HEAD, (3, 3, 3, 2, 5.0)])}, 0, args=["--append"])
+    export([results], kernel_dest=dest, only=["kernel_tables"])
+    assert rows(table) == [[str(c) for c in r] for r in [*old, (3, 3, 3, 2, 5.0)]]
+
+
+def test_a_run_on_a_repeated_dest_key_replaces_every_sample(tmp_path: Path) -> None:
+    results, dest = tmp_path / "results", tmp_path / "data"
+    table = seed(dest, "graph/gemm/H100.csv",
+                 csv_text([GEMM_HEAD, (1, 1, 1, 2, 3.0), (2, 2, 2, 2, 4.0), (1, 1, 1, 2, 2.5)]))
+    probe_run(results, "gemm", {GEMM: csv_text([GEMM_HEAD, (1, 1, 1, 2, 9.0)])}, 0, args=["--append"])
+    export([results], kernel_dest=dest, only=["kernel_tables"])
+    assert rows(table) == [list(GEMM_HEAD), ["2", "2", "2", "2", "4.0"], ["1", "1", "1", "2", "9.0"]]
+
+
+def test_many_repeated_dest_samples_all_stay(tmp_path: Path) -> None:
+    """63 dest rows over 38 keys, as QuettaSim's graph/gemm/H100.csv: an
+    --append run on a new key keeps all 63 and adds its one."""
+    results, dest = tmp_path / "results", tmp_path / "data"
+    old = [(m, 4096, 4096, 2, 1.0 + i) for i, m in enumerate([*range(1, 39), *range(1, 26)])]
+    table = seed(dest, "graph/gemm/H100.csv", csv_text([GEMM_HEAD, *old]))
+    probe_run(results, "gemm", {GEMM: csv_text([GEMM_HEAD, (8192, 8192, 8192, 2, 999.0)])}, 0,
+              args=["--ncu", "--append"])
+    export([results], kernel_dest=dest, only=["kernel_tables"])
+    got = rows(table)[1:]
+    assert len(got) == 64 and got[:63] == [[str(c) for c in r] for r in old]
+
+
+def test_a_dict_upserted_dest_table_keeps_its_last_row_on_a_key(tmp_path: Path) -> None:
+    """reparallel's old upsert held its rows in a dict, so a dest key repeated
+    keeps its last row, as the run's own table does."""
+    head = ("gpu", "world", "tp_from", "tp_to", "total_weight_gb", "comm_ms")
+    results, dest = tmp_path / "results", tmp_path / "data"
+    table = seed(dest, "eager/reparallel/H100_reshard.csv",
+                 csv_text([head, ("H100", 2, 1, 2, 16, 5.0), ("H100", 2, 1, 2, 16, 6.0)]))
+    probe_run(results, "reparallel", {"cuda_event/reparallel/H100_reshard.csv":
+                                      csv_text([head, ("H100", 4, 1, 4, 16, 7.0)])}, 0)
+    export([results], kernel_dest=dest, only=["kernel_tables"])
+    assert rows(table) == [list(head), ["H100", "2", "1", "2", "16", "6.0"], ["H100", "4", "1", "4", "16", "7.0"]]
+
+
+def test_dropping_a_dest_column_stops_unless_replace_tables(tmp_path: Path) -> None:
+    results, dest = tmp_path / "results", tmp_path / "data"
+    old = csv_text([("M", "N", "K", "us", "note"), (1, 1, 1, 3, "x")])
+    table = seed(dest, "graph/gemm/H100.csv", old)
+    probe_run(results, "gemm", {GEMM: csv_text([("M", "N", "K", "us"), (1, 1, 1, 4)])}, 0)
+    with pytest.raises(SystemExit, match=r"graph/gemm/H100.csv: .*drop column note.*--replace-tables"):
+        export([results], kernel_dest=dest, only=["kernel_tables"])
+    assert table.read_bytes() == old.encode()
+    export([results], kernel_dest=dest, only=["kernel_tables"], replace_tables=True)
+    assert rows(table) == [["M", "N", "K", "us"], ["1", "1", "1", "4"]]
+
+
+def test_replace_tables_replaces_only_the_tables_that_would_stop(tmp_path: Path) -> None:
+    """A gemm --append merge stays a merge under --replace-tables; a gdn
+    table that would lose rows is replaced."""
+    results, dest = tmp_path / "results", tmp_path / "data"
+    gemm = seed(dest, "graph/gemm/H100.csv", csv_text([GEMM_HEAD, (1, 1, 1, 2, 3.0), (2, 2, 2, 2, 4.0)]))
+    gdn = seed(dest, "eager/gdn/H100_9b_decode.csv", "batch,us\n1,5\n2,6\n")
+    probe_run(results, "gemm", {GEMM: csv_text([GEMM_HEAD, (3, 3, 3, 2, 5.0)])}, 0, args=["--append"])
+    probe_run(results, "gdn", {"cuda_event/gdn/H100_9b_decode.csv": "batch,us\n1,7\n"}, 1)
+    with pytest.raises(SystemExit, match="keep 0 of its 2 rows"):
+        export([results], kernel_dest=dest, only=["kernel_tables"])
+    export([results], kernel_dest=dest, only=["kernel_tables"], replace_tables=True)
+    assert len(rows(gemm)) == 4
+    assert gdn.read_text() == "batch,us\n1,7\n"
+
+
+TP4_HEAD = ("op", "world", "bytes", "latency_us", "dtype_bytes")
+
+
+def test_a_collective_rerun_over_dest_updates_its_all_reduce_rows(tmp_path: Path) -> None:
+    """With no vllm_allreduce run beside it, a collective run's all_reduce
+    rows are its own measurement and replace dest's; a dest table with no
+    path column gets none."""
+    results, dest = tmp_path / "results", tmp_path / "data"
+    old = [TP4_HEAD, ("all_reduce", 4, 2048, 26.0, 2), ("all_gather", 4, 2048, 13.0, 2)]
+    table = seed(dest, "graph/collectives/H200_tp4.csv", csv_text(old))
+    probe_run(results, "collective", {"ncu/collectives/H200_tp4.csv": csv_text(
+        [TP4_HEAD, ("all_reduce", 4, 2048, 99.0, 2), ("all_gather", 4, 2048, 98.0, 2)])}, 0, gpu="H200")
+    export([results], kernel_dest=dest, only=["kernel_tables"])
+    assert rows(table) == [list(TP4_HEAD), ["all_reduce", "4", "2048", "99.0", "2"],
+                           ["all_gather", "4", "2048", "98.0", "2"]]
+
+
+def test_collectives_over_dest_match_a_fresh_export(tmp_path: Path) -> None:
+    fresh, over = tmp_path / "fresh", tmp_path / "over"
+    results = tmp_path / "results"
+    probe_run(results, "collective", {"ncu/collectives/H100_tp2.csv": COLLECTIVE}, 0)
+    probe_run(results, "vllm_allreduce", {"ncu/collectives/H100_tp2.csv": VLLM}, 1)
+    export([results], kernel_dest=fresh, only=["kernel_tables"])
+    seed(over, "graph/collectives/H100_tp2.csv", csv_text([
+        ("op", "world", "bytes", "latency_us", "dtype_bytes", "path"), ("all_gather", 2, 4096, 1.0, 2, "nccl"),
+        ("all_reduce", 2, 2048, 1.0, 2, "vllm"), ("", 2, 1024, 1.0, 2, "nccl")]))
+    export([results], kernel_dest=over, only=["kernel_tables"])
+    assert tree(over / "kernel_data") == tree(fresh / "kernel_data")
+
+
+def test_two_fresh_exports_in_a_row_give_the_same_tree(tmp_path: Path) -> None:
+    results, first, second = tmp_path / "results", tmp_path / "a", tmp_path / "b"
+    probe_run(results, "gemm", {GEMM: GEMM_ROW, "ncu/elementwise/H100.json": '{"fp8_act_quant": 1}'}, 0)
+    probe_run(results, "elementwise", {"ncu/elementwise/H100.json": '{"rms_norm": 1}'}, 1)
+    probe_run(results, "moe", {"ncu/moe/H100_routing.json": '{\n "a": 1\n}\n'}, 2)
+    probe_run(results, "collective", {"ncu/collectives/H100_tp2.csv": COLLECTIVE}, 3)
+    probe_run(results, "vllm_allreduce", {"ncu/collectives/H100_tp2.csv": VLLM}, 4)
+    export([results], kernel_dest=first, only=["kernel_tables"])
+    export([results], kernel_dest=second, only=["kernel_tables"])
+    once = tree(first / "kernel_data")
+    export([results], kernel_dest=second, only=["kernel_tables"])
+    assert tree(second / "kernel_data") == once
+
+
+def test_an_export_of_unchanged_tables_leaves_dest_bytes_alone(tmp_path: Path) -> None:
+    """Runs that hold what dest holds rewrite nothing: JSON keeps its
+    indent and final newline (or none), CSV its line ending."""
+    results, dest = tmp_path / "results", tmp_path / "data"
+    tables = {"graph/elementwise/H100.json": '{\n    "rms_norm": {\n        "floor_us": 1.5\n    }\n}',
+              "graph/moe/H100_routing.json": '{\n "a": {\n  "floor_us": 2.0\n }\n}\n',
+              "graph/gemm/H100.csv": "M,N,K,dtype_bytes,latency_us\n1,1,1,2,3.0\n"}
+    for rel, text in tables.items():
+        seed(dest, rel, text)
+    probe_run(results, "elementwise", {"ncu/elementwise/H100.json": tables["graph/elementwise/H100.json"]}, 0)
+    probe_run(results, "moe", {"ncu/moe/H100_routing.json": tables["graph/moe/H100_routing.json"]}, 1)
+    probe_run(results, "gemm", {GEMM: tables["graph/gemm/H100.csv"]}, 2, args=["--append"])
+    export([results], kernel_dest=dest, only=["kernel_tables"])
+    assert {rel: (dest / "kernel_data" / rel).read_text() for rel in tables} == tables
+
+
+def test_the_manifest_chains_runs_across_exports(tmp_path: Path) -> None:
+    """Dest rows a later export keeps carry the runs an earlier export
+    recorded for them, then the new runs."""
+    first, second, dest = tmp_path / "a", tmp_path / "b", tmp_path / "data"
+    probe_run(first, "gemm", {GEMM: csv_text([GEMM_HEAD, (1, 1, 1, 2, 3.0)])}, 0)
+    export([first], kernel_dest=dest, only=["kernel_tables"])
+    probe_run(second, "gemm", {GEMM: csv_text([GEMM_HEAD, (2, 2, 2, 2, 3.0)])}, 1, args=["--append"])
+    export([second], kernel_dest=dest, only=["kernel_tables"])
+    runs = json.loads((dest / "kernel_data" / "qbench_manifest.json").read_text())["kernel_tables"]
+    assert [Path(r).parents[3].name for r in runs["graph/gemm/H100.csv"]["runs"]] == ["a", "b"]
+
+
+@pytest.mark.parametrize("bad", ["{", "[]", '{"kernel_tables": []}', "{}"])
+def test_a_malformed_kernel_manifest_stops_before_a_table_moves(tmp_path: Path, bad) -> None:
+    results, dest = tmp_path / "results", tmp_path / "data"
+    manifest = seed(dest, "qbench_manifest.json", bad)
+    probe_run(results, "gemm", {GEMM: GEMM_ROW}, 0)
+    with pytest.raises(SystemExit, match="qbench_manifest.json: malformed manifest"):
+        export([results], kernel_dest=dest, only=["kernel_tables"])
+    assert manifest.read_text() == bad and not (dest / "kernel_data" / "graph").exists()
+
+
+def test_the_kernel_manifest_keeps_its_other_keys(tmp_path: Path) -> None:
+    results, dest = tmp_path / "results", tmp_path / "data"
+    manifest = seed(dest, "qbench_manifest.json", '{"kernel_tables": {}, "reviewed_by": "kw"}')
+    probe_run(results, "gemm", {GEMM: GEMM_ROW}, 0)
+    export([results], kernel_dest=dest, only=["kernel_tables"])
+    assert json.loads(manifest.read_text())["reviewed_by"] == "kw"
+
+
+def test_a_kept_dest_sidecar_joins_notes_and_keeps_known_fields(tmp_path: Path) -> None:
+    """qbench's note is appended to dest's; a field qbench leaves null keeps
+    the value dest's sidecar had."""
+    results, dest = tmp_path / "results", tmp_path / "data"
+    rel = "graph/gemm/H100.csv"
+    table = seed(dest, rel, csv_text([GEMM_HEAD, (1, 1, 1, 2, 3.0)]),
+                 {"notes": "locked clocks", "reduce": "min", "gpu": "H100"})
+    probe_run(results, "gemm", {GEMM: csv_text([GEMM_HEAD, (2, 2, 2, 2, 4.0)])}, 0, args=["--ncu", "--append"])
+    probe_run(results, "gemm", {GEMM: csv_text([GEMM_HEAD, (3, 3, 3, 2, 4.0)])}, 1,
+              args=["--graph", "--append"])
+    export([results], kernel_dest=dest, only=["kernel_tables"])
+    meta = json.loads(table.with_name(table.name + ".meta.json").read_text())
+    assert meta["notes"] == "locked clocks; rows timed as graph_replay, ncu"
+    tp2 = seed(dest, "graph/collectives/H100_tp2.csv", COLLECTIVE, {"reduce": "median"})
+    probe_run(results, "vllm_allreduce", {"ncu/collectives/H100_tp2.csv": VLLM}, 2)
+    export([results], kernel_dest=dest, only=["kernel_tables"])
+    assert json.loads(tp2.with_name(tp2.name + ".meta.json").read_text())["reduce"] == "median"

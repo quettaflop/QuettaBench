@@ -4,6 +4,7 @@ workload_hash gate."""
 import calendar
 import time
 import unittest
+from pathlib import Path
 
 from quettabench.crossval import compare, reader
 from tests.golden._harness import FIXTURES
@@ -41,6 +42,15 @@ class GoldenRows(unittest.TestCase):
         self.assertTrue(all("method" in r["withheld"] for r in report.rows))
         forced = golden_pair("bench_criterion.log", allow_method_mismatch=True)
         self.assertTrue(all(r["ratio"] is not None for r in forced.rows))
+
+
+class StaleBaseline(unittest.TestCase):
+    def test_the_warning_names_a_justfile_recipe(self):
+        report = golden_pair()
+        report.age_days = compare.STALE_DAYS + 1
+        self.assertIn("re-run `just run configs/runs/<wl>.yaml`", compare.render(report))
+        justfile = (Path(__file__).resolve().parents[2] / "justfile").read_text()
+        self.assertIn("\nrun cfg *args:", justfile)
 
 
 class WorkloadGate(unittest.TestCase):

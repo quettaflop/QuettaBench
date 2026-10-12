@@ -21,8 +21,8 @@ def main(argv=None) -> None:
                          "kernel_tables writes its kernel_data/ (with qbench_manifest.json) there, "
                          "and runs only when given")
     ap.add_argument("--replace-tables", action="store_true",
-                    help="replace the kernel tables and sidecars --kernel-dest holds instead of "
-                         "merging into them, even where that drops their rows")
+                    help="replace the kernel tables (and sidecars) --kernel-dest holds where merging "
+                         "into them would stop, dropping their rows; the others still merge")
     ap.add_argument("--only", nargs="+", choices=sorted(BUILDERS),
                     help="run just these builders (default: all)")
     a = ap.parse_args(argv)

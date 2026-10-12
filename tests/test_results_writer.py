@@ -153,9 +153,19 @@ class Redaction(unittest.TestCase):
                          {"headers": {"Authorization": "REDACTED",
                                       "Content-Type": "application/json"}})
 
-    def test_a_secret_named_list_is_redacted_item_by_item(self):
-        self.assertEqual(results.redact({"api_key": ["k1", 2, {"token": "t", "n": 1}]}),
-                         {"api_key": ["REDACTED", "REDACTED", {"token": "REDACTED", "n": 1}]})
+    def test_a_secret_named_list_or_mapping_is_redacted_whole(self):
+        self.assertEqual(results.redact({"api_key": ["k1", 2, {"token": "t", "n": 1}],
+                                         "auth": {"user": "u", "n": 1}, "token": [], "secret": {}}),
+                         {"api_key": "REDACTED", "auth": "REDACTED", "token": [], "secret": {}})
+
+    def test_an_assignment_after_a_comma_is_redacted(self):
+        self.assertEqual(results.redact({"env": "A=1,HF_TOKEN=sk"}), {"env": "A=1,HF_TOKEN=REDACTED"})
+        self.assertEqual(results.redact(["-e", "A=1,HF_TOKEN=sk,B=2"]), ["-e", "A=1,HF_TOKEN=REDACTED,B=2"])
+
+    def test_a_quoted_secret_assignment_is_redacted_whole(self):
+        self.assertEqual(results.redact({"cmd": "export HF_TOKEN='sk x'"}), {"cmd": "export HF_TOKEN=REDACTED"})
+        self.assertEqual(results.redact(["sh", "-c", "export HF_TOKEN='sk x' ; vllm serve m"]),
+                         ["sh", "-c", "export HF_TOKEN=REDACTED ; vllm serve m"])
 
     def test_an_argv_with_non_string_items(self):
         self.assertEqual(results.redact(["--port", 8000, "--api-key", 123, "--tp", 2]),
