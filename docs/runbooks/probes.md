@@ -9,7 +9,7 @@ All probes time the production kernels (vLLM's `flash_attn_varlen_func`, `torch.
 ```bash
 # from the QuettaBench repo root:
 just gpu=<gpu> profile-gpu
-just flash <gpu> tp1 32 8 128
+just nh=32 nkv=8 hd=128 flash <gpu>
 
 # any probe, flags in one quoted argument
 just probe gemm "--gpu-label <gpu> --ncu"
@@ -31,9 +31,9 @@ The one route to QuettaSim is the `kernel_tables` export builder: `just export -
 2. Collect tables, from the repo root:
    ```
    just gpu=X profile-gpu                         # gemm + elementwise (GPU-generic)
-   just flash X tp1 <Hq> <Hkv> <head_dim>       # per model head config
-   just flash X tp2 <Hq/2> <Hkv/2> <head_dim>   # sharded, if you run tp2
-   just gdn X 9b                                # only for Qwen3.5-style hybrids
+   just nh=<Hq> nkv=<Hkv> hd=<head_dim> flash X              # per model head config
+   just tag=tp2 nh=<Hq/2> nkv=<Hkv/2> hd=<head_dim> flash X  # sharded, if you run tp2
+   just gdn X                                   # only for Qwen3.5-style hybrids
    just gpu=X moe                                 # only if you serve MoE models
    ```
    Rows land in `results/probes/X/<probe>/<run-id>/rows.jsonl`; the export builds QuettaSim's layout from them (`graph/` = graphed-decode-faithful, `eager/` = eager-prefill-faithful): `graph/gemm/X.csv`, `eager/elementwise/X.json`, `{graph,eager}/flash_attn/X[_tpN].csv` (decode; graph with `--ncu`), `eager/fa3_prefill/X[_tpN].csv` (prefill), `{graph,eager}/gdn/X_<geom>_{decode,prefill}.csv`, `eager/moe/X.csv` + `eager/moe/X_routing.json`.
@@ -43,7 +43,7 @@ The one route to QuettaSim is the `kernel_tables` export builder: `just export -
 4. Serving-dynamics blocks for `X.yaml` (`frontend:` / `tp_comm:` / `serving:`): the API-server host cost, tp>1 all-reduce, and per-step host overhead the kernel tables do not capture. Without them a GPU prices serving as a bare compute roofline with no frontend or comm overhead. If `X` already has GT:
    ```
    just -f $QUETTASIM/justfile serving-fit gpu=X model=<Model>   # fits frontend:+serving: FROM GT (no GPU)
-   just gpu=X collectives world=2 hidden=<H> layers=<L>          # measures tp_comm: (needs 2 GPUs, torchrun)
+   just collectives X 2 <H> <L>                                  # measures tp_comm: (needs 2 GPUs, torchrun)
    ```
    If `X` has no GT yet, `just gpu=X serving-profile results/<run>` measures frontend:+serving: against that run's live `vllm serve` into its `profile.json` (`frontend` section); the others print a YAML block to paste into `X.yaml`.
 
@@ -89,14 +89,14 @@ MXFP4-expert models (gpt-oss) are swept for shape coverage but not priced off th
 
 Which timing method is *faithful* depends on how the kernel runs in serving, so `kernel_data` is split by timing (`graph/` vs `eager/`) and the loader reads each kernel from the right one:
 
-- Decode is CUDA-graphed: the graph replays all decode kernels with no per-launch CPU dispatch, so NCU (pure kernel time) equals the achieved time. Decode grids + gemm + elementwise come from `graph/`. Pass `--ncu` to the `gemm`, `flash` and `gdn` recipes (needs a real `ncu`: `NCU_BIN=/opt/nvidia/nsight-compute/2024.3.2/ncu`, not stock `/usr/bin/ncu`).
+- Decode is CUDA-graphed: the graph replays all decode kernels with no per-launch CPU dispatch, so NCU (pure kernel time) equals the achieved time. Decode grids + gemm + elementwise come from `graph/`. Add `--ncu` after the gpu (`just gemm X --ncu`, `just nh=<Hq> nkv=<Hkv> hd=<head_dim> flash X --ncu`, `just mode=smoke gdn X --ncu`; it needs a real `ncu`: `NCU_BIN=/opt/nvidia/nsight-compute/2024.3.2/ncu`, not stock `/usr/bin/ncu`).
 - Prefill is eager (dynamic shapes, not graphed): every kernel pays its dispatch cost, which cuda_event captures and NCU misses. Prefill grids come from `eager/`. The `flash`/`gdn` probes always emit prefill via cuda_event (even under `--ncu`, which only switches the *decode* grid).
 
 The dispatch overhead is real and host-specific: GDN prefill's 8 tiny Triton sub-kernels floor at ~500µs on A100 (~62µs/launch) vs far less on H100, which is why NCU alone can't reconstruct prefill. Every table's method is recorded in QuettaSim's `data/kernel_data/PROVENANCE.md`; keep a GPU/kernel/phase on one method and re-collect rather than mix. `gemm` without `--ncu` times raw `torch.matmul` cuBLAS, not vLLM's GEMM; prefer `--ncu`.
 
 ## Notes / TODO
 - `flash` and `gdn` grids are head-config specific: run them per model head config (and per tp shard), not once per GPU.
-- `gdn` is first-cut: decode uses the generic recurrent op (the serving-faithful decode is `fused_sigmoid_gating_delta_rule_update`); the batch grid can OOM past B≈80 on the state path. 27B geometry is `geom=27b hv=48`.
+- `gdn` is first-cut: decode uses the generic recurrent op (the serving-faithful decode is `fused_sigmoid_gating_delta_rule_update`); the batch grid can OOM past B≈80 on the state path. 27B geometry is `just geom=27b hv=48 gdn X`.
 - Serving-dynamics blocks have recipes (see step 4): `serving-fit` / `serving-profile` (frontend: + serving:, GT-fit or live-server) and `collectives` (tp_comm:, all-reduce microbench, `quettabench/probes/collective.py`). `serving-fit` fits only the conc1 floor, which improves TTFT in isolation, but a large floor combined with another GPU's mult/lanes curves gives pathological high-concurrency arrival delays that worsen tp>1 TPOT; the floor and curves must be fit jointly against TTFT and TPOT. `collectives` measures the real all-reduce cost but over-corrects low-concurrency TPOT. Treat the output as a starting point.
 
 ## Live-server probes

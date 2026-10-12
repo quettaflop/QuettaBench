@@ -26,3 +26,4 @@ data/_holdout_*.jsonl
 
 # provision.py writes the resolved run env here (the justfile loads it); host-specific.
 .env
+*.whl

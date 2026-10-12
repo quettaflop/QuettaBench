@@ -11,7 +11,7 @@ dependencies = [
     "aiohttp>=3.9",
     "numpy>=1.24",
     "datasets>=2.18",
-    "transformers>=4.40",  # tokenizer for random token profiles
+    "transformers>=4.40",  # tokenizers for ShareGPT profiles and the reference driver
     "pyyaml>=6",
     "huggingface_hub>=0.25",  # first release with HFValidationError and LocalEntryNotFoundError in huggingface_hub.errors
 ]
@@ -25,8 +25,7 @@ probe = ["torch>=2.1", "vllm>=0.6"]
 [project.scripts]
 qbench = "quettabench.cli:main"
 
-# Only the package installs: data/ and tests/ are not
-# importable names to put on site-packages next to the stdlib.
+# Only the package installs: data/ and tests/ are not importable names to put on site-packages next to the stdlib.
 [tool.setuptools.packages.find]
 include = ["quettabench*"]
 
@@ -35,19 +34,16 @@ line-length = 120
 target-version = "py310"
 
 [tool.ruff.lint]
-# pycodestyle, pyflakes, import order, pyupgrade. Not B: its loop-closure
-# and zip(strict=) findings are deliberate in the timing loops, and
-# strict= would change behaviour.
+# pycodestyle, pyflakes, import order, pyupgrade. Not B: its loop-closure and zip(strict=) findings are deliberate in the timing loops.
 select = ["E", "F", "I", "UP"]
-# Line length is not enforced; the moved code has lines up to 160.
+# Line length is not enforced.
 ignore = ["E501"]
 
 [tool.ruff.lint.isort]
 combine-as-imports = true
 
 [tool.ruff.lint.per-file-ignores]
-# Timing lambdas close over tensors the probe then `del`s to free GPU
-# memory; pyflakes reads the del as making the name undefined.
+# Timing lambdas close over tensors the probe then `del`s to free GPU memory; pyflakes reads the del as making the name undefined.
 "quettabench/probes/{cross_attn,flash_attn,gemm,moe,reparallel}.py" = ["F821"]
 
 [tool.pytest.ini_options]

@@ -14,8 +14,20 @@ gpu_ids := env_var_or_default("GPU_IDS", "")
 nproc := env_var_or_default("NPROC", "1")
 ncu_bin := env_var_or_default("NCU_BIN", "")
 kdata := "results/probes"
+# Head config for flash and gdn, set per run: just nh=64 nkv=8 flash <gpu> --ncu
+tag := "tp1"
+nh := "32"
+nkv := "8"
+hd := "128"
+layers := "32"
+geom := "9b"
+hv := "32"
+dk := "128"
+dv := "128"
+nlin := "24"
+mode := "full"
 
-r2_endpoint := env_var_or_default("R2_ENDPOINT", "https://b33fe7347f25479b27ec9680eff19b78.r2.cloudflarestorage.com")
+r2_endpoint := env_var_or_default("R2_ENDPOINT", "")
 r2_bucket := env_var_or_default("R2_BUCKET", "")
 # The probes' own prefix: a backup of results/probes/, never QuettaSim's profiling/kernel_data/.
 r2_prefix := "profiling/qbench_probes"
@@ -91,7 +103,7 @@ gemm gpu=gpu *args:
 elementwise gpu=gpu:
     CUDA_VISIBLE_DEVICES={{gpu_id}} {{py}} -m quettabench.probes.elementwise --gpu-label {{gpu}}
 
-flash gpu=gpu tag="tp1" nh="32" nkv="8" hd="128" layers="32" *args:
+flash gpu=gpu *args:
     CUDA_VISIBLE_DEVICES={{gpu_id}} {{py}} -m quettabench.probes.flash_attn --gpu-label {{gpu}} --tag {{tag}} --n-heads {{nh}} --n-kv-heads {{nkv}} --head-dim {{hd}} --layers {{layers}} {{args}}
 
 moe gpu=gpu geoms="qwen3-30b-a3b,mixtral-8x7b,gpt-oss-20b,gpt-oss-120b" tp="1,2,4":
@@ -101,7 +113,7 @@ moe gpu=gpu geoms="qwen3-30b-a3b,mixtral-8x7b,gpt-oss-20b,gpt-oss-120b" tp="1,2,
 moe-routing model gpu=gpu layer="1" *args:
     CUDA_VISIBLE_DEVICES={{gpu_id}} {{py}} -m quettabench.probes.moe --routing --gpu-label {{gpu}} --model {{model}} --layer {{layer}} {{args}}
 
-gdn gpu=gpu geom="9b" hv="32" dk="128" dv="128" nlin="24" mode="full" *args:
+gdn gpu=gpu *args:
     CUDA_VISIBLE_DEVICES={{gpu_id}} {{py}} -m quettabench.probes.gdn --gpu-label {{gpu}} --geometry-tag {{geom}} --hv {{hv}} --dk {{dk}} --dv {{dv}} --n-linear {{nlin}} --mode {{mode}} {{args}}
 
 # NCCL grid -> results/probes/<gpu>/collective/<run-id>/rows.jsonl. Also prints tp_comm scalars as a YAML block.
@@ -131,8 +143,8 @@ profile-gpu gpu=gpu:
     just gpu={{gpu}} elementwise
     @echo ""
     @echo "GPU-generic tables done for {{gpu}}. Head-config-specific next:"
-    @echo "  just flash {{gpu}} tp1 <Hq> <Hkv> <head_dim>"
-    @echo "  just gdn {{gpu}} 9b     # Qwen3.5 hybrids only"
+    @echo "  just nh=<Hq> nkv=<Hkv> hd=<head_dim> flash {{gpu}}"
+    @echo "  just gdn {{gpu}}     # Qwen3.5 hybrids only"
     @echo "Then route the tables to QuettaSim: just export --only kernel_tables --results results/probes --kernel-dest <QuettaSim data root, e.g. ../QuettaSim/data>"
 
 # The trajectory datasets from R2 into data/ (gitignored)
