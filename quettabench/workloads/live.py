@@ -13,7 +13,7 @@ import yaml
 
 from .base import DrawnTrace, Request, Trace, synth_ids
 
-BLOCK_SIZE = 512
+BLOCK_SIZE = 512  # tokens per Mooncake hash id
 
 # Avoids low special token ids and stays under small vocabs.
 TOKEN_ID_LOW = 1000
@@ -170,9 +170,7 @@ class RealTrace(Trace):
 
 
 class MooncakeTrace(DrawnTrace):
-    """Mooncake records in file order with expanded token ids, wrapping at the end and rewinding after warmup.
-
-    Requests carry prompt_token_ids so no chat template disturbs block boundaries. arrival_ts is the record's timestamp in seconds; lap k of a wrapped draw is shifted by k * (span + mean gap) of the timestamps. A span of 0 has no pace, and runner.build_trace refuses such a wrap under workload.arrival=trace."""
+    """Mooncake records in file order with expanded token ids, wrapping at the end and rewinding after warmup."""
 
     rewinds = True
 
@@ -180,7 +178,9 @@ class MooncakeTrace(DrawnTrace):
         super().__init__()
         self.records = parse_mooncake_trace(path, limit)
         stamps = [r.timestamp for r in self.records if r.timestamp is not None]
-        span = max(stamps) - min(stamps) if stamps else 0
+        span = (
+            max(stamps) - min(stamps) if stamps else 0
+        )  # 0 has no pace; build_trace refuses such a wrap under arrival=trace
         self.lap_ms = span + (span / (len(stamps) - 1) if len(stamps) > 1 else 0)
         self.seed = seed
         self._cursor = 0
@@ -273,10 +273,7 @@ def load_chat_tokenizer(name):
 
 
 class ShareGPTTrace(SampledChatTrace):
-    """First user/assistant pair of each ShareGPT conversation; max tokens is the estimated reply length.
-
-    Pairs outside the input and output bounds are skipped, and with max_total_tokens so is one whose prompt, reply and margin overflow it. Loads up to 3x num_prompts pairs, shuffles, keeps num_prompts.
-    """
+    """First user/assistant pair of each ShareGPT conversation; max tokens is the estimated reply length."""
 
     def __init__(
         self,

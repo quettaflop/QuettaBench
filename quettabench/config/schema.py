@@ -242,9 +242,8 @@ def dict_field(path):
 
 # Serving-topology and expert-parallel rules: the loader refuses a Config that breaks them.
 def parse_serving_style(spec):
-    """Parse a serving topology into {mode, ...degrees}, recorded so aggregated and disaggregated numbers never share a table; raises ValueError on a malformed spec.
-
-    'aggregated' (default) is one server over tp*pp GPUs; 'disagg:<P>p<D>d' splits prefill and decode onto disjoint pools with a KV connector (vLLM PD); 'ep<N>dp<M>' is N-way experts across M data-parallel replicas; 'afd:<A>a<F>f' puts attention and FFN/MoE layers on disjoint pools of A and F GPUs.
+    """Parse a serving topology into {mode, ...degrees}; raises ValueError on a malformed spec.
+    'aggregated', 'disagg:<P>p<D>d', 'ep<N>dp<M>' or 'afd:<A>a<F>f'.
     """
     if spec in (None, "", "aggregated"):
         return {"mode": "aggregated"}

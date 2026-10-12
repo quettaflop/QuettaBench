@@ -1,6 +1,5 @@
-"""The measurement procedure: send a Trace's requests through a Driver and collect one RequestResult row per request.
-
-Closed loop holds mode.concurrency slots; open loop fires each request at its arrival. SessionDispatcher feeds each reply into the session's later turns; run_grid times a GridTrace cell by cell. The metrics.core gates and the workload identity gate (exit 3 on a hash mismatch) run after.
+"""Send a Trace's requests through a Driver and collect one RequestResult row per request.
+Closed loop holds mode.concurrency slots, open loop fires at arrival; run_grid times a GridTrace cell by cell.
 """
 
 import asyncio
