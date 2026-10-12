@@ -17,7 +17,7 @@ ABSENT = "<absent>"
 
 def returns_grid_kwargs(name, env, extra_argv=()):
     """The one path that still builds vllm.LLM."""
-    run = run_grid_cli(grid_argv(name, "--allow-unverified", "--set", "mode.returns=text", *extra_argv), env)
+    run = run_grid_cli(grid_argv(name, "--allow-unverified", "--set", "mode.return_outputs=text", *extra_argv), env)
     (kwargs,) = run["llm_kwargs"]
     return kwargs
 

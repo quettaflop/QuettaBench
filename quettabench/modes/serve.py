@@ -272,9 +272,9 @@ def server_spec_section(before, after):
     }
 
 
-def compare_sections(pairs, duration, mode, server_spec=None):
+def summary_sections(pairs, duration, mode, server_spec=None):
     """spec prefers the server's counters over the rows'."""
-    out = {"spec": server_spec or spec_section(pairs)}
+    out = {"spec_decode": server_spec or spec_section(pairs)}
     records = serve_records(pairs, mode.load == "open")
     if not records:
         return out
@@ -444,7 +444,7 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
     enforce(usage_gate(core, mode.allow_missing_usage), writer, summary)
 
     ident = summary.sections["workload"] = identity(trace, served(pairs))
-    summary.sections.update({"goodput": goodput} if goodput else compare_sections(pairs, duration, mode, server_spec))
+    summary.sections.update({"goodput": goodput} if goodput else summary_sections(pairs, duration, mode, server_spec))
     print_summary_tag_lines(summary.sections)
     if not ident["match"]:
         stop(writer, summary.to_dict(), "failed", "workload identity", IDENTITY_EXIT)
@@ -528,7 +528,7 @@ def measure_cell(driver, writer, mode, steps, prompts, cell):
             writer.append(r, **{k: f(r) for k, f in extra.items()})
         return rows
 
-    if mode.returns == "text":
+    if mode.return_outputs == "text":
         # Routing-parity audit: greedy ids must match the engine's DS_TOKEN_TRACE.
         batch(
             TEXT_TOKENS,
@@ -536,7 +536,7 @@ def measure_cell(driver, writer, mode, steps, prompts, cell):
             token_ids=lambda r: r.generated_token_ids[:TEXT_TOKENS],
             text=lambda r: r.generated_text,
         )
-    if mode.returns == "logits":
+    if mode.return_outputs == "logits":
         score(driver, writer, prompts, cell)
     batch(max(steps), "warm")
     out = []
@@ -554,7 +554,7 @@ def measure_cell(driver, writer, mode, steps, prompts, cell):
 def score(driver, writer, prompts, cell):
     requests = [Request(ids, len(ids)) for ids in prompts]
     for r in driver.run(
-        requests, cell={**cell, "step_point": None, "phase": "logits", "attempt": None}, returns="logits"
+        requests, cell={**cell, "step_point": None, "phase": "logits", "attempt": None}, return_outputs="logits"
     ):
         r.excluded_from_summary = True
         writer.append(r)
@@ -584,7 +584,7 @@ def run_bench(driver, cfg, writer):
         need = (ctx + hw.timing_steps + hw.max_seq_headroom) * bs
         if (ctx, bs) in over:
             event = {"event": "skip_maxlen", "ctx": ctx, "bs": bs}
-        elif cap and need > cfg.mode.cap_frac * cap:
+        elif cap and need > cfg.mode.max_kv_fraction * cap:
             event = {"event": "skip_kv", "ctx": ctx, "bs": bs, "need": need, "cap": cap}
         else:
             kept.append((ctx, bs, spec))
@@ -606,7 +606,7 @@ def run_grid(trace, driver, cfg, writer):
     mode, engine = cfg.mode, cfg.engine
     eval_pos = mode.eval_decode_pos if mode.eval_decode_pos is not None else cfg.hardware.timing_steps // 2
     steps = trace.step_points
-    kv_label = engine.kv_dtype if engine.kv_dtype != "auto" else engine.dtype
+    kv_label = engine.kv_cache_dtype if engine.kv_cache_dtype != "auto" else engine.dtype
     gpu, gpu_bytes = driver.device()
     run = {"meta": meta(cfg, gpu, driver.version, eval_pos, steps), "kv": kv_label, "events": []}
     if trace.trace is not None:
@@ -639,7 +639,7 @@ def run_grid(trace, driver, cfg, writer):
         need = (ctx + top) * bs
         if (ctx, bs) in over:
             run["events"].append({"event": "skip_maxlen", "ctx": ctx, "bs": bs})
-        elif cap and need > mode.cap_frac * cap:
+        elif cap and need > mode.max_kv_fraction * cap:
             run["events"].append({"event": "skip_kv", "ctx": ctx, "bs": bs, "need": need, "cap": cap})
         else:
             # Checked at the first cell that needs it, so an all-SKIP run never asks.

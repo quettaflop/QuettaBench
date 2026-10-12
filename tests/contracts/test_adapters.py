@@ -36,9 +36,9 @@ class LaunchSpecTests(unittest.TestCase):
             base.get("nope")
 
     def test_unsupported_field_names_engine_and_field(self):
-        err = base.UnsupportedField("vllm", "kv_dtype", "no flag")
-        self.assertEqual((err.engine, err.field), ("vllm", "kv_dtype"))
-        self.assertIn("kv_dtype", str(err))
+        err = base.UnsupportedField("vllm", "kv_cache_dtype", "no flag")
+        self.assertEqual((err.engine, err.field), ("vllm", "kv_cache_dtype"))
+        self.assertIn("kv_cache_dtype", str(err))
 
 
 GOLDEN = json.loads((FIXTURES / "engine_args.json").read_text())
@@ -66,14 +66,14 @@ class KwargsMatchVminFit(unittest.TestCase):
         for name in sorted(GOLDEN):
             with self.subTest(name=name):
                 self.assertEqual(
-                    spec_for(name, env=ENV_OVERRIDE, sets=["mode.returns=text"]).engine_kwargs,
+                    spec_for(name, env=ENV_OVERRIDE, sets=["mode.return_outputs=text"]).engine_kwargs,
                     GOLDEN[name]["vmin_fit_env_override"],
                 )
 
     def test_nograph(self):
         for name in sorted(GOLDEN):
             with self.subTest(name=name):
-                spec = spec_for(name, sets=["engine.cudagraph=false", "mode.returns=text"])
+                spec = spec_for(name, sets=["engine.cudagraph=false", "mode.return_outputs=text"])
                 self.assertEqual(spec.engine_kwargs, GOLDEN[name]["vmin_fit_nograph"])
                 self.assertIn("--enforce-eager", spec.server_argv)
 
@@ -117,7 +117,7 @@ class ServerArgv(unittest.TestCase):
         self.assertNotIn("--quantization", spec.server_argv)
         self.assertEqual(spec.engine_kwargs["quantization"], "fp8")
 
-    def test_kv_dtype_is_kv_cache_dtype(self):
+    def test_kv_cache_dtype_is_the_vllm_flag(self):
         argv = list(spec_for("deepseek").server_argv)
         self.assertEqual(argv[argv.index("--kv-cache-dtype") + 1], "fp8_ds_mla")
         self.assertNotIn("--kv-cache-dtype", spec_for("llama").server_argv)
@@ -131,7 +131,7 @@ class ServerArgv(unittest.TestCase):
             spec_for(
                 "llama",
                 sets=[
-                    "engine.kv_dtype=fp8",
+                    "engine.kv_cache_dtype=fp8",
                     "engine.ep=true",
                     "engine.gpu_util=0.95",
                     "engine.extra.vllm={max_num_seqs: 32, max_num_batched_tokens: 4096}",
@@ -207,7 +207,7 @@ class Extra(unittest.TestCase):
 
 
 class GridDriver(unittest.TestCase):
-    """mode.returns picks how a grid run reaches vLLM."""
+    """mode.return_outputs picks how a grid run reaches vLLM."""
 
     def cfg(self, *sets):
         (cfg,) = loader.load(RUNS / "llama.yaml", [*PINNED, *sets], env={})
@@ -215,9 +215,9 @@ class GridDriver(unittest.TestCase):
 
     def test_a_returns_grid_is_in_process(self):
         adapter = vllm_adapter.ADAPTER
-        for returns in ("text", "logits"):
-            with self.subTest(returns=returns):
-                cfg = self.cfg(f"mode.returns={returns}")
+        for return_outputs in ("text", "logits"):
+            with self.subTest(return_outputs=return_outputs):
+                cfg = self.cfg(f"mode.return_outputs={return_outputs}")
                 self.assertFalse(adapter.needs_server(cfg))
                 driver = adapter.driver(adapter.translate(cfg), launcher.NoServer(Path("r")))
                 self.assertIsInstance(driver, InProcessDriver)
@@ -394,7 +394,7 @@ class DeepseekMoe(unittest.TestCase):
         ):
             with self.subTest(field), self.assertRaisesRegex(base.UnsupportedField, shown):
                 quettaserve_spec("deepseek", (1024, 1), sets=[*DS, field])
-        # Model yaml facts (dtype, kv_dtype, ep) describe the checkpoint.
+        # Model yaml facts (dtype, kv_cache_dtype, ep) describe the checkpoint.
         self.assertTrue(quettaserve_spec("deepseek", (1024, 1), sets=DS).bench_argv)
 
     def test_cli_refuses_pp_on_quettaserve(self):

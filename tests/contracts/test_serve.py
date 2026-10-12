@@ -247,7 +247,7 @@ class LineFormats(unittest.TestCase):
                 "sla_tpot_ms": None,
             },
             "burst": {"peak_ttft_p99": 40.06, "recovery_s": None, "target_ms": 30.0},
-            "spec": {"spec": "measured", "accept_len": 2.0, "accept_rate": 0.5, "n": 4},
+            "spec_decode": {"spec": "measured", "accept_len": 2.0, "accept_rate": 0.5, "n": 4},
         }
         self.assertEqual(
             summary_tag_lines(summary),
@@ -280,7 +280,7 @@ class LineFormats(unittest.TestCase):
         )
         records = [{"ttft_ms": 5.0, "index": 0, "out_tokens": 1, "arrival_s": 0.0, "tpot_ms": None}]
         with mock.patch.object(serve, "serve_records", return_value=records):
-            sections = serve.compare_sections([], 1.0, ModeCfg(sla_ttft_ms=30.0, sla_tpot_ms=10.0))
+            sections = serve.summary_sections([], 1.0, ModeCfg(sla_ttft_ms=30.0, sla_tpot_ms=10.0))
         self.assertIsNone(sections["sla"]["tpot_p99"])
 
     def test_off_and_void_and_goodput(self):
@@ -288,7 +288,7 @@ class LineFormats(unittest.TestCase):
             summary_tag_lines(
                 {
                     "serve": {"n": 1, "ttft_ms": PCT, "tpot_ms": None, "req_s": 1.0, "tok_s": 1.0},
-                    "spec": {"spec": "off"},
+                    "spec_decode": {"spec": "off"},
                 }
             ),
             [
@@ -336,7 +336,7 @@ class Sections(unittest.TestCase):
 
     def test_no_tokens_from_the_driver_means_spec_off(self):
         summary, out = run_sections(single_trace(3), FakeDriver(), ModeCfg(warmup=0, concurrency=3))
-        self.assertEqual(summary.sections["spec"], {"spec": "off"})
+        self.assertEqual(summary.sections["spec_decode"], {"spec": "off"})
         self.assertEqual(tail(out, "SPEC_DECODE_SUMMARY"), ["SPEC_DECODE_SUMMARY spec=off note=needs-real-text-trace"])
 
     def test_http_spec_comes_from_server_counter_deltas(self):
@@ -354,7 +354,7 @@ class Sections(unittest.TestCase):
             driver = HttpDriver("completions", url=endpoint + "/v1/completions", model="m")
             summary, out = run_sections(single_trace(3), driver, ModeCfg(warmup=0, concurrency=3))
         self.assertEqual(
-            summary.sections["spec"],
+            summary.sections["spec_decode"],
             {
                 "spec": "measured",
                 "source": "server_metrics",
@@ -378,7 +378,7 @@ class Sections(unittest.TestCase):
         with helpers.serve() as (endpoint, _):
             driver = HttpDriver("completions", url=endpoint + "/v1/completions", model="m")
             summary, _ = run_sections(single_trace(3), driver, ModeCfg(warmup=0, concurrency=3))
-        self.assertEqual(summary.sections["spec"], {"spec": "off"})
+        self.assertEqual(summary.sections["spec_decode"], {"spec": "off"})
 
     def test_a_failed_metrics_scrape_reads_as_no_counters(self):
         driver = HttpDriver("completions", url="http://127.0.0.1:1/v1/completions", model="m")
@@ -501,7 +501,7 @@ class GridRunFiles(unittest.TestCase):
             self.assertEqual(all(r.get("excluded_from_summary", False) for r in rows), phase != "fit")
 
     def test_dump_tokens_writes_text_rows(self):
-        _, _, rows = grid_run("--set", "mode.grid=smoke", "--set", "mode.returns=text")
+        _, _, rows = grid_run("--set", "mode.grid=smoke", "--set", "mode.return_outputs=text")
         text = [r for r in rows if r["cell"]["phase"] == "text"]
         self.assertTrue(text)
         self.assertEqual({r["cell"]["step_point"] for r in text}, {64})

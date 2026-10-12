@@ -40,7 +40,7 @@ class RequestResult:
     cell: dict | None = None
     # Every row of the batch carries the wall time of the one generate().
     batch_wall_s: float | None = None
-    # mode.returns=logits; entry i scores prompt token i + 1.
+    # mode.return_outputs=logits; entry i scores prompt token i + 1.
     logits: dict | None = None
 
     request_index: int | None = None

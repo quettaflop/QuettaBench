@@ -602,7 +602,7 @@ class BenchDriver(Driver):
 
 
 class InProcessDriver(Driver):
-    """Only for mode.returns: only this path returns token ids, text or logits."""
+    """Only for mode.return_outputs: only this path returns token ids, text or logits."""
 
     def __init__(self, spec):
         self.spec = spec
@@ -650,9 +650,9 @@ class InProcessDriver(Driver):
         params = SamplingParams(temperature=0, max_tokens=1, prompt_logprobs=2)
         return self.llm().generate([{"prompt_token_ids": ids} for ids in prompts], params, use_tqdm=False)
 
-    def run(self, requests, *, cell, returns="none", concurrency=None, **kwargs):
-        """returns="logits" scores instead and times nothing."""
-        if returns == "logits":
+    def run(self, requests, *, cell, return_outputs="none", concurrency=None, **kwargs):
+        """return_outputs="logits" scores instead and times nothing."""
+        if return_outputs == "logits":
             outs = self.score([r.prompt_token_ids for r in requests])
             for r, out in zip(requests, outs):
                 yield RequestResult(

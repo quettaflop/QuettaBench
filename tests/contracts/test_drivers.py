@@ -779,7 +779,7 @@ class Halves(unittest.TestCase):
         vllm.reset()
         driver = InProcessDriver(LaunchSpec(adapter="vllm", engine_kwargs={"model": "m"}))
         with mock.patch.object(vllm.LLM, "generate", autospec=True, side_effect=vllm.LLM.generate) as generate:
-            rows = list(driver.run(requests(), cell=LOGITS_CELL, returns="logits"))
+            rows = list(driver.run(requests(), cell=LOGITS_CELL, return_outputs="logits"))
         (_, prompts, params), kwargs = generate.call_args
         self.assertEqual(params.kwargs, {"temperature": 0, "max_tokens": 1, "prompt_logprobs": 2})
         self.assertEqual(prompts, [{"prompt_token_ids": ids} for ids in PROMPTS])
@@ -848,7 +848,7 @@ class Recipe(unittest.TestCase):
         sets = ["--set", "mode.grid=smoke"]
         with tempfile.TemporaryDirectory() as td:
             for name, extra in (
-                ("ours", ["--set", "mode.returns=logits"]),
+                ("ours", ["--set", "mode.return_outputs=logits"]),
                 ("ref", ["--set", "engine.name=reference"]),
                 ("slice", ["--set", "engine.name=reference", "--set", "engine.layers=2"]),
             ):
@@ -886,7 +886,7 @@ def config(name, *sets):
 
 class VllmDriver(unittest.TestCase):
     def test_grid_run_with_returns_is_in_process(self):
-        cfg = config("llama", "engine.model=/w", "mode.returns=text")
+        cfg = config("llama", "engine.model=/w", "mode.return_outputs=text")
         self.assertFalse(vllm_adapter.ADAPTER.needs_server(cfg))
         spec = vllm_adapter.ADAPTER.translate(cfg)
         driver = vllm_adapter.ADAPTER.driver(spec, launcher.NoServer(Path("/r")))
@@ -952,7 +952,7 @@ class QuettaServeThroughCli(unittest.TestCase):
         "engine.tp=1",
         f"engine.extra.bench_bin={FAKE}",
         "engine.max_model_len=10000",
-        "mode.cap_frac=0.3",
+        "mode.max_kv_fraction=0.3",
     ]
 
     def qbench(self, *argv):

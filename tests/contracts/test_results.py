@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def config():
     return Config(
-        engine=EngineCfg(model="m", kv_dtype="fp8"),
+        engine=EngineCfg(model="m", kv_cache_dtype="fp8"),
         workload=WorkloadCfg(),
         mode=ModeCfg(),
         hardware=HardwareCfg(collective={"NCCL_ALGO": "Ring"}),
@@ -73,7 +73,8 @@ class RoundTrip(unittest.TestCase):
         self.assertEqual(on_disk["config"]["engine"]["model"], "m")
         prov = on_disk["provenance"]
         self.assertEqual(
-            (prov["engine"], prov["engine_sha"], prov["nccl_algo"], prov["kv_dtype"]), ("vllm", "abc", "Ring", "fp8")
+            (prov["engine"], prov["engine_sha"], prov["nccl_algo"], prov["kv_cache_dtype"]),
+            ("vllm", "abc", "Ring", "fp8"),
         )
         self.assertTrue(prov["started"] <= prov["finished"])
         self.assertEqual([r["request_index"] for r in rows], [0, 1, 2])

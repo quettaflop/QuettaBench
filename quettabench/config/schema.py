@@ -27,7 +27,7 @@ CHOICES = {
     "mode.mode": ("serve", "probe"),
     "mode.serve_profile": (None, "stress-test", "single-turn", "multi-turn"),
     "mode.load": ("closed", "open"),
-    "mode.returns": ("none", "text", "logits"),
+    "mode.return_outputs": ("none", "text", "logits"),
     "hardware.backend": ("auto", "cuda", "rocm", "neuron", "tpu", "cpu"),
     "hardware.link_profile": ("auto", "pcie", "nvlink"),
     "hardware.launcher": ("local", "docker"),
@@ -77,7 +77,7 @@ class EngineCfg:
     pp: int = 1
     ep: bool = False  # model yaml ep, ENABLE_EP
     dtype: str = "auto"
-    kv_dtype: str = "auto"
+    kv_cache_dtype: str = "auto"
     quant: str | None = None
     max_model_len: int | None = None
     layers: int | None = None  # first N decoder layers only: a slice run (slice_truncate.py)
@@ -138,12 +138,12 @@ class ModeCfg:
     sla_ttft_ms: float | None = None
     sla_tpot_ms: float | None = None
     goodput_sweep: bool = False
-    returns: str = "none"  # none | text | logits
+    return_outputs: str = "none"  # none | text | logits
     grid: str | None = None  # name in grids.yaml; set => step metrics
     fit_attempts: int = 4  # grid: fit passes per cell, best r2 kept
     fit_r2_stop: float = 0.999  # grid: a pass fitting at least this r2 ends the cell
     eval_decode_pos: int | None = None  # None => hardware.timing_steps // 2
-    cap_frac: float = 0.80
+    max_kv_fraction: float = 0.80
     probe: str | None = None  # mode=probe: module under quettabench/probes/
     probe_args: str = ""  # mode=probe: that probe's own flags, shell-quoted
 

@@ -31,7 +31,7 @@ MODEL_KEYS = {
     "tp": "engine.tp",
     "weights_gib": "engine.weights_gib",
     "max_model_len": "engine.max_model_len",
-    "kv_dtype": "engine.kv_dtype",
+    "kv_cache_dtype": "engine.kv_cache_dtype",
     "kv_bytes": "engine.kv_bytes",
     "quant": "engine.quant",
     "ep": "engine.ep",
@@ -283,14 +283,14 @@ def _validate(values, origins, allow_unverified, where):
         values["mode.load"] != "open" or not (values["mode.sla_ttft_ms"] or values["mode.sla_tpot_ms"])
     ):
         raise ConfigError(f"{where}: goodput sweep needs open load and mode.sla_ttft_ms and/or sla_tpot_ms")
-    if values["mode.grid"] and values["workload.prompt_mode"] == "corpus" and values["mode.returns"] == "none":
+    if values["mode.grid"] and values["workload.prompt_mode"] == "corpus" and values["mode.return_outputs"] == "none":
         raise ConfigError(
             f"{where}: prompt_mode=corpus tokenizes in-process, which only a "
-            "mode.returns run builds; a timing grid runs over HTTP with no tokenizer"
+            "mode.return_outputs run builds; a timing grid runs over HTTP with no tokenizer"
         )
-    if values["mode.grid"] and values["mode.returns"] != "none" and backend in OTHER_ACCELERATORS:
+    if values["mode.grid"] and values["mode.return_outputs"] != "none" and backend in OTHER_ACCELERATORS:
         raise ConfigError(
-            f"{where}: mode.returns={values['mode.returns']} builds vLLM in-process, "
+            f"{where}: mode.return_outputs={values['mode.return_outputs']} builds vLLM in-process, "
             f"which reads the device through torch.cuda; hardware.backend={backend} "
             "has no CUDA"
         )

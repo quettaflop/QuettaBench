@@ -142,7 +142,7 @@ def in_docker(cfg, adapter):
     if not adapter.needs_server(cfg):
         raise ConfigError(
             f"{cfg.run_name}: hardware.launcher=docker needs a launched server; "
-            "a grid run with mode.returns builds vLLM in this process"
+            "a grid run with mode.return_outputs builds vLLM in this process"
         )
     return True
 

@@ -50,7 +50,7 @@ def header(**known):
         "grid",
         "graph_mode",
         "method",
-        "kv_dtype",
+        "kv_cache_dtype",
         "quant",
         "serving_style",
         "nccl_algo",
@@ -224,7 +224,7 @@ def read_baseline(path):
             grid=b.get("grid", "?"),
             graph_mode=b["mode"],
             method=b.get("method", "slope"),
-            kv_dtype=b.get("kv_dtype"),
+            kv_cache_dtype=b.get("kv_cache_dtype"),
             quant=b.get("quant", b.get("dtype", "?")),
             serving_style=b.get("serving_style", "aggregated"),
             nccl_algo=b.get("nccl_algo"),
@@ -280,7 +280,7 @@ def read_run(results_dir):
     engine = cfg["engine"]
     mode = meta.get("mode") or ("FULL" if engine.get("cudagraph", True) else "NOGRAPH")
     row_mode = "eager" if mode == "NOGRAPH" else "graph"
-    kv = grid.get("kv") or prov.get("kv_dtype")
+    kv = grid.get("kv") or prov.get("kv_cache_dtype")
 
     bench = {}
     for r in read_rows(d):
@@ -312,7 +312,7 @@ def read_run(results_dir):
             grid=meta.get("grid") or "?",
             graph_mode=mode,
             method="+".join(sorted(methods)) or None,
-            kv_dtype=kv,
+            kv_cache_dtype=kv,
             quant=meta.get("quant") or prov.get("quant"),
             serving_style=prov.get("serving_style"),
             nccl_algo=meta.get("nccl_algo") or prov.get("nccl_algo"),

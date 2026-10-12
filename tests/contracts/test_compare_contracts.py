@@ -350,7 +350,7 @@ class TableParity(unittest.TestCase):
             "dtype": "float16",
             "grid": "g",
             "method": "slope",
-            "kv_dtype": kv,
+            "kv_cache_dtype": kv,
             "nccl_algo": "allreduce:tree;allgather:ring",
             "nccl_proto": "Simple",
             "serving_style": serving_style,
@@ -509,7 +509,7 @@ class TableParity(unittest.TestCase):
             "dtype": "float16",
             "grid": "g",
             "method": "slope",
-            "kv_dtype": "float16",
+            "kv_cache_dtype": "float16",
             "nccl_algo": "allreduce:tree;allgather:ring",
             "nccl_proto": "Simple",
             "points": [
@@ -554,7 +554,7 @@ class TableParity(unittest.TestCase):
             "dtype": "float16",
             "grid": "g",
             "method": "slope",
-            "kv_dtype": "float16",
+            "kv_cache_dtype": "float16",
             "nccl_algo": "allreduce:tree;allgather:ring",
             "nccl_proto": "Simple",
             "points": [
@@ -593,7 +593,7 @@ class TableParity(unittest.TestCase):
         self.assertIn("prompt_mode", src)
         for mode in ('"clone"', '"corpus"', '"distinct"'):
             self.assertIn(mode, src)
-        self.assertIn('returns: str = "none"', src)
+        self.assertIn('return_outputs: str = "none"', src)
 
     def test_cache_records_prompt_mode(self):
         self.assertIn("prompt_mode", (QB / "compare.py").read_text())
@@ -840,7 +840,13 @@ class TraceWorkloads(unittest.TestCase):
 def text_run(out):
     run = run_grid_cli(
         grid_argv(
-            "llama", "--set", "mode.returns=text", "--set", f"run_name={out.name}", "--results-dir", str(out.parent)
+            "llama",
+            "--set",
+            "mode.return_outputs=text",
+            "--set",
+            f"run_name={out.name}",
+            "--results-dir",
+            str(out.parent),
         ),
         {},
     )

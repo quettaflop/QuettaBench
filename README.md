@@ -26,7 +26,7 @@ A run is one yaml in `configs/runs/` naming a model (`configs/models/`), a workl
 
 Precedence, highest first: `--set` > env (through `config/env_map.py`, the only reader of `os.environ`) > run yaml > model yaml > hardware yaml > schema defaults. Unknown keys are refused. `just dry-run` prints every value with its origin.
 
-A grid run (`mode.grid` set) times decode ms per step per (ctx, bs) cell: vLLM over HTTP against a launched server (bs concurrent completions per batch, prefix cache reset per cell), QuettaServe through its cargo bench (`--set engine.name=quettaserve`). A vLLM grid run with `mode.returns` text or logits builds vLLM in-process instead, the only path that returns token ids, text or logits; only such a run takes `prompt_mode=corpus`, which a timing grid refuses. `engine.pp` and `engine.cudagraph=false` reach the server as `--pipeline-parallel-size` and `--enforce-eager`. `tests/parity/slope_gate.json` holds the HTTP-vs-in-process gate both paths passed (8x H200, vLLM 0.30.1: 15 cells, worst |delta| 0.228 ms). A serve run (`mode.grid` unset) launches the server and replays the workload against it. `mode: probe` runs a kernel probe (`mode.probe`, `mode.probe_args`) with `--out results/<run>/`. It refuses the torchrun probes (`collective`, `reparallel`, `vllm_allreduce`) and the probes that name output files (`serving_decode_grid`, `serving_stage_split`); run those with `just probe`.
+A grid run (`mode.grid` set) times decode ms per step per (ctx, bs) cell: vLLM over HTTP against a launched server (bs concurrent completions per batch, prefix cache reset per cell), QuettaServe through its cargo bench (`--set engine.name=quettaserve`). A vLLM grid run with `mode.return_outputs` text or logits builds vLLM in-process instead, the only path that returns token ids, text or logits; only such a run takes `prompt_mode=corpus`, which a timing grid refuses. `engine.pp` and `engine.cudagraph=false` reach the server as `--pipeline-parallel-size` and `--enforce-eager`. `tests/parity/slope_gate.json` holds the HTTP-vs-in-process gate both paths passed (8x H200, vLLM 0.30.1: 15 cells, worst |delta| 0.228 ms). A serve run (`mode.grid` unset) launches the server and replays the workload against it. `mode: probe` runs a kernel probe (`mode.probe`, `mode.probe_args`) with `--out results/<run>/`. It refuses the torchrun probes (`collective`, `reparallel`, `vllm_allreduce`) and the probes that name output files (`serving_decode_grid`, `serving_stage_split`); run those with `just probe`.
 
 ## Provisioning
 
@@ -45,7 +45,7 @@ It is idempotent. Anything it cannot resolve prints `MISSING: <what>`, and it ex
 | tpu | `vllm/vllm-tpu:v0.30.0` | Docker Hub; tpu-inference docs |
 | neuron | `public.ecr.aws/neuron/pytorch-inference-vllm-neuronx:0.24.0.1.1.0-neuronx-py313-sdk2.32.0-ubuntu24.04` (vLLM 0.24 with vllm-neuron) | AWS Neuron DLC quickstart (SDK 2.32.0) |
 
-`hardware.backend` picks the devices a launched server sees (`CUDA_VISIBLE_DEVICES`; `HIP_VISIBLE_DEVICES` and `CUDA_VISIBLE_DEVICES` on rocm; `TPU_VISIBLE_CHIPS` with its process bounds on tpu; `NEURON_VISIBLE_DEVICES` on neuron, with `NEURON_RT_VISIBLE_CORES` unset) and, with `hardware.launcher: docker`, the device flags. On tpu `engine.dtype=float16` is refused; the kernel probes, nsys, `hardware.provision.nccl_lib`, the transformers reference and `mode.returns` grids (in-process vLLM) are cuda only. Only cuda checks which GPUs are busy; rocm, tpu and neuron runs must set `hardware.visible_devices`, else they take devices 0..n-1. amd-smi, neuron-ls and tpu report no memory size, so grids there run without the KV SKIP.
+`hardware.backend` picks the devices a launched server sees (`CUDA_VISIBLE_DEVICES`; `HIP_VISIBLE_DEVICES` and `CUDA_VISIBLE_DEVICES` on rocm; `TPU_VISIBLE_CHIPS` with its process bounds on tpu; `NEURON_VISIBLE_DEVICES` on neuron, with `NEURON_RT_VISIBLE_CORES` unset) and, with `hardware.launcher: docker`, the device flags. On tpu `engine.dtype=float16` is refused; the kernel probes, nsys, `hardware.provision.nccl_lib`, the transformers reference and `mode.return_outputs` grids (in-process vLLM) are cuda only. Only cuda checks which GPUs are busy; rocm, tpu and neuron runs must set `hardware.visible_devices`, else they take devices 0..n-1. amd-smi, neuron-ls and tpu report no memory size, so grids there run without the KV SKIP.
 
 Mount the HF cache, so `engine.model` can be a repo id, the vLLM compile cache and `results/`:
 
@@ -109,7 +109,7 @@ The table prints a ratio only for like with like. It is withheld when the method
 
 - `distinct` (default): per-slot synthetic seeds, spread routing
 - `clone`: the engine benches' exact ids on every slot, identical routing
-- `corpus`: sliding windows over the text at `workload.source` (`QBENCH_CORPUS`); in-process, so `mode.returns` runs only
+- `corpus`: sliding windows over the text at `workload.source` (`QBENCH_CORPUS`); in-process, so `mode.return_outputs` runs only
 - `trace`: prompts from the replay JSONL at `workload.source` (`QBENCH_TRACE`)
 
 The baseline records the mode and the table prints it.
@@ -130,10 +130,10 @@ A host without cargo sets `engine.extra.bench_bin` to a prebuilt test binary.
 
 ### Correctness
 
-Agreement is two runs compared by `qbench compare`. Runs with `mode.returns=text` give greedy-agreement rows (engine vs vLLM text); runs with `mode.returns=logits` give the FIDELITY gate, vLLM against the transformers reference on the same grid prompts:
+Agreement is two runs compared by `qbench compare`. Runs with `mode.return_outputs=text` give greedy-agreement rows (engine vs vLLM text); runs with `mode.return_outputs=logits` give the FIDELITY gate, vLLM against the transformers reference on the same grid prompts:
 
 ```bash
-qbench run configs/runs/llama.yaml --set mode.grid=smoke --set mode.returns=logits \
+qbench run configs/runs/llama.yaml --set mode.grid=smoke --set mode.return_outputs=logits \
     --set 'engine.extra.vllm={enforce_eager: true}' --set run_name=llama-logits
 qbench run configs/runs/llama.yaml --set mode.grid=smoke --set engine.name=reference \
     --set run_name=llama-reference
@@ -147,7 +147,7 @@ FIDELITY passes only with zero hard disagreements (an argmax flip where the refe
 A model cut to its first N layers cannot be checked on a free-running greedy chain: bf16 rounding flips its router within a few steps. The check is teacher-forced logits against a float32 reference anchor, passing when the engine's argmax flips are no more than the reference's own at the engine's dtype (the noise floor). `engine.layers=N` cuts the reference (and sets the QuettaServe batch_bench's `<P>_LAYERS`); vLLM loads a checkpoint dir cut the same way as `engine.model`. `qbench compare <ours> <anchor> --floor <run>` prints the BAND line:
 
 ```
-qbench run <run>.yaml --set mode.returns=logits --set engine.model=<cut dir> --set run_name=slice-vllm
+qbench run <run>.yaml --set mode.return_outputs=logits --set engine.model=<cut dir> --set run_name=slice-vllm
 qbench run <run>.yaml --set engine.name=reference --set engine.layers=N --set engine.dtype=float32 --set run_name=slice-f32
 qbench run <run>.yaml --set engine.name=reference --set engine.layers=N --set engine.dtype=bfloat16 --set run_name=slice-bf16
 qbench compare results/slice-vllm results/slice-f32 --floor results/slice-bf16

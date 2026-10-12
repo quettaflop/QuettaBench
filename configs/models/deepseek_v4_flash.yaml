@@ -3,7 +3,7 @@ dtype: bfloat16
 weights_gib: 156
 max_model_len: 33280
 tp: 8
-kv_dtype: fp8_ds_mla
+kv_cache_dtype: fp8_ds_mla
 kv_bytes: 24768
 ep: true
 verified: false

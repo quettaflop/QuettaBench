@@ -47,7 +47,7 @@ MLA_MODEL = {
     "weights_gib": 10,
     "max_model_len": 9216,
     "tp": 1,
-    "kv_dtype": "fp8_ds_mla",
+    "kv_cache_dtype": "fp8_ds_mla",
     "verified": True,
     "attention": "mla",
 }
@@ -89,10 +89,10 @@ def check_record(case, cfg, old, env):
     )
     case.assertEqual((e.tp, e.pp), (int(wl.get("tp", 1)), int(env.get("QBENCH_PP", wl.get("pp", 1)))))
     case.assertEqual(
-        (e.ep, e.kv_dtype, e.kv_bytes, e.quant, e.verified),
+        (e.ep, e.kv_cache_dtype, e.kv_bytes, e.quant, e.verified),
         (
             bool(wl.get("expert_parallel")),
-            wl.get("kv_dtype") or "auto",
+            wl.get("kv_cache_dtype") or "auto",
             wl.get("kv_bytes"),
             wl.get("quant"),
             wl["verified"],

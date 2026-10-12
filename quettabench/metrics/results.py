@@ -269,7 +269,7 @@ def provenance(cfg, handle=None, driver=None, launch_env=None):
         "link_profile": hardware.link_profile,
         "serving_style": engine.serving_style,
         "quant": engine.quant,
-        "kv_dtype": engine.kv_dtype,
+        "kv_cache_dtype": engine.kv_cache_dtype,
         "launch_env": redact(launch_env or {}),
     }
 
@@ -412,7 +412,7 @@ def summary_tag_lines(summary):
         lines.append(
             f"BURST_SUMMARY peak_ttft_p99={b['peak_ttft_p99']:.1f} recovery_s={rec} target_ms={b['target_ms']}"
         )
-    spec = summary.get("spec")
+    spec = summary.get("spec_decode")
     if spec is not None and spec.get("source") == "server_metrics":
         lines.append(
             f"SPEC_DECODE_SUMMARY spec=measured source=server_metrics "

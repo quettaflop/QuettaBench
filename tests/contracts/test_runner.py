@@ -148,7 +148,7 @@ class MatrixEnv(unittest.TestCase):
         run = {
             "model": "llama31_8b",
             "workload": {"kind": "grid"},
-            "mode": {"grid": "smoke", "returns": "text"},
+            "mode": {"grid": "smoke", "return_outputs": "text"},
             "matrix": {"engine.tp": [1, 2]},
         }
         with (
@@ -168,7 +168,7 @@ class InProcessEnv(unittest.TestCase):
     def test_a_server_point_after_an_in_process_one_drops_its_exports(self):
         load = functools.partial(loader.load, RUNS[0].with_name("llama.yaml"), env={})
         (grid,) = load(
-            ["engine.model=/w", "hardware.visible_devices=0", "hardware.link_profile=pcie", "mode.returns=text"]
+            ["engine.model=/w", "hardware.visible_devices=0", "hardware.link_profile=pcie", "mode.return_outputs=text"]
         )
         (served,) = load(["engine.model=/w", "hardware.visible_devices=1", "mode.grid=null"])
         exported = set()
@@ -195,7 +195,7 @@ class InProcessEnv(unittest.TestCase):
         run = {
             "model": "llama31_8b",
             "workload": {"kind": "grid"},
-            "mode": {"grid": "smoke", "returns": "text"},
+            "mode": {"grid": "smoke", "return_outputs": "text"},
             "matrix": {"engine.gpu_util": [0.8, 0.9]},
         }
         with scratch_configs("sweep", run) as (path, td):
@@ -227,7 +227,7 @@ class InProcessEnv(unittest.TestCase):
                 self.assertEqual(run_one.call_count, 0 if refused else 2)
         (grid,) = loader.load(
             RUNS[0].with_name("llama.yaml"),
-            ["engine.model=/w", "hardware.visible_devices=0", "mode.returns=text"],
+            ["engine.model=/w", "hardware.visible_devices=0", "mode.return_outputs=text"],
             env={},
         )
         (gemm,) = loader.load(
@@ -363,7 +363,7 @@ class DockerDryRun(unittest.TestCase):
             "--set",
             "hardware.launcher=docker",
             "--set",
-            "mode.returns=text",
+            "mode.return_outputs=text",
         )
         self.assertIn("needs a launched server", exit_msg)
 
@@ -440,7 +440,7 @@ class FailureRecord(unittest.TestCase):
         targets = {
             "translate": (runner.base.get("vllm"), "translate", ()),
             "idle_gpus": (runner.launcher, "idle_gpus", ("hardware.visible_devices=null",)),
-            "export": (runner.env_map, "export", ("mode.grid=llama_single", "mode.returns=text")),
+            "export": (runner.env_map, "export", ("mode.grid=llama_single", "mode.return_outputs=text")),
         }
         for name, (obj, attr, sets) in targets.items():
             with self.subTest(name), mock.patch.object(obj, attr, side_effect=OSError(name)):

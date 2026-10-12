@@ -16,7 +16,7 @@
     230,
     400
   ],
-  "kv_dtype": "float16",
+  "kv_cache_dtype": "float16",
   "expert_parallel": false,
   "nccl_algo": "auto",
   "nccl_proto": "auto",

@@ -265,10 +265,10 @@ class LoaderRules(unittest.TestCase):
         for backend in ("rocm", "tpu", "neuron"):
             with self.subTest(backend), self.assertRaisesRegex(ConfigError, f"hardware.backend={backend} has no CUDA"):
                 self.load(
-                    {"mode": {"grid": "toy", "returns": "text"}},
+                    {"mode": {"grid": "toy", "return_outputs": "text"}},
                     [f"hardware.backend={backend}", "engine.dtype=bfloat16"],
                 )
-        self.one({"mode": {"grid": "toy", "returns": "text"}}, ["hardware.backend=cuda"])
+        self.one({"mode": {"grid": "toy", "return_outputs": "text"}}, ["hardware.backend=cuda"])
 
     def test_quettaserve_is_cuda_only(self):
         for backend in ("rocm", "tpu", "neuron"):

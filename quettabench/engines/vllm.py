@@ -68,7 +68,7 @@ FIELDS = {
     "pp": (unless(1, "--pipeline-parallel-size"), kw("pipeline_parallel_size")),
     "ep": (switch("--enable-expert-parallel"), kw_when("enable_expert_parallel", bool)),
     "dtype": (flag("--dtype"), kw("dtype")),
-    "kv_dtype": (unless("auto", "--kv-cache-dtype"), kw_when("kv_cache_dtype", lambda v: v != "auto")),
+    "kv_cache_dtype": (unless("auto", "--kv-cache-dtype"), kw_when("kv_cache_dtype", lambda v: v != "auto")),
     "quant": (lambda v: [], kw_when("quantization", bool)),  # server reads it from the checkpoint
     "max_model_len": (unless(None, "--max-model-len"), kw_when("max_model_len", lambda v: v is not None)),
     "gpu_util": (flag("--gpu-memory-utilization"), kw("gpu_memory_utilization")),
@@ -147,8 +147,8 @@ class VllmAdapter(EngineAdapter):
         )
 
     def needs_server(self, cfg):
-        """A grid run with mode.returns builds vllm.LLM itself."""
-        return cfg.mode.grid is None or cfg.mode.returns == "none"
+        """A grid run with mode.return_outputs builds vllm.LLM itself."""
+        return cfg.mode.grid is None or cfg.mode.return_outputs == "none"
 
     def driver(self, spec, handle, trace=None):
         """InProcessDriver when nothing was launched."""
