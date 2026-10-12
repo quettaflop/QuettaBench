@@ -29,18 +29,109 @@ import sys
 import uuid
 from pathlib import Path
 
-from quettabench import workloads
 from quettabench.config import env_map, loader
 from quettabench.config.schema import ConfigError, device_count
 from quettabench.engines import base, launcher
 from quettabench.metrics.results import RUN_MARKERS, RunWriter, redact
 from quettabench.modes import serve
 from quettabench.probes import base as probes_base
+from quettabench.workloads.base import DoubleWrapRandomTokenTrace, LegacyRandomTokenTrace, RandomTokenTrace
+from quettabench.workloads.grid import GridTrace
+from quettabench.workloads.live import (
+    PROFILE_ALIASES,
+    PROFILES,
+    MooncakeTrace,
+    PromptJsonlTrace,
+    RealTrace,
+    ShareGPTTrace,
+    SmokeTrace,
+    get_profile,
+)
+from quettabench.workloads.sessions import (
+    ShareGPTSessionTrace,
+    TrajectorySessionTrace,
+    TurnPacing,
+    resolve_multi_turn_num_sessions,
+)
 
 # Probes mode: probe refuses (check_probe): torchrun's, and those whose
 # output flags name files instead of taking a directory --out.
 TORCHRUN_PROBES = ("collective", "reparallel", "vllm_allreduce")
 FILE_OUT_PROBES = ("serving_decode_grid", "serving_stage_split")
+
+TRAJECTORY_DATASETS = ("swebench-multi-turn", "terminalbench-multi-turn", "osworld-multi-turn")
+RANDOM_TRACES = {"random": RandomTokenTrace, "random-legacy": LegacyRandomTokenTrace,
+                 "random-doublewrap": DoubleWrapRandomTokenTrace}
+
+# Room left between a trajectory turn's prompt plus output and the profile's isl_tokens window.
+CONTEXT_SAFETY_MARGIN = 256
+
+
+def single_turn_trace(profile, seed):
+    """The undrawn single-turn trace a profile's dataset names."""
+    d = profile.dataset
+    if d == "test":
+        return SmokeTrace()
+    if d == "mooncake-trace":
+        return MooncakeTrace(profile.file_path, seed=seed)
+    if d == "jsonl":
+        return PromptJsonlTrace(profile.file_path, seed=seed)
+    if d == "sharegpt":
+        return ShareGPTTrace(num_prompts=1000, seed=seed, system_prompt=profile.system_prompt,
+                             max_isl_tokens=profile.isl_tokens, max_osl_tokens=profile.osl_tokens,
+                             context_safety_margin_tokens=CONTEXT_SAFETY_MARGIN)
+    if d in RANDOM_TRACES:
+        return RANDOM_TRACES[d](profile.tokenizer_name, profile.isl_tokens, profile.osl_tokens,
+                                seed=seed)
+    if d == "sharegpt-multi-turn" or d in TRAJECTORY_DATASETS:
+        raise ValueError(f"Profile '{profile.name}' is multi-turn; run it with "
+                         "workload.kind=sessions")
+    raise ValueError(f"Unknown dataset type: {d}")
+
+
+def session_trace(profile, num_sessions, seed, **trace_kw):
+    """A multi-turn profile's sessions as a LoadedSessionTrace."""
+    if profile.dataset == "sharegpt-multi-turn":
+        return ShareGPTSessionTrace(
+            min_turns=profile.min_turns, max_turns=profile.max_turns, num_sessions=num_sessions,
+            seed=seed, system_prompt=profile.system_prompt, max_isl_tokens=profile.isl_tokens,
+            max_osl_tokens=profile.osl_tokens, profile=profile, **trace_kw)
+    if profile.dataset in TRAJECTORY_DATASETS:
+        return TrajectorySessionTrace(
+            profile.file_path, min_turns=profile.min_turns, max_turns=profile.max_turns,
+            num_sessions=num_sessions, seed=seed, max_isl_tokens=profile.isl_tokens,
+            max_osl_tokens=profile.osl_tokens,
+            context_safety_margin_tokens=CONTEXT_SAFETY_MARGIN, profile=profile, **trace_kw)
+    raise ValueError(f"Profile '{profile.name}' does not use a multi-turn dataset")
+
+
+def build_trace(cfg, tokenizer=None):
+    """The run's Trace. A grid run (mode.grid) gets the GridTrace of its
+    cells; otherwise workload.source is a profile name (configs/workloads.yaml),
+    drawn as single-turn or, for kind sessions, as multi-turn sessions, or a
+    replay JSONL path. tokenizer is the engine's, called lazily by corpus
+    grids."""
+    w = cfg.workload
+    if cfg.mode.grid is not None:
+        return GridTrace.from_config(cfg, tokenizer=tokenizer)
+    if w.source not in PROFILES and w.source not in PROFILE_ALIASES:
+        return RealTrace.from_jsonl(w.source, seed=w.seed)
+    profile = get_profile(w.source)
+    if w.kind == "sessions":
+        pacing = TurnPacing(w.pacing, w.tool_wait_ms, w.human_wait_ms, w.use_recorded_waits,
+                            w.use_recorded_arrivals)
+        sessions, _ = resolve_multi_turn_num_sessions(profile, cfg.mode.concurrency)
+        return session_trace(profile, sessions, w.seed, warmup=cfg.mode.warmup, pacing=pacing,
+                             max_turn_index=w.max_turn_index)
+    trace = single_turn_trace(profile, w.seed)
+    if (w.arrival == "trace" and isinstance(trace, MooncakeTrace) and trace.lap_ms == 0
+            and w.num_requests > len(trace.records)):
+        # Every lap would land on the first lap's times; a lap length is not invented.
+        raise ConfigError(f"workload.arrival=trace: {profile.name}'s timestamps span 0 ms, so "
+                          f"{w.num_requests} requests over its {len(trace.records)} records "
+                          "wrap with no lap length; lower workload.num_requests or use "
+                          "another arrival")
+    return trace.draw(w.num_requests, cfg.mode.warmup, profile)
 
 
 def spec_lines(spec):
@@ -207,7 +298,7 @@ def serve_one(cfg, out, exported, writer):
     writer.provenance["launch_env"] = redact(spec.env)
     # A launched server's driver has no tokenizer, so its trace is built
     # first: a bad workload fails before a long model load, not after.
-    trace = workloads.build(cfg) if adapter.needs_server(cfg) else None
+    trace = build_trace(cfg) if adapter.needs_server(cfg) else None
     handle = (launcher.start(spec, out, backend=backend, cfg=cfg, gpus=gpus,
                              timeout_s=cfg.hardware.ready_timeout_s)
               if adapter.needs_server(cfg) else launcher.NoServer(out))
@@ -215,7 +306,7 @@ def serve_one(cfg, out, exported, writer):
         driver = adapter.driver(spec, handle, trace)
         writer.bind(handle, driver)
         if trace is None:
-            trace = workloads.build(cfg, tokenizer=getattr(driver, "tokenizer", None))
+            trace = build_trace(cfg, tokenizer=getattr(driver, "tokenizer", None))
         serve.run(trace, driver, cfg.mode, writer, cfg.workload)
     finally:
         handle.stop()

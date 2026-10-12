@@ -102,7 +102,7 @@ class GpuPick(unittest.TestCase):
         with mock.patch.object(runner.base, "get", return_value=adapter), \
                 mock.patch.object(runner.launcher, "idle_gpus", return_value="3,5") as idle, \
                 mock.patch.object(runner.env_map, "export") as export, \
-                mock.patch.object(runner.workloads, "build"), \
+                mock.patch.object(runner, "build_trace"), \
                 mock.patch.object(runner, "RunWriter"), mock.patch.object(runner.serve, "run"), \
                 tempfile.TemporaryDirectory() as td:
             runner.run_one(cfg, Path(td))
@@ -129,7 +129,7 @@ class MatrixEnv(unittest.TestCase):
                                   side_effect=lambda n, backend: idle[n]), \
                 mock.patch.object(runner.launcher, "start") as start, \
                 mock.patch.object(runner.env_map, "export") as export, \
-                mock.patch.object(runner.workloads, "build"), \
+                mock.patch.object(runner, "build_trace"), \
                 mock.patch.object(runner, "RunWriter"), mock.patch.object(runner.serve, "run"):
             runner.main(path, ["engine.model=/w"], results_dir=td, allow_unverified=True)
         envs = [c.args[0].env for c in start.call_args_list]
@@ -160,7 +160,7 @@ class InProcessEnv(unittest.TestCase):
         exported = set()
         with tempfile.TemporaryDirectory() as td, mock.patch.dict(os.environ, {}, clear=True), \
                 mock.patch.object(runner.launcher, "start") as start, \
-                mock.patch.object(runner.workloads, "build"), \
+                mock.patch.object(runner, "build_trace"), \
                 mock.patch.object(runner, "RunWriter"), mock.patch.object(runner.serve, "run"):
             runner.run_one(grid, Path(td, "a"), exported)
             in_process = {k: os.environ[k] for k in exported}
@@ -220,7 +220,7 @@ class ReadyTimeout(unittest.TestCase):
                               "mode.grid=null", "hardware.ready_timeout_s=10800"], env={})
         with mock.patch.object(runner.launcher, "start") as start, \
                 mock.patch.object(runner.env_map, "export"), \
-                mock.patch.object(runner.workloads, "build"), \
+                mock.patch.object(runner, "build_trace"), \
                 mock.patch.object(runner, "RunWriter"), mock.patch.object(runner.serve, "run"), \
                 tempfile.TemporaryDirectory() as td:
             runner.run_one(cfg, Path(td))
@@ -232,7 +232,7 @@ class ReadyTimeout(unittest.TestCase):
                              ["engine.model=/w", "hardware.visible_devices=0",
                               "mode.grid=null"], env={})
         with mock.patch.object(runner.launcher, "start") as start, \
-                mock.patch.object(runner.workloads, "build", side_effect=ValueError("bad")), \
+                mock.patch.object(runner, "build_trace", side_effect=ValueError("bad")), \
                 tempfile.TemporaryDirectory() as td, self.assertRaisesRegex(ValueError, "bad"):
             runner.run_one(cfg, Path(td))
         start.assert_not_called()
@@ -265,7 +265,7 @@ class DockerDryRun(unittest.TestCase):
                              ["engine.model=/w", "hardware.visible_devices=3,5"], env={})
         with mock.patch.object(runner.launcher, "start") as start, \
                 mock.patch.object(runner.env_map, "export"), \
-                mock.patch.object(runner.workloads, "build"), \
+                mock.patch.object(runner, "build_trace"), \
                 mock.patch.object(runner, "RunWriter"), mock.patch.object(runner.serve, "run"), \
                 tempfile.TemporaryDirectory() as td:
             runner.run_one(cfg, Path(td))
@@ -320,7 +320,7 @@ class ChatOverHttp(unittest.TestCase):
             handle = launcher.Handle("vllm", endpoint, 0, Path(td), mock.Mock())
             with mock.patch.object(runner.launcher, "start", return_value=handle), \
                     mock.patch.object(handle, "stop"), \
-                    mock.patch.object(runner.workloads, "build", return_value=trace), \
+                    mock.patch.object(runner, "build_trace", return_value=trace), \
                     contextlib.redirect_stdout(io.StringIO()):
                 runner.run_one(cfg, Path(td, "run"))
             rows = [json.loads(x) for x in Path(td, "run", "requests.jsonl").read_text().splitlines()]
@@ -344,7 +344,7 @@ class FailureRecord(unittest.TestCase):
         (cfg,) = loader.load(RUNS[0].with_name("llama.yaml"),
                              ["engine.model=/w", "mode.grid=null", *sets], env={})
         with tempfile.TemporaryDirectory() as td, \
-                mock.patch.object(runner.workloads, "build"), \
+                mock.patch.object(runner, "build_trace"), \
                 mock.patch.object(runner.launcher, "start", **patches.get("start", {})), \
                 mock.patch.object(runner.serve, "run", **patches.get("serve", {})):
             out = Path(td, "run")

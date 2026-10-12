@@ -134,7 +134,7 @@ moe gpu=gpu geoms="qwen3-30b-a3b,mixtral-8x7b,gpt-oss-20b,gpt-oss-120b" tp="1,2,
 
 # One MoE block's input, output and routing decision -> results/probes/<gpu>/moe_routing/<run-id>/ (slice verification)
 moe-routing model gpu=gpu layer="1" *args:
-    CUDA_VISIBLE_DEVICES={{gpu_id}} {{py}} -m quettabench.probes.moe_routing --gpu-label {{gpu}} --model {{model}} --layer {{layer}} {{args}}
+    CUDA_VISIBLE_DEVICES={{gpu_id}} {{py}} -m quettabench.probes.moe --routing --gpu-label {{gpu}} --model {{model}} --layer {{layer}} {{args}}
 
 gdn gpu=gpu geom="9b" hv="32" dk="128" dv="128" nlin="24" mode="full":
     CUDA_VISIBLE_DEVICES={{gpu_id}} {{py}} -m quettabench.probes.gdn --gpu-label {{gpu}} --geometry-tag {{geom}} --hv {{hv}} --dk {{dk}} --dv {{dv}} --n-linear {{nlin}} --mode {{mode}}

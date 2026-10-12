@@ -219,7 +219,7 @@ qbench crossval results/slice-vllm results/slice-f32 --floor results/slice-bf16
 A floor run is trusted once it is deterministic: the same run twice crossvals
 to argmax_agree equal to positions and delta max 0. `qbench profile --source kernels` gives per-kernel
 GPU time per decode step from an nsys-armed run, and `just moe-routing
-<model>` dumps one MoE block for an engine-side diff. The verdict log of the
+<model>` (`probes/moe.py --routing`) dumps one MoE block for an engine-side diff. The verdict log of the
 original harness is `docs/runbooks/slice_verification.md`.
 
 ### Model notes
@@ -260,7 +260,7 @@ are withheld. glm53 and glm53flash have no engine bench yet: vLLM side only.
 | `slice_tf/tf_verify.py`, `ref_full.py`, `ref_slice.py`, `vllm_tf.py`, `vllm_baseline.py` | logits runs with `engine.layers` and `qbench crossval ... --floor` (Slice verification above) |
 | `slice_tf/slice_truncate.py` | `--set engine.layers=N` (reference, QuettaServe); for vLLM, `python3 data/slice_checkpoint.py <src> <dst>` builds the cut checkpoint dir that `engine.model` names (Kimi-K3 slice only: 13 layers, MLA at 4, 8, 12 1-indexed; all three gates run from this repo) |
 | `slice_tf/vllm_nsys.py`, `nsys_kernels.py <sqlite> --steps N` | `--set engine.instrumentation=nsys`, then `just profile --run results/<run> --source kernels --kernel-steps N` |
-| `slice_tf/moe_routing_probe.py <out>` | `just moe-routing <model> <gpu> 1 "--layers 13 --kda-mode fused_recurrent"` |
+| `slice_tf/moe_routing_probe.py <out>` | `just moe-routing <model> <gpu> 1 "--layers 13 --kda-mode fused_recurrent"` (`python3 -m quettabench.probes.moe --routing`) |
 | `xval.yaml`, `workloads.json` | `configs/models/`, `configs/runs/`, `configs/grids.yaml`, `configs/hardware/` |
 
 ## QuettaSim recipes that call the old probe paths
@@ -301,11 +301,11 @@ just export --only kernel_tables --results results/probes --kernel-dest ../Quett
 
 ```
 quettabench/cli.py        qbench: run | profile | crossval | export, and provision
-quettabench/runner.py     run: load, translate, launch, drive, serve, write
+quettabench/runner.py     run: load, build the Trace, translate, launch, drive, serve, write
 quettabench/provision.py  box setup, --dry-run plan, MISSING: and stop
 quettabench/config/       schema (with topology rules), loader (yaml + --set + env), env_map
-quettabench/workloads/    traces: live, sessions, grid; arrival schedules; profiles
-quettabench/engines/      adapters (vllm, quettaserve), drivers, launcher
+quettabench/workloads/    traces: live (with the profiles registry), sessions, grid; arrival schedules
+quettabench/engines/      adapters (vllm, quettaserve), drivers (with the reference adapter), launcher
 quettabench/crossval.py   pairs two runs' cells; withhold rules; agreement rows
 quettabench/modes/serve.py  the one measurement procedure: replay, sessions, grid cells
 quettabench/metrics/      percentiles, step fit, the results writer

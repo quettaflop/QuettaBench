@@ -2,7 +2,8 @@
 
 InProcessDriver builds vLLM inside this process from spec.engine_kwargs and
 times one grid batch per generate() call, or scores it (returns="logits").
-ReferenceDriver scores with transformers, the FIDELITY reference. BenchDriver runs a QuettaServe
+ReferenceDriver scores with transformers, the FIDELITY reference, and
+ReferenceAdapter (engine.name: reference) hands it its spec. BenchDriver runs a QuettaServe
 bench per grid cell, as bench.sh did, and reads its rows with
 crossval.py's bench log parser. HttpDriver streams
 OpenAI-compatible requests at a launched server, and times a grid batch as
@@ -42,7 +43,9 @@ import aiohttp
 
 from quettabench import crossval
 from quettabench.config import env_map
+from quettabench.config.schema import ConfigError
 from quettabench.engines import launcher
+from quettabench.engines.base import EngineAdapter, LaunchSpec, register
 from quettabench.metrics.core import RequestResult, parse_prometheus, spec_counts
 from quettabench.workloads.base import Request
 from quettabench.workloads.grid import distinct_ids
@@ -834,3 +837,38 @@ class ReferenceDriver(Driver):
         for r in requests:
             yield RequestResult(success=True, input_tokens=r.prompt_len, cell=dict(cell),
                                 logits=self.score(r.prompt_token_ids))
+
+
+class ReferenceAdapter(EngineAdapter):
+    """The transformers side of the FIDELITY gate: no server and no argv, the
+    driver loads the weights from engine_kwargs {model, dtype, layers}. Grid runs
+    only; engine.layers keeps the first N decoder layers, as slice_truncate.py did."""
+
+    name = "reference"
+    supports = frozenset({"model", "dtype", "layers"})
+    benchmarked = False
+
+    def translate(self, cfg, run_dir=None):
+        self.refuse_unsupported(cfg)
+        engine = cfg.engine
+        if engine.model is None:
+            raise ConfigError("reference: engine.model is required")
+        if engine.dtype == "auto":
+            raise ConfigError("reference: engine.dtype must name a torch dtype, e.g. bfloat16")
+        if cfg.mode.grid is None:
+            raise ConfigError("reference: scores grid prompts only; set mode.grid")
+        if engine.layers is not None and engine.layers < 1:
+            raise ConfigError(f"reference: engine.layers must be >= 1, got {engine.layers}")
+        kwargs = {"model": engine.model, "dtype": engine.dtype}
+        if engine.layers is not None:
+            kwargs["layers"] = engine.layers
+        return LaunchSpec(adapter=self.name, engine_kwargs=kwargs)
+
+    def needs_server(self, cfg):
+        return False
+
+    def driver(self, spec, handle, trace=None):
+        return ReferenceDriver(spec)
+
+
+REFERENCE = register(ReferenceAdapter())

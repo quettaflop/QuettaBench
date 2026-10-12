@@ -38,6 +38,14 @@ realistic rather than perfectly balanced.
 
   CUDA_VISIBLE_DEVICES=0 python3 -m quettabench.probes.moe --gpu-label H100 --out <dir>
   ... --geometries qwen3-30b-a3b,mixtral-8x7b --tp 1,2,4
+
+--routing instead dumps one MoE block's exact input, output and routing decision
+from a transformers model, so an engine can diff its own block on the identical
+input (slice verification), to results/probes/<gpu>/moe_routing/<run-id>/<model>_layer<L>.safetensors:
+
+  CUDA_VISIBLE_DEVICES=0,1,2,3 python3 -m quettabench.probes.moe --routing \\
+      --gpu-label H100 --model <dir> --layers 13 --layer 1 --dtype float32 \\
+      --kda-mode fused_recurrent
 """
 from __future__ import annotations
 
@@ -45,6 +53,8 @@ import argparse
 import csv
 import json
 import statistics as st
+import sys
+from pathlib import Path
 
 import torch
 
@@ -295,9 +305,123 @@ def sweep_routing(dev, e_default=128, k_default=8):
     return out
 
 
+# --routing: ref_full.py's 16 fixed prompt ids (below Kimi-K3's 163840 vocab; no tokenizer).
+PROMPT_IDS = [1, 4321, 100, 65535, 2048, 777, 31415, 9,
+              128000, 42, 5, 99991, 1234, 60000, 8, 163839]
+# (submodule, "in" or "out", dump name): the stages moe_routing_probe.py hooked.
+STAGES = [
+    ("routed_expert_down_proj", "out", "latent"),
+    ("routed_expert_norm", "in", "routed"),
+    ("routed_expert_norm", "out", "normed"),
+    ("routed_expert_up_proj", "out", "up"),
+    ("shared_experts", "out", "shared"),
+]
+
+
+def routing_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(description="One MoE block's input, output and routing decision.")
+    add_output_args(ap)
+    ap.add_argument("--routing", action="store_true", required=True)
+    ap.add_argument("--model", required=True, help="checkpoint dir")
+    ap.add_argument("--layer", type=int, default=1, help="decoder layer whose MoE block is dumped")
+    ap.add_argument("--layers", type=int, default=None,
+                    help="keep only the first N decoder layers (engine.layers)")
+    ap.add_argument("--dtype", default="float32", help="torch dtype the model runs in")
+    ap.add_argument("--kda-mode", default=None,
+                    help="set self_attn.mode on every layer that has one (KDA prefill kernel)")
+    ap.add_argument("--prompt-ids", default=",".join(map(str, PROMPT_IDS)),
+                    help="comma-separated token ids fed in one prefill")
+    return ap
+
+
+def routing_model(args):
+    """The model on the visible GPUs in args.dtype, cut to args.layers.
+    ref_slice.py's loader is not ported: it kept Kimi's MXFP4 experts packed over
+    four GPUs, and a checkpoint that does not fit decompressed to bf16 needs it."""
+    from transformers import AutoConfig, AutoModelForCausalLM  # only --routing needs transformers
+    config = AutoConfig.from_pretrained(args.model, trust_remote_code=True)
+    if args.layers:
+        config.num_hidden_layers = args.layers
+        if isinstance(getattr(config, "layer_types", None), list):
+            config.layer_types = config.layer_types[:args.layers]
+    model = AutoModelForCausalLM.from_pretrained(
+        args.model, config=config, torch_dtype=getattr(torch, args.dtype),
+        device_map="auto", trust_remote_code=True)
+    model.eval()
+    if args.kda_mode:
+        for layer in model.model.layers:
+            if hasattr(layer.self_attn, "mode"):
+                layer.self_attn.mode = args.kda_mode
+    return model, config
+
+
+def routing_tensors(args) -> dict:
+    """{name: tensor} of the block's input, output, routing and stages. The block is
+    the layer's block_sparse_moe, else its mlp; a router returning (topk_idx,
+    topk_weight) is dumped as those two, one returning logits as router_logits."""
+    torch.manual_seed(33377335)
+    torch.backends.cuda.matmul.allow_tf32 = False
+    torch.backends.cudnn.allow_tf32 = False
+    torch.set_float32_matmul_precision("highest")
+    model, config = routing_model(args)
+    ids = [int(t) for t in args.prompt_ids.split(",")]
+    if max(ids) >= config.vocab_size:
+        raise SystemExit(f"prompt id {max(ids)} >= vocab_size {config.vocab_size}; "
+                         "pass --prompt-ids")
+    layer = model.model.layers[args.layer]
+    moe = getattr(layer, "block_sparse_moe", None) or layer.mlp
+    if not hasattr(moe, "gate"):
+        raise SystemExit(f"layer {args.layer} has no MoE block with a gate")
+    cap = {}
+
+    def keep(name, side):
+        def hook(_m, inputs, output=None):
+            t = inputs[0] if side == "in" else output
+            if isinstance(t, tuple):
+                t = t[0]
+            cap[name] = t.detach().float().cpu()
+        return hook
+
+    def routing(_m, _inputs, output):
+        if isinstance(output, tuple):
+            cap["topk_idx"] = output[0].detach().cpu()
+            cap["topk_weight"] = output[1].detach().float().cpu()
+        else:
+            cap["router_logits"] = output.detach().float().cpu()
+
+    handles = [moe.register_forward_pre_hook(keep("in", "in")),
+               moe.register_forward_hook(keep("out", "out")),
+               moe.gate.register_forward_hook(routing)]
+    for attr, side, name in STAGES:
+        sub = getattr(moe, attr, None)
+        if sub is not None:
+            register = sub.register_forward_pre_hook if side == "in" else sub.register_forward_hook
+            handles.append(register(keep(name, side)))
+    device = model.get_input_embeddings().weight.device
+    with torch.no_grad():
+        model(input_ids=torch.tensor([ids], device=device))
+    for h in handles:
+        h.remove()
+    return {f"moe{args.layer}_{k}": (v[0] if v.dim() == 3 else v).contiguous()
+            for k, v in cap.items()}
+
+
+def routing_main(argv) -> None:
+    args = routing_parser().parse_args(argv)
+    from safetensors.torch import save_file  # only --routing needs safetensors
+    tensors = routing_tensors(args)
+    out = out_root(args, "moe_routing") / f"{Path(args.model).name}_layer{args.layer}.safetensors"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    for k, v in tensors.items():
+        print(f"  {k}: {tuple(v.shape)} {v.dtype}")
+    save_file(tensors, str(out))
+    print(f"wrote {out}")
 
 
 def main(argv=None) -> None:
+    argv = sys.argv[1:] if argv is None else argv
+    if "--routing" in argv:
+        return routing_main(argv)
     # No abbreviations: export reads --append from the argv as written.
     ap = argparse.ArgumentParser(description=__doc__, allow_abbrev=False,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -405,4 +529,4 @@ def main(argv=None) -> None:
 
 
 if __name__ == "__main__":
-    run_recorded(main, "moe")
+    run_recorded(main, "moe_routing" if "--routing" in sys.argv else "moe")

@@ -352,6 +352,13 @@ def test_append_cannot_be_abbreviated(name, capsys):
     assert stop.value.code == 2 and "unrecognized" in capsys.readouterr().err
 
 
+def test_moe_routing_flag_takes_the_routing_parser(capsys):
+    """--routing parses the block-dump flags, not the kernel grid's."""
+    with pytest.raises(SystemExit) as stop:
+        import_without_torch("moe").main(["--routing", "--gpu-label", "H100"])
+    assert stop.value.code == 2 and "--model" in capsys.readouterr().err
+
+
 def test_probe_flags_cannot_be_abbreviated():
     """add_output_args makes every probe parser take flags only as written,
     so --gpu-l or --ru never stand for --gpu-label or --run-id."""

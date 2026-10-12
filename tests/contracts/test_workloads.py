@@ -1,9 +1,12 @@
-"""Traces, arrivals, grid prompts, profile sources and real-trace datasets."""
+"""Traces, arrivals, grid prompts, the profile registry, profile sources and real-trace datasets,
+and every runnable profile's pinned content hash."""
 
 import contextlib
 import dataclasses
+import hashlib
 import io
 import json
+import os
 import sys
 import tempfile
 import types
@@ -12,7 +15,7 @@ from pathlib import Path
 from unittest import mock
 from unittest.mock import patch
 
-from quettabench import workloads
+from quettabench import runner
 from quettabench.config.schema import Config, ConfigError, EngineCfg, HardwareCfg, ModeCfg, WorkloadCfg
 from quettabench.modes.serve import make_trace_request_id
 from quettabench.workloads.arrival import (
@@ -24,9 +27,23 @@ from quettabench.workloads.arrival import (
 )
 from quettabench.workloads.base import Request, workload_hash
 from quettabench.workloads.grid import GridTrace, clone_ids
-from quettabench.workloads.live import MooncakeTrace, PromptJsonlTrace, RealTrace, ShareGPTTrace
-from quettabench.workloads.profiles import WorkloadProfile
-from quettabench.workloads.sessions import SessionTrace, TrajectorySessionTrace, TurnPacing
+from quettabench.workloads.live import (
+    PROFILES,
+    MooncakeTrace,
+    PromptJsonlTrace,
+    RealTrace,
+    ShareGPTTrace,
+    WorkloadProfile,
+    active_profiles,
+    get_profile,
+    load_profiles,
+)
+from quettabench.workloads.sessions import (
+    SessionTrace,
+    TrajectorySessionTrace,
+    TurnPacing,
+    resolve_multi_turn_num_sessions,
+)
 
 
 def write_jsonl(td, rows):
@@ -192,13 +209,13 @@ class SingleTurn(unittest.TestCase):
             cfg = dataclasses.replace(cfg, workload=dataclasses.replace(
                 cfg.workload, arrival=arrival, num_requests=n))
             with self.subTest(arrival=arrival, n=n), \
-                    mock.patch.object(workloads, "single_turn_trace",
+                    mock.patch.object(runner, "single_turn_trace",
                                       return_value=MooncakeTrace(path)):
                 if refused:
                     with self.assertRaisesRegex(ConfigError, "span 0 ms"):
-                        workloads.build(cfg)
+                        runner.build_trace(cfg)
                 else:
-                    self.assertEqual(len(workloads.build(cfg).requests()), n)
+                    self.assertEqual(len(runner.build_trace(cfg).requests()), n)
 
     def test_messages_and_metadata_never_reach_the_hash(self):
         plain = Request([1, 2], 2, order=0, output_length=4)
@@ -207,14 +224,14 @@ class SingleTurn(unittest.TestCase):
         self.assertEqual(workload_hash([chat]), workload_hash([plain]))
 
     def test_build_names_the_profile(self):
-        trace = workloads.build(config("test"))
+        trace = runner.build_trace(config("test"))
         self.assertEqual(trace.source_meta(), {"profile": "test", "dataset": "test", "path": "",
                                                "reqs": 100})
         self.assertEqual(trace.requests()[0].max_tokens, 20)
 
     def test_multi_turn_profile_is_refused_single_turn(self):
         with self.assertRaisesRegex(ValueError, "is multi-turn; run it with workload.kind=sessions"):
-            workloads.build(config("swebench-multiturn-short"))
+            runner.build_trace(config("swebench-multiturn-short"))
 
 
 class MultiTurn(unittest.TestCase):
@@ -258,7 +275,7 @@ class MultiTurn(unittest.TestCase):
 
     def test_single_turn_profile_is_refused(self):
         with self.assertRaisesRegex(ValueError, "does not use a multi-turn dataset"):
-            workloads.build(config("test", kind="sessions"))
+            runner.build_trace(config("test", kind="sessions"))
 
 
 def words(n: int) -> str:
@@ -452,13 +469,233 @@ class RealTraceWorkloadTests(unittest.TestCase):
             cfg = Config(engine=EngineCfg(), workload=WorkloadCfg(kind="sessions", source=profile.name),
                          mode=ModeCfg(concurrency=1), hardware=HardwareCfg())
 
-            with patch.dict(workloads.PROFILES, {profile.name: profile}), \
+            with patch.dict(PROFILES, {profile.name: profile}), \
                     contextlib.redirect_stdout(io.StringIO()):
-                trace = workloads.build(cfg)
+                trace = runner.build_trace(cfg)
 
             meta = trace.requests()[0].metadata
             self.assertEqual(meta["context_window_tokens"], 4096)
             self.assertEqual(meta["context_safety_margin_tokens"], 256)
+
+
+class ProfileRegistryTests(unittest.TestCase):
+    def test_profiles_are_the_yaml_entries(self):
+        self.assertEqual(sorted(PROFILES), ["chat-multiturn-short", "chat-singleturn",
+                                            "coding-singleturn", "mooncake-trace", "random-1k",
+                                            "swebench-multiturn-short", "test"])
+
+    def test_unknown_key_is_an_error(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "w.yaml"
+            path.write_text("x:\n  isl_tokens: 1\n  osl_tokens: 1\n  isl_stddev: 0.0\n"
+                            "  description: d\n  dataset: test\n  isl: 3\n")
+            with self.assertRaisesRegex(ValueError, r"w.yaml: x: unknown profile key\(s\) \['isl'\]"):
+                load_profiles(path)
+
+    def test_listings_hide_inactive_profiles(self):
+        self.assertEqual(active_profiles(), ["chat-singleturn", "coding-singleturn",
+                                             "mooncake-trace"])
+        with self.assertRaises(ValueError) as e:
+            get_profile("nope")
+        self.assertIn(str(active_profiles()), str(e.exception))
+        self.assertNotIn("random-1k", str(e.exception))
+
+    def test_coding_agent_is_alias_for_coding_singleturn(self):
+        self.assertEqual(get_profile("coding-agent").name, "coding-singleturn")
+        self.assertEqual(get_profile("coding-singleturn").dataset, "jsonl")
+
+    def test_legacy_multiturn_profiles_remain_explicitly_runnable(self):
+        self.assertEqual(get_profile("multi-turn-short").dataset, "sharegpt-multi-turn")
+        self.assertEqual(get_profile("swebench-multiturn-short").dataset, "swebench-multi-turn")
+
+    def test_multi_turn_num_sessions_uses_concurrency_floor(self):
+        profile = get_profile("swebench-multiturn-short")
+
+        effective, source = resolve_multi_turn_num_sessions(
+            profile,
+            profile.num_sessions + 1,
+        )
+
+        self.assertEqual(effective, profile.num_sessions + 1)
+        self.assertEqual(source, "concurrency_floor")
+
+    def test_multi_turn_num_sessions_keeps_profile_default_when_large_enough(self):
+        profile = get_profile("chat-multiturn-short")
+
+        effective, source = resolve_multi_turn_num_sessions(
+            profile,
+            max(1, profile.num_sessions - 1),
+        )
+
+        self.assertEqual(effective, profile.num_sessions)
+        self.assertEqual(source, "profile_default")
+
+
+SEED = 7
+NUM_REQUESTS = 12
+WARMUP = 3
+
+# name: (workload_hash, content digest)
+PINS = {
+    "chat-multiturn-short": ("c51f134d3946f53d", "5e2d31c9032a7cb8"),
+    "chat-singleturn": ("1b84966cb9c4facc", "84b2b4875f8a177f"),
+    "coding-singleturn": ("15384d696a4d7a1b", "0359e7a0be1623a2"),
+    "mooncake-trace": ("a03be7b0ed268d81", "b5ed59cd7a0d7aff"),
+    "random-1k": ("00740b698acbf0f7", "e90e87f402815bd2"),
+    "random-1k-random-doublewrap": ("633909c6f1f06765", "c4e5d1efa3c5ee45"),
+    "random-1k-random-legacy": ("1635e8cfbd8dcba8", "8cc8f5f07ec127ef"),
+    "swebench-multiturn-short": ("9f0aa9d6f98e5bd3", "2e44a22e09c81ea1"),
+    "test": ("7ae706bdf8eeae1d", "a5c809ace7fb7a08"),
+    "cut": ("0e8b8a8de4442ecb", "c8f75cbcdd1e78dc"),
+}
+
+
+def tagged_words(n, tag):
+    return " ".join(f"{tag}{i}" for i in range(n))
+
+
+def sharegpt_rows():
+    rows = [{"conversations": [{"from": "human", "value": "lonely"}]},
+            {"conversations": [{"from": "gpt", "value": tagged_words(80, "g")},
+                               {"from": "human", "value": tagged_words(30, "h")}]}]
+    for k in range(40):
+        convs = []
+        for t in range(1 + k % 12):
+            convs.append({"from": "human", "value": tagged_words(20 + (k * 37 + t * 11) % 600, f"h{k}.{t}.")})
+            convs.append({"from": "gpt", "value": tagged_words(30 + (k * 53 + t * 7) % 900, f"g{k}.{t}.")})
+        rows.append({"conversations": convs})
+    return rows
+
+
+def trajectory_rows(tag):
+    rows = []
+    for k, n in enumerate((2, 5, 12, 15, 25, 35, 70, 90, 160, 9, 22)):
+        turns, history = [], []
+        for t in range(n):
+            history = history + [{"role": "user", "content": tagged_words(5 + (k + t) % 40, f"{tag}{k}.{t}.")}]
+            turn = {"messages": list(history), "osl_tokens": 50 + (k * 13 + t) % 3000}
+            if t % 3 == 0:
+                turn["turn_idx"] = t
+            if t % 4 == 1:
+                turn["tool_ms"] = 10 * t
+            if t % 5 == 2:
+                turn["human_wait_after_ms"] = 3 * t
+            turns.append(turn)
+        row = {"session_id": f"{tag}-{k}", "source": tag, "turns": turns}
+        if k % 2:
+            row["arrival_time_ms"] = 250 * k
+        rows.append(row)
+    return rows
+
+
+def write_fixtures(root):
+    files = {
+        "data/coding_agent_prompts.jsonl": [
+            {"system": f"sys{i}", "user": tagged_words(10 + i, f"u{i}."), "osl_tokens": 100 + i}
+            for i in range(5)],
+        "data/mooncake/conversation_trace.jsonl": [
+            {"timestamp": 10 * i, "input_length": 700 + 300 * i, "output_length": 5 + i,
+             "hash_ids": list(range(i % 3, i % 3 + 1 + i))} for i in range(4)],
+        "data/swebench_trajectories.jsonl": trajectory_rows("swe"),
+    }
+    for rel, rows in files.items():
+        path = Path(root) / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+
+
+class FakeTokenizer:
+    """Lossy on purpose: encode drops ids divisible by 7, so the random-token
+    profiles pad with their rng."""
+
+    vocab_size = 1000
+
+    def decode(self, ids):
+        return " ".join(str(int(i)) for i in ids)
+
+    def encode(self, text, add_special_tokens=False):
+        return [int(t) for t in text.split() if t.isdigit() and int(t) % 7]
+
+    def apply_chat_template(self, messages, add_generation_prompt=True, tokenize=False):
+        text = "".join(f"<{m['role']}>{m['content']}" for m in messages) + "<assistant>"
+        return [0] * len(text.split()) if tokenize else text
+
+
+FAKE_MODULES = {
+    "datasets": types.SimpleNamespace(load_dataset=lambda *a, **k: sharegpt_rows()),
+    "transformers": types.SimpleNamespace(
+        AutoTokenizer=types.SimpleNamespace(from_pretrained=lambda *a, **k: FakeTokenizer())),
+}
+
+MULTI_TURN = ("sharegpt-multi-turn", "swebench-multi-turn")
+
+
+def profile_config(name, kind, max_turn_index=None):
+    return Config(engine=EngineCfg(model="fake-model"), hardware=HardwareCfg(),
+                  workload=WorkloadCfg(kind=kind, source=name, seed=SEED,
+                                       num_requests=NUM_REQUESTS, max_turn_index=max_turn_index),
+                  mode=ModeCfg(concurrency=4, warmup=WARMUP))
+
+
+def row(r):
+    return [r.prompt_token_ids, r.prompt_len, r.order, r.output_length, r.max_tokens,
+            r.session_id, r.turn, r.arrival_ts, r.seed, r.source, r.messages, r.metadata]
+
+
+def digest(trace):
+    record = {
+        "requests": [row(r) for r in trace.requests()],
+        "warmup": [row(r) for r in trace.warmup_requests(WARMUP)],
+        "source_meta": trace.source_meta(),
+        "max_turns": getattr(trace, "max_turns", None),
+        "replies": {str(k): v for k, v in getattr(trace, "replies", {}).items()},
+        "sessions": [[r.order for r in s] for s in trace.sessions()]
+        if hasattr(trace, "sessions") else None,
+    }
+    return hashlib.sha256(json.dumps(record, sort_keys=True, default=str).encode()).hexdigest()[:16]
+
+
+@contextlib.contextmanager
+def fixture_cwd():
+    old = os.getcwd()
+    with tempfile.TemporaryDirectory() as td, mock.patch.dict(sys.modules, FAKE_MODULES):
+        write_fixtures(td)
+        os.chdir(td)
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                yield
+        finally:
+            os.chdir(old)
+
+
+def pinned_build(name, max_turn_index=None):
+    kind = "sessions" if get_profile(name).dataset in MULTI_TURN else "live"
+    trace = runner.build_trace(profile_config(name, kind, max_turn_index))
+    return trace.workload_hash(), digest(trace)
+
+
+def runnable():
+    return sorted(PROFILES)
+
+
+def variants():
+    """The two InferenceX random-token variants no shipped profile names."""
+    base = get_profile("random-1k")
+    return {f"random-1k-{d}": dataclasses.replace(base, name=f"random-1k-{d}", dataset=d)
+            for d in ("random-legacy", "random-doublewrap")}
+
+
+class ProfileHashPins(unittest.TestCase):
+    def test_every_runnable_profile_is_pinned(self):
+        self.assertEqual(sorted(PINS), sorted(runnable() + list(variants()) + ["cut"]))
+
+    def test_profiles_build_the_pinned_traces(self):
+        with fixture_cwd(), mock.patch.dict(PROFILES, variants()):
+            got = {name: pinned_build(name) for name in runnable() + list(variants())}
+            got["cut"] = pinned_build("swebench-multiturn-short", max_turn_index=3)
+        for name, pin in PINS.items():
+            with self.subTest(profile=name):
+                self.assertEqual(got[name], pin)
 
 
 if __name__ == "__main__":

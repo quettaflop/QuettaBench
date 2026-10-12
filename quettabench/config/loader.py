@@ -22,7 +22,7 @@ from quettabench.config.schema import (
     dict_field,
     parse_serving_style,
 )
-from quettabench.workloads import arrival, profiles
+from quettabench.workloads import arrival, live
 
 # model yaml key -> Config path
 MODEL_KEYS = {
@@ -194,10 +194,10 @@ def _profile_prefix_caching(values, origins, where):
     --enable-prefix-caching; a false the run asked for (run yaml, env,
     --set) is refused, one from a default, model or hardware yaml is not."""
     source = values["workload.source"]
-    if values["mode.grid"] is not None or (source not in profiles.PROFILES
-                                           and source not in profiles.PROFILE_ALIASES):
+    if values["mode.grid"] is not None or (source not in live.PROFILES
+                                           and source not in live.PROFILE_ALIASES):
         return
-    if values["engine.prefix_caching"] or not profiles.get_profile(source).prefix_caching_required:
+    if values["engine.prefix_caching"] or not live.get_profile(source).prefix_caching_required:
         return
     if origins.get("engine.prefix_caching", "default") not in NOT_ASKED:
         raise ConfigError(f"{where}: engine.prefix_caching=False contradicts workload profile "
@@ -253,7 +253,7 @@ def _validate(values, origins, allow_unverified, where):
     # A single-turn profile draws num_requests; other sources set their own count.
     source = values["workload.source"]
     drawn = (values["mode.grid"] is None and values["workload.kind"] == "live"
-             and (source in profiles.PROFILES or source in profiles.PROFILE_ALIASES))
+             and (source in live.PROFILES or source in live.PROFILE_ALIASES))
     arrival = arrival_kind(values["workload.arrival"],
                            values["workload.num_requests"] if drawn else 0)
     if values["mode.load"] == "open" and arrival not in RATE_ARRIVALS + ("trace",):
