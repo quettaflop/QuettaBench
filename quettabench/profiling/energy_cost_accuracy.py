@@ -1,4 +1,4 @@
-"""Wrapped profiler sources: board energy, dollar cost and gsm8k accuracy."""
+"""Profiler sources for board energy, dollar cost and gsm8k accuracy."""
 
 import json
 import re

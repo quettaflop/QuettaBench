@@ -148,14 +148,14 @@ class CompareScripts(unittest.TestCase):
         self.assertNotEqual(h0, workload_hash(reqs))
 
     def test_energy_integration(self):
-        from quettabench.profiling.wrapped import integrate_power
+        from quettabench.profiling.energy_cost_accuracy import integrate_power
 
         self.assertEqual(integrate_power([100.0, 100.0, 100.0], 1.0), 300.0)
         self.assertEqual(integrate_power([], 1.0), 0.0)
         self.assertIn("ENERGY_SUMMARY", (QB / "profiler.py").read_text())
 
     def test_cost_math(self):
-        from quettabench.profiling.wrapped import cost_per_m_tokens
+        from quettabench.profiling.energy_cost_accuracy import cost_per_m_tokens
 
         # 2 GPUs at $3.60/hr for 30 min producing 1M tokens: $3.60, $3.60/M.
         usd, per_m = cost_per_m_tokens(3.6, 2, 1800.0, 1_000_000)
@@ -164,7 +164,7 @@ class CompareScripts(unittest.TestCase):
         self.assertIn("COST_SUMMARY", (QB / "profiler.py").read_text())
 
     def test_gsm8k_answer_parse(self):
-        from quettabench.profiling.wrapped import gsm8k_answer as f
+        from quettabench.profiling.energy_cost_accuracy import gsm8k_answer as f
 
         self.assertEqual(f("Natalia sold 48 clips. #### 72"), "72")
         self.assertEqual(f("so the total is $1,234."), "1234")

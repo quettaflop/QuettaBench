@@ -1,4 +1,4 @@
-"""Native profiler sources: /metrics, armed traces, nsys kernel tables, probe wrappers."""
+"""Profiler sources read from the engine side: /metrics, armed traces, nsys kernel tables, probe wrappers."""
 
 import importlib
 import json
@@ -15,7 +15,7 @@ HITS = "vllm:gpu_prefix_cache_hits"
 QUERIES = "vllm:gpu_prefix_cache_queries"
 
 # Imported on demand: it needs QuettaSim, which the GPU-free profiler must not.
-FRONTEND = "quettabench.profiling.frontend"
+FRONTEND = "quettabench.profiling.client_side"
 
 # nsys writes <out>.nsys-rep, or <out>.qdrep before 2021.4.
 TRACE_FILES = {
@@ -222,10 +222,10 @@ def serving_frontend(endpoint, model, argv=()):
     return probe.frontend_probe(a)
 
 
-def pd_host(endpoint, model, argv=()):
+def pd_proxy_overhead(endpoint, model, argv=()):
     probe = importlib.import_module(FRONTEND)
-    a = probe.pd_host_parser().parse_args(with_defaults(argv, {"--proxy-url": endpoint, "--model": model}))
-    return {"rows": probe.pd_host_probe(a)}
+    a = probe.pd_proxy_overhead_parser().parse_args(with_defaults(argv, {"--proxy-url": endpoint, "--model": model}))
+    return {"rows": probe.pd_proxy_overhead_probe(a)}
 
 
 def kv_transfer(run_dir):

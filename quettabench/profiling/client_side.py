@@ -1,4 +1,4 @@
-"""Live-server frontend and PD host profiler sources; standalone with --device-yaml <yaml>."""
+"""Client-side profiler sources, the live-server frontend and the PD proxy overhead; standalone with --device-yaml <yaml>."""
 
 from __future__ import annotations
 
@@ -214,7 +214,7 @@ def frontend_probe(a):
         mult_pts, conc_rows = _conc_sweep(a, cost, model)
 
     print(f"\n[{a.gpu_label} / {a.model} / tp{a.tp}] live-server frontend probe\n")
-    print(f"# paste into device_spec/{a.gpu_label.lower()}.yaml (quettabench.profiling.frontend):")
+    print(f"# paste into device_spec/{a.gpu_label.lower()}.yaml (quettabench.profiling.client_side):")
     print("frontend:")
     print(f"  floor_ms: {round(floor, 2)}")
     print(f"  new_ms_per_token: {round(rate_n, 6)}")
@@ -390,7 +390,7 @@ def lstsq(xs, ys):
     return my - b * mx, b
 
 
-def pd_host_parser() -> argparse.ArgumentParser:
+def pd_proxy_overhead_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description="Per-request host cost of a PD-disaggregated vLLM pair, by prompt length.")
     ap.add_argument("--gpu-label", required=True)
     ap.add_argument("--proxy-url", default="http://127.0.0.1:8000")
@@ -420,11 +420,13 @@ def pd_host_parser() -> argparse.ArgumentParser:
     ap.add_argument("--herd", type=int, default=16)
     ap.add_argument("--herd-tokens", type=int, default=32768)
     ap.add_argument("--link", default="2.2e11,0,25", help="bw_bytes_per_s,latency_us,per_desc_us of the pull")
-    ap.add_argument("--out", help="CSV path; pd_host_main() requires it, pd_host_probe() ignores it")
+    ap.add_argument(
+        "--out", help="CSV path; pd_proxy_overhead_main() requires it, pd_proxy_overhead_probe() ignores it"
+    )
     return ap
 
 
-def pd_host_probe(a) -> list[dict]:
+def pd_proxy_overhead_probe(a) -> list[dict]:
     """One COLS row per scored request."""
     bw, lat, pdu = (float(x) for x in a.link.split(","))
     sim = SimSide(a.device_yaml, a.model_yaml, a.tp, Link(bw, lat, pdu))
@@ -538,12 +540,12 @@ def pd_host_probe(a) -> list[dict]:
     return rows
 
 
-def pd_host_main(argv=None) -> None:
-    ap = pd_host_parser()
+def pd_proxy_overhead_main(argv=None) -> None:
+    ap = pd_proxy_overhead_parser()
     a = ap.parse_args(argv)
     if not a.out:
         ap.error("--out is required")
-    rows = pd_host_probe(a)
+    rows = pd_proxy_overhead_probe(a)
     out = Path(a.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     with out.open("w", newline="") as fh:
@@ -582,13 +584,13 @@ def pd_host_main(argv=None) -> None:
         )
 
 
-MAINS = {"frontend": frontend_main, "pd_host": pd_host_main}
+MAINS = {"frontend": frontend_main, "pd_proxy_overhead": pd_proxy_overhead_main}
 
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else list(argv)
     if not argv or argv[0] not in MAINS:
-        sys.exit(f"usage: python -m quettabench.profiling.frontend {{{'|'.join(MAINS)}}} [flags]")
+        sys.exit(f"usage: python -m quettabench.profiling.client_side {{{'|'.join(MAINS)}}} [flags]")
     MAINS[argv[0]](argv[1:])
 
 

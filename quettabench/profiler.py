@@ -10,11 +10,11 @@ from pathlib import Path
 
 from quettabench.config.schema import OTHER_ACCELERATORS
 from quettabench.metrics.results import write_atomic
-from quettabench.profiling import native, wrapped
+from quettabench.profiling import energy_cost_accuracy, engine_side
 
-SOURCES = ("metrics", "energy", "cost", "gsm8k", "frontend", "pd_host", "kv_transfer", "kernels")
+SOURCES = ("metrics", "energy", "cost", "gsm8k", "frontend", "pd_proxy_overhead", "kv_transfer", "kernels")
 # Energy first: it waits for the run to end.
-ORDER = ("energy", "metrics", "gsm8k", "frontend", "pd_host", "cost", "kv_transfer", "kernels")
+ORDER = ("energy", "metrics", "gsm8k", "frontend", "pd_proxy_overhead", "cost", "kv_transfer", "kernels")
 SECTION = {"gsm8k": "accuracy"}
 
 
@@ -46,8 +46,8 @@ def measure_energy(
     run_json = Path(results_dir) / "run.json"
     if energy_s is None and run_json.exists():
         raise ValueError("run.json already exists: the run is over; pass energy_s for a fixed window")
-    sampler = wrapped.PowerSampler(
-        wrapped.energy_devices(engine, config), nvidia_smi=nvidia_smi, interval_s=interval_s
+    sampler = energy_cost_accuracy.PowerSampler(
+        energy_cost_accuracy.energy_devices(engine, config), nvidia_smi=nvidia_smi, interval_s=interval_s
     ).start()
     deadline = time.monotonic() + (energy_s if energy_s is not None else timeout_s)
     while time.monotonic() < deadline and (energy_s is not None or not run_json.exists()):
@@ -68,33 +68,35 @@ def run_source(source, results_dir, engine, args, energy):
     model = args.get("served_model") or (config.get("engine") or {}).get("model")
     if source == "energy":
         samples, window = energy
-        devices = wrapped.energy_devices(engine, config)
-        section = wrapped.energy_section(samples, args.get("interval_s", 1.0), run_totals(run)[0], devices)
+        devices = energy_cost_accuracy.energy_devices(engine, config)
+        section = energy_cost_accuracy.energy_section(samples, args.get("interval_s", 1.0), run_totals(run)[0], devices)
         if window == "fixed":
             section["joules_per_token"] = None
         return {**section, "window": window}
     if source == "metrics":
-        return native.metrics_section(native.scrape_metrics(_endpoint(engine)))
+        return engine_side.metrics_section(engine_side.scrape_metrics(_endpoint(engine)))
     if source == "cost":
         if not run:
             raise ValueError("cost needs run.json")
         out_tokens, wall_s = run_totals(run)
         e = config.get("engine") or {}
-        return wrapped.cost_section(args["gpu_cost_hr"], e.get("tp", 1) * e.get("pp", 1), wall_s, out_tokens)
+        return energy_cost_accuracy.cost_section(
+            args["gpu_cost_hr"], e.get("tp", 1) * e.get("pp", 1), wall_s, out_tokens
+        )
     if source == "gsm8k":
-        items = wrapped.load_gsm8k(
+        items = energy_cost_accuracy.load_gsm8k(
             args["gsm8k_file"], args.get("tokenizer") or model, args["gsm8k_n"], tokenizer=args.get("gsm8k_tokenizer")
         )
-        generate = args.get("gsm8k_generate") or wrapped.http_generate(_endpoint(engine), model)
-        return wrapped.gsm8k_accuracy(generate, items)
+        generate = args.get("gsm8k_generate") or energy_cost_accuracy.http_generate(_endpoint(engine), model)
+        return energy_cost_accuracy.gsm8k_accuracy(generate, items)
     if source == "frontend":
-        return native.serving_frontend(_endpoint(engine), model, args.get("frontend_argv"))
-    if source == "pd_host":
-        return native.pd_host(_endpoint(engine), model, args.get("pd_host_argv"))
+        return engine_side.serving_frontend(_endpoint(engine), model, args.get("frontend_argv"))
+    if source == "pd_proxy_overhead":
+        return engine_side.pd_proxy_overhead(_endpoint(engine), model, args.get("pd_proxy_overhead_argv"))
     if source == "kv_transfer":
-        return native.kv_transfer(args.get("kv_transfer_run") or results_dir)
+        return engine_side.kv_transfer(args.get("kv_transfer_run") or results_dir)
     if source == "kernels":
-        return native.kernel_summary(
+        return engine_side.kernel_summary(
             results_dir, args["kernel_steps"], args.get("kernel_window"), args.get("kernel_subtract")
         )
     raise ValueError(f"unknown source {source}")
@@ -124,7 +126,7 @@ def profile(results_dir, sources, **source_args):
             out[SECTION.get(source, source)] = run_source(source, results_dir, engine, source_args, energy)
         except Exception as e:  # noqa: BLE001  one broken source must not lose the others
             errors[source] = f"{type(e).__name__}: {e}"
-    out["traces"] = native.collect_armed_traces(results_dir, engine.get("instrumentation", "none"))
+    out["traces"] = engine_side.collect_armed_traces(results_dir, engine.get("instrumentation", "none"))
     out["sources_run"] = sorted(set(out.get("sources_run", [])) | (set(sources) - set(errors)))
     out["errors"] = errors
     out["profiled_at"] = datetime.now(timezone.utc).isoformat()
@@ -171,7 +173,7 @@ def get_args(argv=None):
         choices=SOURCES,
         help="repeatable. metrics: one scrape of the endpoint; energy: board power until run.json "
         "appears; cost: USD over the run's wall time; gsm8k: exact match through the endpoint; "
-        "frontend, pd_host: live-server probes; kv_transfer: a NIXL probe run's rows.jsonl; "
+        "frontend, pd_proxy_overhead: live-server probes; kv_transfer: a NIXL probe run's rows.jsonl; "
         "kernels: per-kernel GPU time per decode step from the armed nsys trace",
     )
     ap.add_argument("--nvidia-smi", default="nvidia-smi")
@@ -187,7 +189,7 @@ def get_args(argv=None):
         default="",
         help='frontend source flags, e.g. "--gpu-label <gpu> --device-yaml ../QuettaSim/device_spec/<gpu>.yaml"',
     )
-    ap.add_argument("--pd-host-args", default="", help="pd_host flags")
+    ap.add_argument("--pd-proxy-overhead-args", default="", help="pd_proxy_overhead flags")
     ap.add_argument(
         "--kv-transfer-run",
         help="the kv_transfer probe's run dir, results/probes/<gpu>/kv_transfer/<run-id>; default --run",
@@ -210,7 +212,7 @@ def main(argv=None):
         "tokenizer": a.tokenizer,
         "served_model": a.served_model,
         "frontend_argv": shlex.split(a.frontend_args),
-        "pd_host_argv": shlex.split(a.pd_host_args),
+        "pd_proxy_overhead_argv": shlex.split(a.pd_proxy_overhead_args),
         "kv_transfer_run": a.kv_transfer_run,
         "kernel_steps": a.kernel_steps,
         "kernel_window": a.kernel_window,

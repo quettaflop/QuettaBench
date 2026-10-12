@@ -15,7 +15,7 @@ from quettabench.config import loader
 from quettabench.config.schema import ConfigError
 from quettabench.engines import base, launcher, quettaserve, vllm as vllm_adapter
 from quettabench.engines.drivers import HttpDriver, InProcessDriver
-from quettabench.profiling import native
+from quettabench.profiling import engine_side
 from quettabench.workloads.base import Request
 from quettabench.workloads.grid import GridTrace
 from tests.golden._harness import ENV_OVERRIDE, FIXTURES, REPO
@@ -174,7 +174,7 @@ class ServerArgv(unittest.TestCase):
             argv = vllm_adapter.ADAPTER.translate(cfg, Path(td, "r")).server_argv
             out = Path(argv[argv.index("-o") + 1])
             self.assertTrue(out.is_absolute())
-            self.assertEqual(out.with_suffix(".nsys-rep").name, native.TRACE_FILES["nsys"][0])
+            self.assertEqual(out.with_suffix(".nsys-rep").name, engine_side.TRACE_FILES["nsys"][0])
             self.assertEqual(out.parent, Path(td, "r").resolve())
 
     def test_torch_instrumentation_is_unsupported(self):

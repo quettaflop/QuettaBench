@@ -27,8 +27,8 @@ def fresh_import(code):
     return subprocess.run([sys.executable, "-c", code], cwd=ROOT, env=env, capture_output=True, text=True)
 
 
-def test_native_then_profiler_imports():
-    proc = fresh_import("import quettabench.profiling.native; import quettabench.profiler")
+def test_profiling_then_profiler_imports():
+    proc = fresh_import("import quettabench.profiling.engine_side; import quettabench.profiler")
     assert proc.returncode == 0, proc.stderr
 
 

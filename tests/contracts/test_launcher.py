@@ -15,7 +15,7 @@ from quettabench.config import loader
 from quettabench.config.schema import ConfigError
 from quettabench.engines import drivers, launcher, vllm
 from quettabench.engines.base import LaunchSpec
-from quettabench.profiling import native
+from quettabench.profiling import engine_side
 from tests.contracts import helpers
 
 FAKE = Path(__file__).with_name("fake_server.py")
@@ -344,7 +344,7 @@ class NoProxy(unittest.TestCase):
             "NO_PROXY": "",
         }
         with helpers.serve() as (endpoint, _), mock.patch.dict(os.environ, dead_proxy):
-            self.assertIn("process_open_fds", native.scrape_metrics(endpoint))
+            self.assertIn("process_open_fds", engine_side.scrape_metrics(endpoint))
             with launcher.urlopen(endpoint + "/metrics", timeout=5) as resp:
                 self.assertEqual(resp.status, 200)
 
