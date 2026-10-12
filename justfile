@@ -151,10 +151,6 @@ gdn-ncu gpu=gpu geom="9b" hv="32" dk="128" dv="128" nlin="24":
 collectives gpu=gpu world="2" hidden="4096" layers="32" ops="all_reduce,all_gather,reduce_scatter,all_to_all" gpu_ids="0,1":
     CUDA_VISIBLE_DEVICES={{gpu_ids}} {{py}} -m torch.distributed.run --nproc_per_node={{world}} -m quettabench.probes.collective --gpu-label {{gpu}} --hidden {{hidden}} --layers {{layers}} --ops {{ops}}
 
-# Alias: all-reduce microbench used to be a separate probe file.
-tp-comm gpu=gpu tp="2" hidden="4096" layers="32" gpu_ids="0,1":
-    just collectives gpu={{gpu}} world={{tp}} hidden={{hidden}} layers={{layers}} gpu_ids={{gpu_ids}}
-
 # Chunked-prefill (q over resident) attention grid, one head config per run.
 cross-attn gpu=gpu nh="16" nkv="2" hd="128":
     CUDA_VISIBLE_DEVICES={{gpu_id}} {{py}} -m quettabench.probes.cross_attn --gpu-label {{gpu}} --n-heads {{nh}} --n-kv-heads {{nkv}} --head-dim {{hd}}

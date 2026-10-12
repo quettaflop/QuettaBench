@@ -367,24 +367,14 @@ def load_profiles(path=WORKLOADS):
 
 PROFILES: dict[str, WorkloadProfile] = load_profiles()
 
-# Old profile names, accepted for archived results and old command lines.
-PROFILE_ALIASES: dict[str, str] = {
-    "chat-long": "chat-singleturn",
-    "coding-agent": "coding-singleturn",
-    "multi-turn-short": "chat-multiturn-short",
-}
-
-
 def active_profiles() -> list[str]:
     """The names a listing shows: every profile with active true."""
     return sorted(name for name, p in PROFILES.items() if p.active)
 
 
 def get_profile(name: str) -> WorkloadProfile:
-    """Look up a profile by name, resolving aliases for old names."""
+    """Look up a profile by name."""
     if name in PROFILES:
         return PROFILES[name]
-    if name in PROFILE_ALIASES:
-        return PROFILES[PROFILE_ALIASES[name]]
     raise ValueError(f"Unknown profile '{name}'. Available: {active_profiles()} "
                      "(inactive profiles are not listed)")

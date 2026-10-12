@@ -827,10 +827,9 @@ class TableParity(unittest.TestCase):
         self.assertTrue(cycled)
         _os.remove(tf)
 
-    def test_grid_knows_synth_and_trace_modes(self):
+    def test_grid_knows_the_trace_mode(self):
         src = (QB / "workloads" / "grid.py").read_text() + (QB / "config" / "env_map.py").read_text()
-        for m in ('"synth"', '"trace"'):
-            self.assertIn(m, src)
+        self.assertIn('"trace"', src)
         self.assertIn("XVAL_TRACE", src)
 
     def test_baseline_age_ignores_local_timezone(self):

@@ -184,8 +184,7 @@ def _force(values, origins, path, value, by, where):
 def _profile_prefix_caching(values, origins, where):
     """Sets engine.prefix_caching true (origin "profile") for a serve run on a profile that requires it; a false from the run yaml, env or --set is refused."""
     source = values["workload.source"]
-    if values["mode.grid"] is not None or (source not in live.PROFILES
-                                           and source not in live.PROFILE_ALIASES):
+    if values["mode.grid"] is not None or source not in live.PROFILES:
         return
     if values["engine.prefix_caching"] or not live.get_profile(source).prefix_caching_required:
         return
@@ -243,7 +242,7 @@ def _validate(values, origins, allow_unverified, where):
     # A single-turn profile draws num_requests; other sources set their own count.
     source = values["workload.source"]
     drawn = (values["mode.grid"] is None and values["workload.kind"] == "live"
-             and (source in live.PROFILES or source in live.PROFILE_ALIASES))
+             and source in live.PROFILES)
     arrival = arrival_kind(values["workload.arrival"],
                            values["workload.num_requests"] if drawn else 0)
     if values["mode.load"] == "open" and arrival not in RATE_ARRIVALS + ("trace",):

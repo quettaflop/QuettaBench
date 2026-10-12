@@ -1,12 +1,12 @@
 """Grid prompts as a Trace: per (ctx, bs) cell and step point, bs requests of ctx prompt tokens asking for step-point output tokens.
 
-Prompt modes are distinct, clone, corpus, synth and trace; every step point of a cell reuses the same bs prompts.
+Prompt modes are distinct, clone, corpus and trace; every step point of a cell reuses the same bs prompts.
 """
 
 from .base import Request, Trace, synth_ids
 from .live import RealTrace
 
-PROMPT_MODES = ("distinct", "clone", "corpus", "synth", "trace")
+PROMPT_MODES = ("distinct", "clone", "corpus", "trace")
 
 
 def stamp_synthetic(reqs, seed):
@@ -117,8 +117,6 @@ class GridTrace(Trace):
         if mode == "corpus":
             ids = self._corpus()
             return [corpus_window(ids, ctx, j) for j in range(bs)], False
-        if mode == "synth":
-            return take(synth_requests(bs, ctx, seed=ctx), bs, ctx)[0], False
         if mode == "trace":
             return take(self._trace_rows, bs, ctx)
         return [distinct_ids(ctx, seed=self.seed + j) for j in range(bs)], False

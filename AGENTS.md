@@ -111,7 +111,6 @@ One line each; everything else follows section 2 "Target layout".
 - `docs/runbooks/` keeps `a100_roofline_utils_runbook.md`, `h100_setup.md`, `serving_stage_split_plan.md` and `slice_verification.md` beside the probe guide.
 - `data/slice_checkpoint.py` builds the cut vLLM checkpoint for slice runs; it is not a fetch script.
 - No mypy config: the lint gate is ruff and the pre-commit hooks.
-- `workload.prompt_mode: synth` stays though no run yaml uses it (owner, "scrap synthetic"): removing it needs `config/schema.py` and `workloads/grid.py` together.
 - `profiling/frontend.py` imports QuettaSim, the one package module that needs a QuettaSim checkout; `native.py` loads it by name only for the `frontend` and `pd_host` sources.
 
 ## Who writes, who starts a process

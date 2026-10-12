@@ -122,10 +122,10 @@ class GridTraceTest(unittest.TestCase):
         self.assertEqual(ids, [[97, 98, 99, 100, 101, 102, 97, 98]])
 
     def test_grid_hash_covers_every_request(self):
-        grid = GridTrace(self.CELLS, self.STEPS, "synth", 4096)
-        self.assertEqual(grid.workload_hash(), GridTrace(self.CELLS, self.STEPS, "synth", 4096).workload_hash())
+        grid = GridTrace(self.CELLS, self.STEPS, "distinct", 4096)
+        self.assertEqual(grid.workload_hash(), GridTrace(self.CELLS, self.STEPS, "distinct", 4096).workload_hash())
         self.assertNotEqual(grid.workload_hash(),
-                            GridTrace(self.CELLS, [10, 20, 41], "synth", 4096).workload_hash())
+                            GridTrace(self.CELLS, [10, 20, 41], "distinct", 4096).workload_hash())
 
 
 class SessionTraceTest(unittest.TestCase):
@@ -504,12 +504,7 @@ class ProfileRegistryTests(unittest.TestCase):
         self.assertIn(str(active_profiles()), str(e.exception))
         self.assertNotIn("random-1k", str(e.exception))
 
-    def test_coding_agent_is_alias_for_coding_singleturn(self):
-        self.assertEqual(get_profile("coding-agent").name, "coding-singleturn")
-        self.assertEqual(get_profile("coding-singleturn").dataset, "jsonl")
-
     def test_legacy_multiturn_profiles_remain_explicitly_runnable(self):
-        self.assertEqual(get_profile("multi-turn-short").dataset, "sharegpt-multi-turn")
         self.assertEqual(get_profile("swebench-multiturn-short").dataset, "swebench-multi-turn")
 
     def test_multi_turn_num_sessions_uses_concurrency_floor(self):

@@ -22,7 +22,7 @@ CHOICES = {
     "engine.instrumentation": ("none", "nsys", "torch"),
     "engine.driver": ("in-process", "http"),
     "workload.kind": ("live", "grid", "sessions"),
-    "workload.prompt_mode": ("distinct", "clone", "corpus", "synth", "trace"),
+    "workload.prompt_mode": ("distinct", "clone", "corpus", "trace"),
     "workload.pacing": ("per-session", "interleaved"),
     "mode.mode": ("serve", "probe"),
     "mode.serve_profile": (None, "stress-test", "single-turn", "multi-turn"),

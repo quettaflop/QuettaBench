@@ -105,15 +105,15 @@ class DockerCheck(unittest.TestCase):
 
     def test_missing_image_prints_the_pull_command(self):
         lines, calls = self.provision("llama-tp1-docker")
-        self.assertIn("[provision] MISSING: docker image vllm/vllm-openai:v0.30.0; "
-                      "pull it with: docker pull vllm/vllm-openai:v0.30.0", lines)
-        self.assertIn(["docker", "image", "inspect", "vllm/vllm-openai:v0.30.0"], calls)
+        self.assertIn("[provision] MISSING: docker image vllm/vllm-openai:v0.26.0; "
+                      "pull it with: docker pull vllm/vllm-openai:v0.26.0", lines)
+        self.assertIn(["docker", "image", "inspect", "vllm/vllm-openai:v0.26.0"], calls)
         self.assertEqual([c for c in calls if "pip" in c], [])  # vllm lives in the image
         self.assertIn("[provision] vllm: in the docker image", lines)
 
     def test_present_image_and_no_docker(self):
         lines, _ = self.provision("llama-tp1-docker", inspect_ok=True)
-        self.assertIn("[provision] llama-tp1-docker: docker image ok: vllm/vllm-openai:v0.30.0",
+        self.assertIn("[provision] llama-tp1-docker: docker image ok: vllm/vllm-openai:v0.26.0",
                       lines)
         lines, calls = self.provision("llama-tp1-docker", docker=None)
         self.assertIn("[provision] MISSING: docker is not on PATH; hardware.launcher=docker "
@@ -122,7 +122,7 @@ class DockerCheck(unittest.TestCase):
 
     def test_dry_run_plans_only_and_backend_flag_sets_the_launcher(self):
         lines, calls = self.provision("llama-tp1-docker", "--dry-run")
-        self.assertIn("[provision] would: docker image inspect vllm/vllm-openai:v0.30.0", lines)
+        self.assertIn("[provision] would: docker image inspect vllm/vllm-openai:v0.26.0", lines)
         self.assertEqual([c for c in calls if c[0] == "docker"], [])
         lines, _ = self.provision("llama-tp1", "--backend", "docker", "--dry-run")
         self.assertIn("[provision] MISSING: llama-tp1: hardware.launcher=docker needs "

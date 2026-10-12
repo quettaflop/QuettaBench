@@ -98,7 +98,7 @@ is tested against mocks only, by owner decision; validate it on a docker
 host before relying on it.
 
 ```bash
-docker pull vllm/vllm-openai:v0.30.0
+docker pull vllm/vllm-openai:v0.26.0
 just dry configs/runs/llama-tp1-docker.yaml --set engine.model=/w/llama   # prints the docker command
 just run configs/runs/llama-tp1-docker.yaml --set engine.model=/w/llama
 ```
@@ -169,7 +169,6 @@ settings that differ between the sides print `NCCL MISMATCH`.
 - `distinct` (default): per-slot synthetic seeds, spread routing
 - `clone`: the engine benches' exact ids on every slot, identical routing
 - `corpus`: sliding windows over the text at `workload.source` (`XVAL_CORPUS`)
-- `synth`: routing-diverse synthetic streams
 - `trace`: prompts from the replay JSONL at `workload.source` (`XVAL_TRACE`)
 
 The baseline records the mode and the table prints it.

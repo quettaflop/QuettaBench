@@ -198,7 +198,7 @@ def bench_sha(repo=REPO):
                              check=False).stdout.strip()
     except OSError:
         sha = ""
-    return sha or str(next(iter(env_map.read_env(only=("QBENCH_SHA",)).values()), ""))
+    return sha or env_map.read_env(only=("QBENCH_SHA",)).get("detect.bench_sha", "")
 
 
 def _now():

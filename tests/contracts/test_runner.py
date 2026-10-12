@@ -254,7 +254,7 @@ class DockerDryRun(unittest.TestCase):
         self.assertRegex(line, r"^docker = docker run -d --pull=never --init --name "
                                r"qbench-llama-tp1-docker-\d+-[0-9a-f]{6} "
                                r"--gpus '\"device=0\"' ")
-        self.assertTrue(line.endswith("vllm/vllm-openai:v0.30.0 serve /w --port 8000 "
+        self.assertTrue(line.endswith("vllm/vllm-openai:v0.26.0 serve /w --port 8000 "
                                       "--tensor-parallel-size 1 --dtype float16 --max-model-len "
                                       "9216 --gpu-memory-utilization 0.9 "
                                       "--no-enable-prefix-caching --enable-chunked-prefill "

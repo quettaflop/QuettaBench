@@ -1,10 +1,10 @@
 # llama-tp1 with the server in a container: the RTX PRO 6000 nodes have vLLM
-# only as docker images (hwn-z1-gpu06 holds vllm/vllm-openai:v0.30.0).
+# only as docker images (vllm/vllm-openai:v0.26.0, the base the qbench image is built and tested on).
 model: llama31_8b
 engine:
   tp: 1
   driver: http
-  image: vllm/vllm-openai:v0.30.0
+  image: vllm/vllm-openai:v0.26.0
 workload:
   kind: grid
 mode:

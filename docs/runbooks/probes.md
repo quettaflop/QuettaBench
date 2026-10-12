@@ -117,7 +117,7 @@ contract: filenames `{gpu}[_tpN].csv`, timing split `graph/` (graphed decode) vs
    overhead) -- the reason A100 serving lagged H100. If `X` already has GT:
    ```
    just -f $QUETTASIM/justfile serving-fit gpu=X model=<Model>   # fits frontend:+serving: FROM GT (no GPU)
-   just gpu=X tp-comm tp=2 hidden=<H> layers=<L>                 # measures tp_comm: (needs 2 GPUs, torchrun)
+   just gpu=X collectives world=2 hidden=<H> layers=<L>          # measures tp_comm: (needs 2 GPUs, torchrun)
    ```
    If `X` has no GT yet, `just gpu=X serving-profile results/<run>` measures frontend:+serving:
    against that run's live `vllm serve` into its `profile.json` (`frontend` section); the
@@ -161,7 +161,7 @@ PYTHON_BIN=/home/<user>/miniconda3/envs/vllm/bin/python \
 | `moe` | `moe/{gpu}.csv` + `moe/{gpu}_routing.json` (`graph/` with `--graph`, else `eager/`) | tokens × (n_experts, top_k, intermediate, hidden) |
 | `moe --routing` (`just moe-routing`) | `moe_routing/{model}_layer{L}.safetensors` | one MoE block's input, output, routing (topk_idx/topk_weight or router_logits) and stage tensors from one prefill, for an engine-side diff of routing, dispatch and combine; `--layers N` cuts the model like `engine.layers` (slice verification, see README.md "Slice verification") |
 | `reparallel` | `reparallel/{gpu}_reshard[_dp\|_ep].csv` (`eager/`) | torchrun; NVLink cost of switching parallelism in place (tp reshard, dp replica broadcast, ep expert restage; `--mode xnode/plan` for cross-node, see the probe header) |
-| `kv_transfer` (now `quettabench/profiling/kv_transfer.py`, run under torchrun and recorded like a probe; the export unions its runs on the old upsert key) | `kv_transfer/{gpu}_nixl.csv` (`eager/`) | PD KV hand-off through NIXL/UCX, laid out as vLLM's NixlConnector issues it (descriptor list per (layer, block)) |
+| `kv_transfer` (now `quettabench/profiling/kv_transfer.py`, run under torchrun and recorded like a probe; the export unions its runs on the old upsert key; the profiler source reads one run's `rows.jsonl`) | `kv_transfer/{gpu}_nixl.csv` (`eager/`) | PD KV hand-off through NIXL/UCX, laid out as vLLM's NixlConnector issues it (descriptor list per (layer, block)) |
 | `pd_host` (`quettabench/profiling/frontend.py` `pd_host_probe`, a profiler source; profile only, not exported) | the CSV at `--out` (e.g. `results/pd_host/{gpu}_pd_host.csv`), and profile.json `pd_host` | per-request HOST cost of a PD pair by prompt length (parse/template/tokenize/hash, paid on P and again on D) |
 
 The decode-step-vs-batch curve the old `decode_batch_probe.py` measured is a grid run now:
@@ -231,12 +231,12 @@ times raw `torch.matmul` cuBLAS, not vLLM's GEMM -- prefer `--ncu`.
   serving-faithful decode is `fused_sigmoid_gating_delta_rule_update`); the batch
   grid can OOM past B≈80 on the state path. 27B geometry is `geom=27b hv=48`.
 - Serving-dynamics blocks have recipes (see step 4): `serving-fit` / `serving-profile`
-  (frontend: + serving:, GT-fit or live-server) and `tp-comm` (tp_comm:, all-reduce microbench,
+  (frontend: + serving:, GT-fit or live-server) and `collectives` (tp_comm:, all-reduce microbench,
   `quettabench/probes/collective.py`). CAVEAT (found applying them to A100 2026-07-21): `serving-fit`'s
   conc1 floor improves TTFT *in isolation* (43.8 -> 31.8) but is NOT a drop-in win -- applied, the
   big floor (~8x H100) with H100's PORTED mult/lanes curves gives pathological high-concurrency
   arrival delays that worsen tp>1 TPOT. The floor and curves must be fit JOINTLY against BOTH
-  TTFT and TPOT (`serving-fit` fits only the conc1 floor today). `tp-comm` measures the
+  TTFT and TPOT (`serving-fit` fits only the conc1 floor today). `collectives` measures the
   real all-reduce cost fine, but on A100 it over-corrects low-conc TPOT (the real tp2 gap is
   large-batch decode under-pricing). Treat the current output as a starting point, not final.
 

@@ -23,7 +23,6 @@ from quettabench.probes import base as probes_base
 from quettabench.workloads.base import RandomTokenTrace
 from quettabench.workloads.grid import GridTrace
 from quettabench.workloads.live import (
-    PROFILE_ALIASES,
     PROFILES,
     MooncakeTrace,
     PromptJsonlTrace,
@@ -96,7 +95,7 @@ def build_trace(cfg, tokenizer=None):
     w = cfg.workload
     if cfg.mode.grid is not None:
         return GridTrace.from_config(cfg, tokenizer=tokenizer)
-    if w.source not in PROFILES and w.source not in PROFILE_ALIASES:
+    if w.source not in PROFILES:
         return RealTrace.from_jsonl(w.source, seed=w.seed)
     profile = get_profile(w.source)
     if w.kind == "sessions":

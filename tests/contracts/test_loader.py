@@ -162,7 +162,7 @@ class LoaderRules(unittest.TestCase):
                          24768)
 
     def test_bad_enum_value(self):
-        with self.assertRaisesRegex(ConfigError, "unknown prompt_mode 'random'; use distinct, clone, corpus, synth or trace"):
+        with self.assertRaisesRegex(ConfigError, "unknown prompt_mode 'random'; use distinct, clone, corpus or trace"):
             self.load(env={"PROMPT_MODE": "random"})
 
     # serve profile and load rules

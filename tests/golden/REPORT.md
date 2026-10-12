@@ -761,3 +761,7 @@ points at `just run configs/runs/<wl>.yaml` instead of the removed
 2026-10-12: no fixture changed. `RealTrace.from_mooncake` is deleted (only tests called it); `test_workloads.py` reads the Mooncake fixtures through `RealTrace.from_jsonl` and `MooncakeTrace`, which give the same requests.
 
 2026-10-12: no fixture changed. `LegacyRandomTokenTrace` and `DoubleWrapRandomTokenTrace` are deleted with the runner's `random-legacy` and `random-doublewrap` datasets and their two pins above: no profile named them.
+
+2026-10-12: no fixture changed for the docker tag. `configs/runs/llama-tp1-docker.yaml`, the README docker section and the launcher, runner and provision tests now name `vllm/vllm-openai:v0.26.0`, the base `docker/Dockerfile` builds on and the tag the docker run was tested with, in place of v0.30.0.
+
+2026-10-12: `config_failures.json` changed. `prompt_mode: synth` is deleted (no run yaml used it; owner, "scrap synthetic"), so `vmin_fit_unknown_prompt_mode` now lists `distinct, clone, corpus or trace`. Every other entry is unchanged.

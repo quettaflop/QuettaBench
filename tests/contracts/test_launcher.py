@@ -148,7 +148,7 @@ class DockerArgv(unittest.TestCase):
             "-v", "/hf:/hf:ro", "-v", f"{repo}:{repo}:ro", "-v", "/r/run:/r/run",
             "-e", "VLLM_SERVER_DEV_MODE=1", "-e", "VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1",
             "-e", "NCCL_IB_DISABLE=1", "-e", "HF_HOME=/hf",
-            "--entrypoint", "vllm", "vllm/vllm-openai:v0.30.0",
+            "--entrypoint", "vllm", "vllm/vllm-openai:v0.26.0",
             "serve", "/hf/llama", "--port", "8000", "--tensor-parallel-size", "1",
             "--dtype", "float16", "--max-model-len", "9216", "--gpu-memory-utilization", "0.9",
             "--no-enable-prefix-caching", "--enable-chunked-prefill", "--trust-remote-code"])
@@ -224,7 +224,7 @@ class DockerStart(unittest.TestCase):
             self.assertEqual((record["pid"], record["container"], record["container_id"],
                               record["image"]),
                              (proc.pid, NAME, "c0ffee",
-                              "vllm/vllm-openai:v0.30.0"))
+                              "vllm/vllm-openai:v0.26.0"))
             self.assertEqual((handle.pid, handle.container_id), (proc.pid, "c0ffee"))
             handle.stop(grace_s=5)
             self.assertEqual(self.docker_calls(run),

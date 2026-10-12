@@ -383,10 +383,18 @@ class BenchSha(unittest.TestCase):
 
     def test_without_a_repo_the_images_qbench_sha_stands_in(self):
         with tempfile.TemporaryDirectory() as td, \
-                mock.patch.object(results.env_map, "read_env", return_value={"provenance.bench_sha": "abc123"}) as read:
+                mock.patch.object(results.env_map, "read_env", return_value={"detect.bench_sha": "abc123"}) as read:
             self.assertEqual(results.bench_sha(td), "abc123")
         read.assert_called_once_with(only=("QBENCH_SHA",))
         self.assertRegex(results.bench_sha(), r"^[0-9a-f]{40}$")
+
+    def test_without_git_run_json_records_the_images_qbench_sha(self):
+        with tempfile.TemporaryDirectory() as td, \
+                mock.patch.object(results.subprocess, "run", side_effect=OSError("no git")), \
+                mock.patch.dict(results.os.environ, {"QBENCH_SHA": "7eea8ff"}):
+            results.RunWriter(Path(td) / "run1", config()).finish({"n": 0})
+            doc = json.loads((Path(td) / "run1" / "run.json").read_text())
+        self.assertEqual(doc["provenance"]["bench_sha"], "7eea8ff")
 
 
 if __name__ == "__main__":
