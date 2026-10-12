@@ -10,9 +10,10 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from quettabench import provision, runner
 from quettabench.config import loader
 from quettabench.config.schema import ConfigError
-from quettabench.engines import launcher, vllm
+from quettabench.engines import drivers, launcher, vllm
 from quettabench.engines.base import LaunchSpec, UnsupportedField
 from quettabench.profiling import native
 from tests.contracts import helpers
@@ -320,6 +321,107 @@ class IdleGpus(unittest.TestCase):
             self.assertEqual(launcher.idle_gpus(2, "cuda"), "1,2")
             with self.assertRaisesRegex(RuntimeError, "NEED 3 FREE GPUS, have: 1 2"):
                 launcher.idle_gpus(3, "cuda")
+
+
+def tools_on_path(td, **outputs):
+    """A PATH holding one stand-in script per tool name that prints its output."""
+    for tool, out in outputs.items():
+        script = Path(td, tool)
+        script.write_text(f"#!/bin/sh\nprintf '{out}'\n")
+        script.chmod(0o755)
+    return mock.patch.dict(os.environ, {"PATH": td})
+
+
+class Backends(unittest.TestCase):
+    def test_visible_env_per_backend(self):
+        self.assertEqual(launcher.visible_env("cuda", "0,1"), ({"CUDA_VISIBLE_DEVICES": "0,1"}, ()))
+        self.assertEqual(launcher.visible_env("rocm", "2"),
+                         ({"HIP_VISIBLE_DEVICES": "2", "CUDA_VISIBLE_DEVICES": "2"}, ()))
+        self.assertEqual(launcher.visible_env("tpu", "0,1,2,3"),
+                         ({"TPU_VISIBLE_CHIPS": "0,1,2,3", "TPU_CHIPS_PER_PROCESS_BOUNDS": "1,4,1",
+                           "TPU_PROCESS_BOUNDS": "1,1,1"}, ()))
+        self.assertEqual(launcher.visible_env("neuron", "0,1"),
+                         ({"NEURON_VISIBLE_DEVICES": "0,1"}, ("NEURON_RT_VISIBLE_CORES",)))
+
+    def child_spec(self, backend, *sets):
+        """The spec runner.serve_one hands launcher.start for a serve run on backend."""
+        (cfg,) = loader.load(DOCKER_YAML, ["engine.model=/w", f"hardware.backend={backend}",
+                                           "engine.dtype=bfloat16", "mode.grid=null",
+                                           "hardware.visible_devices=0,1", *sets], env={})
+        with mock.patch.object(runner.launcher, "start") as start, \
+                mock.patch.object(runner, "build_trace"), mock.patch.object(runner.serve, "run"), \
+                tempfile.TemporaryDirectory() as td:
+            runner.serve_one(cfg, Path(td), set(), mock.Mock(provenance={}))
+        return start.call_args.args[0]
+
+    def test_the_server_gets_its_backends_devices(self):
+        for backend, launch in (("rocm", "local"), ("tpu", "docker"), ("neuron", "local")):
+            with self.subTest(backend=backend):
+                spec = self.child_spec(backend, f"hardware.launcher={launch}")
+                want, unset = launcher.visible_env(backend, "0,1")
+                self.assertEqual({k: spec.env[k] for k in want}, want)
+                self.assertEqual(set(unset) <= set(spec.env_drop), True)
+        self.assertNotIn("CUDA_VISIBLE_DEVICES", self.child_spec("cuda", "hardware.launcher=docker").env)
+
+    def test_docker_device_flags_per_backend(self):
+        fixed_name(self)
+        flags = {"rocm": ["--group-add=video", "--cap-add=SYS_PTRACE", "--security-opt",
+                          "seccomp=unconfined", "--device", "/dev/kfd", "--device", "/dev/dri"],
+                 "tpu": ["--privileged", "--net=host"],
+                 "neuron": ["--device=/dev/neuron0", "--device=/dev/neuron1", "--device=/dev/neuron10",
+                            "--cap-add", "SYS_ADMIN", "--cap-add", "IPC_LOCK"]}
+        devices = ["/dev/neuron10", "/dev/neuron1", "/dev/neuron0"]
+        for backend, want in flags.items():
+            with self.subTest(backend=backend), \
+                    mock.patch.object(launcher.glob, "glob", return_value=devices):
+                cfg, spec = docker_spec(f"hardware.backend={backend}", "engine.dtype=bfloat16")
+                argv = launcher.docker_argv(spec, cfg, "0,1", "/r/run")
+                self.assertEqual(argv[7:7 + len(want)], want)
+                self.assertNotIn("--gpus", argv)
+        cfg, spec = docker_spec("hardware.backend=neuron")
+        with mock.patch.object(launcher.glob, "glob", return_value=[]), \
+                self.assertRaisesRegex(ConfigError, "no /dev/neuron"):
+            launcher.docker_argv(spec, cfg, "0", "/r/run")
+
+    def test_accelerator_identity_per_backend(self):
+        with tempfile.TemporaryDirectory() as td, tools_on_path(
+                td, **{"nvidia-smi": "NVIDIA H200, 143771\n",
+                       "amd-smi": "ASIC:\n    MARKET_NAME: AMD Instinct MI300X\n",
+                       "neuron-ls": "instance-type: trn2.48xlarge\ninstance-id: i-0\n"}):
+            self.assertEqual(launcher.accelerator("cuda"), ("NVIDIA H200", 143771 << 20))
+            self.assertEqual(launcher.accelerator("rocm"), ("AMD Instinct MI300X", None))
+            self.assertEqual(launcher.accelerator("neuron"), ("trn2.48xlarge", None))
+            self.assertEqual(launcher.accelerator("tpu"), ("", None))
+        with tempfile.TemporaryDirectory() as td, tools_on_path(td):
+            for backend in ("cuda", "rocm", "neuron", "tpu", "cpu"):
+                self.assertEqual(launcher.accelerator(backend), ("", None))
+        handle = launcher.NoServer(Path("r"), endpoint="http://127.0.0.1:1", backend="rocm")
+        (cfg,) = loader.load(DOCKER_YAML, ["engine.model=/w", "hardware.backend=rocm",
+                                           "mode.grid=null"], env={})
+        driver = vllm.ADAPTER.driver(vllm.ADAPTER.translate(cfg), handle)
+        with mock.patch.object(drivers.launcher, "accelerator", return_value=("MI300X", None)) as acc:
+            self.assertEqual(driver.device(), ("MI300X", None))
+        acc.assert_called_once_with("rocm")
+
+    def test_cuda_only_refusals(self):
+        def load(*sets):
+            return loader.load(DOCKER_YAML.with_name("llama.yaml"), ["engine.model=/w", *sets], env={})
+        with self.assertRaisesRegex(ConfigError, "TPU has no fp16; set engine.dtype=bfloat16"):
+            load("hardware.backend=tpu")
+        for backend in ("rocm", "neuron", "tpu"):
+            with self.subTest(backend=backend):
+                hw = [f"hardware.backend={backend}", "engine.dtype=bfloat16"]
+                with self.assertRaisesRegex(ConfigError, f"nsys traces CUDA; hardware.backend={backend}"):
+                    load(*hw, "engine.instrumentation=nsys")
+                (probe,) = load(*hw, "mode.mode=probe", "mode.probe=gemm", "mode.grid=null")
+                with self.assertRaisesRegex(ConfigError, "the kernel probes time CUDA kernels"):
+                    runner.check_probe(probe)
+                (ref,) = load(*hw, "engine.name=reference")
+                with self.assertRaisesRegex(ConfigError, "reference: runs transformers on cuda:0"):
+                    drivers.REFERENCE.translate(ref)
+                plan = provision.Plan(True)
+                with self.assertRaisesRegex(ConfigError, "nccl_lib is CUDA's NCCL"):
+                    provision.machine(plan, {"cache_root": "/tmp/q", "nccl_lib": "/n"}, True, backend)
 
 
 if __name__ == "__main__":

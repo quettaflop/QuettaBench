@@ -71,7 +71,18 @@ engines, or the vLLM line alone for a model yaml without a `quettaserve:` block.
 
 ## One image on a fresh box
 
-`just image` builds `docker/Dockerfile`, qbench installed editable on `vllm/vllm-openai:v0.26.0` (`--build-arg VLLM_IMAGE=<image>` for another platform), tagged `qbench:<short sha>` with the sha in `QBENCH_SHA`. Mount the HF cache, so `engine.model` can be a repo id, the vLLM compile cache and `results/`:
+`just image [<base>]` builds `docker/Dockerfile`, qbench installed editable on the platform's vLLM image (default `vllm/vllm-openai:v0.26.0`), tagged `qbench:<short sha>` with the sha in `QBENCH_SHA`. On a non-cuda base add `--build-arg NIXL=` (the NIXL wheel is cuda only). Bases whose tags were checked on Docker Hub or in the vendor docs:
+
+| `hardware.backend` | base image | source |
+|---|---|---|
+| cuda | `vllm/vllm-openai:v0.26.0` (tested on H200 and RTX 6000 Pro) | Docker Hub |
+| rocm | `vllm/vllm-openai-rocm:v0.30.0` | Docker Hub; vLLM `docs/getting_started/installation/gpu.rocm.inc.md` |
+| tpu | `vllm/vllm-tpu:v0.30.0` | Docker Hub; tpu-inference docs |
+| neuron | `public.ecr.aws/neuron/pytorch-inference-vllm-neuronx:0.24.0.1.1.0-neuronx-py313-sdk2.32.0-ubuntu24.04` (vLLM 0.24 with vllm-neuron) | AWS Neuron DLC quickstart (SDK 2.32.0) |
+
+`hardware.backend` picks the devices a launched server sees (`CUDA_VISIBLE_DEVICES`; `HIP_VISIBLE_DEVICES` and `CUDA_VISIBLE_DEVICES` on rocm; `TPU_VISIBLE_CHIPS` with its process bounds on tpu; `NEURON_VISIBLE_DEVICES` on neuron, with `NEURON_RT_VISIBLE_CORES` unset) and, with `hardware.launcher: docker`, the device flags. On tpu `engine.dtype=float16` is refused; the kernel probes, nsys, `hardware.provision.nccl_lib` and the transformers reference are cuda only. amd-smi, neuron-ls and tpu report no memory size, so grids there run without the KV SKIP.
+
+Mount the HF cache, so `engine.model` can be a repo id, the vLLM compile cache and `results/`:
 
 ```bash
 docker run --rm --gpus all --network host --ipc host -v ~/.cache/huggingface:/root/.cache/huggingface \

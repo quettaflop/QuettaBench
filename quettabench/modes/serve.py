@@ -570,7 +570,7 @@ def run_bench(driver, cfg, writer):
     steps passes the measured rows through."""
     engine, hw, grid = cfg.engine, cfg.hardware, cfg.grid
     device = driver.device() if engine.kv_bytes and engine.weights_gib is not None else None
-    cap = capacity(engine, device[1], engine.kv_bytes)[1] if device else 0
+    cap = capacity(engine, device[1], engine.kv_bytes)[1] if device and device[1] else 0
     over = set(grid.cells_over_maxlen)
     record, kept = {"bench_log": str(driver.log_path), "events": []}, []
     for ctx, bs, spec in driver.cells:
@@ -611,7 +611,8 @@ def run_grid(trace, driver, cfg, writer):
     shown = print_legacy_grid_lines(run)
 
     kv_b = kv_bytes_per_token(engine)
-    free_gib, cap = capacity(engine, gpu_bytes, kv_b)
+    # amd-smi, neuron-ls and tpu give no memory size, so those grids run without the KV SKIP
+    free_gib, cap = capacity(engine, gpu_bytes, kv_b) if gpu_bytes else (None, 0)
     run["capacity"] = {"mode": graph_mode(engine), "tp": engine.tp, "dtype": engine.dtype,
                        "kv_bytes": kv_b, "free_gib": free_gib, "kv_tokens": cap}
     shown = print_legacy_grid_lines(run, shown)

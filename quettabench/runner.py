@@ -15,7 +15,7 @@ import uuid
 from pathlib import Path
 
 from quettabench.config import env_map, loader
-from quettabench.config.schema import ConfigError, device_count
+from quettabench.config.schema import OTHER_ACCELERATORS, ConfigError, device_count
 from quettabench.engines import base, launcher
 from quettabench.metrics.results import RUN_MARKERS, RunWriter, redact
 from quettabench.modes import serve
@@ -173,6 +173,9 @@ def check_probe(cfg):
     module with a main, one that needs torchrun ranks, or one whose output
     flag names a file rather than the run dir."""
     name = cfg.mode.probe
+    if cfg.hardware.backend in OTHER_ACCELERATORS:
+        raise ConfigError(f"{cfg.run_name}: the kernel probes time CUDA kernels (CUDA graphs, "
+                          f"ncu, CUDA events); hardware.backend={cfg.hardware.backend} has none")
     if not is_probe(name):
         raise ConfigError(f"{cfg.run_name}: mode.probe {name!r} is not a module under "
                           "quettabench/probes/ with a main")
@@ -271,11 +274,13 @@ def serve_one(cfg, out, exported, writer):
                                                               cfg.hardware.backend)
     backend = "docker" if in_docker(cfg, adapter) else "local"
     pins = {k: v for k, v in cfg.hardware.collective.items() if v}
-    if backend == "local":
-        pins["CUDA_VISIBLE_DEVICES"] = gpus
+    visible, unset = launcher.visible_env(cfg.hardware.backend, gpus)
+    # docker gives cuda its GPUs by --gpus; the other accelerators take theirs from this env
+    if backend == "local" or cfg.hardware.backend in OTHER_ACCELERATORS:
+        pins.update(visible)
     if in_process(cfg, adapter, spec):
         exported.update(env_map.export(pins))
-    spec = with_child_env(spec, pins, exported)
+    spec = with_child_env(spec, pins, {*exported, *unset})
     writer.provenance["launch_env"] = redact(spec.env)
     # A launched server's driver has no tokenizer, so its trace is built
     # first: a bad workload fails before a long model load, not after.

@@ -206,7 +206,8 @@ class VllmAdapter(EngineAdapter):
         endpoint = "chat" if chat_requests(trace) else "completions"
         path = "/v1/chat/completions" if endpoint == "chat" else "/v1/completions"
         return HttpDriver(endpoint, url=handle.endpoint + path, model=spec.engine_kwargs["model"],
-                          api_key=spec.env.get(API_KEY_ENV, "test"), timeout=spec.timeout_s)
+                          api_key=spec.env.get(API_KEY_ENV, "test"), timeout=spec.timeout_s,
+                          accelerator=getattr(handle, "backend", "cuda"))
 
 
 def chat_requests(trace):

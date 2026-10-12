@@ -28,8 +28,8 @@ in one results layer, `results/<run>/`, and leaves the repo by
   `launcher.py` is the only code that starts an engine server, for a run or
   a probe (`probes/base.py` `launch_vllm`); `BenchDriver` runs the
   QuettaServe bench, which is its own engine, once per grid cell. Other
-  subprocesses are tools (nvidia-smi, git, nsys export, docker, cargo in
-  provision), never an engine.
+  subprocesses are tools (nvidia-smi, amd-smi, neuron-ls, git, nsys export,
+  docker, cargo in provision), never an engine.
 - `quettabench/modes/`: `serve.py`, nothing else: the request replay, the
   session dispatch and the grid cells. Nothing in `modes/` branches on the
   engine name; an engine difference is a driver.

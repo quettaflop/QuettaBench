@@ -486,7 +486,7 @@ def legacy_grid_lines(run):
     c = run.get("capacity")
     if c is not None:
         lines.append(f"CAPACITY mode={c['mode']} tp={c['tp']} dtype={c['dtype']} "
-                     f"kv_bytes_per_token={c['kv_bytes']} free_gib={c['free_gib']:.0f} "
+                     f"kv_bytes_per_token={c['kv_bytes']} free_gib={'-' if c['free_gib'] is None else format(c['free_gib'], '.0f')} "
                      f"kv_tokens={c['kv_tokens']}")
     if run.get("warm_ok"):
         lines.append("WARM_OK")

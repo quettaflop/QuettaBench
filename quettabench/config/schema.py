@@ -32,6 +32,9 @@ CHOICES = {
     "hardware.launcher": ("local", "docker"),
 }
 
+# Accelerators qbench launches vLLM on besides cuda; cpu is the stub backend the tests run.
+OTHER_ACCELERATORS = ("rocm", "neuron", "tpu")
+
 # Keys each dict-valued field accepts; None means free-form.
 DICT_KEYS = {
     "engine.extra": None,

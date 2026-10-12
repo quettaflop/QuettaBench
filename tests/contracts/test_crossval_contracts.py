@@ -70,7 +70,7 @@ class CrossvalScripts(unittest.TestCase):
         with mock.patch("shutil.which", return_value=None):
             self.assertEqual(_config("llama").hardware.backend, "cpu")
             self.assertEqual(_config("llama").hardware.link_profile, "nvlink")
-        self.assertEqual(_config("llama", env={"XVAL_BACKEND": "tpu"}).hardware.backend, "tpu")
+        self.assertEqual(_config("llama", "engine.dtype=bfloat16", env={"XVAL_BACKEND": "tpu"}).hardware.backend, "tpu")
 
     def test_pp_wired_in_grid_and_device_count(self):
         # pipeline_parallel_size comes from XVAL_PP or the workload's pp; devices provisioned are tp * pp.
@@ -89,7 +89,7 @@ class CrossvalScripts(unittest.TestCase):
         # a caller override wins; non-cuda backends take the no-pins nvlink profile.
         self.assertEqual(_config("llama", env={"XVAL_LINK_PROFILE": "pcie"}).hardware.link_profile,
                          "pcie")
-        self.assertEqual(_config("llama", env={"XVAL_BACKEND": "tpu"}).hardware.link_profile,
+        self.assertEqual(_config("llama", "engine.dtype=bfloat16", env={"XVAL_BACKEND": "tpu"}).hardware.link_profile,
                          "nvlink")
 
     def test_provision_defaults(self):

@@ -222,7 +222,7 @@ def run_grid_cli(argv, env, model_config=None):
                     mock.patch.object(launcher, "idle_gpus", return_value="0"), \
                     mock.patch.object(launcher, "start", server.start), \
                     mock.patch.object(launcher, "urlopen", server.urlopen), \
-                    mock.patch.object(drivers, "nvidia_smi_device", return_value=gpu), \
+                    mock.patch.object(launcher, "accelerator", return_value=gpu), \
                     mock.patch.object(aiohttp, "ClientSession", server.session), \
                     mock.patch.object(aiohttp, "TCPConnector", lambda **kw: None), \
                     contextlib.redirect_stdout(out):

@@ -44,7 +44,7 @@ import aiohttp
 
 from quettabench import crossval
 from quettabench.config import env_map
-from quettabench.config.schema import ConfigError
+from quettabench.config.schema import OTHER_ACCELERATORS, ConfigError
 from quettabench.engines import launcher
 from quettabench.engines.base import EngineAdapter, LaunchSpec, register
 from quettabench.metrics.core import RequestResult, parse_prometheus, spec_counts
@@ -401,18 +401,6 @@ def server_base_url(url: str) -> str:
     return urlunsplit((parts.scheme, parts.netloc, "", "", ""))
 
 
-def nvidia_smi_device():
-    """(name, total bytes) of GPU 0 from nvidia-smi; None without one."""
-    try:
-        out = subprocess.run(["nvidia-smi", "--query-gpu=name,memory.total",
-                              "--format=csv,noheader,nounits"],
-                             capture_output=True, text=True, check=True).stdout
-    except (OSError, subprocess.CalledProcessError):
-        return None
-    name, mib = out.splitlines()[0].rsplit(", ", 1)
-    return name, int(mib) * 2**20
-
-
 class GridBatchFailed(RuntimeError):
     """A grid batch over HTTP lost a request or decoded the wrong length."""
 
@@ -428,16 +416,16 @@ class HttpDriver(Driver):
     """
 
     def __init__(self, endpoint, backend_name="vllm", *, url=None, model=None,
-                 api_key="test", timeout=60):
-        self.endpoint, self.backend_name = endpoint, backend_name
+                 api_key="test", timeout=60, accelerator="cuda"):
+        self.endpoint, self.backend_name, self.accelerator = endpoint, backend_name, accelerator
         self._stream, self.ttft_rule = ENDPOINTS[endpoint]
         self.url, self.model, self.api_key, self.timeout = url, model, api_key, timeout
         self._http = None
         self._cell = None   # (ctx, bs) of the last grid batch; a new one resets the cache
 
     def device(self):
-        """GPU 0 as nvidia-smi reports it on this box, as BenchDriver reads it."""
-        return nvidia_smi_device()
+        """Device 0 of this box's accelerator (launcher.accelerator)."""
+        return launcher.accelerator(self.accelerator)
 
     @property
     def version(self):
@@ -616,7 +604,7 @@ class BenchDriver(Driver):
         self.cells = cells
 
     def device(self):
-        return nvidia_smi_device()
+        return launcher.accelerator("cuda")
 
     def run(self, cell_specs, *, concurrency=1, step_points=(), **kwargs):
         """cell_specs: (ctx, bs, translate(cfg, (ctx, bs))) per cell; yields rows.
@@ -866,6 +854,9 @@ class ReferenceAdapter(EngineAdapter):
             raise ConfigError("reference: engine.dtype must name a torch dtype, e.g. bfloat16")
         if cfg.mode.grid is None:
             raise ConfigError("reference: scores grid prompts only; set mode.grid")
+        if cfg.hardware.backend in OTHER_ACCELERATORS:
+            raise ConfigError(f"reference: runs transformers on cuda:0; "
+                              f"hardware.backend={cfg.hardware.backend} has none")
         if engine.layers is not None and engine.layers < 1:
             raise ConfigError(f"reference: engine.layers must be >= 1, got {engine.layers}")
         kwargs = {"model": engine.model, "dtype": engine.dtype}

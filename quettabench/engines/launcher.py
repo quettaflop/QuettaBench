@@ -11,6 +11,7 @@ container that fails to start has `docker logs` written to server.log and
 is removed. The docker path has not been run against a real daemon.
 """
 
+import glob
 import json
 import os
 import re
@@ -50,6 +51,7 @@ class Handle:
     gpu: str = ""
     container: str = ""   # docker: the container name
     container_id: str = ""
+    backend: str = "cuda"
 
     def stop(self, grace_s=30):
         """SIGTERM the process group; SIGKILL whatever is left after grace_s.
@@ -88,9 +90,44 @@ class NoServer:
     vLLM, the cargo bench): the results dir, no endpoint, nothing to stop."""
     results_dir: Path
     endpoint: str | None = None
+    backend: str = "cuda"
 
     def stop(self):
         pass
+
+
+def visible_env(backend, devices):
+    """The env that limits a vLLM server to devices, and the inherited names to unset."""
+    if backend == "rocm":
+        # vLLM reads CUDA_VISIBLE_DEVICES on ROCm and refuses a HIP value that differs (vllm/platforms/rocm.py:127-145,496)
+        return {"HIP_VISIBLE_DEVICES": devices, "CUDA_VISIBLE_DEVICES": devices}, ()
+    if backend == "tpu":
+        # tpu-inference examples/external_lb/run_dp_external_lb.sh:203-205 (v0.30.0)
+        chips = len(devices.split(","))
+        return {"TPU_VISIBLE_CHIPS": devices, "TPU_CHIPS_PER_PROCESS_BOUNDS": f"1,{chips},1",
+                "TPU_PROCESS_BOUNDS": "1,1,1"}, ()
+    if backend == "neuron":
+        # vllm-neuron picks cores from NEURON_VISIBLE_DEVICES and refuses NEURON_RT_VISIBLE_CORES (neuron_worker.py:527-532)
+        return {"NEURON_VISIBLE_DEVICES": devices}, ("NEURON_RT_VISIBLE_CORES",)
+    return {"CUDA_VISIBLE_DEVICES": devices}, ()
+
+
+def device_flags(backend, gpus):
+    """docker run flags that give the container the accelerator, from each vendor's vLLM container docs."""
+    if backend == "rocm":
+        # vllm docs/getting_started/installation/gpu.rocm.inc.md:359-370 (v0.30.0)
+        return ["--group-add=video", "--cap-add=SYS_PTRACE", "--security-opt", "seccomp=unconfined",
+                "--device", "/dev/kfd", "--device", "/dev/dri"]
+    if backend == "tpu":
+        # tpu-inference docs/mkdocs/javascripts/interactive.js:26 (v0.30.0)
+        return ["--privileged", "--net=host"]
+    if backend == "neuron":
+        # awsdocs-neuron v2.32.0 deploy/environments/quickstart-deploy-dlc.rst:66-84
+        devices = sorted(glob.glob("/dev/neuron[0-9]*"), key=lambda d: int(d[len("/dev/neuron"):]))
+        if not devices:
+            raise ConfigError("hardware.backend=neuron: no /dev/neuron* device on this host")
+        return [*(f"--device={d}" for d in devices), "--cap-add", "SYS_ADMIN", "--cap-add", "IPC_LOCK"]
+    return ["--gpus", f'"device={gpus}"']
 
 
 def idle_gpus(n, backend, visible_devices=None):
@@ -108,14 +145,37 @@ def idle_gpus(n, backend, visible_devices=None):
     return ",".join(ids[:n])
 
 
-def gpu_name():
-    """First GPU's name from nvidia-smi; empty when there is none, never a crash."""
+NVIDIA_SMI = ["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"]
+# backend -> (tool argv, the line prefix that carries the name)
+IDENTITY = {
+    "rocm": (["amd-smi", "static", "-g", "0", "-a"], "MARKET_NAME:"),  # vllm .buildkite/performance-benchmarks/scripts/run-performance-benchmarks.sh:44
+    "neuron": (["neuron-ls"], "instance-type:"),  # awsdocs-neuron tools/neuron-sys-tools/neuron-ls.rst:45
+}
+
+
+def tool_lines(argv):
+    """The non-empty stdout lines of a tool; none when it is missing or fails."""
     try:
-        out = subprocess.run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
-                             capture_output=True, text=True, check=False).stdout
+        out = subprocess.run(argv, capture_output=True, text=True, check=False).stdout
     except OSError:
-        return ""
-    return out.splitlines()[0].strip() if out.strip() else ""
+        return []
+    return [line.strip() for line in out.splitlines() if line.strip()]
+
+
+def accelerator(backend="cuda"):
+    """(name, total bytes) of device 0: nvidia-smi on cuda, the name only from amd-smi
+    or neuron-ls, nothing on tpu and cpu; ("", None) when the tool is missing, never a crash."""
+    if backend in IDENTITY:
+        argv, prefix = IDENTITY[backend]
+        names = [line[len(prefix):].strip() for line in tool_lines(argv) if line.startswith(prefix)]
+        return (names[0] if names else ""), None
+    if backend in ("tpu", "cpu"):
+        return "", None
+    lines = tool_lines(NVIDIA_SMI)
+    if not lines or ", " not in lines[0]:
+        return "", None
+    name, mib = lines[0].rsplit(", ", 1)
+    return name, int(float(mib)) * 2**20
 
 
 def wait_healthy(proc, url, timeout_s, poll_s):
@@ -153,7 +213,7 @@ def docker_argv(spec, cfg, gpus, results_dir):
     The flags follow the H200 campaign notes (no launch script ever used
     docker): detached, --pull=never (provision never pulls, and a missing
     image fails here instead of downloading), --init (so the engine is not
-    PID 1 and reaps its workers), --gpus, --ipc=host, --shm-size, the
+    PID 1 and reaps its workers), the backend's device_flags, --ipc=host, --shm-size, the
     port published, and the repo, the HF cache (hardware.hf_home, when set) and the model
     dir (when it is an absolute path no other mount covers; provision puts
     weights under <cache_root>/models/) mounted read-only at their host
@@ -178,7 +238,7 @@ def docker_argv(spec, cfg, gpus, results_dir):
     hidden = docker_secrets(spec)
     return ["docker", "run", "-d", "--pull=never", "--init",
             "--name", container_name(cfg.run_name),
-            "--gpus", f'"device={gpus}"', "--ipc=host", f"--shm-size={hw.shm_size}",
+            *device_flags(hw.backend, gpus), "--ipc=host", f"--shm-size={hw.shm_size}",
             "-p", f"{spec.port}:{spec.port}",
             *(a for path in [*mounts, REPO] for a in ("-v", f"{path}:{path}:ro")),
             "-v", f"{run_dir}:{run_dir}",
@@ -231,8 +291,9 @@ def start(spec, results_dir, *, backend="local", cfg=None, gpus="", timeout_s=18
             remove(container)
         raise
     endpoint = f"http://127.0.0.1:{spec.port}"
-    handle = Handle(spec.adapter, endpoint, proc.pid, results_dir, proc, gpu_name(),
-                    container, container_id)
+    backend = cfg.hardware.backend if cfg else "cuda"
+    handle = Handle(spec.adapter, endpoint, proc.pid, results_dir, proc, accelerator(backend)[0],
+                    container, container_id, backend)
     try:
         wait_healthy(proc, endpoint + spec.health_path, timeout_s, poll_s)
         record = {

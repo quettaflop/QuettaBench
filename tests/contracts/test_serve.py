@@ -15,7 +15,7 @@ from unittest import mock
 from quettabench import runner
 from quettabench.config import loader
 from quettabench.config.schema import Config, ConfigError, EngineCfg, HardwareCfg, ModeCfg, WorkloadCfg
-from quettabench.engines import drivers, launcher
+from quettabench.engines import launcher
 from quettabench.engines.drivers import HttpDriver
 from quettabench.metrics.core import RequestResult
 from quettabench.metrics.results import RunWriter, legacy_lines
@@ -464,7 +464,7 @@ class GridRunOverHttp(unittest.TestCase):
             handle = launcher.NoServer(Path(td) / "out", endpoint=endpoint)
             with mock.patch.dict(os.environ, {}, clear=True), \
                     mock.patch.object(launcher, "start", return_value=handle) as start, \
-                    mock.patch.object(drivers, "nvidia_smi_device",
+                    mock.patch.object(launcher, "accelerator",
                                       return_value=("FAKE-80GiB", 80 << 30)):
                 runner.run_one(cfg, Path(td) / "out")
             doc = json.loads((Path(td) / "out" / "run.json").read_text())

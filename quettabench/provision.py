@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 from quettabench.config import loader
-from quettabench.config.schema import ConfigError
+from quettabench.config.schema import OTHER_ACCELERATORS, ConfigError
 
 REPO = Path(__file__).resolve().parents[1]
 CACHE_DIRS = ("vllm", "torch", "hf", "tmp", "models")
@@ -80,8 +80,8 @@ def docker_images(plan, configs):
             plan.need(f"docker image {image}; pull it with: docker pull {image}")
 
 
-def machine(plan, prov, docker=False):
-    """Steps 1-4 (2 and 3 skipped for docker); returns (python, QuettaServe checkout)."""
+def machine(plan, prov, docker=False, backend="cuda"):
+    """Steps 1-4 (2 and 3 skipped for docker, 3 for a backend other than cuda); returns (python, QuettaServe checkout)."""
     cache = Path(prov["cache_root"])
     if plan.dry:
         plan.log("would: mkdir -p " + " ".join(str(cache / d) for d in CACHE_DIRS))
@@ -106,7 +106,11 @@ def machine(plan, prov, docker=False):
                   "hardware.provision.vllm_spec to install one")
 
     lib = prov.get("nccl_lib")
-    if docker:
+    if backend in OTHER_ACCELERATORS:
+        if lib:
+            raise ConfigError(f"hardware.provision.nccl_lib is CUDA's NCCL; hardware.backend={backend} has none")
+        plan.log(f"nccl: not checked on {backend}")
+    elif docker:
         plan.log("nccl: in the docker image")
     elif lib:
         if not Path(lib).is_dir():
@@ -229,8 +233,8 @@ def main(argv=None):
     docker = {n: c for n, c in configs.items() if c.hardware.launcher == "docker"}
     if docker:
         docker_images(plan, docker)
-    py, qs = machine(plan, next(iter(configs.values())).hardware.provision,
-                     len(docker) == len(configs))
+    first = next(iter(configs.values())).hardware
+    py, qs = machine(plan, first.provision, len(docker) == len(configs), first.backend)
     lines = [line for name, cfg in configs.items() for line in run(plan, name, cfg, py, qs) or ()]
     if plan.missing:
         plan.log("provisioning incomplete; resolve the MISSING items above")

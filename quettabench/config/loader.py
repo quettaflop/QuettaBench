@@ -12,6 +12,7 @@ from quettabench.config.schema import (
     CHOICES,
     DICT_KEYS,
     NOT_ASKED,
+    OTHER_ACCELERATORS,
     SECTIONS,
     Config,
     ConfigError,
@@ -226,6 +227,11 @@ def _validate(values, origins, allow_unverified, where):
     if not values["engine.verified"] and not allow_unverified:
         raise ConfigError(f"{where}: {values['run_name']} is not validated yet; "
                           "pass --allow-unverified to bring it up")
+    backend = values["hardware.backend"]
+    if backend == "tpu" and values["engine.dtype"] in ("float16", "half"):
+        raise ConfigError(f"{where}: TPU has no fp16; set engine.dtype=bfloat16")
+    if backend in OTHER_ACCELERATORS and values["engine.instrumentation"] == "nsys":
+        raise ConfigError(f"{where}: nsys traces CUDA; hardware.backend={backend} has none")
     if values["mode.mode"] == "probe" and not values["mode.probe"]:
         raise ConfigError(f"{where}: mode=probe needs mode.probe, a quettabench.probes module")
     if values["engine.attention"] in ("mla", "hybrid") and values["engine.kv_bytes"] is None:

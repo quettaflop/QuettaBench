@@ -3,8 +3,9 @@
 ARG VLLM_IMAGE=vllm/vllm-openai:v0.26.0
 FROM ${VLLM_IMAGE}
 
-# NIXL for the kv_transfer probe; vLLM's NixlConnector uses the same package. v0.26.0 ships 1.3.1.
-RUN pip install --no-cache-dir nixl==1.3.1
+# NIXL for the kv_transfer probe (cuda only); vLLM's NixlConnector uses the same package. Empty NIXL skips it on rocm, tpu and neuron bases.
+ARG NIXL=1.3.1
+RUN if [ -n "$NIXL" ]; then pip install --no-cache-dir nixl==$NIXL; fi
 
 WORKDIR /opt/qbench
 COPY pyproject.toml requirements.txt README.md ./
