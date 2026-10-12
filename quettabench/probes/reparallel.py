@@ -83,14 +83,14 @@ def main(argv=None) -> bool:
     ap.add_argument(
         "--mode",
         default="tp",
-        choices=["tp", "dp", "ep", "pp", "kv", "plan", "xnode"],
+        choices=["tp", "dp", "ep", "pp", "kv", "plan", "cross_node"],
         help="tp: fixed-pool TP reshard (all-gather); dp: replica "
         "replication (broadcast a shard to fresh GPUs); ep: expert "
         "restage (all-to-all); pp: pipeline-stage reshard (whole-layer "
         "all-gather); kv: in-flight paged-KV reshard (head-shard "
         "all-gather); plan: whole PD-plan reshard (faithful per-GPU "
         "byte-range exchange for a P/D layout change; node-aware when "
-        "launched across nodes); xnode: cross-node link physics -- "
+        "launched across nodes); cross_node: cross-node link physics -- "
         "concurrent p2p pair sweep (rail sharing / replica hydration) "
         "and node-spanning all-gathers. One dim per mode.",
     )
@@ -152,8 +152,8 @@ def main(argv=None) -> bool:
         out_rows = _measure_kv(a, rank, world, _get_groups)
     elif a.mode == "plan":
         out_rows = _measure_plan(a, rank, world)
-    elif a.mode == "xnode":
-        out_rows = _measure_xnode(a, rank, world)
+    elif a.mode == "cross_node":
+        out_rows = _measure_cross_node(a, rank, world)
     else:
         out_rows = _measure_tp(a, rank, world, _get_groups)
 
@@ -165,7 +165,7 @@ def main(argv=None) -> bool:
             "pp": "reshard_pp",
             "kv": "reshard_kv",
             "plan": "reshard_plan",
-            "xnode": "reshard_xnode",
+            "cross_node": "reshard_xnode",
         }[a.mode]
         stem = a.out_name or f"{a.gpu_label}_{default_stem}"
         _emit(f"reparallel/{stem}.csv", out_rows)
@@ -430,14 +430,14 @@ def _measure_kv(a, rank: int, world: int, _get_groups) -> list[dict]:
     return out_rows
 
 
-def _measure_xnode(a, rank: int, world: int) -> list[dict]:
+def _measure_cross_node(a, rank: int, world: int) -> list[dict]:
     """Launch with torchrun --nnodes=2."""
     gpn = int(os.environ.get("LOCAL_WORLD_SIZE", world))
     n_nodes = world // gpn
     out_rows: list[dict] = []
     if n_nodes < 2:
         if rank == 0:
-            print("xnode mode needs --nnodes >= 2; nothing to measure", flush=True)
+            print("cross_node mode needs --nnodes >= 2; nothing to measure", flush=True)
         return out_rows
     node, local = rank // gpn, rank % gpn
 

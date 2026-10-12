@@ -591,7 +591,7 @@ def test_probe_runs_export_to_the_quettasim_layout(tmp_path: Path) -> None:
     )
     probe_run(results, "elementwise", {"graph/elementwise/H100.json": '{"rms_norm": {"floor_us": 1}}'}, 1)
     probe_run(results, "flash_attn", {"graph/flash_attn/H100.csv": FA, "eager/fa3_prefill/H100.csv": FA}, 2)
-    probe_run(results, "cross_attn", {"eager/fa3_cross/H100.csv": FA}, 3)
+    probe_run(results, "chunked_prefill_attn", {"eager/fa3_cross/H100.csv": FA}, 3)
     probe_run(results, "moe", {"graph/moe/H100.csv": MOE, "graph/moe/H100_routing.json": '{"a": 1}'}, 4)
     probe_run(results, "gdn", {"eager/gdn/H100_9b_decode.csv": "g\r\n1\r\n"}, 5)
     probe_run(results, "reparallel", {"eager/reparallel/H100_reshard.csv": RESHARD}, 6)
@@ -971,7 +971,7 @@ GEMM_ROW = "M,N,K,us\r\n1,1,1,5\r\n"
             {"graph/flash_attn/H200.csv": "graph_replay", "eager/fa3_prefill/H200.csv": "eager"},
         ),
         ("flash_attn", "H200", [], {"eager/flash_attn/H200.csv": FA}, {"eager/flash_attn/H200.csv": "eager"}),
-        ("cross_attn", "H200", [], {"eager/fa3_cross/H200.csv": FA}, {"eager/fa3_cross/H200.csv": "eager"}),
+        ("chunked_prefill_attn", "H200", [], {"eager/fa3_cross/H200.csv": FA}, {"eager/fa3_cross/H200.csv": "eager"}),
         (
             "moe",
             "H200",
@@ -1617,14 +1617,25 @@ IDENTITY_TABLES = [
 ]
 
 
-def exported(work: Path) -> dict[str, bytes]:
+# The base tree names its probes the old way; the exported tool and source dirs carry the name.
+BASE_NAMES = {
+    b"probes.cross_attn": b"probes.chunked_prefill_attn",
+    b"/cross_attn/": b"/chunked_prefill_attn/",
+    b"probe-cross_attn": b"probe-chunked_prefill_attn",
+}
+
+
+def exported(work: Path, renames: dict[bytes, bytes] | None = None) -> dict[str, bytes]:
     out = {"stop.txt": (work / "stop.txt").read_bytes()}
     for path in sorted(p for p in work.glob("*/kernel_data/**/*") if p.is_file()):
         body = path.read_bytes()
+        for old_name, new_name in (renames or {}).items():
+            body = body.replace(old_name, new_name)
         if path.name == "qbench_manifest.json":
             doc = json.loads(body.replace(str(work).encode(), b"<WORK>"))
             for entry in [doc, *doc["kernel_tables"].values()]:
                 entry["bench_sha"] = entry["exported_at"] = "*"
+            doc["runs"].sort(key=lambda r: r["run"])
             body = json.dumps(doc, indent=2).encode()
         out[path.relative_to(work).as_posix()] = body
     return out
@@ -1649,7 +1660,7 @@ def test_rows_export_matches_the_per_probe_tables_export(tmp_path: Path) -> None
             ],
             check=True,
         )
-    old, new = exported(tmp_path / "old"), exported(tmp_path / "new")
+    old, new = exported(tmp_path / "old", BASE_NAMES), exported(tmp_path / "new")
     for tree_dir in ("data", "fresh"):
         assert [t for t in IDENTITY_TABLES if f"{tree_dir}/kernel_data/{t}" in old] == IDENTITY_TABLES
     assert {k: v for k, v in new.items() if old.get(k) != v} == {}

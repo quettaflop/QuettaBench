@@ -108,7 +108,7 @@ elementwise gpu=gpu:
     {{visible}}={{gpu_id}} {{py}} -m quettabench.probes.elementwise --gpu-label {{gpu}}
 
 flash gpu=gpu *args:
-    {{visible}}={{gpu_id}} {{py}} -m quettabench.probes.flash_attn --gpu-label {{gpu}} --tag {{tag}} --n-heads {{nh}} --n-kv-heads {{nkv}} --head-dim {{hd}} --layers {{layers}} {{args}}
+    {{visible}}={{gpu_id}} {{py}} -m quettabench.probes.flash_attn --gpu-label {{gpu}} --head-config {{tag}} --n-heads {{nh}} --n-kv-heads {{nkv}} --head-dim {{hd}} --layers {{layers}} {{args}}
 
 moe gpu=gpu geoms="qwen3-30b-a3b,mixtral-8x7b,gpt-oss-20b,gpt-oss-120b" tp="1,2,4":
     {{visible}}={{gpu_id}} {{py}} -m quettabench.probes.moe --gpu-label {{gpu}} --geometries {{geoms}} --tp {{tp}}
@@ -118,21 +118,21 @@ moe-routing model gpu=gpu layer="1" *args:
     {{visible}}={{gpu_id}} {{py}} -m quettabench.probes.moe --routing --gpu-label {{gpu}} --model {{model}} --layer {{layer}} {{args}}
 
 gdn gpu=gpu *args:
-    {{visible}}={{gpu_id}} {{py}} -m quettabench.probes.gdn --gpu-label {{gpu}} --geometry-tag {{geom}} --hv {{hv}} --dk {{dk}} --dv {{dv}} --n-linear {{nlin}} --mode {{mode}} {{args}}
+    {{visible}}={{gpu_id}} {{py}} -m quettabench.probes.gdn --gpu-label {{gpu}} --gdn-geometry {{geom}} --value-heads {{hv}} --key-dim {{dk}} --value-dim {{dv}} --gdn-layers {{nlin}} --grid-size {{mode}} {{args}}
 
 # NCCL grid; also prints tp_comm scalars as a YAML block.
 collectives gpu=gpu world="2" hidden="4096" layers="32" ops="all_reduce,all_gather,reduce_scatter,all_to_all" gpu_ids="0,1":
     {{visible}}={{gpu_ids}} {{py}} -m torch.distributed.run --nproc_per_node={{world}} -m quettabench.probes.collective --gpu-label {{gpu}} --hidden {{hidden}} --layers {{layers}} --ops {{ops}}
 
 # Chunked-prefill attention grid, one head config per run.
-cross-attn gpu=gpu nh="16" nkv="2" hd="128":
-    {{visible}}={{gpu_id}} {{py}} -m quettabench.probes.cross_attn --gpu-label {{gpu}} --n-heads {{nh}} --n-kv-heads {{nkv}} --head-dim {{hd}}
+chunked-prefill-attn gpu=gpu nh="16" nkv="2" hd="128":
+    {{visible}}={{gpu_id}} {{py}} -m quettabench.probes.chunked_prefill_attn --gpu-label {{gpu}} --n-heads {{nh}} --n-kv-heads {{nkv}} --head-dim {{hd}}
 
 # TP all-reduce through vLLM's GroupCoordinator next to plain NCCL.
 vllm-allreduce gpu=gpu world="2" gpu_ids="0,1":
     {{visible}}={{gpu_ids}} {{py}} -m torch.distributed.run --nproc_per_node={{world}} -m quettabench.probes.vllm_allreduce --gpu-label {{gpu}}
 
-# Parallelism-switch cost (mode: tp | dp | ep | xnode | plan); xnode needs 2-node torchrun.
+# Parallelism-switch cost (mode: tp | dp | ep | cross_node | plan); cross_node needs 2-node torchrun.
 reparallel gpu=gpu world="8" mode="tp" gpu_ids="0,1,2,3,4,5,6,7":
     {{visible}}={{gpu_ids}} {{py}} -m torch.distributed.run --nproc_per_node={{world}} -m quettabench.probes.reparallel --gpu-label {{gpu}} --mode {{mode}}
 

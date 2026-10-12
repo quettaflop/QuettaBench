@@ -13,6 +13,15 @@ from unittest import mock
 
 CODE, WORK, SEED = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])
 sys.path.insert(0, str(CODE))
+# The base tree predates the plain names; it is driven under its own.
+OLD_NAMES = {"chunked_prefill_attn": "cross_attn", "--head-config": "--tag"}
+IS_OLD = (CODE / "quettabench" / "probes" / "cross_attn.py").exists()
+
+
+def named(name: str) -> str:
+    return OLD_NAMES.get(name, name) if IS_OLD else name
+
+
 T0 = datetime(2026, 10, 12, 9, 0, 0, tzinfo=timezone.utc)
 STEP = [0]
 CLOCK = [0]
@@ -118,7 +127,7 @@ TIMING = {
     "moe": {"_time": SEQ, "_fused_experts": lambda: (mock.MagicMock(), lambda *a: (1, 2, 3))},
     "elementwise": {"time_op": SEQ, "graph_median_us": SEQ, "op_for": mock.Mock(), "op_for_vllm": mock.Mock()},
     "flash_attn": {"time_call": SEQ, "graph_median_us": SEQ, "_ncu_us": SEQ},
-    "cross_attn": {"time_call": SEQ},
+    "chunked_prefill_attn": {"time_call": SEQ},
     "gdn": {"time_call": gdn_time, "ncu_op_us": SEQ, "mk": lambda *a: (mock.MagicMock(),) * 5},
     "collective": {"_time_op": mock.Mock(side_effect=lambda *a: tick() * 1e-6)},
     "vllm_allreduce": {"_time": SEQ},
@@ -158,7 +167,7 @@ BATCHES = [
                 "32",
                 "--n-kv-heads",
                 "4",
-                "--tag",
+                "--head-config",
                 "tp1",
                 "--fa-version",
                 "3",
@@ -172,7 +181,7 @@ BATCHES = [
             ],
         ),
         (
-            "cross_attn",
+            "chunked_prefill_attn",
             ["--n-heads", "16", "--n-kv-heads", "2", "--fa-version", "3", "--q-axis", "512", "--ctx-axis", "0,1024,99"],
         ),
         ("gdn", []),
@@ -205,7 +214,7 @@ BATCHES = [
                 "32",
                 "--n-kv-heads",
                 "4",
-                "--tag",
+                "--head-config",
                 "tp1",
                 "--fa-version",
                 "3",
@@ -224,9 +233,9 @@ BATCHES = [
 
 def run(results_dir: Path, probe: str, flags: list[str], at: int) -> None:
     package = "profiling" if probe == "kv_transfer" else "probes"
-    module = __import__(f"quettabench.{package}.{probe}", fromlist=["main"])
+    module = __import__(f"quettabench.{package}.{named(probe)}", fromlist=["main"])
     env = {"RANK": "0", "WORLD_SIZE": "8" if probe == "reparallel" else "2", "LOCAL_RANK": "0"}
-    argv = ["probe", "--gpu-label", "H200", "--out", str(results_dir / "probes" / "H200"), *flags]
+    argv = ["probe", "--gpu-label", "H200", "--out", str(results_dir / "probes" / "H200"), *map(named, flags)]
     with contextlib.ExitStack() as stack:
         for name, fake in TIMING[probe].items():
             stack.enter_context(mock.patch.object(module, name, fake))
@@ -234,7 +243,7 @@ def run(results_dir: Path, probe: str, flags: list[str], at: int) -> None:
         if probe not in TORCHRUN:
             os.environ.pop("RANK", None)
         stack.enter_context(mock.patch.object(sys, "argv", argv))
-        base.run_recorded(module.main, probe, now=T0 + timedelta(seconds=at))
+        base.run_recorded(module.main, named(probe), now=T0 + timedelta(seconds=at))
 
 
 def main() -> None:

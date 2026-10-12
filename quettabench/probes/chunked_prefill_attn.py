@@ -62,7 +62,7 @@ class CrossAttnProbe(Probe):
         del q, k, v
         print(f"  q={ql:5d} resident={ctx:6d} kv={kv:6d}: {us:8.1f} us/layer", flush=True)
         return ProbeRow(
-            "cross_attn",
+            "chunked_prefill_attn",
             f"fa3_cross/{a.gpu_label}.csv",
             {
                 "n_heads": a.n_heads,
@@ -107,4 +107,4 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    run_recorded(main, "cross_attn")
+    run_recorded(main, "chunked_prefill_attn")

@@ -143,17 +143,17 @@ REDUCE = {
     "moe": "min",
     "elementwise": "median",
     "flash_attn": "median",
-    "cross_attn": "median",
+    "chunked_prefill_attn": "median",
     "gdn": "median",
 }
 # The key a collectives row replaces a dest row on.
 COLLECTIVE_KEY = ("op", "world", "bytes")
 GEOMETRY = ("n_heads", "n_kv_heads", "head_dim")
-# flash_attn and cross_attn replace every row of a head config.
+# flash_attn and chunked_prefill_attn replace every row of a head config.
 ROW_KEYS = {
     ("flash_attn", "flash_attn"): GEOMETRY,
     ("flash_attn", "fa3_prefill"): GEOMETRY,
-    ("cross_attn", "fa3_cross"): GEOMETRY,
+    ("chunked_prefill_attn", "fa3_cross"): GEOMETRY,
     ("gemm", "gemm"): ("M", "N", "K"),
     ("gemm", "gemm_wide"): ("M", "N", "K"),
     ("moe", "moe"): ("tokens", "n_experts", "top_k", "intermediate", "hidden"),

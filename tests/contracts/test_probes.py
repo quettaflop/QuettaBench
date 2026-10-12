@@ -203,7 +203,7 @@ class RunRecorded(unittest.TestCase):
                 out_root(a, "gemm")
 
 
-@pytest.mark.parametrize("name", ["cross_attn", "flash_attn", "gemm", "moe", "reparallel"])
+@pytest.mark.parametrize("name", ["chunked_prefill_attn", "flash_attn", "gemm", "moe", "reparallel"])
 def test_a_probe_run_writes_only_the_rows_it_measured(name):
     source = (PROBES / f"{name}.py").read_text()
     assert "prior_table" not in source, name

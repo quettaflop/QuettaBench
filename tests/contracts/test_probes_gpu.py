@@ -56,7 +56,7 @@ def test_elementwise_probe_capped(tmp_path):
 def test_cross_attn_probe_tiny_grid(tmp_path):
     run_probe(
         tmp_path,
-        "cross_attn",
+        "chunked_prefill_attn",
         "--n-heads",
         "8",
         "--n-kv-heads",
@@ -68,14 +68,14 @@ def test_cross_attn_probe_tiny_grid(tmp_path):
         "--ctx-axis",
         "1024,4096",
     )
-    assert written_tables(tmp_path), "cross-attn probe wrote no table"
+    assert written_tables(tmp_path), "chunked-prefill-attn probe wrote no table"
 
 
 def test_flash_attn_probe_tiny_grid(tmp_path):
     run_probe(
         tmp_path,
         "flash_attn",
-        "--tag",
+        "--head-config",
         "tp1",
         "--n-heads",
         "8",

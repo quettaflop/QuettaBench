@@ -66,19 +66,19 @@ class GdnProbe(Probe):
     def __init__(self, a):
         self.a = a
         self.dev, self.dt = torch.device("cuda"), torch.bfloat16
-        self.scale = 1.0 / (a.dk**0.5)
-        self.base = f"{a.gpu_label}_{a.geometry_tag}"
+        self.scale = 1.0 / (a.key_dim**0.5)
+        self.base = f"{a.gpu_label}_{a.gdn_geometry}"
         self.failed = False
 
     def grid(self):
         a = self.a
         # Prefill first: the decode proxy's illegal-memory bug at large B would lose it.
-        for T in SEQ_SMOKE if a.mode == "smoke" else SEQ_FULL:
+        for T in SEQ_SMOKE if a.grid_size == "smoke" else SEQ_FULL:
             if self.failed:
                 break
             yield "prefill", T
         self.failed = False
-        for B in BATCH_NCU if a.ncu else (BATCH_SMOKE if a.mode == "smoke" else BATCH_FULL):
+        for B in BATCH_NCU if a.ncu else (BATCH_SMOKE if a.grid_size == "smoke" else BATCH_FULL):
             if self.failed:
                 break
             yield "decode", B
@@ -96,16 +96,16 @@ class GdnProbe(Probe):
         if us is None:
             return None
         if phase == "prefill":
-            print(f"  prefill T={n:5d}: {us:8.2f} us/call  x{a.n_linear}L={us * a.n_linear:9.1f} us", flush=True)
+            print(f"  prefill T={n:5d}: {us:8.2f} us/call  x{a.gdn_layers}L={us * a.gdn_layers:9.1f} us", flush=True)
             return ProbeRow(
                 "gdn",
                 f"gdn/{self.base}_prefill.csv",
                 {"seq_len": n},
-                {"us_per_call": round(us, 3), "us_x_nlinear": round(us * a.n_linear, 3)},
+                {"us_per_call": round(us, 3), "us_x_nlinear": round(us * a.gdn_layers, 3)},
                 "eager",
             )
         print(
-            f"  {'ncu ' if a.ncu else ''}decode B={n:4d}: {us:8.2f} us/call  x{a.n_linear}L={us * a.n_linear:9.1f} us",
+            f"  {'ncu ' if a.ncu else ''}decode B={n:4d}: {us:8.2f} us/call  x{a.gdn_layers}L={us * a.gdn_layers:9.1f} us",
             flush=True,
         )
         # Decode is CUDA-graphed in serving, so NCU timing is faithful.
@@ -113,13 +113,13 @@ class GdnProbe(Probe):
             "gdn",
             f"gdn/{self.base}_decode.csv",
             {"batch": n},
-            {"us_per_call": round(us, 3), "us_x_nlinear": round(us * a.n_linear, 3)},
+            {"us_per_call": round(us, 3), "us_x_nlinear": round(us * a.gdn_layers, 3)},
             "ncu" if a.ncu else "eager",
         )
 
     def prefill_us(self, T):
         a = self.a
-        q, k, v, g, beta = mk(1, T, a.hv, a.dk, a.dv, self.dev, self.dt)
+        q, k, v, g, beta = mk(1, T, a.value_heads, a.key_dim, a.value_dim, self.dev, self.dt)
 
         def call():
             return chunk_gated_delta_rule(
@@ -130,7 +130,7 @@ class GdnProbe(Probe):
 
     def decode_us(self, B):
         a = self.a
-        H, K, V = a.hv, a.dk, a.dv
+        H, K, V = a.value_heads, a.key_dim, a.value_dim
         if a.ncu:
             us = ncu_op_us(_ncu_decode_inner(B, H, K, V), a.ncu_bin, NCU_REPS)
             if us is None:
@@ -158,23 +158,23 @@ class GdnProbe(Probe):
 
 def main(argv=None):
     ap = argparse.ArgumentParser()
-    ap.add_argument("--hv", type=int, default=32)
-    ap.add_argument("--dk", type=int, default=128)
-    ap.add_argument("--dv", type=int, default=128)
-    ap.add_argument("--n-linear", type=int, default=24)
-    ap.add_argument("--mode", choices=["smoke", "full"], default="smoke")
+    ap.add_argument("--value-heads", type=int, default=32)
+    ap.add_argument("--key-dim", type=int, default=128)
+    ap.add_argument("--value-dim", type=int, default=128)
+    ap.add_argument("--gdn-layers", type=int, default=24)
+    ap.add_argument("--grid-size", choices=["smoke", "full"], default="smoke")
     add_output_args(ap)
-    ap.add_argument("--geometry-tag", default="9b", help="GDN head geometry tag, e.g. 9b (H_v=32) / 27b (H_v=48)")
+    ap.add_argument("--gdn-geometry", default="9b", help="GDN head geometry tag, e.g. 9b (H_v=32) / 27b (H_v=48)")
     ap.add_argument("--max-mem-gb", type=float, default=30.0)
     ap.add_argument("--ncu", action="store_true", help="NCU per-kernel timing (the standard); curated grid")
     ap.add_argument("--ncu-bin", default=os.environ.get("NCU_BIN", "ncu"))
     a = ap.parse_args(argv)
     print(
-        f"[gdn{'/ncu' if a.ncu else ''}] dev={torch.cuda.get_device_name(0)} H={a.hv} K={a.dk} V={a.dv} n_linear={a.n_linear}",
+        f"[gdn{'/ncu' if a.ncu else ''}] dev={torch.cuda.get_device_name(0)} H={a.value_heads} K={a.key_dim} V={a.value_dim} gdn_layers={a.gdn_layers}",
         flush=True,
     )
     n = GdnProbe(a).run()
-    print(f"[gdn] {n} rows of gdn/{a.gpu_label}_{a.geometry_tag}_decode.csv and _prefill.csv", flush=True)
+    print(f"[gdn] {n} rows of gdn/{a.gpu_label}_{a.gdn_geometry}_decode.csv and _prefill.csv", flush=True)
 
 
 if __name__ == "__main__":
