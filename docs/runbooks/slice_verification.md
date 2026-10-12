@@ -10,7 +10,7 @@ current one (README.md "Old command -> new command").
 | stage | what | command | pass criterion | status |
 |---|---|---|---|---|
 | V1 | port equivalence | historical, `slice_tf/` retired: diff each `slice_tf/*.py` against QuettaServe `origin/kev/deepseek-batch:docs/scripts/` with the rename map in `slice_tf/README.md` applied | 9/9 identical modulo the recorded renames | pass |
-| V2 | static contracts | `python -m pytest tests/test_crossval_contracts.py -q` | all tests pass | pass |
+| V2 | static contracts | `python -m pytest tests/contracts/test_crossval_contracts.py -q` | all tests pass | pass |
 | V3 | engine tp equivalence | QuettaServe `supp_tp` checkout, 8 idle GPUs: `cargo test -p llama --test tp_equivalence -- --nocapture` | passes: tp 2/4/8 tokens equal tp1, logits within f16 tolerance | blocked |
 | V4 | engine tp bench | `supp_tp` checkout: `TP=2 MODEL=<weights> cargo bench --bench latency 2>&1 \| tee /tmp/qs-bench-llama-tp2.txt`, then TP=4 | criterion completes; `decode_tp{N}` groups present at ctx 100/1024/4096/8192 | blocked |
 | V5 | tp baselines | historical `just vllm llama-tp2`, `llama-tp4`; now `just run configs/runs/llama-tp2.yaml --set engine.model=<weights>`, same for `llama-tp4.yaml` | 4 cells each, every r2 >= 0.999, no SKIP lines | pass (blackwell) |

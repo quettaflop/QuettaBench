@@ -8,5 +8,5 @@ sequrity = "sequrity" # GCS bucket name
 hel = "hel"           # streamed token fragment in a test
 
 [default]
-# Pinned hex digests (tests/test_profile_hashes.py) are not words.
+# Pinned hex digests (tests/contracts/test_profiles.py) are not words.
 extend-ignore-re = ['"[0-9a-f]{16}"']

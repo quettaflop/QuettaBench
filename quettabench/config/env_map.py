@@ -1,6 +1,6 @@
 # Every env var the pre-refactor code reads, mapped to the Config field it
 # sets, so old habits keep working. read_env() and export() are the
-# package's own reads and writes of os.environ; tests/config/test_no_environ.py
+# package's own reads and writes of os.environ; tests/contracts/test_env_map.py
 # enforces it, with an allowlist of older readers that only shrinks.
 import os
 

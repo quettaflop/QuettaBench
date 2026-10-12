@@ -315,6 +315,8 @@ quettabench/export/quettasim.py  the one route to QuettaSim: tp_comm, stage_spli
                           serving_decode_grid, kernel_tables
 configs/                  models, runs, grids, hardware
 docs/runbooks/            the probe guide (probes.md) and the GPU and verification runbooks
+tests/golden/             characterization fixtures from the pre-refactor code
+tests/contracts/          one test module per package module, plus the crossval contracts and GPU smoke
 analysis/, data/          one-off studies and data fetch; not imported by the package
 ```
 

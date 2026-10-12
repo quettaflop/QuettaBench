@@ -1,0 +1,58 @@
+"""Golden: the engine args each run yaml translates to."""
+
+import json
+import unittest
+
+from quettabench.config import loader
+from quettabench.config.schema import ConfigError
+from quettabench.engines import vllm as vllm_adapter
+from tests.golden._harness import ENV_OVERRIDE, FIXTURES, REPO, RUNS, check_json, grid_argv, run_grid_cli
+
+# The merged workload records xval_config resolved, pinned in the config golden.
+WORKLOADS = {name: rec["cleared"]["xval_config"]["workload"] for name, rec in
+             json.loads((FIXTURES / "config_workloads.json").read_text()).items()}
+ABSENT = "<absent>"
+
+
+def vmin_fit_kwargs(name, env, extra_argv=()):
+    run = run_grid_cli(grid_argv(name, "--allow-unverified", *extra_argv), env)
+    (kwargs,) = run["llm_kwargs"]
+    return kwargs
+
+
+def serve_kwargs(name):
+    """engine_kwargs of the run yaml with --model and the workload's --tp, as
+    the retired trace_serve.py built them, or the loader's refusal."""
+    tp = WORKLOADS[name].get("tp", 1)
+    try:
+        (cfg,) = loader.load(RUNS / f"{name}.yaml", ["allow_unverified=true",
+                             "engine.model=<MODEL>", f"engine.tp={tp}"], env={})
+    except ConfigError as e:
+        return {"exit": "trace_serve: " + str(e).replace(str(REPO), "<REPO>")}
+    return dict(vllm_adapter.ADAPTER.translate(cfg).engine_kwargs)
+
+
+def kwargs_diff(a, b):
+    """{key: [a value, b value]} for every key whose value differs."""
+    return {k: [a.get(k, ABSENT), b.get(k, ABSENT)]
+            for k in sorted(set(a) | set(b)) if a.get(k, ABSENT) != b.get(k, ABSENT)}
+
+
+class EngineArgsGolden(unittest.TestCase):
+    def test_engine_kwargs_per_workload(self):
+        record = {}
+        for name in sorted(WORKLOADS):
+            vmin = vmin_fit_kwargs(name, {})
+            serve = serve_kwargs(name)
+            record[name] = {
+                "vmin_fit": vmin,
+                "vmin_fit_env_override": vmin_fit_kwargs(name, ENV_OVERRIDE),
+                "vmin_fit_nograph": vmin_fit_kwargs(name, {}, ["--set", "engine.cudagraph=false"]),
+                "trace_serve": serve,
+                "diff_vmin_fit_vs_trace_serve": None if "exit" in serve else kwargs_diff(vmin, serve),
+            }
+        check_json(self, "engine_args", record)
+
+
+if __name__ == "__main__":
+    unittest.main()

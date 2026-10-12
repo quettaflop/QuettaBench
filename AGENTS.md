@@ -19,7 +19,7 @@ in one results layer, `results/<run>/`, and leaves the repo by
   sequence, and box setup. `runner.py` is the only code that starts a run.
 - `quettabench/config/`: schema (with the serving-topology rules), loader,
   env_map. The only place `os.environ` is read is `config/env_map.py`,
-  enforced by `tests/config/test_no_environ.py`; its allowlist only shrinks.
+  enforced by `tests/contracts/test_env_map.py`; its allowlist only shrinks.
 - `quettabench/workloads/`: every request source is a `Trace` with a
   `workload_hash`. A source without a hash does not belong here.
 - `quettabench/engines/`: adapters translate a Config to a LaunchSpec from a
@@ -69,12 +69,15 @@ in one results layer, `results/<run>/`, and leaves the repo by
   and never restate its facts. `grids.yaml` holds the grids and step points,
   `hardware/` the link profiles, `workloads.yaml` every workload profile by name.
 - `data/` and `analysis/`: fetch scripts and one-off studies. Never imported by
-  `quettabench/`, enforced by `tests/test_analysis_is_leaf.py`.
+  `quettabench/`, enforced by `tests/contracts/test_imports.py`.
 - `docs/runbooks/`: the probe guide and runbooks; with README.md and AGENTS.md
   the only docs.
 - `tests/golden/`: characterization fixtures captured from the pre-refactor
   code. Change a fixture only with a dated line in `tests/golden/REPORT.md`
   saying why.
+- `tests/contracts/`: one test module per package module (`test_<module>.py`),
+  plus `test_crossval_contracts.py`, `test_imports.py` and the two GPU smoke
+  modules; `helpers.py` and the `fake_*.py` scripts are their plumbing.
 
 ## Deviations from QBENCH_STRUCTURE.md
 
@@ -85,6 +88,7 @@ One line each; everything else follows section 2 "Target layout".
 - `probes/moe_routing.py` (`just moe-routing`, slice verification), `serving_decode_grid.py` and `serving_stage_split.py` (read by the export builders) are probes beyond section 2's list.
 - `profiling/frontend.py` holds the `frontend` and `pd_host` sources, not `native.py`: both import QuettaSim at the top, and the profiler imports `native.py` for every source.
 - `profiling/kv_transfer.py` stays its own module: it is a torchrun target (`-m quettabench.profiling.kv_transfer`) and the tool name in the kernel manifest.
+- `tests/` has `golden/` and `contracts/` only: the probe contracts and GPU smoke tests live in `contracts/` (owner decision 2026-10-12), and `tests/parity/` waits for the GPU parity gate.
 - `analysis/` has no synthetic-sampler studies or `build_trace_distributions`: `analysis/synthetic/` was deleted by owner decision (2026-10-12, "scrap synthetic").
 
 ## Who writes, who starts a process
@@ -138,7 +142,7 @@ Every writer and every process starter, exactly:
 5. A setting is added in exactly one place: a `schema.py` field, an adapter
    table row, and an `env_map` row only if an env var used to carry it.
 6. No module outside `config/` reads the environment, except the allowlist
-   in `tests/config/test_no_environ.py`: the torchrun probes read `RANK`,
+   in `tests/contracts/test_env_map.py`: the torchrun probes read `RANK`,
    `WORLD_SIZE`, `LOCAL_RANK` and `LOCAL_WORLD_SIZE` (the launcher's
    protocol; reparallel reads GPUs per node from the last), the `--ncu`
    probes read `NCU_BIN`, and `profiling/kv_transfer.py` reads its torchrun

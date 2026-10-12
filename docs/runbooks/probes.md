@@ -260,7 +260,7 @@ Probe runs stay in `results/probes/` and are backed up to R2 under `profiling/qb
 
 ## Tests
 
-`python3 -m pytest tests/probes/` runs the probe contracts and emitter tests on fixtures, no
-GPU. Two skip when their optional inputs are absent (the stage-split artifact regeneration
+`python3 -m pytest tests/contracts/test_probes.py tests/contracts/test_export.py` runs the probe
+contracts and export tests on fixtures, no GPU. Two skip when their optional inputs are absent (the stage-split artifact regeneration
 needs the gitignored source CSVs; the decode-grid `load_grid` check needs the consumer's
-`simulator` package), and the GPU smoke test skips without CUDA.
+`simulator` package), and `tests/contracts/test_probes_gpu.py` skips without CUDA.

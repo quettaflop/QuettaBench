@@ -1,0 +1,465 @@
+"""Traces, arrivals, grid prompts, profile sources and real-trace datasets."""
+
+import contextlib
+import dataclasses
+import io
+import json
+import sys
+import tempfile
+import types
+import unittest
+from pathlib import Path
+from unittest import mock
+from unittest.mock import patch
+
+from quettabench import workloads
+from quettabench.config.schema import Config, ConfigError, EngineCfg, HardwareCfg, ModeCfg, WorkloadCfg
+from quettabench.modes.serve import make_trace_request_id
+from quettabench.workloads.arrival import (
+    make_arrival_times,
+    parse_arrival,
+    poisson_arrivals,
+    ramp_arrivals,
+    rebase_arrivals,
+)
+from quettabench.workloads.base import Request, workload_hash
+from quettabench.workloads.grid import GridTrace, clone_ids
+from quettabench.workloads.live import MooncakeTrace, PromptJsonlTrace, RealTrace, ShareGPTTrace
+from quettabench.workloads.profiles import WorkloadProfile
+from quettabench.workloads.sessions import SessionTrace, TrajectorySessionTrace, TurnPacing
+
+
+def write_jsonl(td, rows):
+    p = Path(td) / "t.jsonl"
+    p.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    return p
+
+
+class RealTraceTest(unittest.TestCase):
+    def test_supports_spec_only_with_real_assistant_tokens(self):
+        with tempfile.TemporaryDirectory() as td:
+            plain = RealTrace.from_jsonl(write_jsonl(td, [{"prompt_token_ids": [1, 2]}]))
+            self.assertFalse(plain.supports_spec)
+            self.assertEqual(plain.source_meta()["text_mode"], "synthetic")
+            real = RealTrace.from_jsonl(write_jsonl(td, [
+                {"prompt_token_ids": [1, 2]},
+                {"prompt_token_ids": [3], "output_token_ids": [4, 5]}]))
+            self.assertTrue(real.supports_spec)
+            self.assertEqual(real.source_meta()["text_mode"], "real")
+
+    def test_empty_file_is_refused(self):
+        with tempfile.TemporaryDirectory() as td:
+            with self.assertRaises(ValueError):
+                RealTrace.from_jsonl(write_jsonl(td, []))
+
+
+class ArrivalTest(unittest.TestCase):
+    def test_serve_pair_and_spec_string_give_one_schedule(self):
+        for seed in (0, 7, 42):
+            self.assertEqual(make_arrival_times("poisson", 50, target_rate=2.0, seed=seed),
+                             parse_arrival("poisson:2.0", 50, seed))
+            self.assertEqual(make_arrival_times("poisson", 50, target_rate=2.0, seed=seed),
+                             poisson_arrivals(50, 2.0, seed))
+            self.assertEqual(make_arrival_times("ramp", 50, target_rate=3.0, seed=seed),
+                             ramp_arrivals(50, 3.0 * 0.1, 3.0, seed))
+            self.assertEqual(make_arrival_times("steady", 5, seed=seed), parse_arrival("steady", 5, seed))
+        self.assertEqual(parse_arrival("steady", 3), [0.0, 0.0, 0.0])
+
+    def test_unknown_spec_is_refused(self):
+        with self.assertRaises(ValueError):
+            parse_arrival("gamma:2", 4)
+        with self.assertRaises(ValueError):
+            make_arrival_times("gamma", 4)
+
+    def test_rebase_shifts_by_the_earliest_and_a_missing_time_is_zero(self):
+        self.assertEqual(rebase_arrivals([5.0, 6.0, 9.0], speed=2.0), [0.0, 0.5, 2.0])
+        self.assertEqual(rebase_arrivals([5.0, None, 7.0], speed=1.0), [5.0, 0.0, 7.0])
+        self.assertEqual(rebase_arrivals([None, 3.0], speed=1.0), [0.0, 3.0])
+
+
+class GridTraceTest(unittest.TestCase):
+    CELLS = [(64, 2), (128, 3), (1000, 1)]
+    STEPS = [10, 20, 40]
+
+    def test_cells_over_maxlen_carry_no_requests(self):
+        grid = GridTrace(self.CELLS, self.STEPS, "distinct", maxlen=1040)
+        self.assertEqual(grid.cells_over_maxlen, [(1000, 1)])  # 1000 + 40 + 2 > 1040
+        reqs = grid.requests()
+        self.assertEqual(len(reqs), (2 + 3) * len(self.STEPS))
+        self.assertEqual(sorted({r.output_length for r in reqs}), self.STEPS)
+        self.assertEqual({r.prompt_len for r in reqs}, {64, 128})
+
+    def test_prompt_modes(self):
+        distinct, _ = GridTrace(self.CELLS, self.STEPS, "distinct", 4096).cell_prompts(64, 2)
+        self.assertEqual(distinct[1][:3], [11, 12, 13])
+        clone, _ = GridTrace(self.CELLS, self.STEPS, "clone", 4096).cell_prompts(64, 2)
+        self.assertEqual(clone, [clone_ids(64)] * 2)
+        with tempfile.TemporaryDirectory() as td:
+            trace = RealTrace.from_jsonl(write_jsonl(td, [{"prompt_token_ids": [7] * 80}]))
+        ids, cycled = GridTrace(self.CELLS, self.STEPS, "trace", 4096, trace=trace).cell_prompts(64, 2)
+        self.assertTrue(cycled)
+        self.assertEqual(ids, [[7] * 64] * 2)
+
+    def test_corpus_windows_need_a_file(self):
+        with self.assertRaises(ValueError):
+            GridTrace(self.CELLS, self.STEPS, "corpus", 4096).cell_prompts(64, 1)
+        with tempfile.TemporaryDirectory() as td:
+            corpus = Path(td) / "c.txt"
+            corpus.write_text("abcdef")
+            grid = GridTrace(self.CELLS, self.STEPS, "corpus", 4096, corpus_path=corpus,
+                             tokenizer=lambda: (lambda text: {"input_ids": [ord(c) for c in text]}))
+            ids, _ = grid.cell_prompts(8, 1)
+        self.assertEqual(ids, [[97, 98, 99, 100, 101, 102, 97, 98]])
+
+    def test_grid_hash_covers_every_request(self):
+        grid = GridTrace(self.CELLS, self.STEPS, "synth", 4096)
+        self.assertEqual(grid.workload_hash(), GridTrace(self.CELLS, self.STEPS, "synth", 4096).workload_hash())
+        self.assertNotEqual(grid.workload_hash(),
+                            GridTrace(self.CELLS, [10, 20, 41], "synth", 4096).workload_hash())
+
+
+class SessionTraceTest(unittest.TestCase):
+    def test_sessions_group_by_id_and_order_by_turn(self):
+        with tempfile.TemporaryDirectory() as td:
+            trace = SessionTrace.from_jsonl(write_jsonl(td, [
+                {"prompt_token_ids": [1], "session_id": "b", "turn": 1},
+                {"prompt_token_ids": [2], "session_id": "a", "turn": 0},
+                {"prompt_token_ids": [3], "session_id": "b", "turn": 0}]))
+        self.assertIsInstance(trace, SessionTrace)
+        self.assertEqual([[r.prompt_token_ids[0] for r in s] for s in trace.sessions()],
+                         [[3, 1], [2]])
+        self.assertEqual(trace.pacing, TurnPacing())
+        trace.pacing = TurnPacing(pacing="interleaved", tool_wait_ms=50.0)
+        self.assertEqual(trace.source_meta()["pacing"], "interleaved")
+        self.assertEqual(trace.source_meta()["sessions"], 2)
+
+
+def write_rows(path, rows):
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    return str(path)
+
+
+def config(source, kind="live"):
+    return Config(engine=EngineCfg(), workload=WorkloadCfg(kind=kind, source=source),
+                  mode=ModeCfg(), hardware=HardwareCfg())
+
+
+class SingleTurn(unittest.TestCase):
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self.dir = Path(self.td.name)
+
+    def tearDown(self):
+        self.td.cleanup()
+
+    def test_warmup_draws_come_first_without_a_rewind(self):
+        path = write_rows(self.dir / "c.jsonl", [
+            {"system": "s", "user": f"u{i}", "osl_tokens": 2 + i} for i in range(4)])
+        source = PromptJsonlTrace(path, seed=5)
+        drawn = [source.get_next_request() for _ in range(9)]
+        trace = PromptJsonlTrace(path, seed=5).draw(7, warmup=2)
+        self.assertEqual([r.messages for r in trace.warmup_requests(2)],
+                         [d.messages for d in drawn[:2]])
+        self.assertEqual([r.messages for r in trace.requests()], [d.messages for d in drawn[2:]])
+        self.assertEqual([r.max_tokens for r in trace.requests()],
+                         [d.max_tokens for d in drawn[2:]])
+        self.assertEqual([r.order for r in trace.requests()], list(range(7)))
+
+    def test_a_rewindable_trace_restarts_after_warmup(self):
+        path = write_rows(self.dir / "m.jsonl", [
+            {"timestamp": i, "input_length": 30 + i, "output_length": 3, "hash_ids": [i]}
+            for i in range(5)])
+        trace = MooncakeTrace(path).draw(5, warmup=3)
+        first = trace.requests()[0]
+        self.assertEqual(first.prompt_token_ids, trace.warmup_requests(1)[0].prompt_token_ids)
+        self.assertEqual(first.prompt_len, 30)
+        self.assertEqual(first.metadata["request_index"], 0)
+
+    def test_a_wrapped_lap_follows_the_last_at_the_trace_pace(self):
+        path = write_rows(self.dir / "m.jsonl", [
+            {"timestamp": t, "input_length": 30, "output_length": 3, "hash_ids": [i]}
+            for i, t in enumerate((1000, 3000, 5000))])
+        trace = MooncakeTrace(path).draw(7, warmup=0)
+        self.assertEqual([r.arrival_ts for r in trace.requests()],
+                         [1.0, 3.0, 5.0, 7.0, 9.0, 11.0, 13.0])
+
+    def test_a_wrap_over_a_zero_span_trace_is_refused_under_arrival_trace(self):
+        path = write_rows(self.dir / "m.jsonl", [
+            {"timestamp": 1000, "input_length": 30, "output_length": 3, "hash_ids": [i]}
+            for i in range(3)])
+        for arrival, n, refused in (("trace", 4, True), ("trace", 3, False), ("steady", 4, False)):
+            cfg = config("mooncake-trace")
+            cfg = dataclasses.replace(cfg, workload=dataclasses.replace(
+                cfg.workload, arrival=arrival, num_requests=n))
+            with self.subTest(arrival=arrival, n=n), \
+                    mock.patch.object(workloads, "single_turn_trace",
+                                      return_value=MooncakeTrace(path)):
+                if refused:
+                    with self.assertRaisesRegex(ConfigError, "span 0 ms"):
+                        workloads.build(cfg)
+                else:
+                    self.assertEqual(len(workloads.build(cfg).requests()), n)
+
+    def test_messages_and_metadata_never_reach_the_hash(self):
+        plain = Request([1, 2], 2, order=0, output_length=4)
+        chat = dataclasses.replace(plain, messages=[{"content": "x"}], metadata={"k": 1})
+        self.assertEqual(chat.to_dict(), plain.to_dict())
+        self.assertEqual(workload_hash([chat]), workload_hash([plain]))
+
+    def test_build_names_the_profile(self):
+        trace = workloads.build(config("test"))
+        self.assertEqual(trace.source_meta(), {"profile": "test", "dataset": "test", "path": "",
+                                               "reqs": 100})
+        self.assertEqual(trace.requests()[0].max_tokens, 20)
+
+    def test_multi_turn_profile_is_refused_single_turn(self):
+        with self.assertRaisesRegex(ValueError, "is multi-turn; run it with workload.kind=sessions"):
+            workloads.build(config("swebench-multiturn-short"))
+
+
+class MultiTurn(unittest.TestCase):
+    def build(self, **kw):
+        sessions = []
+        for s in range(3):
+            turns = [{"turn_idx": t, "messages": [{"role": "user", "content": f"s{s} t{t}"}],
+                      "osl_tokens": 2, "tool_ms": 5} for t in range(13 + s)]
+            sessions.append({"session_id": f"S{s}", "arrival_time_ms": 100 * s, "turns": turns})
+        td = tempfile.TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        path = write_rows(Path(td.name) / "t.jsonl", sessions)
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            trace = TrajectorySessionTrace(path, min_turns=13, num_sessions=3, **kw)
+        return trace, out.getvalue()
+
+    def test_sessions_carry_turns_arrivals_and_waits(self):
+        trace, out = self.build(warmup=4, pacing=TurnPacing("interleaved"))
+        self.assertIn("Loaded 3 sessions, max 15 turns per session", out)
+        for turns in trace.sessions():
+            sid = turns[0].session_id
+            source = int(turns[0].metadata["source_session_id"][1:])
+            self.assertEqual([r.messages[0]["content"] for r in turns],
+                             [f"s{source} t{t}" for t in range(13 + source)])
+            self.assertEqual([r.turn for r in turns], list(range(len(turns))))
+            self.assertEqual(turns[0].arrival_ts, source / 10.0)
+            self.assertIsNone(turns[1].arrival_ts)
+            self.assertEqual(turns[2].metadata["tool_wait_after_ms"], 5.0)
+            self.assertEqual(trace.replies[sid], [])
+        self.assertEqual(trace.pacing.pacing, "interleaved")
+        self.assertEqual(trace.max_turns, 15)
+        firsts = [s[0].messages for s in trace.sessions()]
+        self.assertEqual([r.messages for r in trace.warmup_requests(4)], firsts + [
+            trace.sessions()[0][1].messages])
+        self.assertEqual([r.order for r in trace.warmup_requests(4)], [0, 1, 2, 3])
+
+    def test_turns_past_max_turn_index_are_not_in_the_trace(self):
+        trace, _ = self.build(max_turn_index=4)
+        self.assertEqual({len(t) for t in trace.sessions()}, {5})
+        self.assertEqual(trace.max_turns, 15)
+
+    def test_single_turn_profile_is_refused(self):
+        with self.assertRaisesRegex(ValueError, "does not use a multi-turn dataset"):
+            workloads.build(config("test", kind="sessions"))
+
+
+def words(n: int) -> str:
+    return " ".join(f"w{i}" for i in range(n))
+
+
+class RealTraceWorkloadTests(unittest.TestCase):
+    def test_trace_request_id_encodes_benchmark_dimensions(self):
+        request_id = make_trace_request_id(
+            profile_name="swebench-multiturn-synth",
+            concurrency=320,
+            session_id=7,
+            turn_index=2,
+            request_index=647,
+        )
+
+        self.assertEqual(
+            request_id,
+            "agenticbench__p=swebench-multiturn-synth__c=320__t=2__s=7__i=647",
+        )
+
+    def test_sharegpt_dataset_reserves_output_and_safety_margin(self):
+        fake_dataset = [
+            {
+                "conversations": [
+                    {"from": "human", "value": words(100)},
+                    {"from": "gpt", "value": words(40)},
+                ],
+            },
+            {
+                "conversations": [
+                    {"from": "human", "value": words(70)},
+                    {"from": "gpt", "value": words(30)},
+                ],
+            },
+        ]
+        fake_datasets_module = types.SimpleNamespace(
+            load_dataset=lambda *args, **kwargs: fake_dataset
+        )
+
+        with patch.dict(sys.modules, {"datasets": fake_datasets_module}):
+            trace = ShareGPTTrace(
+                num_prompts=10,
+                system_prompt="",
+                max_isl_tokens=4096,
+                max_osl_tokens=4096,
+                min_osl_tokens=1,
+                max_total_tokens=180,
+                context_safety_margin_tokens=10,
+            )
+
+            request = trace.get_next_request()
+
+        self.assertEqual(request.max_tokens, int(30 * 1.35))
+        self.assertLessEqual(
+            int(70 * 1.35) + request.max_tokens,
+            180 - 10,
+        )
+
+    def test_sharegpt_dataset_uses_tokenizer_prompt_count_when_available(self):
+        fake_dataset = [
+            {
+                "conversations": [
+                    {"from": "human", "value": words(100)},
+                    {"from": "gpt", "value": words(40)},
+                ],
+            },
+            {
+                "conversations": [
+                    {"from": "human", "value": words(70)},
+                    {"from": "gpt", "value": words(30)},
+                ],
+            },
+        ]
+        fake_datasets_module = types.SimpleNamespace(
+            load_dataset=lambda *args, **kwargs: fake_dataset
+        )
+
+        class FakeTokenizer:
+            def apply_chat_template(self, messages, add_generation_prompt, tokenize):
+                content = " ".join(message["content"] for message in messages)
+                return [0] * (180 if "w99" in content else 100)
+
+        fake_transformers_module = types.SimpleNamespace(
+            AutoTokenizer=types.SimpleNamespace(
+                from_pretrained=lambda *args, **kwargs: FakeTokenizer()
+            )
+        )
+
+        with patch.dict(sys.modules, {
+            "datasets": fake_datasets_module,
+            "transformers": fake_transformers_module,
+        }):
+            trace = ShareGPTTrace(
+                num_prompts=10,
+                system_prompt="",
+                max_isl_tokens=4096,
+                max_osl_tokens=4096,
+                min_osl_tokens=1,
+                max_total_tokens=210,
+                context_safety_margin_tokens=10,
+                tokenizer_name="fake-tokenizer",
+            )
+
+            self.assertEqual(len(trace.samples), 1)
+            request = trace.get_next_request()
+
+        self.assertEqual(request.max_tokens, int(30 * 1.35))
+
+    def test_trajectory_dataset_reserves_output_and_safety_margin(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "trace.jsonl"
+            session = {
+                "session_id": "trace-1",
+                "source": "unit-trace",
+                "turns": [
+                    {
+                        "turn_idx": 0,
+                        "messages": [{"role": "user", "content": words(50)}],
+                        "osl_tokens": 20,
+                    },
+                    {
+                        "turn_idx": 1,
+                        "messages": [
+                            {"role": "user", "content": words(50)},
+                            {"role": "assistant", "content": words(20)},
+                            {"role": "user", "content": words(20)},
+                        ],
+                        "osl_tokens": 20,
+                    },
+                ],
+            }
+            path.write_text(json.dumps(session) + "\n", encoding="utf-8")
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                trace = TrajectorySessionTrace(
+                    str(path),
+                    min_turns=1,
+                    max_turns=2,
+                    num_sessions=1,
+                    max_isl_tokens=120,
+                    max_osl_tokens=50,
+                    context_safety_margin_tokens=10,
+                )
+
+            self.assertEqual(len(trace.sessions()), 1)
+            turns = trace.sessions()[0]
+            self.assertEqual(len(turns), 1)
+            meta = turns[0].metadata
+            self.assertEqual(meta["source_session_id"], "trace-1")
+            self.assertEqual(meta["source_turn_index"], 0)
+            self.assertEqual(meta["trace_content_source"], "unit-trace")
+            self.assertLessEqual(
+                meta["planned_total_with_output_tokens"],
+                meta["context_window_tokens"] - meta["context_safety_margin_tokens"],
+            )
+
+    def test_build_gives_trajectories_the_profile_window_and_margin(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "trace.jsonl"
+            path.write_text(
+                json.dumps({
+                    "session_id": "trace-2",
+                    "source": "unit-trace",
+                    "turns": [
+                        {
+                            "turn_idx": 0,
+                            "messages": [{"role": "user", "content": words(50)}],
+                            "osl_tokens": 20,
+                        }
+                    ],
+                }) + "\n",
+                encoding="utf-8",
+            )
+            profile = WorkloadProfile(
+                name="fixture-real-trace",
+                isl_tokens=4096,
+                osl_tokens=50,
+                isl_stddev=0.0,
+                description="fixture",
+                dataset="swebench-multi-turn",
+                file_path=str(path),
+                mode="multi-turn",
+                min_turns=1,
+                max_turns=2,
+                num_sessions=1,
+                agent_type="coding",
+                turn_style="multi-turn",
+                data_source="swebench",
+            )
+            cfg = Config(engine=EngineCfg(), workload=WorkloadCfg(kind="sessions", source=profile.name),
+                         mode=ModeCfg(concurrency=1), hardware=HardwareCfg())
+
+            with patch.dict(workloads.PROFILES, {profile.name: profile}), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                trace = workloads.build(cfg)
+
+            meta = trace.requests()[0].metadata
+            self.assertEqual(meta["context_window_tokens"], 4096)
+            self.assertEqual(meta["context_safety_margin_tokens"], 256)
+
+
+if __name__ == "__main__":
+    unittest.main()
