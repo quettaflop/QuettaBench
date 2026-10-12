@@ -14,6 +14,11 @@ TP_DEGREES = (2, 4)
 NEVER = datetime.min.replace(tzinfo=timezone.utc)
 
 
+def clearing(path: Path, root: Path) -> bool:
+    """path sits in a .clearing-* dir under root (runner.clear_run_dir cut short)."""
+    return any(part.startswith(".clearing-") for part in Path(path).relative_to(root).parts)
+
+
 @functools.cache
 def run_dirs(root: Path) -> dict[Path, str | None]:
     """{run dir: why export leaves it out, None when kept} for every run dir
@@ -24,7 +29,7 @@ def run_dirs(root: Path) -> dict[Path, str | None]:
     Cached per root; export() clears it before each builder."""
     runs = {}
     dirs = sorted({p.parent for marker in RUN_MARKERS for p in Path(root).rglob(marker)
-                   if not any(part.startswith(".clearing-") for part in p.parts)})
+                   if not clearing(p, root)})
     for run_dir in dirs:
         if run_dir.name == "server" and run_dir.parent in dirs:
             continue
@@ -59,12 +64,12 @@ def owner(path: Path, root: Path, runs: dict[Path, str | None]) -> Path | None:
 
 
 def files(root: Path, pattern: str, recursive: bool = True) -> list[Path]:
-    """Paths under root matching pattern, sorted, without those whose run dir
-    (owner) export leaves out."""
+    """Paths under root matching pattern, sorted, without those in a
+    .clearing-* dir or whose run dir (owner) export leaves out."""
     root = Path(root)
     runs = run_dirs(root)
     hits = root.rglob(pattern) if recursive else root.glob(pattern)
-    return [p for p in sorted(hits) if runs.get(owner(p, root, runs)) is None]
+    return [p for p in sorted(hits) if not clearing(p, root) and runs.get(owner(p, root, runs)) is None]
 
 
 def quettasim_symbol_gone(symbol: str) -> None:

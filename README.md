@@ -18,7 +18,7 @@ just run configs/runs/llama.yaml --set engine.model=/w/llama   # -> results/llam
 just profile --run results/llama --source metrics --source energy
 just crossval results/<ours> results/<theirs>   # compares two results dirs
 just export --results results/llama --dest <export dir>   # the builders but kernel_tables
-just export --only kernel_tables --results results/probes --kernel-dest ../QuettaSim/data
+just export --only kernel_tables --results results/probes --kernel-dest ../QuettaSim/data   # -> kernel_data/{graph,eager}/
 ```
 
 Without `just`, every recipe is one line: `python3 -m quettabench.cli run ...`,
@@ -281,7 +281,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 $PYTHON_BIN -m torch.distributed.run --npro
   -m quettabench.probes.reparallel --gpu-label H200 --mode kv --out-name H200_reshard_kv_val \
   --kv-tokens 2048 8192 32768 98304 196608
 
-# then, for any of the five: the tables into QuettaSim's data root
+# then, for any of the five: the tables into QuettaSim's kernel_data/{graph,eager}/
 just export --only kernel_tables --results results/probes --kernel-dest ../QuettaSim/data
 ```
 

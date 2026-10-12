@@ -244,3 +244,14 @@ def test_stage_split_legs_come_from_the_latest_finished_ok_run(tmp_path: Path) -
         "provenance": {"started": "20261001", "finished": "2026-10-09T00:00:00+00:00"}}))
     _inputs.run_dirs.cache_clear()
     assert _inputs.find([results], "serving_stage_split_H100_tp2.csv") == old / "serving_stage_split_H100_tp2.csv"
+
+
+def test_files_and_find_skip_a_clearing_dir(tmp_path: Path) -> None:
+    """A run dir clear_run_dir renamed to .clearing-* and did not finish
+    removing: its files are no run's, and export reads none of them."""
+    results = tmp_path / "results"
+    run = stage_split_run(results, "20261001", "2026-10-01T02:00:00+00:00", "ok", 1.0)
+    run.rename(run.with_name(".clearing-abc123"))
+    _inputs.run_dirs.cache_clear()
+    assert _inputs.files(results, "*.csv") == []
+    assert _inputs.find([results], "serving_stage_split_H100.csv") is None

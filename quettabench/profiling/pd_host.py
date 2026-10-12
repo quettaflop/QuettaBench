@@ -36,7 +36,7 @@ contention multiplier at that concurrency.
   # servers + proxy up (see scratchpad/pd_probe/launch.sh for the E6-shaped pair)
   /opt/vllm-local/bin/python -m quettabench.profiling.pd_host --gpu-label H200 \\
       --device-yaml ../QuettaSim/device_spec/h200.yaml \\
-      --proxy-log <dir>/proxy_requests.jsonl --out data/kernel_data/cuda_event/frontend/H200_pd_host.csv
+      --proxy-log <dir>/proxy_requests.jsonl --out data/kernel_data/eager/frontend/H200_pd_host.csv
 
 Prints per-row residuals and the least-squares floor + per-token slopes for P (cold /
 warm) and D; does NOT edit the YAML.

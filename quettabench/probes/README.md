@@ -1,8 +1,8 @@
 # Kernel probes -- tables for QuettaSim
 
-Writes the `ncu/` vs `cuda_event/` layout that QuettaSim `kernel_composed`
-interpolates, under `results/probes/<gpu>/`. `just export --only kernel_tables` routes them
-to QuettaSim. The
+Writes `ncu/` vs `cuda_event/` tables under `results/probes/<gpu>/`.
+`just export --only kernel_tables` routes them to QuettaSim's `kernel_data/graph/`
+and `kernel_data/eager/`, the layout `kernel_composed` interpolates. The
 live-server probes that sit beside them are listed under "Live-server probes" below.
 
 The `kernel_composed` cost backend prices each serving step from **measured**
@@ -47,12 +47,15 @@ The one route to QuettaSim is the `kernel_tables` export builder:
 `just export --only kernel_tables --results results/probes --kernel-dest <QuettaSim data root>`
 (`$QUETTASIM_DATA`, or `../QuettaSim/data` for the in-repo tree) builds every
 `<method>/<kind>/<file>` table from the ok runs of its probe by the rule above into
-`<dest>/kernel_data/<method>/<kind>/<file>`, the paths `kernel_artifact_paths` in
-QuettaSim's `engine/backends/kernel_composed_cost.py` reads. Two merges: the collective
+`<dest>/kernel_data/<dir>/<kind>/<file>` (`ncu/` to `graph/`, `cuda_event/` to
+`eager/`), the paths `kernel_artifact_paths` in QuettaSim's
+`engine/backends/kernel_composed_cost.py` reads, each with the `<file>.meta.json`
+sidecar QuettaSim's `tools/kernel_manifest.py check` requires (mode, tool, reduce,
+gpu, measured). Two merges: the collective
 probe's and vllm_allreduce's `ncu/collectives/{gpu}_tp{N}.csv` become one table,
 vllm_allreduce's `all_reduce` rows over the collective probe's; gemm's `fp8_act_quant`
 joins the elementwise probe's `elementwise/{gpu}.json`. `kernel_data/qbench_manifest.json` names the runs
-with rows in each table. The R2 mirror (`just mirror-up`, `mirror-down`) is a backup of
+with rows in each table; with no table found it is not written. The R2 mirror (`just mirror-up`, `mirror-down`) is a backup of
 `results/probes/` under `profiling/qbench_probes/`, in the same `<gpu>/<probe>/<run-id>/`
 layout; QuettaSim never reads it. Schema
 contract: filenames `{gpu}[_tpN].csv`, method split `ncu/` (graphed decode) vs

@@ -614,3 +614,19 @@ both loaded `device_spec/<gpu>.yaml` beside this repo, a file that does
 not exist, so neither could run. serving_frontend imports
 `engine.sim.closed_loop` and `kernel_composed.types` at the top, as
 QuettaSim main (d8503b8) has both.
+
+2026-10-12: no fixture changed. `kernel_tables` writes QuettaSim main's
+(d8503b8) `kernel_data/graph/` and `kernel_data/eager/` instead of
+`ncu/` and `cuda_event/`, a probe run's `ncu/` going to `graph/` and
+`cuda_event/` to `eager/`, and writes beside each table the
+`<table>.meta.json` sidecar QuettaSim's `tools/kernel_manifest.py check`
+requires: `mode` from the probe, its flags and the kind (`graph_replay`,
+`ncu` with `--ncu`, `amortized_wallclock` for collectives, `reference`
+for `*_nccl_vs_vllm.csv`, `host_wallclock` for host-timed kinds, else
+`eager`; `unknown` when the runs kept were timed two ways), `tool`,
+`reduce`, `gpu` and `measured`. Before, QuettaSim read neither dir. A
+stopped export removes the `--kernel-dest` it made; no
+`qbench_manifest.json` is written when no table was found; an empty CSV
+and unparsable `probe_args` stop the export naming the run instead of
+raising a traceback; `_inputs.files` and `find` skip paths under a
+`.clearing-*` dir, as `run_dirs` does.
