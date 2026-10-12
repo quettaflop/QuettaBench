@@ -31,7 +31,7 @@ _WRITER: RunWriter | None = None
 
 @dataclasses.dataclass(frozen=True)
 class ProbeRow:
-    """One measured row of a QuettaSim table: table is <kind>/<file> (gemm/H200.csv), columns are key then value, timing picks the dir. A JSON table's row is key {"entry": name}, value {"value": ...}."""
+    """One measured row of a QuettaSim table: table is <kind>/<file> (gemm/<gpu>.csv), columns are key then value, timing picks the dir. A JSON table's row is key {"entry": name}, value {"value": ...}."""
 
     probe: str
     table: str
@@ -88,7 +88,12 @@ def run_config(cfg: Config, writer: RunWriter | None = None):
 def add_output_args(ap: argparse.ArgumentParser) -> None:
     """Add --gpu-label, --out (default results/probes/<gpu-label>) and --run-id; each run records under <out>/<probe>/<run-id>/. Flags are taken only as written, so export reads probe_args as the probe did."""
     ap.allow_abbrev = False
-    ap.add_argument("--gpu-label", "--gpu", required=True, help="GPU name the tables are keyed by, e.g. A100/H100")
+    ap.add_argument(
+        "--gpu-label",
+        "--gpu",
+        required=True,
+        help="GPU label the tables are keyed by: the <gpu> in results/probes/<gpu>/ and in the table file names",
+    )
     ap.add_argument(
         "--out",
         "--out-dir",

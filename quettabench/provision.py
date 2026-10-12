@@ -130,7 +130,7 @@ def machine(plan, prov, docker=False, backend="cuda"):
         plan.env["LD_LIBRARY_PATH"] = lib
     elif (compute_capability() or 0) >= 10 and (nccl_version(py) or (0,)) < NCCL_FLOOR:
         plan.need(
-            f"Blackwell needs NCCL >= 2.28 and {py} has {nccl_version(py)}; set "
+            f"compute capability 10 and up needs NCCL >= 2.28 and {py} has {nccl_version(py)}; set "
             "hardware.provision.nccl_lib to a newer NCCL's lib dir"
         )
 

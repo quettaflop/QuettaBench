@@ -188,7 +188,7 @@ def get_args(argv=None):
     ap.add_argument(
         "--frontend-args",
         default="",
-        help='frontend source flags, e.g. "--gpu-label H200 --device-yaml ../QuettaSim/device_spec/h200.yaml"',
+        help='frontend source flags, e.g. "--gpu-label <gpu> --device-yaml ../QuettaSim/device_spec/<gpu>.yaml"',
     )
     ap.add_argument("--pd-host-args", default="", help="pd_host flags")
     ap.add_argument(

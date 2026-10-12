@@ -74,7 +74,7 @@ class GdnProbe(Probe):
 
     def grid(self):
         a = self.a
-        # Prefill first: the decode proxy's illegal-memory bug (B=16 on 3090, B>=120 on A100/H100) would lose it.
+        # Prefill first: the decode proxy's illegal-memory bug at large B would lose it.
         for T in SEQ_SMOKE if a.mode == "smoke" else SEQ_FULL:
             if self.failed:
                 break

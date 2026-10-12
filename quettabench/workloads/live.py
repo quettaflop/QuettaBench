@@ -250,7 +250,7 @@ def est_tokens(text):
 
 
 def load_sharegpt():
-    import datasets as hf_datasets  # only ShareGPT profiles need it
+    import datasets as hf_datasets  # imported here: slow to load, only ShareGPT profiles need it
 
     return hf_datasets.load_dataset("Aeala/ShareGPT_Vicuna_unfiltered", split="train")
 
@@ -267,7 +267,7 @@ def load_chat_tokenizer(name):
     """The model's tokenizer for prompt counts; None without a name, raises if it fails to load."""
     if not name:
         return None
-    from transformers import AutoTokenizer  # imported here: optional dependency
+    from transformers import AutoTokenizer  # imported here: slow to load
 
     return AutoTokenizer.from_pretrained(name)
 

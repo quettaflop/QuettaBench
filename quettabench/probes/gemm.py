@@ -60,7 +60,7 @@ NCU_NK = [
 NCU_REPS = 3  # warm launches per NCU capture; the min is kept
 
 
-# Hopper GEMMs (nvjet, cutlass3x, xmma, wgmma) do not contain "gemm" in their names; the list still excludes the randn setup kernel.
+# sm90 GEMM kernels (nvjet, cutlass3x, xmma, wgmma) do not contain "gemm" in their names; the list still excludes the randn setup kernel.
 GEMM_KERNELS = ("gemm", "nvjet", "cutlass", "xmma", "wgmma")
 
 
@@ -80,7 +80,7 @@ def ncu_gemm_us(m, n, k, ncu_bin, reps=NCU_REPS) -> float | None:
 
 
 class Fp8Op:
-    """vLLM's block-scaled FP8 linear on Hopper: QuantFP8 and cutlass_scaled_mm, timed separately."""
+    """vLLM's block-scaled FP8 linear on sm90: QuantFP8 and cutlass_scaled_mm, timed separately."""
 
     def __init__(self) -> None:
         """vllm is imported here: only --dtype fp8 needs it."""

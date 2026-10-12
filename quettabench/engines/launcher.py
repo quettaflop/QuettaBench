@@ -104,7 +104,7 @@ def visible_env(backend, devices):
 def device_flags(backend, gpus):
     """docker run flags that give the container the accelerator, from each vendor's vLLM container docs."""
     if backend == "rocm":
-        # vllm docs/getting_started/installation/gpu.rocm.inc.md:359-370 (v0.30.0)
+        # vLLM's ROCm install guide (v0.30.0)
         return [
             "--group-add=video",
             "--cap-add=SYS_PTRACE",
@@ -116,10 +116,10 @@ def device_flags(backend, gpus):
             "/dev/dri",
         ]
     if backend == "tpu":
-        # tpu-inference docs/mkdocs/javascripts/interactive.js:26 (v0.30.0)
+        # tpu-inference's container quickstart (v0.30.0)
         return ["--privileged", "--net=host"]
     if backend == "neuron":
-        # awsdocs-neuron v2.32.0 deploy/environments/quickstart-deploy-dlc.rst:66-84
+        # the Neuron DLC quickstart (SDK 2.32)
         devices = sorted(glob.glob("/dev/neuron[0-9]*"), key=lambda d: int(d[len("/dev/neuron") :]))
         if not devices:
             raise ConfigError("hardware.backend=neuron: no /dev/neuron* device on this host")
@@ -149,8 +149,8 @@ IDENTITY = {
     "rocm": (
         ["amd-smi", "static", "-g", "0", "-a"],
         "MARKET_NAME:",
-    ),  # vllm .buildkite/performance-benchmarks/scripts/run-performance-benchmarks.sh:44
-    "neuron": (["neuron-ls"], "instance-type:"),  # awsdocs-neuron tools/neuron-sys-tools/neuron-ls.rst:45
+    ),  # how vLLM's own benchmark scripts read the card name
+    "neuron": (["neuron-ls"], "instance-type:"),
 }
 
 

@@ -156,7 +156,7 @@ def main(argv=None):
     ap.add_argument("--n-kv-heads", type=int, required=True)
     ap.add_argument("--head-dim", type=int, default=128)
     ap.add_argument("--layers", type=int, default=32)
-    ap.add_argument("--fa-version", type=int, default=0, help="0=auto (FA3 on Hopper sm90+, else FA2)")
+    ap.add_argument("--fa-version", type=int, default=0, help="0=auto (FA3 on sm90 and up, else FA2)")
     add_output_args(ap)
     ap.add_argument("--tag", required=True, help="grid tag, e.g. tp1/tp2/tp4 (head config)")
     ap.add_argument("--max-mem-gb", type=float, default=40.0)

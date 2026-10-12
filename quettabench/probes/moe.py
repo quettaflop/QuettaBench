@@ -367,7 +367,7 @@ def main(argv=None) -> None:
         help="bf16: vLLM's unquantized fused_experts. fp8: the SAME entry "
         "point with a block-scaled FP8 quant_config (128x128 weight "
         "blocks), i.e. what a `quant_method: fp8` checkpoint runs. "
-        "Writes {gpu}_fp8.csv with dtype_bytes=1.",
+        "Emits the rows of moe/{gpu}_fp8.csv with dtype_bytes=1.",
     )
     ap.add_argument(
         "--append",
@@ -436,7 +436,7 @@ def main(argv=None) -> None:
             seen.add((e, k, shard, hidden))
             rows += sweep_expert_kernel(f"{key}/tp{tp}", e, k, shard, hidden, tokens_axis, dev, a.max_mem_gb)
 
-    # On H200 the eager grid overpriced graphed decode 2.3x; use --graph for decode.
+    # The eager grid overprices graphed decode (2.3x measured); use --graph for decode.
     timing = "graph_replay" if _GRAPH else "eager"
     table = f"moe/{a.gpu_label}{'' if a.dtype == 'bf16' else '_' + a.dtype}.csv"
     for r in rows:

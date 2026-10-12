@@ -345,8 +345,6 @@ class TableParity(unittest.TestCase):
     """crossval prints ratios only when both sides timed the same quantity; criterion logs withhold ratios and differing KV formats carry a KV flag."""
 
     def _table(self, bench_text, kv="float16", env=None, expect_rc=0, serving_style="aggregated", quant="bf16"):
-        import sys
-        import time
 
         base = {
             "recorded_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -723,19 +721,16 @@ class TableParity(unittest.TestCase):
 
     def test_trace_shapes_parse(self):
         # three trace shapes parse, and take() trims or pads them to the cell's ctx.
-        import json as _j
-        import os as _os
-        import tempfile
 
         from quettabench.workloads.grid import take
 
         tf = tempfile.mktemp()
         open(tf, "w").write(
-            _j.dumps({"prompt_token_ids": [1, 2, 3, 4, 5]})
+            json.dumps({"prompt_token_ids": [1, 2, 3, 4, 5]})
             + "\n"
-            + _j.dumps({"prompt_len": 40})
+            + json.dumps({"prompt_len": 40})
             + "\n"
-            + _j.dumps({"input_length": 64, "output_length": 128})
+            + json.dumps({"input_length": 64, "output_length": 128})
             + "\n"
         )
         tr = load_trace(tf)
@@ -744,7 +739,7 @@ class TableParity(unittest.TestCase):
         prompts, cycled = take(tr, 6, 20)
         self.assertTrue(all(len(p) == 20 for p in prompts))
         self.assertTrue(cycled)
-        _os.remove(tf)
+        os.remove(tf)
 
     def test_grid_knows_the_trace_mode(self):
         src = (QB / "workloads" / "grid.py").read_text() + (QB / "config" / "env_map.py").read_text()

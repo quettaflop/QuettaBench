@@ -23,7 +23,7 @@ QuettaBench is a measurement harness. It has one command, `qbench`, with four do
 - `configs/`: `models/` holds per-model facts, once. `runs/` reference a model and never restate its facts. `grids.yaml` holds the grids and step points, `hardware/` the link profiles, `workloads.yaml` every workload profile by name.
 - `data/`: fetch scripts. Never imported by `quettabench/`, enforced by `tests/contracts/test_imports.py`.
 - `docs/runbooks/`: the probe guide; with README.md and AGENTS.md the only docs.
-- `tests/golden/`: characterization fixtures captured from the pre-refactor code. Change a fixture only with a dated line in `tests/golden/REPORT.md` saying why.
+- `tests/golden/`: characterization fixtures of the measured behaviour. Change a fixture only with a dated line in `tests/golden/REPORT.md` saying why.
 - `tests/contracts/`: one test module per package area, not per module: `test_workloads.py` covers `workloads/` (sessions included), `test_probes.py` `probes/`, `test_adapters.py` the adapters, `test_export.py` `export/`, `test_native.py` `profiling/`, `test_metrics_core.py` `metrics/core.py` and `metrics/step_fit.py`, and `config/schema.py` is tested through `test_loader.py`; `provision.py` is tested in `tests/golden/test_provision.py` only. Plus `test_crossval_contracts.py` (with `crossval.py`'s tests), `test_imports.py` and the GPU smoke module `test_probes_gpu.py`; `helpers.py` and the `fake_*.py` modules are their plumbing.
 - `tests/parity/`: `slope_gate.json`, the committed HTTP-vs-in-process slope gate, and the test that holds every cell to its rule.
 
@@ -57,6 +57,7 @@ One line each; everything else follows section 2 "Target layout".
 - No mypy config: the lint gate is ruff and the pre-commit hooks.
 - `probes/gemm.py`, `flash_attn.py`, `gdn.py`, `vllm_allreduce.py`, `reparallel.py` and `profiling/kv_transfer.py` read `os.environ` themselves: they run as `python -m` modules outside the Config path (under torchrun or on a remote host that gets only the probe package), so torchrun's `RANK`, `WORLD_SIZE`, `LOCAL_RANK`, `LOCAL_WORLD_SIZE` and the `--ncu-bin` default `NCU_BIN` reach them only through the environment.
 - `serving_decode_grid.py`, `serving_stage_split.py` and `profiling/frontend.py` write their own CSV/JSON at `--out`, not `ProbeRow`s through `metrics/results.py`: `export/quettasim.py` reads the serving probes' files by name and in their own schema, and frontend's `--out` is a standalone dump beside the result `native.py` puts in `profile.json`; `run_recorded` still writes the serving probes' `run.json`.
+- `probes/gemm.py` and `probes/moe.py` hold the GEMM shapes and MoE geometries they time: probe grids, not model configs, so they are not read from `configs/models/`.
 - `data/` scripts are not under the env rule: `fetch.py` reads `AWS_PROFILE`, `R2_ENDPOINT` and `R2_BUCKET`, the two download scripts take `--credentials` (default `$GOOGLE_APPLICATION_CREDENTIALS`) and need `google-cloud-storage`, and `slice_checkpoint.py` reads `TMPDIR`. They are one-off data tools outside the package.
 - `probes/moe.py --routing` writes a safetensors dump of one MoE block, not `ProbeRow`s: it is an engine-side diff input, not a table.
 - `config/loader.py` runs `nvidia-smi topo -m` on cuda to pick the NCCL link profile when `hardware.link_profile` is `auto`; it only reads the topology.
@@ -101,7 +102,7 @@ Every writer and every process starter, exactly:
 - `just test` and `just lint` are green before every commit. The lint gate is ruff and the pre-commit hooks; mypy is not part of it.
 - No attribution trailers in code, commits or PRs: the author field is the only authorship.
 - No em-dash in prose; write `--`.
-- Imports at the top of the file, except torch, vLLM, GPU-only and optional packages, imported where used so the CPU paths and tests load without them; a new one goes in `OPTIONAL_PACKAGES` in `tests/contracts/test_imports.py`. No inline python in shell or justfile recipes. A recipe calls into the package where it can; `gpu-info`, `image`, `hooks`, `test`, `lint`, `fetch` and the `mirror-*` recipes call host tools (ssh, nvidia-smi, docker, pre-commit, pytest, ruff, aws) or `data/fetch.py` instead, and `gpu-info` and `profile-gpu` run more than one line.
+- Imports at the top of the file, except torch, vLLM, GPU-only and optional packages, imported where used so the CPU paths and tests load without them, and transformers and datasets, imported where used because they load slowly and only tokenizing paths need them; a new one goes in `OPTIONAL_PACKAGES` in `tests/contracts/test_imports.py`. No inline python in shell or justfile recipes. A recipe calls into the package where it can; `gpu-info`, `image`, `hooks`, `test`, `lint`, `fetch` and the `mirror-*` recipes call host tools (ssh, nvidia-smi, docker, pre-commit, pytest, ruff, aws) or `data/fetch.py` instead, and `gpu-info` and `profile-gpu` run more than one line.
 - Measured before kept: an optimization lands with the measurement that justifies it, and a feature lands with its measurement.
 - Report every number, including the ones that weaken a claim.
 

@@ -107,7 +107,7 @@ def gsm8k_answer(text):
 def load_gsm8k(path, tokenizer_name, n, tokenizer=None):
     """[(prompt_ids, gold_answer)] for the first n items of a GSM8k JSONL ({question, answer}); tokenizer replaces loading tokenizer_name."""
     if tokenizer is None:
-        from transformers import AutoTokenizer  # imported here: optional dependency
+        from transformers import AutoTokenizer  # imported here: slow to load
 
         tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, trust_remote_code=True)
     with open(path) as fh:

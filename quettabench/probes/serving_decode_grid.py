@@ -20,6 +20,8 @@ import tempfile
 import time
 from pathlib import Path
 
+import aiohttp
+
 from quettabench.metrics.core import SUMMARY_FIELDS, summarize_cell
 from quettabench.probes.base import launch_vllm, run_recorded
 
@@ -139,7 +141,6 @@ async def _loop_lag_sampler(stop: asyncio.Event, out: list[float]) -> None:
 async def _run_shard(
     req_specs: list[dict], port: int, api_key: str, model_name: str, eos_mode: str, barrier
 ) -> list[dict]:
-    import aiohttp  # GPU host only
 
     url = f"http://127.0.0.1:{port}/v1/completions"
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}

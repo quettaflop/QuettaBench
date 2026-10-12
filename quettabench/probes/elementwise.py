@@ -60,7 +60,7 @@ def op_for(kernel, n, dev, dt):
 
 
 def op_for_vllm(kernel, n, dev, dt):
-    """vLLM's own kernel for each composition op; the torch-chain proxies launch several kernels where vLLM launches one, and on H200 overpriced fused ops by 2-3 ms/step at 48 layers. n means what the composition's elements means for that kernel. vllm is imported here: only --vllm needs it."""
+    """vLLM's own kernel for each composition op; the torch-chain proxies launch several kernels where vLLM launches one, and overpriced fused ops by 2-3 ms/step at 48 layers when measured. n means what the composition's elements means for that kernel. vllm is imported here: only --vllm needs it."""
     from vllm import _custom_ops as ops
 
     if kernel == "rmsnorm":

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Cost of switching parallelism in place over NVLink, under torchrun: tp reshard, dp broadcast, ep restage, pp, kv, whole PD-plan and cross-node modes.
-Rank 0 writes reparallel/<gpu>_reshard[_<mode>].csv and prints the floor + per-byte fit per (tp_from, tp_to).
+Rank 0 emits the rows of reparallel/<gpu>_reshard[_<mode>].csv and prints the floor + per-byte fit per (tp_from, tp_to).
 """
 
 from __future__ import annotations

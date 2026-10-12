@@ -139,7 +139,7 @@ def frontend_parser():
     ap.add_argument(
         "--device-yaml",
         required=True,
-        help="QuettaSim's device_spec/<gpu>.yaml, e.g. ../QuettaSim/device_spec/h200.yaml",
+        help="QuettaSim's device_spec/<gpu>.yaml",
     )
     ap.add_argument("--base-url", default="http://localhost:8000/v1")
     ap.add_argument("--tp", type=int, default=1)
@@ -290,7 +290,7 @@ class Prompter:
     """Random-word prompts of a target token length, checked with the model tokenizer."""
 
     def __init__(self, tokenizer_name: str, seed: int = 1234):
-        from transformers import AutoTokenizer  # imported here: optional dependency
+        from transformers import AutoTokenizer  # imported here: slow to load
 
         self.tok = AutoTokenizer.from_pretrained(tokenizer_name)
         self.rng = random.Random(seed)
@@ -409,7 +409,7 @@ def pd_host_parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "--device-yaml",
         required=True,
-        help="QuettaSim's device_spec/<gpu>.yaml, e.g. ../QuettaSim/device_spec/h200.yaml",
+        help="QuettaSim's device_spec/<gpu>.yaml",
     )
     ap.add_argument("--tp", type=int, default=4)
     ap.add_argument("--lengths", type=int, nargs="+", default=[2048, 8192, 16384, 32768, 49152, 65536, 98304, 122880])

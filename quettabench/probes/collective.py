@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """NCCL collective microbenchmark under torchrun: every op LLM inference emits across message sizes.
-Rank 0 writes collectives/{gpu}_tp{world}.csv and prints the tp_comm: YAML block; run it once per world size.
+Rank 0 emits the rows of collectives/{gpu}_tp{world}.csv and prints the tp_comm: YAML block; run it once per world size.
 """
 
 from __future__ import annotations

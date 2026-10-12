@@ -69,7 +69,7 @@ docker run --rm --gpus '"device=0"' --network host --ipc host \
 
 ## Running inside docker
 
-`hardware.launcher: docker` runs the server in `engine.image` (`docker run -d`, the GPUs, the port, and the repo, `hardware.hf_home` and an absolute `engine.model` dir mounted read-only at their host paths, and `results/<run>/` read-write so nsys output lands there); `configs/runs/llama-tp1-docker.yaml` is the example. Provision never pulls; pull the image yourself. The docker backend is tested against mocks only; validate it on a docker host before relying on it.
+`hardware.launcher: docker` runs the server in `engine.image` (`docker run -d`, the GPUs, the port, and the repo, `hardware.hf_home` and an absolute `engine.model` dir mounted read-only at their host paths, and `results/<run>/` read-write so nsys output lands there); `configs/runs/llama-tp1-docker.yaml` is the example. Provision never pulls; pull the image yourself. The docker backend is validated on one cuda host (see Validation); its rocm, tpu and neuron device flags are tested against mocks only.
 
 ```bash
 docker pull vllm/vllm-openai:v0.26.0

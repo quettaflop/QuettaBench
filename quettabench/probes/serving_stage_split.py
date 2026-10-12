@@ -215,30 +215,10 @@ def launch_server(model, port, gpu_mem, max_model_len, api_key, hash_algo, run_d
 
 
 # Printed, never run, so the profiled wall stays apart from the client and /metrics lanes.
-_WORKER_EXT_HINT = r"""
-# --- LANE B worker-side hook (save as a module on the GPU host) ---
-# Inject via:  vllm serve ... --worker-extension-cls my_ext.NvtxForwardTimer
-# Check on your vLLM version that --worker-extension-cls injects into the worker subprocess and which entrypoint to wrap:
-#       vllm.v1.worker.gpu_worker.Worker.execute_model
-#       vllm.v1.worker.gpu_model_runner.GPUModelRunner.execute_model
-# The NVTX ranges must land in NVTX_EVENTS, joinable to CUPTI_ACTIVITY_KIND_KERNEL rows by timestamp.
-#
-# import torch, time
-# from vllm.v1.worker.gpu_model_runner import GPUModelRunner
-# _orig = GPUModelRunner.execute_model
-# _RING = []  # (start_evt, end_evt, host_wall_ms, new, cached)
-# def timed_execute_model(self, scheduler_output, *a, **k):
-#     # (new, cached) per step come from scheduler_output.num_scheduled_tokens; at c1 one prefill per step.
-#     s = torch.cuda.Event(enable_timing=True); e = torch.cuda.Event(enable_timing=True)
-#     torch.cuda.nvtx.range_push("vllm_prefill_step")   # NVTX window for the nsys kernel join
-#     t0 = time.perf_counter(); s.record()
-#     out = _orig(self, scheduler_output, *a, **k)
-#     e.record(); host_wall = (time.perf_counter() - t0) * 1e3
-#     torch.cuda.nvtx.range_pop()
-#     _RING.append((s, e, host_wall))   # elapsed_time read OFF the hot path (sync on flush)
-#     return out
-# GPUModelRunner.execute_model = timed_execute_model
-"""
+_WORKER_EXT_HINT = (
+    "Lane B needs a worker extension (vllm serve --worker-extension-cls) that wraps GPUModelRunner.execute_model "
+    "in an NVTX range named vllm_prefill_step between two CUDA events, reading elapsed_time off the hot path."
+)
 
 
 def emit_nsys_cmd(model, port, gpu_mem, max_model_len, out_sqlite):

@@ -176,7 +176,7 @@ class Profile(unittest.TestCase):
         self.assertFalse((self.dir / "profile.json").exists())
 
 
-class LegacyLines(unittest.TestCase):
+class ProfileTagLines(unittest.TestCase):
     def test_formats(self):
         profile = {
             "energy": {
