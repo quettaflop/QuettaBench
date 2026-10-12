@@ -13,6 +13,7 @@ skipped.
 from __future__ import annotations
 
 import ast
+import json
 import re
 import shutil
 import subprocess
@@ -81,7 +82,7 @@ def probe_invocations() -> list[tuple[Path, set[str]]]:
     for block in recipe_blocks(JUSTFILE):
         probes = [PROBES_DIR / f"{m}.py" for m in re.findall(r"-m quettabench\.probes\.([a-z0-9_]+)", block)]
         probes += [PROFILING_DIR / f"{m}.py" for m in re.findall(r"-m quettabench\.profiling\.([a-z0-9_]+)", block)]
-        flags = {t for t in block.split() if t.startswith("--") and "=" not in t}
+        flags = {t for t in block.split() if t.startswith("--") and t != "--" and "=" not in t}
         out.extend((probe, flags) for probe in probes)
     return out
 
@@ -183,11 +184,18 @@ class FakeHost:
             rc = self.probe_rc
         if check and rc:
             raise subprocess.CalledProcessError(rc, cmd)
-        return subprocess.CompletedProcess(cmd, rc, stdout=self.rdir + "\n" if "mktemp" in cmd[-1] else "")
+        if cmd[0] == "rsync" and cmd[-2].endswith("/out/") and not rc:
+            self.pulled(Path(cmd[-1]))
+        return subprocess.CompletedProcess(
+            cmd, rc, stdout="banner\n" + self.rdir + "\n" if "mktemp" in cmd[-1] else "")
+
+    def pulled(self, local):
+        """What the pull brings back: nothing, as from an empty out/."""
 
 
 NOW = datetime(2026, 10, 11, 12, 0, 0, 123456, tzinfo=timezone.utc)
 REMOTE = ["--host", "a100", "--py", "/v/bin/python", "--gpu-id", "3"]
+SSH = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=30", "a100"]
 
 
 def remote(argv, host, tmp_path, monkeypatch):
@@ -204,12 +212,12 @@ def test_remote_probe_runs_in_its_own_dir_and_always_pulls(tmp_path, monkeypatch
     rdir = host.rdir
     assert rc == 3
     mktemp, ship, probe, pull, rm = host.calls
-    assert mktemp == ["ssh", "-o", "BatchMode=yes", "a100", "mktemp -d /tmp/qbench-probes.XXXXXX"]
+    assert mktemp == [*SSH, "d=$(mktemp -d /tmp/qbench-probes.XXXXXX) && mkdir -p $d/out && echo $d"]
     assert ship[:4] == ["rsync", "-a", "--relative", "-e"] and ship[-1] == f"a100:{rdir}/"
     assert probe[-1] == (f"cd {rdir} && CUDA_VISIBLE_DEVICES=3 /v/bin/python -m quettabench.probes.gemm "
                          f"--gpu-label A100 --out {rdir}/out --run-id 20261011T120000.123456Z --ncu --wide")
     assert pull[-2:] == [f"a100:{rdir}/out/", "results/probes/A100/"] and "--ignore-existing" in pull
-    assert rm == ["ssh", "-o", "BatchMode=yes", "a100", f"rm -rf {rdir}"]
+    assert rm == [*SSH, f"rm -rf {rdir}"]
     assert (tmp_path / "results" / "probes" / "A100").is_dir()
 
 
@@ -229,6 +237,54 @@ def test_a_failed_pull_keeps_the_remote_dir(tmp_path, monkeypatch):
     with pytest.raises(SystemExit, match="kept"):
         remote(["gemm", "A100"], host, tmp_path, monkeypatch)
     assert not any("rm -rf" in c[-1] for c in host.calls)
+
+
+def test_a_pull_that_raises_still_says_the_remote_dir_is_kept(tmp_path, monkeypatch, capsys):
+    class PullRaises(FakeHost):
+        def __call__(self, cmd, check=False, **kw):
+            if cmd[0] == "rsync" and cmd[-2].endswith("/out/"):
+                raise KeyboardInterrupt
+            return super().__call__(cmd, check=check, **kw)
+    host = PullRaises(probe_rc=4)
+    with pytest.raises(KeyboardInterrupt):
+        remote(["gemm", "A100"], host, tmp_path, monkeypatch)
+    assert f"a100:{host.rdir}" in capsys.readouterr().err
+    assert not any("rm -rf" in c[-1] for c in host.calls)
+
+
+def test_a_failed_pull_names_the_probe_exit_code(tmp_path, monkeypatch):
+    host = FakeHost(probe_rc=5, pull_rc=23)
+    with pytest.raises(SystemExit, match="probe exit 5"):
+        remote(["gemm", "A100"], host, tmp_path, monkeypatch)
+
+
+def test_the_pulled_run_finishes_on_the_local_clock(tmp_path, monkeypatch):
+    """The remote clock may be skewed: the pulled run.json's finished is set
+    here after the pull, the remote one kept as remote_finished."""
+    class Pulls(FakeHost):
+        def pulled(self, local):
+            run = local / "gemm" / "20261011T120000.123456Z"
+            run.mkdir(parents=True)
+            (run / "run.json").write_text(json.dumps({"provenance": {"finished": "2099-01-01"}}))
+    remote(["gemm", "A100"], Pulls(), tmp_path, monkeypatch)
+    doc = json.loads((tmp_path / "results/probes/A100/gemm/20261011T120000.123456Z/run.json")
+                     .read_text())
+    assert doc["provenance"]["remote_finished"] == "2099-01-01"
+    assert datetime.fromisoformat(doc["provenance"]["finished"]) < datetime(2099, 1, 1, tzinfo=timezone.utc)
+
+
+def test_probe_args_pass_through_intact(tmp_path, monkeypatch):
+    """Flags after `--` (the justfile's "$@") keep spaces, $ and quotes."""
+    host = FakeHost()
+    remote(["--", "gemm", "A100", "--model-shapes", "a b$c\"d"], host, tmp_path, monkeypatch)
+    assert host.calls[2][-1].endswith("--model-shapes 'a b$c\"d'")
+
+
+def test_the_justfile_passes_remote_probe_args_as_they_are():
+    text = JUSTFILE.read_text()
+    assert "set positional-arguments" in text
+    block = next(b for b in recipe_blocks(JUSTFILE) if b.startswith("remote-probe "))
+    assert block.rstrip().endswith('-- "$@"') and "{{args}}" not in block
 
 
 def test_a_failed_ship_removes_the_remote_dir(tmp_path, monkeypatch):
@@ -252,7 +308,11 @@ def test_an_odd_mktemp_answer_is_never_removed(rdir, tmp_path, monkeypatch):
     assert len(host.calls) == 1
 
 
-@pytest.mark.parametrize("argv", [["../x", "A100"], ["gemm", "A 100"], ["gemm", "A100", "--host", ""]])
+@pytest.mark.parametrize("argv", [["../x", "A100"], ["gemm", "A 100"], ["gemm", "A100", "--host", ""],
+                                  ["gemm", "A100", "--host=-oProxyCommand=x"],
+                                  ["gemm", "A100", "--probe-args=--out /x"],
+                                  ["gemm", "A100", "--probe-args=--run-id=1"],
+                                  ["--", "gemm", "A100", "--out-dir", "/x"]])
 def test_remote_probe_refuses_odd_names(argv, tmp_path, monkeypatch):
     host = FakeHost()
     with pytest.raises(SystemExit):
@@ -387,3 +447,9 @@ def runbook_drift(path: Path) -> list[str]:
 
 def test_runbook_commands_still_run_here():
     assert [d for path in RUNBOOKS for d in runbook_drift(path)] == []
+
+
+def test_emitting_the_nsys_command_records_no_run(tmp_path, capsys):
+    from quettabench.probes import serving_stage_split as sss
+    assert sss.main(["--model", "/w", "--emit-nsys-cmd", "--out", str(tmp_path / "x.csv")]) is False
+    assert list(tmp_path.iterdir()) == []

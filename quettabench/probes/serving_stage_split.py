@@ -419,7 +419,7 @@ def main(argv=None):
     if a.emit_nsys_cmd:
         emit_nsys_cmd(a.model, a.port, a.gpu_mem, a.max_model_len,
                       out_sqlite="serving_stage_split_nsys")
-        return
+        return False  # printed a command, measured nothing: no run.json
 
     news = [int(x) for x in a.news.split(",")]
     cacheds = [int(x) for x in a.cacheds.split(",")]

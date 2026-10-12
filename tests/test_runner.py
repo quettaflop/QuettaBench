@@ -540,6 +540,27 @@ class ProbeMode(unittest.TestCase):
             runner.clear_run_dir(results / "p", True, results)
             self.assertEqual(list(results.iterdir()), [])
 
+    def test_an_interrupted_clear_leaves_no_run_export_reads(self):
+        """rmtree interrupted: the .clearing-* dir left holds no run marker,
+        and export never counts a .clearing-* dir as a run."""
+        from quettabench.export.quettasim import _inputs
+        with tempfile.TemporaryDirectory() as td:
+            results = Path(td, "results")
+            (results / "p" / "ncu" / "gemm").mkdir(parents=True)
+            (results / "p" / "ncu" / "gemm" / "H100.csv").write_text("M,N,K\n")
+            (results / "p" / "run.json").write_text(json.dumps({"run_status": {"status": "ok"}}))
+            (results / "p" / "requests.jsonl").write_text("")
+            with mock.patch.object(runner.shutil, "rmtree", side_effect=KeyboardInterrupt), \
+                    self.assertRaises(KeyboardInterrupt):
+                runner.clear_run_dir(results / "p", True, results)
+            (aside,) = results.iterdir()
+            self.assertTrue(aside.name.startswith(".clearing-"))
+            self.assertEqual([p.name for p in aside.iterdir()], ["ncu"])
+            (aside / "run.json").write_text(json.dumps({"run_status": {"status": "ok"}}))
+            _inputs.run_dirs.cache_clear()
+            self.assertEqual(_inputs.run_dirs(results), {})
+            _inputs.run_dirs.cache_clear()
+
     def test_a_failed_run_is_replaced_without_overwrite(self):
         run = {"mode": {"mode": "probe", "probe": "fake"}}
         with scratch_configs("p", run) as (path, td), \

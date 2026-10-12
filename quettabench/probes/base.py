@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import dataclasses
+import json
 import re
 import shlex
 import subprocess
@@ -15,7 +16,7 @@ from pathlib import Path
 
 from quettabench.config import env_map
 from quettabench.config.schema import Config, EngineCfg, HardwareCfg, ModeCfg, WorkloadCfg
-from quettabench.metrics.results import RunWriter, exit_status, redact
+from quettabench.metrics.results import RunWriter, exit_status, redact, write_atomic
 
 DEFAULT_OUT = Path("results") / "probes"
 # A run id: the run's start in UTC to the microsecond, so a probe's run dirs sort by start.
@@ -150,6 +151,8 @@ SHIPPED = ("quettabench/__init__.py", "quettabench/probes/", "quettabench/config
 REMOTE_DIR = re.compile(r"/tmp/qbench-probes\.[A-Za-z0-9]{6,}")
 NAME = re.compile(r"[a-z][a-z0-9_]*")
 GPU = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+# Flags remote_probe sets itself; a probe arg naming one is refused.
+OWN_FLAGS = ("--out", "--out-dir", "--run-id")
 
 
 def _remote_args(argv):
@@ -163,9 +166,14 @@ def _remote_args(argv):
     ap.add_argument("--probe-args", default="", help="the probe's own flags, one string")
     ap.add_argument("name")
     ap.add_argument("gpu")
+    ap.add_argument("probe_argv", nargs="*", help="the probe's own flags, after --")
     a = ap.parse_args(argv)
-    if not a.host or not NAME.fullmatch(a.name) or not GPU.fullmatch(a.gpu):
-        ap.error("needs --host (set REMOTE_HOST), a probe module name and a GPU label")
+    if not a.host or a.host.startswith("-") or not NAME.fullmatch(a.name) or not GPU.fullmatch(a.gpu):
+        ap.error("needs --host (set REMOTE_HOST, not starting with -), a probe module name "
+                 "and a GPU label")
+    a.probe_argv = [*shlex.split(a.probe_args), *a.probe_argv]
+    if any(arg.split("=")[0] in OWN_FLAGS for arg in a.probe_argv):
+        ap.error(f"remote_probe sets {', '.join(OWN_FLAGS)} itself; leave them out of the probe args")
     return a
 
 
@@ -174,19 +182,37 @@ def _remote_python(py):
     return "~/" + shlex.quote(py[2:]) if py.startswith("~/") else shlex.quote(py)
 
 
+def _finish_here(run_dir: Path) -> None:
+    """Set the pulled run's provenance.finished from this machine's clock,
+    the remote one kept as remote_finished, so export orders runs on one clock."""
+    path = run_dir / "run.json"
+    if not path.is_file():
+        return
+    doc = json.loads(path.read_text())
+    provenance = doc.setdefault("provenance", {})
+    provenance["remote_finished"] = provenance.get("finished")
+    provenance["finished"] = datetime.now(timezone.utc).isoformat()
+    write_atomic(path, json.dumps(doc, indent=2) + "\n")
+
+
 def remote_probe(argv=None, run=subprocess.run, now=None) -> int:
     """Run a probe on a remote host in its own `mktemp -d` dir: ship SHIPPED,
     run it with --run-id from this machine's clock, always pull its out/
-    into results/probes/<gpu>/ (never overwriting a local file), then remove
-    that dir alone. Returns the remote run's exit code; a failed pull keeps
-    the remote dir and says where it is."""
+    (made up front, so a probe that wrote nothing pulls nothing) into
+    results/probes/<gpu>/ (never overwriting a local file), record the
+    finish on this machine's clock, then remove that dir alone. Returns the
+    remote run's exit code; a failed or interrupted pull keeps the remote
+    dir and says where it is."""
     a = _remote_args(argv)
-    ssh = ["ssh", "-o", "BatchMode=yes", a.host]
-    rsh = "ssh -o BatchMode=yes"
-    rdir = run([*ssh, "mktemp -d /tmp/qbench-probes.XXXXXX"], check=True,
-               capture_output=True, text=True).stdout.strip()
-    if not REMOTE_DIR.fullmatch(rdir):
-        raise SystemExit(f"remote mktemp gave {rdir!r}, not a /tmp/qbench-probes.XXXXXX dir")
+    ssh = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=30", a.host]
+    rsh = "ssh -o BatchMode=yes -o ConnectTimeout=30"
+    made = run([*ssh, "d=$(mktemp -d /tmp/qbench-probes.XXXXXX) && mkdir -p $d/out && echo $d"],
+               check=True, capture_output=True, text=True).stdout
+    # The last line that is a dir: a login banner may come first.
+    dirs = [line.strip() for line in made.splitlines() if REMOTE_DIR.fullmatch(line.strip())]
+    if not dirs:
+        raise SystemExit(f"remote mktemp gave {made!r}, not a /tmp/qbench-probes.XXXXXX dir")
+    rdir = dirs[-1]
     py = _remote_python(a.py)
     if a.nproc > 1:
         launch = (f"CUDA_VISIBLE_DEVICES={shlex.quote(a.gpu_ids or a.gpu_id)} {py} "
@@ -196,8 +222,8 @@ def remote_probe(argv=None, run=subprocess.run, now=None) -> int:
         launch = f"CUDA_VISIBLE_DEVICES={shlex.quote(a.gpu_id)} {ncu}{py} -m quettabench.probes.{a.name}"
     rid = run_id(now or datetime.now(timezone.utc))
     command = (f"cd {rdir} && {launch} --gpu-label {a.gpu} --out {rdir}/out --run-id {rid} "
-               f"{shlex.join(shlex.split(a.probe_args))}").rstrip()
-    started, pulled = False, None
+               f"{shlex.join(a.probe_argv)}").rstrip()
+    started, pulled, status = False, None, None
     try:
         run(["rsync", "-a", "--relative", "-e", rsh, *SHIPPED, f"{a.host}:{rdir}/"], check=True)
         started = True
@@ -207,15 +233,19 @@ def remote_probe(argv=None, run=subprocess.run, now=None) -> int:
         if started:
             local = Path("results") / "probes" / a.gpu
             local.mkdir(parents=True, exist_ok=True)
-            pulled = run(["rsync", "-a", "--ignore-existing", "-e", rsh, f"{a.host}:{rdir}/out/",
-                          f"{local}/"]).returncode
-        if pulled:
-            print(f"pulling {a.host}:{rdir}/out/ failed ({pulled}); the remote dir is kept",
-                  file=sys.stderr)
-        else:
+            try:
+                pulled = run(["rsync", "-a", "--ignore-existing", "-e", rsh,
+                              f"{a.host}:{rdir}/out/", f"{local}/"]).returncode
+            finally:
+                if pulled != 0:
+                    print(f"pulling {a.host}:{rdir}/out/ failed ({pulled}); the remote dir "
+                          f"{a.host}:{rdir} is kept", file=sys.stderr)
+            if not pulled:
+                _finish_here(local / a.name / rid)
+        if not pulled:
             run([*ssh, f"rm -rf {rdir}"])
     if pulled:
-        raise SystemExit(f"remote dir kept: {a.host}:{rdir}")
+        raise SystemExit(f"remote dir kept: {a.host}:{rdir} (probe exit {status})")
     return status
 
 if __name__ == "__main__":

@@ -298,7 +298,8 @@ def sweep_routing(dev, e_default=128, k_default=8):
 
 
 def main(argv=None) -> None:
-    ap = argparse.ArgumentParser(description=__doc__,
+    # No abbreviations: export reads --append from the argv as written.
+    ap = argparse.ArgumentParser(description=__doc__, allow_abbrev=False,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     add_output_args(ap)
     ap.add_argument("--geometries", default=",".join(GEOMETRIES),

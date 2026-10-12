@@ -19,10 +19,12 @@ def run_dirs(root: Path) -> dict[Path, str | None]:
     """{run dir: why export leaves it out, None when kept} for every run dir
     under root (root included): run.json missing (a run that never finished),
     unparsable, or a run_status other than ok. A server/ dir under a run dir
-    (a probe's launched server, engine.json there) is part of that run.
+    (a probe's launched server, engine.json there) is part of that run; a
+    .clearing-* dir (runner.clear_run_dir cut short) is none.
     Cached per root; export() clears it before each builder."""
     runs = {}
-    dirs = sorted({p.parent for marker in RUN_MARKERS for p in Path(root).rglob(marker)})
+    dirs = sorted({p.parent for marker in RUN_MARKERS for p in Path(root).rglob(marker)
+                   if not any(part.startswith(".clearing-") for part in p.parts)})
     for run_dir in dirs:
         if run_dir.name == "server" and run_dir.parent in dirs:
             continue

@@ -580,3 +580,28 @@ compared, so `01:00+01:00` sorted after `00:30+00:00`.
 the runs first name them, oldest run first. The old flash_attn upsert put
 the newest run's columns first, then the older runs' extra ones; a table
 whose runs name different columns comes out in a different column order.
+
+2026-10-11: no fixture changed. `clear_run_dir` unlinks `run.json`,
+`requests.jsonl` and `engine.json` in the `.clearing-*` dir before its
+rmtree, and export's run scan skips any `.clearing-*` dir. Before, an
+interrupted rmtree left a `.clearing-*` dir export read as an ok run.
+
+2026-10-11: no fixture changed. `remote_probe` makes the remote dir and
+its `out/` in one ssh (`mktemp -d ... && mkdir -p $d/out && echo $d`),
+taking the last output line that is such a dir, so a probe that wrote
+nothing pulls nothing and its exit code is returned; ssh gets
+`-o ConnectTimeout=30`; a `--host` starting with `-` and `--out`,
+`--out-dir` or `--run-id` among the probe args are refused; a pull that
+fails or raises says the remote dir is kept, and a failed pull's exit
+names the probe's exit code. After the pull, the run's
+`provenance.finished` is set from the local clock (the remote one kept
+as `provenance.remote_finished`), so export orders remote and local
+runs on one clock. `just remote-probe` passes its args through `"$@"`
+(`set positional-arguments`) after `--`, so an arg holding a space, `$`
+or `"` reaches the probe whole; before, the args were joined into one
+quoted string and split again.
+
+2026-10-11: no fixture changed. The gemm and moe probes take no
+abbreviated flags, so `--app` is refused instead of appending while
+export reads it as a reset. `serving_stage_split --emit-nsys-cmd`
+records no run.json; before, it wrote an ok run with no table.

@@ -125,7 +125,7 @@ earlier run goes up, since a run writes only its own rows. Pick a **free** GPU
 ```
 REMOTE_HOST=a100 GPU_ID=0 \
 PYTHON_BIN=/home/<user>/miniconda3/envs/vllm/bin/python \
-  just remote-probe gemm A100 "--ncu"
+  just remote-probe gemm A100 --ncu --wide
 ```
 
 ## Probes

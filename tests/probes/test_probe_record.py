@@ -333,6 +333,7 @@ def import_without_torch(name):
     fake = types.ModuleType("torch")
     fake.nn = types.ModuleType("torch.nn")
     fake.nn.functional = types.ModuleType("torch.nn.functional")
+    fake.bfloat16 = "bfloat16"  # moe's module-level dtype
     with mock.patch.dict(sys.modules, {"torch": fake, "torch.nn": fake.nn,
                                        "torch.nn.functional": fake.nn.functional}):
         sys.modules.pop(f"quettabench.probes.{name}", None)
@@ -351,3 +352,12 @@ def test_gemm_ncu_reads_kernels_through_the_shared_parser():
     with mock.patch.object(gemm._ncu, "ncu_kernel_durations", return_value=[("at::fill", 1.0)]):
         assert gemm.ncu_gemm_us(1, 4096, 4096, "/opt/ncu") is None
     assert "Metric Value" not in (PROBES / "gemm.py").read_text()
+
+
+@pytest.mark.parametrize("name", ["gemm", "moe"])
+def test_append_cannot_be_abbreviated(name, capsys):
+    """export reads --append from probe_args as written; --app would append
+    unseen, so the parser takes no abbreviation."""
+    with pytest.raises(SystemExit) as stop:
+        import_without_torch(name).main(["--gpu-label", "H100", "--app"])
+    assert stop.value.code == 2 and "unrecognized" in capsys.readouterr().err

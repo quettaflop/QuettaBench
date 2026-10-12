@@ -162,7 +162,14 @@ nsys profile -t cuda,nvtx,cublas --cuda-graph-trace=node \
 Worker hook (`my_ext.NvtxForwardTimer`, dropped into a module on `PYTHONPATH`) brackets the model
 forward INSIDE the EngineCore subprocess with an NVTX range + a `torch.cuda.Event` pair (read off
 the hot path). Skeleton printed by `--emit-nsys-cmd`. Drive the nsys server with the SAME bench
-client (`--no-launch`), export `.nsys-rep` → `.sqlite`, then compute per-step device time:
+client (`--no-launch`), into its own run dir (`--emit-nsys-cmd` only prints, so it records no run):
+
+```bash
+$PYTHON -m quettabench.probes.serving_stage_split --no-launch --port 8771 --api-key "$VLLM_API_KEY" \
+  --out results/probes/H100/serving_stage_split/<date>-laneb/serving_stage_split_H100.csv
+```
+
+Export `.nsys-rep` → `.sqlite`, then compute per-step device time:
 
 ```
 device_kernel_ms(window) = SUM(k.end - k.start)

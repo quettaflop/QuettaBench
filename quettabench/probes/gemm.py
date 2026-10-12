@@ -225,7 +225,8 @@ def time_matmul(m, n, k, dev, dt, graph: bool = False) -> float:
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser()
+    # No abbreviations: export reads --append from the argv as written.
+    ap = argparse.ArgumentParser(allow_abbrev=False)
     add_output_args(ap)
     ap.add_argument("--wide", action="store_true", help="emit {method}/gemm_wide/{gpu}.csv (wide MoE shapes) instead of {method}/gemm/{gpu}.csv")
     ap.add_argument("--dims", type=int, nargs="*", default=None, help="override the (N,K) dim set")

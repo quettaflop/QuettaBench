@@ -254,6 +254,9 @@ def clear_run_dir(out, overwrite, results_dir):
     if aside.is_symlink() or not aside.is_dir():
         os.rename(aside, out)
         raise ConfigError(f"{out} became a symlink or a file while being emptied; left as it is")
+    # Markers first: an rmtree cut short leaves no dir a results scan reads as a run.
+    for marker in RUN_MARKERS:
+        (aside / marker).unlink(missing_ok=True)
     shutil.rmtree(aside)
 
 

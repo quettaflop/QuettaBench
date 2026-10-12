@@ -21,6 +21,8 @@
 #   just export --only kernel_tables --results results/probes --kernel-dest ../QuettaSim/data
 
 set dotenv-load := true
+# Recipe args reach the shell as $1, $2, ... too, so "$@" passes them on unsplit.
+set positional-arguments
 
 gpu := "A100"
 gpu_id := env_var_or_default("GPU_ID", "0")
@@ -92,9 +94,10 @@ probe name *args:
 # Run a probe on REMOTE_HOST in its own mktemp dir (probes/base.py remote_probe): ship the
 # probes package and what its run.json needs, run it (NPROC>1 = one rank per GPU in GPU_IDS
 # through torchrun) with --run-id from this machine's clock, always pull the run into
-# results/probes/<gpu>/<probe>/<run-id>/, then remove that remote dir.
+# results/probes/<gpu>/<probe>/<run-id>/, then remove that remote dir. The probe's flags
+# follow the GPU as they are: just remote-probe gemm H100 --ncu --model-shapes llama8b
 remote-probe name gpu=gpu *args:
-    python3 -m quettabench.probes.base remote-probe --host "{{remote_host}}" --py "{{py}}" --gpu-id "{{gpu_id}}" --gpu-ids "{{gpu_ids}}" --nproc "{{nproc}}" --ncu-bin "{{ncu_bin}}" --probe-args="{{args}}" {{name}} {{gpu}}
+    python3 -m quettabench.probes.base remote-probe --host "{{remote_host}}" --py "{{py}}" --gpu-id "{{gpu_id}}" --gpu-ids "{{gpu_ids}}" --nproc "{{nproc}}" --ncu-bin "{{ncu_bin}}" -- "$@"
 
 # QuettaSim tables from results dirs: just export --results results/<run> --dest <dir> [--kernel-dest <QuettaSim data root>]
 export *args:
