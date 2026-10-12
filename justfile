@@ -4,7 +4,7 @@
 #   just dry configs/runs/llama.yaml --set engine.model=/weights/llama
 #   just run configs/runs/llama.yaml --set engine.model=/weights/llama
 #   just profile --run results/llama --source metrics
-#   just crossval ...
+#   just xval results/<ours> results/<theirs>
 #   just export --results results/<run> --dest <export dir>
 #
 # .env (written by `just provision`) sets PYTHON_BIN and the cache dirs. Each probe run writes
@@ -45,7 +45,7 @@ default:
 
 # Check and set up this box for the given run yamls (--dry-run prints the plan; writes .env)
 provision *args:
-    {{py}} -m quettabench.cli provision {{args}}
+    {{py}} -m quettabench.provision {{args}}
 
 # One run yaml to results/<run>/
 run cfg *args:
@@ -64,8 +64,8 @@ profile *args:
     {{py}} -m quettabench.cli profile {{args}}
 
 # Compare results dirs (QuettaServe vs vLLM at matched cells)
-crossval *args:
-    {{py}} -m quettabench.cli crossval {{args}}
+xval *args:
+    {{py}} -m quettabench.cli xval {{args}}
 
 test:
     python3 -m pytest tests -q

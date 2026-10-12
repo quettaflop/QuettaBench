@@ -2,8 +2,8 @@
 
 Measures LLM serving engines on production-shaped workloads, and
 cross-validates the QuettaServe engine against vLLM per decode step. One
-command, `qbench`, with four doors: `run | profile | crossval | export`,
-and `qbench provision` for box setup.
+command, `qbench`, with four doors: `run | profile | xval | export`,
+and `just provision` for box setup.
 
 ## Quickstart
 
@@ -16,13 +16,13 @@ just provision configs/runs/llama.yaml --dry-run \
 just dry configs/runs/llama.yaml --set engine.model=/w/llama   # Config + LaunchSpec, starts nothing
 just run configs/runs/llama.yaml --set engine.model=/w/llama   # -> results/llama/
 just profile --run results/llama --source metrics --source energy
-just crossval results/<ours> results/<theirs>   # compares two results dirs
+just xval results/<ours> results/<theirs>       # compares two results dirs
 just export --results results/llama --dest <export dir>   # the builders but kernel_tables
 just export --only kernel_tables --results results/probes --kernel-dest ../QuettaSim/data   # -> kernel_data/{graph,eager}/
 ```
 
 Without `just`, every recipe is one line: `python3 -m quettabench.cli run ...`,
-`python3 -m quettabench.cli provision ...` (`qbench provision` once installed). `just test` and `just lint` run pytest
+`python3 -m quettabench.provision ...` for `just provision`. `just test` and `just lint` run pytest
 and ruff.
 
 ## Config
@@ -102,7 +102,7 @@ refused. `run_name` (the yaml stem or `--set run_name=`) matches
 `[A-Za-z0-9][A-Za-z0-9._-]*` and is none of `probes`, `xval`, `baselines`;
 matrix suffixes are cut to that charset.
 
-Grid runs no longer write `results/baselines/*.json`; `qbench crossval`
+Grid runs no longer write `results/baselines/*.json`; `qbench xval`
 reads the run dir, and still reads old baselines files. Each probe run writes
 its own `results/probes/<gpu>/<probe>/<run-id>/` (the run id is its UTC start,
 e.g. `20261011T120000.000000Z`) and records itself beside its tables in
@@ -181,7 +181,7 @@ its peer all-reduce. Empty values are never exported. The caller's
 
 ### Correctness
 
-Agreement is two runs compared by `qbench crossval`. Runs with
+Agreement is two runs compared by `qbench xval`. Runs with
 `mode.returns=text` give greedy-agreement rows (engine vs vLLM text); runs
 with `mode.returns=logits` give the FIDELITY gate, vLLM against the
 transformers reference on the same grid prompts:
@@ -191,7 +191,7 @@ qbench run configs/runs/llama.yaml --set mode.grid=smoke --set mode.returns=logi
     --set 'engine.extra.vllm={enforce_eager: true}' --set run_name=llama-logits
 qbench run configs/runs/llama.yaml --set mode.grid=smoke --set engine.name=reference \
     --set run_name=llama-reference
-qbench crossval results/llama-logits results/llama-reference
+qbench xval results/llama-logits results/llama-reference
 ```
 
 FIDELITY passes only with zero hard disagreements (an argmax flip where the
@@ -206,14 +206,14 @@ teacher-forced logits against a float32 reference anchor, passing when the
 engine's argmax flips are no more than the reference's own at the engine's
 dtype (the noise floor). `engine.layers=N` cuts the reference (and sets the
 QuettaServe batch_bench's `<P>_LAYERS`); vLLM loads a checkpoint dir cut the
-same way as `engine.model`. `qbench crossval <ours> <anchor> --floor <run>`
+same way as `engine.model`. `qbench xval <ours> <anchor> --floor <run>`
 prints the BAND line:
 
 ```
 qbench run <run>.yaml --set mode.returns=logits --set engine.model=<cut dir> --set run_name=slice-vllm
 qbench run <run>.yaml --set engine.name=reference --set engine.layers=N --set engine.dtype=float32 --set run_name=slice-f32
 qbench run <run>.yaml --set engine.name=reference --set engine.layers=N --set engine.dtype=bfloat16 --set run_name=slice-bf16
-qbench crossval results/slice-vllm results/slice-f32 --floor results/slice-bf16
+qbench xval results/slice-vllm results/slice-f32 --floor results/slice-bf16
 ```
 
 A floor run is trusted once it is deterministic: the same run twice crossvals
@@ -252,12 +252,12 @@ are withheld. glm53 and glm53flash have no engine bench yet: vLLM side only.
 | `python -m quettabench.modes.serve ...` (and its `--output` file) | `just run ...`; results in `results/<run>/` |
 | `vmin_fit.py <wl>` / `serve --grid --workload <wl>` | `just run configs/runs/<wl>.yaml --set engine.model=<weights>` (`--nograph`: `--set engine.cudagraph=false`, `--dump-tokens`: `--set mode.returns=text`) |
 | `trace_serve.py <trace> --model <w>` | `just run <yaml> --set mode.grid=null --set workload.kind=live --set workload.source=<trace> --set mode.load=open --set workload.arrival=trace`; energy, cost, gsm8k: `just profile --source energy|cost|gsm8k` |
-| `cache.py <log> <out>` | nothing: grid runs no longer write `results/baselines/*.json`; old files are still readable by `qbench crossval` |
-| `python3 table.py <bench-log> <baseline>` | `qbench crossval <ours> <theirs>` (`just crossval`); each side a results dir, an old baselines json or a bench log |
+| `cache.py <log> <out>` | nothing: grid runs no longer write `results/baselines/*.json`; old files are still readable by `qbench xval` |
+| `python3 table.py <bench-log> <baseline>` | `qbench xval <ours> <theirs>` (`just xval`); each side a results dir, an old baselines json or a bench log |
 | `xval_config.py tp|devices|cells|bench <wl>` | `just dry configs/runs/<wl>.yaml` (`engine.tp`, `engine.pp`, `grid.cells`, `engine.extra.quettaserve`) |
 | `xval_config.py collective|link-profile|backend|run-params` | `just dry ...` (`hardware.*` lines) |
 | `xval_config.py provision [key]` | `just provision ... --dry-run`, or the `hardware.provision.*` lines of `just dry` |
-| `slice_tf/tf_verify.py`, `ref_full.py`, `ref_slice.py`, `vllm_tf.py`, `vllm_baseline.py` | logits runs with `engine.layers` and `qbench crossval ... --floor` (Slice verification above) |
+| `slice_tf/tf_verify.py`, `ref_full.py`, `ref_slice.py`, `vllm_tf.py`, `vllm_baseline.py` | logits runs with `engine.layers` and `qbench xval ... --floor` (Slice verification above) |
 | `slice_tf/slice_truncate.py` | `--set engine.layers=N` (reference, QuettaServe); for vLLM, `python3 data/slice_checkpoint.py <src> <dst>` builds the cut checkpoint dir that `engine.model` names (Kimi-K3 slice only: 13 layers, MLA at 4, 8, 12 1-indexed; all three gates run from this repo) |
 | `slice_tf/vllm_nsys.py`, `nsys_kernels.py <sqlite> --steps N` | `--set engine.instrumentation=nsys`, then `just profile --run results/<run> --source kernels --kernel-steps N` |
 | `slice_tf/moe_routing_probe.py <out>` | `just moe-routing <model> <gpu> 1 "--layers 13 --kda-mode fused_recurrent"` (`python3 -m quettabench.probes.moe --routing`) |
@@ -300,7 +300,7 @@ just export --only kernel_tables --results results/probes --kernel-dest ../Quett
 ## Layout
 
 ```
-quettabench/cli.py        qbench: run | profile | crossval | export, and provision
+quettabench/cli.py        qbench: run | profile | xval | export
 quettabench/runner.py     run: load, build the Trace, translate, launch, drive, serve, write
 quettabench/provision.py  box setup, --dry-run plan, MISSING: and stop
 quettabench/config/       schema (with topology rules), loader (yaml + --set + env), env_map

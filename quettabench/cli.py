@@ -4,10 +4,9 @@
              [--overwrite]
                                                       quettabench.runner
   qbench profile  --run results/<run> --source ...   quettabench.profiler
-  qbench crossval ...                                 quettabench.crossval
+  qbench xval     ...                                 quettabench.crossval
   qbench export   --results ... --dest DIR            quettabench.export.quettasim
                   [--kernel-dest QUETTASIM_DATA [--replace-tables]]
-  qbench provision <run.yaml>... [--dry-run]          quettabench.provision
 
 run is parsed here: --set is repeatable and its values are yaml scalars,
 --results-dir is the parent of results/<run>/. A config the loader refuses,
@@ -31,9 +30,8 @@ from quettabench.engines.base import UnsupportedField
 # door -> module whose main(argv) takes the remaining arguments
 DOORS = {
     "profile": "quettabench.profiler",
-    "crossval": "quettabench.crossval",
+    "xval": "quettabench.crossval",
     "export": "quettabench.export.quettasim",
-    "provision": "quettabench.provision",
 }
 
 

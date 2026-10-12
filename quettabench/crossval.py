@@ -646,7 +646,7 @@ def report_json(report):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="crossval", description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(prog="qbench xval", description=__doc__.splitlines()[0])
     ap.add_argument("ours", help="results/<run>/ dir, baselines/*.json, or bench log")
     ap.add_argument("theirs", help="results/<run>/ dir, baselines/*.json, or bench log")
     ap.add_argument("--allow-method-mismatch", action="store_true",

@@ -18,10 +18,10 @@ current one (README.md "Old command -> new command").
 | V7 | realigned llama baseline | historical `just vllm llama`; now `just run configs/runs/llama.yaml --set engine.model=<weights>` (grid is now 15 cells) | 15 cells, r2 >= 0.999 each, 4096x32 and 4096x64 present | pass |
 | V8 | deepseek baseline | 4 idle H200s: historical `just vllm deepseek`; now `just run configs/runs/deepseek.yaml --set engine.model=<weights>` | completed cells at r2 >= 0.999; any SKIP carries its reason | blocked |
 | V9 | slice artifacts | historical `slice_truncate.py`, then `ref_slice.py`; now `python3 data/slice_checkpoint.py <src> <dst>` and a reference run with `--set engine.layers=N --set engine.dtype=float32` (README.md "Slice verification") | truncated model dir and fp32 reference safetensors exist | blocked |
-| V10 | noise floor | historical `tf_verify.py <fp32-ref> out.json` at `KIMI_REF_DTYPE=bf16`; now logits runs with `engine.layers` and `qbench crossval ... --floor` | both KDA modes deterministic across their two runs; band recorded | blocked |
+| V10 | noise floor | historical `tf_verify.py <fp32-ref> out.json` at `KIMI_REF_DTYPE=bf16`; now logits runs with `engine.layers` and `qbench xval ... --floor` | both KDA modes deterministic across their two runs; band recorded | blocked |
 | V11 | vllm inside band | historical: verify part of `vllm_tf.py`; now as V10, the vLLM run against the fp32 anchor | vLLM disagreement rate vs the fp32 chain <= the worse HF bf16 kernel rate from V10 | blocked |
 | V12 | routing dump | historical `moe_routing_probe.py <out.safetensors>`; now `just moe-routing <model> <gpu> 1 "--layers 13 --kda-mode fused_recurrent"` (`python3 -m quettabench.probes.moe --routing`) | dump holds topk_idx, topk_weight and the stage tensors | blocked |
-| V13 | llama logit agreement | historical `python3 scripts/crossval/logit_agreement.py --model <weights>`; now the logits and reference runs in README.md "Slice verification", then `just crossval` | argmax agreement >= 99 percent with disagreements only at near-ties; mean true-token logprob delta <= 0.05 | pass |
+| V13 | llama logit agreement | historical `python3 scripts/crossval/logit_agreement.py --model <weights>`; now the logits and reference runs in README.md "Slice verification", then `just xval` | argmax agreement >= 99 percent with disagreements only at near-ties; mean true-token logprob delta <= 0.05 | pass |
 
 Notes. V3 and V4 run from a QuettaServe checkout of `supp_tp` next to this
 repo; the table consumes their criterion logs unchanged. V9 to V12 need the

@@ -221,7 +221,7 @@ def split_sets(items):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="qbench provision", description=__doc__,
+    ap = argparse.ArgumentParser(prog="just provision", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("run_yaml", nargs="+", help="configs/runs/<name>.yaml to provision for")
     ap.add_argument("--set", dest="overrides", action="append", default=[],

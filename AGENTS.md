@@ -6,7 +6,7 @@ each thing lives, and the rules every commit keeps.
 ## What this repo is
 
 QuettaBench is a measurement harness. It has one command, `qbench`, with four
-doors: `run | profile | crossval | export`, plus `provision` for box setup.
+doors: `run | profile | xval | export`; `just provision` sets the box up.
 It has one measurement procedure, `quettabench/modes/serve.py`. Three structs flow one way, `Config ->
 LaunchSpec -> RequestResult`, and nothing flows back. Every measurement lands
 in one results layer, `results/<run>/`, and leaves the repo by
@@ -83,7 +83,6 @@ in one results layer, `results/<run>/`, and leaves the repo by
 
 One line each; everything else follows section 2 "Target layout".
 
-- The doors are `run | profile | crossval | export` plus `provision`; section 2 names the third `xval`.
 - The justfile also carries the kernel probe recipes, `probe`, `remote-probe`, `serving-profile`, `profile-gpu`, `gpu-info`, `hooks` and the `mirror-*` R2 recipes, beyond section 2's nine.
 - `runner.py` is about 370 lines, not under 100: it also holds `build_trace(cfg)`, which picks the Trace a Config names, and runs probe-mode runs, matrix sweeps, the in-process env pins and the run dir rules.
 - `configs/hardware/` holds the NCCL link profiles and `configs/workloads.yaml` the named workload profiles, beside section 2's models, grids and runs.
