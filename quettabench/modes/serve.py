@@ -1,31 +1,18 @@
-"""THE measurement procedure: send a Trace's requests through a Driver and
-collect one RequestResult row per request.
+"""THE measurement procedure: send a Trace's requests through a Driver and collect one RequestResult row per request.
 
-run(trace, driver, mode, writer, workload) warms the engine on the trace's
-warmup requests, resets the prefix cache when asked, then replays:
-
-  closed loop  mode.concurrency slots; a request's TTFT clock starts at its
-               slot grant (ttft_basis "slot")
-  open loop    no cap; each request fires at its arrival from
-               workload.arrival / workload.speed (ttft_basis "arrival")
-
-A SessionTrace goes through SessionDispatcher (modes/_sessions_dispatch.py),
-which feeds each reply into the session's later turns. With mode.grid set
-the trace is a GridTrace and run_grid (modes/_grid.py) times it cell by
-cell instead; its per-step numbers are the run's steps section. Every row goes to the
-writer as it finishes. Then the gates from metrics.core (exit 1 on abort)
-and the workload identity gate: every dispatched request, failed or not,
-hashed must equal trace.workload_hash(), else the run is "failed" and exits
-3. Failed requests make the run "partial", or abort it below
-mode.min_success_rate.
-
-quettabench/runner.py builds the trace, driver and writer and calls run.
+Closed loop holds mode.concurrency slots; open loop fires each request at its arrival.
+SessionDispatcher feeds each reply into the session's later turns; run_grid times a GridTrace cell by cell.
+Then the metrics.core gates and the workload identity gate (exit 3 on a hash mismatch).
 """
 
 import asyncio
 import dataclasses
+import itertools
+import json
+import os
 import sys
 import time
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 
 from ..config.schema import WorkloadCfg
@@ -35,8 +22,10 @@ from ..metrics.core import (
     acceptance,
     aggregate,
     aggregate_per_turn,
+    annotate_multi_turn_cache_estimate,
     annotate_request_observability,
     burst_recovery,
+    first_error,
     print_multi_turn_summary,
     print_summary,
     sla_verdict,
@@ -45,17 +34,28 @@ from ..metrics.core import (
     transient_gate,
     usage_gate,
 )
-from ..metrics.results import goodprobe_line, print_legacy_lines
+from ..metrics.results import goodprobe_line, grid_event_line, print_legacy_grid_lines, print_legacy_lines
+from ..metrics.step_fit import GIB, fit, fit_run
 from ..workloads.arrival import offered_rate, parse_arrival, rebase_arrivals
-from ..workloads.base import workload_hash
-from ..workloads.sessions import SessionTrace
-from ._grid import run_grid
-from ._sessions_dispatch import RunAborted, SessionDispatcher, no_limit
+from ..workloads.base import Request, workload_hash
+from ..workloads.sessions import SessionTrace, _sleep_until_elapsed, inter_turn_wait_s
 
 WORKLOAD_SCHEMA_VERSION = "distributional-synthetic-v1"
 TRACE_REQUEST_ID_PREFIX = "agenticbench"
 IDENTITY_EXIT = 3  # legacy/trace_serve.py's exit code for a workload mismatch
 DEFAULT_WORKLOAD = WorkloadCfg()
+RESERVE_GIB = 5.0   # per GPU, held back from the KV budget for activations and graphs
+TEXT_TOKENS = 64    # mode.returns=text: greedy tokens decoded per cell
+
+
+class RunAborted(Exception):
+    """The run cannot produce a measurement; the message is the ABORT line."""
+
+
+@asynccontextmanager
+async def no_limit():
+    """Stand-in for the concurrency semaphore when running open loop."""
+    yield
 
 
 @dataclass
@@ -449,3 +449,374 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
         summary.reason = f"{core.failed_requests} of {core.num_requests} requests failed"
     writer.finish(summary.to_dict(), status=summary.status, reason=summary.reason)
     return summary
+
+
+def kv_bytes_per_token(engine):
+    """engine.kv_bytes, else the dense formula over the model's config.json.
+    The formula counts every layer; hybrid and MLA stacks must set kv_bytes."""
+    if engine.kv_bytes:
+        return int(engine.kv_bytes)
+    with open(os.path.join(engine.model, "config.json")) as f:
+        cfg = json.load(f)
+    cfg = cfg.get("text_config", cfg)
+    hd = cfg.get("head_dim") or cfg["hidden_size"] // cfg["num_attention_heads"]
+    hd += cfg.get("qk_rope_head_dim") or 0
+    return 2 * cfg["num_hidden_layers"] * cfg["num_key_value_heads"] * hd * 2
+
+
+def graph_mode(engine):
+    return "FULL" if engine.cudagraph else "NOGRAPH"
+
+
+def meta(cfg, gpu, version, eval_pos, steps):
+    """META key -> value, in vmin_fit's order; expert_parallel only when on."""
+    e, h = cfg.engine, cfg.hardware
+    out = {"gpu": gpu, "vllm": version, "model": e.model_name, "dtype": e.dtype,
+           "grid": cfg.mode.grid, "mode": graph_mode(e), "eval_pos": eval_pos,
+           "step_points": list(steps),
+           "nccl_algo": h.collective.get("NCCL_ALGO") or "auto",
+           "nccl_proto": h.collective.get("NCCL_PROTO") or "auto",
+           "link_profile": h.link_profile, "prompt_mode": cfg.workload.prompt_mode,
+           "tp": e.tp, "pp": e.pp, "quant": e.quant or e.dtype}
+    if e.ep:
+        out["expert_parallel"] = 1
+    return out
+
+
+def capacity(engine, gpu_bytes, kv_b):
+    """(free GiB for KV across tp GPUs, KV tokens that fit; 0 when none)."""
+    gpu_gib = gpu_bytes / GIB
+    free_gib = engine.tp * (gpu_gib * engine.gpu_util) - engine.weights_gib - engine.tp * RESERVE_GIB
+    return free_gib, int(free_gib * GIB / kv_b) if free_gib > 0 else 0
+
+
+def measure_cell(driver, writer, mode, steps, prompts, cell):
+    """The cell's batches in vmin_fit's order: the text run when asked, the
+    warm run at max(steps), then the fit passes. Returns the fit rows."""
+    def batch(step, phase, attempt=None, **extra):
+        requests = [Request(ids, len(ids), output_length=step) for ids in prompts]
+        rows = list(driver.run(requests, cell={**cell, "step_point": step, "phase": phase,
+                                               "attempt": attempt}))
+        for r in rows:
+            r.excluded_from_summary = phase != "fit"
+            writer.append(r, **{k: f(r) for k, f in extra.items()})
+        return rows
+
+    if mode.returns == "text":
+        # Routing-parity audit: greedy ids must match the engine's DS_TOKEN_TRACE.
+        batch(TEXT_TOKENS, "text", token_ids=lambda r: r.generated_token_ids[:TEXT_TOKENS],
+              text=lambda r: r.generated_text)
+    if mode.returns == "logits":
+        score(driver, writer, prompts, cell)
+    batch(max(steps), "warm")
+    out = []
+    for attempt in range(mode.vmin_attempts):
+        walls = []
+        for step in steps:
+            rows = batch(step, "fit", attempt)
+            out += rows
+            walls.append(rows[0].batch_wall_s)
+        if fit(steps, walls)[2] >= mode.fit_r2_stop:
+            break
+    return out
+
+
+def score(driver, writer, prompts, cell):
+    """One scoring pass over the cell's prompts; rows carry logits, no time."""
+    requests = [Request(ids, len(ids)) for ids in prompts]
+    for r in driver.run(requests, cell={**cell, "step_point": None, "phase": "logits",
+                                        "attempt": None}, returns="logits"):
+        r.excluded_from_summary = True
+        writer.append(r)
+
+
+def score_grid(trace, driver, cfg, writer):
+    """A scoring pass per cell for a driver that only scores; maxlen SKIPs
+    apply, nothing is timed, so there are no steps."""
+    record, over = {"events": []}, set(trace.cells_over_maxlen)
+    for ctx, bs in trace.cells:
+        if (ctx, bs) in over:
+            event = {"event": "skip_maxlen", "ctx": ctx, "bs": bs}
+            record["events"].append(event)
+            print(grid_event_line(record, event), flush=True)
+        else:
+            score(driver, writer, trace.cell_prompts(ctx, bs)[0],
+                  {"ctx": ctx, "bs": bs, "tp": cfg.engine.tp})
+    return record, None, []
+
+
+def run_bench(driver, cfg, writer):
+    """driver.cells past the SKIP rules, measured in one driver.run call.
+
+    maxlen SKIPs as for any grid. A KV SKIP needs the budget: engine.kv_bytes,
+    engine.weights_gib and the GPU memory driver.device() reports; a cell
+    needs its bench max_seq (ctx + timing_steps + headroom) per sequence.
+    steps passes the measured rows through."""
+    engine, hw, grid = cfg.engine, cfg.hardware, cfg.grid
+    device = driver.device() if engine.kv_bytes and engine.weights_gib is not None else None
+    cap = capacity(engine, device[1], engine.kv_bytes)[1] if device else 0
+    over = set(grid.cells_over_maxlen)
+    record, kept = {"bench_log": str(driver.log_path), "events": []}, []
+    for ctx, bs, spec in driver.cells:
+        need = (ctx + hw.timing_steps + hw.max_seq_headroom) * bs
+        if (ctx, bs) in over:
+            event = {"event": "skip_maxlen", "ctx": ctx, "bs": bs}
+        elif cap and need > cfg.mode.cap_frac * cap:
+            event = {"event": "skip_kv", "ctx": ctx, "bs": bs, "need": need, "cap": cap}
+        else:
+            kept.append((ctx, bs, spec))
+            continue
+        record["events"].append(event)
+        print(grid_event_line(record, event), flush=True)
+    rows = list(driver.run(kept, step_points=grid.step_points))
+    for row in rows:
+        writer.append(row)
+    return record, fit_run(rows, None, None, None), rows
+
+
+def run_grid(trace, driver, cfg, writer):
+    """One grid run; returns (record, steps, rows). record is what the
+    legacy lines print from and the run.json grid section; steps is
+    fit_run over every fit row."""
+    if getattr(driver, "measures_steps", False):
+        return run_bench(driver, cfg, writer)
+    if getattr(driver, "scores_only", False):
+        return score_grid(trace, driver, cfg, writer)
+    mode, engine = cfg.mode, cfg.engine
+    eval_pos = mode.eval_pos if mode.eval_pos is not None else cfg.hardware.timing_steps // 2
+    steps = trace.step_points
+    kv_label = engine.kv_dtype if engine.kv_dtype != "auto" else engine.dtype
+    gpu, gpu_bytes = driver.device()
+    run = {"meta": meta(cfg, gpu, driver.version, eval_pos, steps), "kv": kv_label, "events": []}
+    if trace.trace is not None:
+        reqs = trace.trace
+        run["trace"] = {"path": cfg.workload.source, "reqs": len(reqs.requests()),
+                        "workload_hash": reqs.workload_hash()}
+    shown = print_legacy_grid_lines(run)
+
+    kv_b = kv_bytes_per_token(engine)
+    free_gib, cap = capacity(engine, gpu_bytes, kv_b)
+    run["capacity"] = {"mode": graph_mode(engine), "tp": engine.tp, "dtype": engine.dtype,
+                       "kv_bytes": kv_b, "free_gib": free_gib, "kv_tokens": cap}
+    shown = print_legacy_grid_lines(run, shown)
+    driver.warmup()
+    run["warm_ok"] = True
+    shown = print_legacy_grid_lines(run, shown)
+
+    over, top, rows = set(trace.cells_over_maxlen), max(steps), []
+    for ctx, bs in trace.cells:
+        need = (ctx + top) * bs
+        if (ctx, bs) in over:
+            run["events"].append({"event": "skip_maxlen", "ctx": ctx, "bs": bs})
+        elif cap and need > mode.cap_frac * cap:
+            run["events"].append({"event": "skip_kv", "ctx": ctx, "bs": bs, "need": need,
+                                  "cap": cap})
+        else:
+            # Checked at the first cell that needs it, so an all-SKIP run never asks.
+            if trace.prompt_mode == "corpus" and not trace.corpus_path:
+                reason = "prompt_mode=corpus needs XVAL_CORPUS pointing at a text file"
+                writer.finish(None, status="aborted", reason=reason)
+                sys.exit(reason)
+            prompts, cycled = trace.cell_prompts(ctx, bs)
+            if cycled:
+                run["events"].append({"event": "cycled", "ctx": ctx, "bs": bs})
+                shown = print_legacy_grid_lines(run, shown)
+            cell_rows = measure_cell(driver, writer, mode, steps, prompts,
+                                     {"ctx": ctx, "bs": bs, "tp": engine.tp})
+            rows += cell_rows
+            (step,) = fit_run(cell_rows, eval_pos, kv_b, engine.weights_gib)
+            run["events"].append({"event": "result", "ctx": ctx, "bs": bs, "step": step})
+        shown = print_legacy_grid_lines(run, shown)
+    run["done"] = True
+    print_legacy_grid_lines(run, shown)
+    return run, fit_run(rows, eval_pos, kv_b, engine.weights_gib), rows
+
+
+class SessionDispatcher:
+    """One multi-turn replay. send(request, request_id=, capture_text=) is
+    the driver call with sampling bound; request_id(session, turn, index)
+    names a request or returns None; emit(request, result) takes every
+    result as it finishes."""
+
+    def __init__(self, trace, mode, workload, send, request_id, emit):
+        self.trace, self.mode, self.workload = trace, mode, workload
+        self.send, self.request_id, self.emit = send, request_id, emit
+        self.sessions = trace.sessions()
+        self.max_turns = getattr(trace, "max_turns", max(len(s) for s in self.sessions))
+        self.pacing = trace.pacing
+        self.open_loop = mode.load == "open"
+
+    def announce(self):
+        """Before warmup: say what interleaved pacing does to the numbers."""
+        if not self.open_loop and self.pacing.pacing == "interleaved":
+            print("WARNING: --turn-pacing interleaved is a turn-aligned herd "
+                  "(global barrier per turn).")
+            print("         TTFT/TPOT spikes at turn boundaries are schedule "
+                  "artifacts, not production traffic.")
+            print("         Default is per-session. Inter-turn waits are ignored "
+                  "under interleaved.")
+            if self.pacing.use_recorded_arrivals:
+                print("WARNING: --use-recorded-arrivals is ignored under "
+                      "--turn-pacing interleaved (everyone starts turn 0 together).")
+
+    async def run(self):
+        """(results in turn order, results_by_turn, [(request, result)] served, start)."""
+        self.slots = asyncio.Semaphore(self.mode.concurrency)
+        self.by_turn = {i: [] for i in range(self.max_turns)}
+        self.served = []
+        self.prev_context, self.prev_output = {}, {}
+        self.dead, self.warned = set(), False
+        self.start = time.perf_counter()
+        if self.open_loop:
+            await self._open()
+        elif self.pacing.pacing == "per-session":
+            await self._per_session()
+        else:
+            await self._interleaved()
+        flat = []
+        for turn in sorted(self.by_turn):
+            for r in self.by_turn[turn]:
+                if r.turn_index is None:
+                    r.turn_index = turn
+                flat.append(r)
+        return flat, self.by_turn, self.served, self.start
+
+    async def _dispatch(self, request, index, scheduled_at_s=None):
+        sid, turn = request.session_id, request.turn
+
+        def elapsed():
+            return time.perf_counter() - self.start
+
+        dispatched = elapsed()
+        async with (no_limit() if self.open_loop else self.slots):
+            granted = elapsed()
+            result = await self.send(request, capture_text=True,
+                                     request_id=self.request_id(sid, turn, index))
+        annotate_request_observability(
+            result, request_index=index, request=request, scheduled_at_s=scheduled_at_s,
+            dispatch_started_at_s=dispatched, semaphore_acquired_at_s=granted,
+            completed_at_s=elapsed())
+        annotate_multi_turn_cache_estimate(
+            result, session_id=sid, turn_index=turn,
+            previous_context_tokens=self.prev_context.get(sid, 0),
+            cache_block_size=self.mode.prefix_cache_block_size,
+            previous_output_tokens=self.prev_output.get(sid, 0),
+            # Placeholders mean the engine reply is spliced into later prompts.
+            reply_in_cache=bool(self.trace.replies.get(sid)))
+        self.served.append((request, result))
+        self.emit(request, result)
+        return result
+
+    def _record(self, request, result):
+        sid = request.session_id
+        self.by_turn[request.turn].append(result)
+        if result.success and result.input_tokens > 0:
+            self.prev_context[sid] = int(result.input_tokens)
+            self.prev_output[sid] = int(result.output_tokens or 0)
+        if result.success:
+            self._feed_reply_back(sid, request.turn, result)
+        else:
+            self.dead.add(sid)
+
+    def _feed_reply_back(self, sid, turn, result):
+        replies = self.trace.replies.get(sid)
+        if not replies:
+            if not self.warned:
+                self.warned = True
+                print("WARNING: this dataset has no assistant placeholders; "
+                      "replies are not fed back (trace replay keeps recorded "
+                      "assistant turns).", flush=True)
+            return
+        if result.generated_text and turn < len(replies):
+            replies[turn]["content"] = result.generated_text
+
+    def _wait_s(self, request):
+        p = self.pacing
+        return inter_turn_wait_s(request, tool_wait_ms=p.tool_wait_ms,
+                                 human_wait_ms=p.human_wait_ms,
+                                 use_recorded_waits=p.use_recorded_waits)
+
+    def _print_waits(self):
+        p = self.pacing
+        if p.tool_wait_ms or p.human_wait_ms or p.use_recorded_waits:
+            print(f"  Inter-turn waits: tool_wait_ms={p.tool_wait_ms:g} "
+                  f"human_wait_ms={p.human_wait_ms:g} "
+                  f"recorded={'on' if p.use_recorded_waits else 'off'}")
+
+    async def _turns(self, turns, index_of, arrive_at_s=None):
+        """One session's turns in order; stop at the first failure."""
+        last = len(turns) - 1
+        for request in turns:
+            result = await self._dispatch(request, index_of(request),
+                                          arrive_at_s if request.turn == 0 else None)
+            self._record(request, result)
+            if not result.success:
+                break
+            wait_s = self._wait_s(request)
+            if wait_s > 0 and request.turn < last:
+                await asyncio.sleep(wait_s)
+
+    async def _open(self):
+        n = len(self.sessions)
+        if self.pacing.use_recorded_arrivals:
+            arrivals = [s[0].arrival_ts or 0.0 for s in self.sessions]
+            print(f"  Open loop: {n} sessions at recorded "
+                  f"arrival_time_ms; turns sequential within a session, no barrier")
+        else:
+            spec = self.workload.arrival
+            arrivals = [t / self.workload.speed
+                        for t in parse_arrival(spec, n, self.workload.seed)]
+            print(f"  Open loop: {n} sessions arriving at "
+                  f"{offered_rate(spec)} sess/s ({spec.partition(':')[0]}); "
+                  f"turns sequential within a session, no barrier")
+        self._print_waits()
+        counter = itertools.count()
+
+        async def session(turns, arrive_at_s):
+            await _sleep_until_elapsed(self.start, arrive_at_s)
+            await self._turns(turns, lambda r: next(counter), arrive_at_s)
+
+        await asyncio.gather(*[session(s, t) for s, t in zip(self.sessions, arrivals)])
+        done = [r for v in self.by_turn.values() for r in v if r is not None]
+        if done and not any(r.success for r in done):
+            raise RunAborted(f"ABORT: all {len(done)} requests failed. First error: "
+                             f"{first_error(done)}")
+
+    async def _per_session(self):
+        index = {(r.session_id, r.turn): i
+                 for i, r in enumerate(r for s in self.sessions for r in s)}
+        print(f"  Per-session pacing: {len(self.sessions)} sessions, "
+              f"{len(index)} requests, up to {self.mode.concurrency} in flight "
+              f"(no cross-session turn barrier)")
+        self._print_waits()
+        recorded = self.pacing.use_recorded_arrivals
+        if recorded:
+            print("  Session starts: recorded arrival_time_ms "
+                  "(wait is outside the concurrency slot)")
+
+        async def session(turns):
+            if recorded:
+                await _sleep_until_elapsed(self.start, turns[0].arrival_ts or 0.0)
+            await self._turns(turns, lambda r: index[(r.session_id, r.turn)])
+
+        await asyncio.gather(*[session(s) for s in self.sessions])
+        results = [r for v in self.by_turn.values() for r in v]
+        if results and not any(r is not None and r.success for r in results):
+            raise RunAborted(f"ABORT: All {len(results)} requests failed. First error: "
+                             f"{first_error(results)}")
+
+    async def _interleaved(self):
+        for turn in range(self.max_turns):
+            batch = [s[turn] for s in self.sessions
+                     if s[0].session_id not in self.dead and turn < len(s)]
+            if not batch:
+                continue
+            print(f"  Turn {turn + 1}/{self.max_turns}: dispatching {len(batch)} requests...")
+            offset = sum(len(v) for v in self.by_turn.values())
+            completed = await asyncio.gather(*[
+                self._dispatch(r, offset + i) for i, r in enumerate(batch)])
+            if not any(r is not None and r.success for r in completed):
+                raise RunAborted(f"ABORT: All {len(completed)} requests in turn {turn + 1} "
+                                 f"failed. First error: {first_error(completed)}")
+            for request, result in zip(batch, completed):
+                self._record(request, result)

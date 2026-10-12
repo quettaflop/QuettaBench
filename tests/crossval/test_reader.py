@@ -1,4 +1,4 @@
-"""crossval/reader.py: each input kind read into a Side, on the golden data."""
+"""crossval/crossval.py: each input kind read into a Side, on the golden data."""
 
 import json
 import math
@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from quettabench.crossval import reader
+from quettabench import crossval
 from quettabench.engines.drivers import BenchDriver
 from quettabench.metrics.results import RunWriter
 from quettabench.metrics.step_fit import fit_run
@@ -22,7 +22,7 @@ def by_cell(side):
 
 class BenchLog(unittest.TestCase):
     def test_loop_log(self):
-        side = reader.read_bench_log(FIXTURES / "bench_loop.log")
+        side = crossval.read_bench_log(FIXTURES / "bench_loop.log")
         self.assertEqual(side.header["method"], "loop")
         self.assertEqual(side.notes, [
             "ignored 1 truncated-model batch_bench line(s) (layers != all)",
@@ -36,7 +36,7 @@ class BenchLog(unittest.TestCase):
         self.assertTrue(all(r["measured"] for r in side.rows))
 
     def test_criterion_log(self):
-        side = reader.read_bench_log(FIXTURES / "bench_criterion.log")
+        side = crossval.read_bench_log(FIXTURES / "bench_criterion.log")
         self.assertEqual(side.header["method"], "criterion")
         cells = by_cell(side)
         # decode_graph outranks plain decode on the same cell
@@ -45,14 +45,14 @@ class BenchLog(unittest.TestCase):
         self.assertIsNone(cells[(1024, 1, 1)]["kv"])
 
     def test_engine_facts_fill_the_header(self):
-        side = reader.read_bench_log(FIXTURES / "bench_loop.log",
+        side = crossval.read_bench_log(FIXTURES / "bench_loop.log",
                                      {"quant": "nvfp4", "nccl_algo": "Ring"})
         self.assertEqual((side.header["quant"], side.header["nccl_algo"]), ("nvfp4", "Ring"))
 
 
 class Baseline(unittest.TestCase):
     def test_golden_baseline(self):
-        side = reader.read_baseline(FIXTURES / "baseline_llama.json")
+        side = crossval.read_baseline(FIXTURES / "baseline_llama.json")
         self.assertEqual(len(side.rows), 15)
         h = side.header
         self.assertEqual((h["engine"], h["version"], h["method"], h["timestamp"]),
@@ -64,16 +64,16 @@ class Baseline(unittest.TestCase):
         self.assertFalse(raw["measured"])
 
     def test_age(self):
-        side = reader.read_baseline(FIXTURES / "baseline_llama.json")
-        self.assertTrue(math.isclose(reader.age_days(side, 1790000000 + 86400), 1.0))
+        side = crossval.read_baseline(FIXTURES / "baseline_llama.json")
+        self.assertTrue(math.isclose(crossval.age_days(side, 1790000000 + 86400), 1.0))
 
 
 class RunDir(unittest.TestCase):
     def test_bench_run_reads_as_its_log(self):
         for log in ("bench_loop.log", "bench_criterion.log"):
             with self.subTest(log=log), tempfile.TemporaryDirectory() as td:
-                run = reader.read_run(bench_run_dir(Path(td) / "qs", FIXTURES / log))
-                side = reader.read_bench_log(FIXTURES / log)
+                run = crossval.read_run(bench_run_dir(Path(td) / "qs", FIXTURES / log))
+                side = crossval.read_bench_log(FIXTURES / log)
                 self.assertEqual(run.rows, side.rows)
                 self.assertEqual(run.notes, side.notes)
                 self.assertEqual(run.header["method"], side.header["method"])
@@ -96,8 +96,8 @@ class RunDir(unittest.TestCase):
                     mock.patch.dict(RunWriter.finish.__globals__, {
                         "_now": lambda: "2026-10-09T00:00:00+00:00",
                         "bench_sha": lambda *a, **k: "0123abc"}):
-                ours = reader.read_run(bench_run_dir(Path(td) / "qs", FIXTURES / log))
-                theirs = reader.read_run(hand_written(Path(td) / "hand" / "qs", FIXTURES / log))
+                ours = crossval.read_run(bench_run_dir(Path(td) / "qs", FIXTURES / log))
+                theirs = crossval.read_run(hand_written(Path(td) / "hand" / "qs", FIXTURES / log))
                 self.assertEqual(ours, theirs)
                 self.assertTrue(ours.rows)
 

@@ -83,7 +83,7 @@ class CrossvalScripts(unittest.TestCase):
         self.assertIn("pipeline_parallel_size", src)
         self.assertIn("XVAL_PP", src)
         # the grid run prints META one key per line
-        self.assertIn('"pp": e.pp', (QB / "modes" / "_grid.py").read_text())
+        self.assertIn('"pp": e.pp', (QB / "modes" / "serve.py").read_text())
         self.assertIn('f"META {k}={v}"', (QB / "metrics" / "results.py").read_text())
         ds = _config("deepseek").engine
         self.assertEqual(ds.tp * ds.pp, 8)  # deepseek tp8, pp1
@@ -566,7 +566,7 @@ class TableParity(unittest.TestCase):
         self.assertIn("QUANT bf16/nvfp4", out)
         self.assertNotIn("0.50x", out)
         self.assertIn("quantization", (QB / "engines" / "vllm.py").read_text())  # kwargs built there
-        self.assertIn('"quant": e.quant or e.dtype', (QB / "modes" / "_grid.py").read_text())
+        self.assertIn('"quant": e.quant or e.dtype', (QB / "modes" / "serve.py").read_text())
 
     def test_serving_style_mismatch_withholds(self):
         # A disagg baseline against an aggregated engine row is never a ratio.
@@ -749,13 +749,12 @@ class TableParity(unittest.TestCase):
 
     def test_cache_records_prompt_mode(self):
         # A baseline without its routing regime is not comparable later.
-        self.assertIn("prompt_mode", (QB / "crossval" / "reader.py").read_text())
-        self.assertIn("prompt_mode", (QB / "crossval" / "compare.py").read_text())
+        self.assertIn("prompt_mode", (QB / "crossval.py").read_text())
 
     def test_corpus_mode_requires_an_explicit_corpus(self):
         # No experimental text ships in the repo; corpus mode takes XVAL_CORPUS.
         self.assertFalse((CROSSVAL / "routing_corpus.txt").exists())
-        self.assertIn("XVAL_CORPUS", (QB / "modes" / "_grid.py").read_text())
+        self.assertIn("XVAL_CORPUS", (QB / "modes" / "serve.py").read_text())
 
     def test_hash_canonicalization(self):
         # The gate hashes the completed set, not the completion order: a true
@@ -881,7 +880,7 @@ class TableParity(unittest.TestCase):
         lines = (QB / "metrics" / "results.py").read_text()
         for tag in ("SLASUM", "BURSTSUM", "SPECSUM"):
             self.assertIn(tag, lines)
-        self.assertIn("FIDELITY", (QB / "crossval" / "agreement.py").read_text())
+        self.assertIn("FIDELITY", (QB / "crossval.py").read_text())
 
     def test_burst_recovery_and_acceptance(self):
         from quettabench.metrics.core import acceptance, burst_recovery

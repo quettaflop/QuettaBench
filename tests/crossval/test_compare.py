@@ -1,4 +1,4 @@
-"""crossval/compare.py: the withhold reasons behind each golden row, and the
+"""crossval/crossval.py: the withhold reasons behind each golden row, and the
 workload_hash gate."""
 
 import calendar
@@ -6,15 +6,15 @@ import time
 import unittest
 from pathlib import Path
 
-from quettabench.crossval import compare, reader
+from quettabench import crossval
 from tests.golden._harness import FIXTURES
 
 NOW = calendar.timegm(time.strptime("2026-09-21T14:13:20Z", "%Y-%m-%dT%H:%M:%SZ")) + 2.5 * 86400
 
 
 def golden_pair(log="bench_loop.log", **kw):
-    return compare.pair(reader.read_bench_log(FIXTURES / log),
-                        reader.read_baseline(FIXTURES / "baseline_llama.json"), now=NOW, **kw)
+    return crossval.pair(crossval.read_bench_log(FIXTURES / log),
+                        crossval.read_baseline(FIXTURES / "baseline_llama.json"), now=NOW, **kw)
 
 
 def by_cell(report):
@@ -47,31 +47,31 @@ class GoldenRows(unittest.TestCase):
 class StaleBaseline(unittest.TestCase):
     def test_the_warning_names_a_justfile_recipe(self):
         report = golden_pair()
-        report.age_days = compare.STALE_DAYS + 1
-        self.assertIn("re-run `just run configs/runs/<wl>.yaml`", compare.render(report))
+        report.age_days = crossval.STALE_DAYS + 1
+        self.assertIn("re-run `just run configs/runs/<wl>.yaml`", crossval.render(report))
         justfile = (Path(__file__).resolve().parents[2] / "justfile").read_text()
         self.assertIn("\nrun cfg *args:", justfile)
 
 
 class WorkloadGate(unittest.TestCase):
     def sides(self, ours_hash, theirs_hash):
-        ours = reader.read_bench_log(FIXTURES / "bench_loop.log")
-        theirs = reader.read_baseline(FIXTURES / "baseline_llama.json")
+        ours = crossval.read_bench_log(FIXTURES / "bench_loop.log")
+        theirs = crossval.read_baseline(FIXTURES / "baseline_llama.json")
         ours.header["workload_hash"], theirs.header["workload_hash"] = ours_hash, theirs_hash
         return ours, theirs
 
     def test_different_hashes_withhold_every_row(self):
-        report = compare.pair(*self.sides("aaaa", "bbbb"), now=NOW)
+        report = crossval.pair(*self.sides("aaaa", "bbbb"), now=NOW)
         self.assertTrue(report.workload_mismatch)
         self.assertTrue(all("workload" in r["withheld"] and r["ratio"] is None
                             for r in report.rows))
-        self.assertIn("WORKLOAD MISMATCH engine=aaaa vllm=bbbb", compare.render(report))
+        self.assertIn("WORKLOAD MISMATCH engine=aaaa vllm=bbbb", crossval.render(report))
 
     def test_one_missing_hash_joins_on_cells_alone(self):
         for hashes in (("aaaa", None), (None, "bbbb"), ("aaaa", "aaaa")):
-            report = compare.pair(*self.sides(*hashes), now=NOW)
+            report = crossval.pair(*self.sides(*hashes), now=NOW)
             self.assertFalse(report.workload_mismatch)
-            self.assertEqual(compare.render(report), compare.render(golden_pair()))
+            self.assertEqual(crossval.render(report), crossval.render(golden_pair()))
 
 
 if __name__ == "__main__":

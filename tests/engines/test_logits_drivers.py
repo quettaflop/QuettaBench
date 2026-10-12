@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from quettabench.crossval import agreement
+from quettabench import crossval
 from quettabench.engines.base import LaunchSpec
 from quettabench.engines.drivers import InProcessDriver, ReferenceDriver
 from quettabench.workloads.base import Request
@@ -82,7 +82,7 @@ class Halves(unittest.TestCase):
             for a, b in zip(o.logits["logprob"] + o.logits["top2_gap"],
                             r.logits["logprob"] + r.logits["top2_gap"]):
                 self.assertAlmostEqual(a, b, places=12)
-        summary = agreement.logit([{"cell": CELL, "logits": o.logits} for o in ours],
+        summary = crossval.logit([{"cell": CELL, "logits": o.logits} for o in ours],
                                   [{"cell": CELL, "logits": r.logits} for r in ref])[-1]
         self.assertEqual((summary["positions"], summary["argmax_agree"], summary["verdict"]),
                          (8, 8, "PASS"))

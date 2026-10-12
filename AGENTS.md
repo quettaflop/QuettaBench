@@ -30,8 +30,8 @@ in one results layer, `results/<run>/`, and leaves the repo by
   QuettaServe bench, which is its own engine, once per grid cell. Other
   subprocesses are tools (nvidia-smi, git, nsys export, docker, cargo in
   provision), never an engine.
-- `quettabench/modes/`: `serve.py` and its two private siblings (`_grid.py`,
-  `_sessions_dispatch.py`), nothing else. Nothing in `modes/` branches on the
+- `quettabench/modes/`: `serve.py`, nothing else: the request replay, the
+  session dispatch and the grid cells. Nothing in `modes/` branches on the
   engine name; an engine difference is a driver.
 - `quettabench/metrics/`: one percentile function, and the caller states the
   method. `step_fit.py` turns grid rows into ms per step. `results.py`
@@ -58,7 +58,7 @@ in one results layer, `results/<run>/`, and leaves the repo by
   an operator-provided server that launcher.py did not start; the operator
   owns that server.
 - Docker launch backend ships tested against mocks only, by owner decision; validate on a docker host before relying on it.
-- `quettabench/crossval/`: reads run files; its only write is the report json
+- `quettabench/crossval.py`: reads run files; its only write is the report json
   (default `results/xval/`).
 - `quettabench/export/`: the only measurement code that writes outside the
   repo; `provision.py` sets the box up outside it (below).
@@ -99,7 +99,7 @@ Every writer and every process starter, exactly:
 - `profiling/serving_frontend.py`: its JSON at `--out`, when given.
 - `profiling/pd_host.py`: its CSV at `--out`.
 - `workloads/tokenize.py`: the tokenized request jsonl at `--out`.
-- `crossval/`: its report json (default `results/xval/`).
+- `crossval.py`: its report json (default `results/xval/`).
 - `export/`: the QuettaSim tables at `--dest`, and the kernel tables under
   `--kernel-dest` (QuettaSim's data root), outside the repo.
 - `provision.py`: outside the repo, the `cache_root` dirs, the QuettaServe

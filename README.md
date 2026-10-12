@@ -206,9 +206,18 @@ teacher-forced logits against a float32 reference anchor, passing when the
 engine's argmax flips are no more than the reference's own at the engine's
 dtype (the noise floor). `engine.layers=N` cuts the reference (and sets the
 QuettaServe batch_bench's `<P>_LAYERS`); vLLM loads a checkpoint dir cut the
-same way as `engine.model`. The four commands are in the
-`crossval/agreement.py` docstring; `qbench crossval <ours> <anchor> --floor
-<run>` prints the BAND line. `qbench profile --source kernels` gives per-kernel
+same way as `engine.model`. `qbench crossval <ours> <anchor> --floor <run>`
+prints the BAND line:
+
+```
+qbench run <run>.yaml --set mode.returns=logits --set engine.model=<cut dir> --set run_name=slice-vllm
+qbench run <run>.yaml --set engine.name=reference --set engine.layers=N --set engine.dtype=float32 --set run_name=slice-f32
+qbench run <run>.yaml --set engine.name=reference --set engine.layers=N --set engine.dtype=bfloat16 --set run_name=slice-bf16
+qbench crossval results/slice-vllm results/slice-f32 --floor results/slice-bf16
+```
+
+A floor run is trusted once it is deterministic: the same run twice crossvals
+to argmax_agree equal to positions and delta max 0. `qbench profile --source kernels` gives per-kernel
 GPU time per decode step from an nsys-armed run, and `just moe-routing
 <model>` dumps one MoE block for an engine-side diff. The verdict log of the
 original harness is `quettabench/probes/runbooks/slice_verification.md`.
@@ -297,7 +306,8 @@ quettabench/provision.py  box setup, --dry-run plan, MISSING: and stop
 quettabench/config/       schema (with topology rules), loader (yaml + --set + env), env_map
 quettabench/workloads/    traces: live, sessions, grid; arrival schedules; profiles
 quettabench/engines/      adapters (vllm, quettaserve), drivers, launcher
-quettabench/modes/serve.py  the one measurement procedure
+quettabench/crossval.py   pairs two runs' cells; withhold rules; agreement rows
+quettabench/modes/serve.py  the one measurement procedure: replay, sessions, grid cells
 quettabench/metrics/      percentiles, step fit, the results writer
 quettabench/profiling/    sources the profiler attaches with
 quettabench/probes/       kernel probes; quettabench/export/ routes to QuettaSim

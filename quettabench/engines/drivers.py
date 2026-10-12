@@ -4,7 +4,7 @@ InProcessDriver builds vLLM inside this process from spec.engine_kwargs and
 times one grid batch per generate() call, or scores it (returns="logits").
 ReferenceDriver scores with transformers, the FIDELITY reference. BenchDriver runs a QuettaServe
 bench per grid cell, as bench.sh did, and reads its rows with
-crossval/reader.py's bench log parser. HttpDriver streams
+crossval.py's bench log parser. HttpDriver streams
 OpenAI-compatible requests at a launched server, and times a grid batch as
 bs concurrent completions with the same row shape InProcessDriver gives. Its two
 endpoints keep their own first-token rules, recorded on every result as
@@ -40,8 +40,8 @@ from urllib.parse import urlsplit, urlunsplit
 
 import aiohttp
 
+from quettabench import crossval
 from quettabench.config import env_map
-from quettabench.crossval import reader
 from quettabench.engines import launcher
 from quettabench.metrics.core import RequestResult, parse_prometheus, spec_counts
 from quettabench.workloads.base import Request
@@ -593,7 +593,7 @@ class BenchDriver(Driver):
     """bench.sh's cell loop: truncate the log, then per cell write the `>>>`
     header, run bench_argv under the cell's env in its cwd, tee stdout and
     stderr into the log, and check the exit code and the pass pattern.
-    Rows come from reader.bench_log_points on the finished log, so they are
+    Rows come from crossval.bench_log_points on the finished log, so they are
     what crossval reads."""
 
     measures_steps = True   # rows are ms per step already; the grid loop fits nothing
@@ -623,7 +623,7 @@ class BenchDriver(Driver):
         times its own decode loop, so a row is already a per-step number:
         measured_ms_per_step, which step_fit passes through instead of fitting.
         The bench takes no step points, so cell's step_point is None."""
-        points, method, notes = reader.bench_log_points(self.log_path)
+        points, method, notes = crossval.bench_log_points(self.log_path)
         for note in notes:
             print(note)
         for (ctx, bs, tp), (ms, group, kv) in points.items():

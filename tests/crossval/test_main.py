@@ -62,12 +62,12 @@ class Door(unittest.TestCase):
         for kind in ("logit_summary", "band"):
             with self.subTest(kind), tempfile.TemporaryDirectory() as td, \
                     mock.patch.object(crossval, "read_side"), \
-                    mock.patch.object(crossval.reader, "read_rows"), \
-                    mock.patch.object(crossval.compare, "render", return_value=""), \
-                    mock.patch.object(crossval.compare, "pair",
+                    mock.patch.object(crossval, "read_rows"), \
+                    mock.patch.object(crossval, "render", return_value=""), \
+                    mock.patch.object(crossval, "pair",
                                       return_value=mock.Mock(rows=[], agreement=[])), \
                     mock.patch.object(crossval, "report_json", return_value={}), \
-                    mock.patch.object(crossval.agreement, "compare_runs",
+                    mock.patch.object(crossval, "compare_runs",
                                       return_value=[{"kind": kind, "verdict": "FAIL"}]):
                 with self.assertRaises(SystemExit) as e:
                     run([td, td, "--json", Path(td) / "r.json"])

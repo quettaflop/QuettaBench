@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from quettabench.crossval import reader
+from quettabench import crossval
 from quettabench.engines import drivers
 from quettabench.engines.base import LaunchSpec
 from quettabench.engines.drivers import BenchDriver, BenchFailed
@@ -43,7 +43,7 @@ class GoldenLogs(unittest.TestCase):
             with self.subTest(log=name):
                 path = FIXTURES / name
                 rows = list(BenchDriver(path).rows())
-                points, method, _ = reader.bench_log_points(path)
+                points, method, _ = crossval.bench_log_points(path)
                 self.assertTrue(points)
                 self.assertEqual(as_points(rows), points)
                 self.assertEqual({r["method"] for r in rows}, {method})

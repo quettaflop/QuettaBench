@@ -19,7 +19,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from quettabench.crossval import reader
+from quettabench import crossval
 from tests.crossval._rundirs import grid_run_dir
 from tests.golden._harness import FIXTURES, check_text, grid_argv, run_grid_cli
 
@@ -41,8 +41,8 @@ class VminFitLogGolden(unittest.TestCase):
 class CompatReaderGolden(unittest.TestCase):
     def test_old_baseline_and_new_run_dir_are_one_side(self):
         with tempfile.TemporaryDirectory() as td:
-            run = reader.read_run(grid_run_dir(Path(td) / "vllm-llama"))
-        old = reader.read_baseline(FIXTURES / BASELINE)
+            run = crossval.read_run(grid_run_dir(Path(td) / "vllm-llama"))
+        old = crossval.read_baseline(FIXTURES / BASELINE)
         self.assertEqual(run.header, old.header)
         self.assertEqual(run.rows, old.rows)
         self.assertEqual(len(run.rows), 15)
