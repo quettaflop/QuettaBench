@@ -79,12 +79,14 @@ in one results layer, `results/<run>/`, and leaves the repo by
   code. Change a fixture only with a dated line in `tests/golden/REPORT.md`
   saying why.
 - `tests/contracts/`: one test module per package area, not per module:
-  `test_workloads.py` covers `workloads/`, `test_probes.py` `probes/`,
-  `test_adapters.py` the adapters, `test_export.py` `export/`, and
-  `config/schema.py` is tested through `test_loader.py`; `provision.py` is
-  tested in `tests/golden/test_provision.py` only. Plus
-  `test_crossval_contracts.py`, `test_imports.py` and the two GPU smoke
-  modules; `helpers.py` and the `fake_*.py` scripts are their plumbing.
+  `test_workloads.py` covers `workloads/` (sessions included), `test_probes.py`
+  `probes/`, `test_adapters.py` the adapters, `test_export.py` `export/`,
+  `test_native.py` `profiling/`, `test_metrics_core.py` `metrics/core.py` and
+  `metrics/step_fit.py`, and `config/schema.py` is tested through
+  `test_loader.py`; `provision.py` is tested in `tests/golden/test_provision.py`
+  only. Plus `test_crossval_contracts.py` (with `crossval.py`'s tests),
+  `test_imports.py` and the GPU smoke module `test_probes_gpu.py`; `helpers.py`
+  and the `fake_*.py` modules are their plumbing.
 - `tests/parity/`: `slope_gate.json`, the committed HTTP-vs-in-process slope
   gate, and the test that holds every cell to its rule.
 

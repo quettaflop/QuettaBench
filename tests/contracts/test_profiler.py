@@ -15,8 +15,7 @@ from unittest import mock
 from quettabench import profiler
 from quettabench.metrics.results import write_atomic
 from tests.contracts import helpers
-from tests.contracts.test_native import fake_nsys_export
-from tests.contracts.test_wrapped import FAKE_SMI, Tokenizer
+from tests.contracts.test_native import FAKE_SMI, Tokenizer, fake_nsys_export
 
 RUN = {
     "schema_version": 1,
