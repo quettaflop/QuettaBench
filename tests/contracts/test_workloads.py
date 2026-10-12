@@ -501,7 +501,6 @@ class ProfileRegistryTests(unittest.TestCase):
                 "chat-singleturn",
                 "coding-singleturn",
                 "mooncake-trace",
-                "random-1k",
                 "swebench-multiturn-short",
                 "test",
             ],
@@ -540,7 +539,6 @@ class ProfileRegistryTests(unittest.TestCase):
         with self.assertRaises(ValueError) as e:
             get_profile("nope")
         self.assertIn(str(active_profiles()), str(e.exception))
-        self.assertNotIn("random-1k", str(e.exception))
 
     def test_multiturn_profiles_remain_explicitly_runnable(self):
         self.assertEqual(get_profile("swebench-multiturn-short").dataset, "swebench-multi-turn")
@@ -578,7 +576,6 @@ PINS = {
     "chat-singleturn": ("1b84966cb9c4facc", "84b2b4875f8a177f"),
     "coding-singleturn": ("15384d696a4d7a1b", "0359e7a0be1623a2"),
     "mooncake-trace": ("a03be7b0ed268d81", "b5ed59cd7a0d7aff"),
-    "random-1k": ("00740b698acbf0f7", "e90e87f402815bd2"),
     "swebench-multiturn-short": ("9f0aa9d6f98e5bd3", "2e44a22e09c81ea1"),
     "test": ("7ae706bdf8eeae1d", "a5c809ace7fb7a08"),
     "cut": ("0e8b8a8de4442ecb", "c8f75cbcdd1e78dc"),

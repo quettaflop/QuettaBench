@@ -263,6 +263,11 @@ def _validate(values, origins, allow_unverified, where):
     _profile_prefix_caching(values, origins, where)
     # A single-turn profile draws num_requests; other sources set their own count.
     source = values["workload.source"]
+    if source.split("-")[0] in ("random", "synthetic") and not Path(source).exists():
+        raise ConfigError(
+            f"{where}: workload.source={source!r} names a synthetic workload; qbench replays real traces only, "
+            "so use a profile from configs/workloads.yaml or a JSONL path"
+        )
     drawn = values["mode.grid"] is None and values["workload.kind"] == "live" and source in live.PROFILES
     arrival = arrival_kind(values["workload.arrival"], values["workload.num_requests"] if drawn else 0)
     if values["mode.load"] == "open" and arrival not in RATE_ARRIVALS + ("trace",):

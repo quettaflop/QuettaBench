@@ -18,7 +18,6 @@ from quettabench.engines import base, launcher
 from quettabench.metrics.results import RUN_MARKERS, RunWriter, redact
 from quettabench.modes import serve
 from quettabench.probes import base as probes_base
-from quettabench.workloads.base import RandomTokenTrace
 from quettabench.workloads.grid import GridTrace
 from quettabench.workloads.live import (
     PROFILES,
@@ -64,8 +63,6 @@ def single_turn_trace(profile, seed):
             max_osl_tokens=profile.osl_tokens,
             context_safety_margin_tokens=CONTEXT_SAFETY_MARGIN,
         )
-    if d == "random":
-        return RandomTokenTrace(profile.tokenizer_name, profile.isl_tokens, profile.osl_tokens, seed=seed)
     if d == "sharegpt-multi-turn" or d in TRAJECTORY_DATASETS:
         raise ValueError(f"Profile '{profile.name}' is multi-turn; run it with workload.kind=sessions")
     raise ValueError(f"Unknown dataset type: {d}")

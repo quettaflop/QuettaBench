@@ -337,14 +337,15 @@ WORKLOADS = Path(__file__).resolve().parents[2] / "configs" / "workloads.yaml"
 @dataclass
 class WorkloadProfile:
     name: str
-    isl_tokens: int  # random: exact ISL; sharegpt: max ISL
-    osl_tokens: int  # random: exact OSL; sharegpt: max OSL and max_tokens
+    isl_tokens: int  # max ISL
+    osl_tokens: int  # max OSL and max_tokens
     isl_stddev: float  # fraction of isl
     description: str
-    dataset: str  # "sharegpt", "test", "random", "jsonl", "sharegpt-multi-turn", "swebench-multi-turn", "terminalbench-multi-turn"
+    dataset: (
+        str  # "sharegpt", "test", "jsonl", "sharegpt-multi-turn", "swebench-multi-turn", "terminalbench-multi-turn"
+    )
     file_path: str = ""
     system_prompt: str = "You are a helpful assistant."
-    tokenizer_name: str = ""  # dataset="random" only
     mode: str = "single-turn"  # "stress-test" | "single-turn" | "multi-turn"
     prefix_caching_required: bool = False  # server needs --enable-prefix-caching
     min_turns: int = 1  # multi-turn only

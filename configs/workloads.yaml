@@ -71,18 +71,6 @@ swebench-multiturn-short:
   data_source: swebench
   active: false
 
-random-1k:
-  isl_tokens: 1024
-  osl_tokens: 1024
-  isl_stddev: 0.0
-  description: 'InferenceX cross-validation: random tokens ISL=1024 OSL=1024'
-  dataset: random
-  tokenizer_name: meta-llama/Llama-3.1-8B-Instruct
-  mode: stress-test
-  agent_type: stress
-  data_source: random
-  active: false
-
 test:
   isl_tokens: 10
   osl_tokens: 20

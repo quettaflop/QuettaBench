@@ -5,8 +5,6 @@ import json
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass, replace
 
-import numpy as np
-
 VOCAB = 100_000  # safe id ceiling for the checkpoints under test
 
 
@@ -138,57 +136,3 @@ class DrawnTrace(Trace):
         p = self.profile
         meta = {"profile": p.name, "dataset": p.dataset, "path": p.file_path} if p else {"reader": type(self).__name__}
         return {**meta, "reqs": len(self._requests)}
-
-
-def uniform_len_bounds(input_len, range_ratio):
-    """InferenceX sample_uniform bounds."""
-    return max(1, int(input_len * range_ratio)), input_len
-
-
-def load_tokenizer(name):
-    from transformers import AutoTokenizer  # only random-token traces need it
-
-    return AutoTokenizer.from_pretrained(name)
-
-
-class RandomTokenTrace(DrawnTrace):
-    """InferenceX's random-token workload for cross-validation: ids (offset_i + i + j) % vocab decoded, re-encoded and trimmed or padded to the target length, sent as one user message. Random tokens trigger early EOS, so output lengths are unreliable."""
-
-    def __init__(self, tokenizer_name, input_len=1024, output_len=1024, num_prompts=500, range_ratio=1.0, seed=0):
-        super().__init__()
-        self.output_len = output_len
-        self.tokenizer = load_tokenizer(tokenizer_name)
-        self.prompts = self.make_prompts(input_len, num_prompts, range_ratio, seed)
-        self._idx = 0
-
-    def make_prompts(self, input_len, num_prompts, range_ratio, seed):
-        tokenizer = self.tokenizer
-        rng = np.random.default_rng(seed)
-        lo, hi = uniform_len_bounds(input_len, range_ratio)
-        input_lens = rng.integers(lo, hi + 1, size=num_prompts)
-        offsets = rng.integers(0, tokenizer.vocab_size, size=num_prompts)
-        prompts = []
-        for i in range(num_prompts):
-            tgt_len = int(input_lens[i])
-            token_ids = [(int(offsets[i]) + i + j) % tokenizer.vocab_size for j in range(tgt_len)]
-            re_encoded = tokenizer.encode(tokenizer.decode(token_ids), add_special_tokens=False)
-            if len(re_encoded) > tgt_len:
-                re_encoded = re_encoded[:tgt_len]
-            elif len(re_encoded) < tgt_len:
-                re_encoded.extend(rng.integers(0, tokenizer.vocab_size, size=tgt_len - len(re_encoded)).tolist())
-            prompts.append(tokenizer.decode(re_encoded))
-        return prompts
-
-    def content(self, prompt):
-        return prompt
-
-    def get_next_request(self):
-        prompt = self.prompts[self._idx % len(self.prompts)]
-        self._idx += 1
-        return Request(
-            [],
-            0,
-            output_length=self.output_len,
-            messages=[{"role": "user", "content": self.content(prompt)}],
-            metadata={},
-        )

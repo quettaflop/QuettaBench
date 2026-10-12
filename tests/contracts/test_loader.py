@@ -183,6 +183,11 @@ class LoaderRules(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "unknown prompt_mode 'random'; use distinct, clone, corpus or trace"):
             self.load(env={"PROMPT_MODE": "random"})
 
+    def test_synthetic_workload_source_is_refused(self):
+        for source in ("random-1k", "synthetic"):
+            with self.subTest(source), self.assertRaisesRegex(ConfigError, "names a synthetic workload"):
+                self.load(run={"workload": {"source": source}})
+
     # serve profile and load rules
 
     def test_stress_test_forces_ignore_eos_and_no_prefix_caching(self):

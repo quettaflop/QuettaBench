@@ -7,7 +7,6 @@ from pathlib import Path
 from unittest import mock
 
 from quettabench import cli
-from quettabench.workloads.base import uniform_len_bounds
 from tests.golden._harness import REPO
 
 
@@ -95,17 +94,6 @@ class TestFlagValidation(unittest.TestCase):
         self.assert_rejected(
             "engine.serving_style=afd:1a1f", "vllm: serving_style=afd:1a1f has no launch flag in use today"
         )
-
-
-class TestUniformLenBounds(unittest.TestCase):
-    def test_default_ratio_is_exact(self):
-        self.assertEqual(uniform_len_bounds(1024, 1.0), (1024, 1024))
-
-    def test_partial_ratio(self):
-        self.assertEqual(uniform_len_bounds(1024, 0.5), (512, 1024))
-
-    def test_tiny_input_floors_at_one(self):
-        self.assertEqual(uniform_len_bounds(1, 0.1), (1, 1))
 
 
 if __name__ == "__main__":
