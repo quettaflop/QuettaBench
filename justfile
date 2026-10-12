@@ -6,6 +6,10 @@ set positional-arguments
 
 # Kernel table label: just gpu=<gpu> <recipe>
 gpu := ""
+# cuda | rocm | tpu | neuron: picks the device-visibility variable and the gpu-info tool.
+backend := env_var_or_default("QBENCH_BACKEND", "cuda")
+visible := if backend == "cuda" { "CUDA_VISIBLE_DEVICES" } else if backend == "rocm" { "HIP_VISIBLE_DEVICES" } else if backend == "tpu" { "TPU_VISIBLE_CHIPS" } else if backend == "neuron" { "NEURON_VISIBLE_DEVICES" } else { error("QBENCH_BACKEND must be cuda, rocm, tpu or neuron") }
+smi := if backend == "cuda" { "nvidia-smi --query-gpu=index,name,memory.used,utilization.gpu --format=csv" } else if backend == "rocm" { "amd-smi list" } else if backend == "tpu" { "tpu-info" } else { "neuron-ls" }
 gpu_id := env_var_or_default("GPU_ID", "0")
 py := env_var_or_default("PYTHON_BIN", "python3")
 sim_root := env_var_or_default("QUETTASIM", "../QuettaSim")
@@ -75,14 +79,14 @@ hooks:
 gpu-info:
     #!/usr/bin/env bash
     if [ -n "${REMOTE_HOST:-}" ]; then
-        ssh -o BatchMode=yes "$REMOTE_HOST" nvidia-smi --query-gpu=index,name,memory.used,utilization.gpu --format=csv
+        ssh -o BatchMode=yes "$REMOTE_HOST" {{smi}}
     else
-        nvidia-smi --query-gpu=index,name,memory.used,utilization.gpu --format=csv
+        {{smi}}
     fi
 
 # Any probe by module name: just probe gemm "--gpu-label <gpu> --ncu"
 probe name *args:
-    CUDA_VISIBLE_DEVICES={{gpu_id}} {{py}} -m quettabench.probes.{{name}} {{args}}
+    {{visible}}={{gpu_id}} {{py}} -m quettabench.probes.{{name}} {{args}}
 
 # Run a probe on REMOTE_HOST and pull the run back (NPROC>1: torchrun): just remote-probe gemm <gpu> --ncu
 remote-probe name gpu=gpu *args:
@@ -98,39 +102,39 @@ export *args:
 
 # CUDA-event timing; --ncu needs a real ncu in NCU_BIN, --wide adds the wide shapes
 gemm gpu=gpu *args:
-    CUDA_VISIBLE_DEVICES={{gpu_id}} {{py}} -m quettabench.probes.gemm --gpu-label {{gpu}} {{args}}
+    {{visible}}={{gpu_id}} {{py}} -m quettabench.probes.gemm --gpu-label {{gpu}} {{args}}
 
 elementwise gpu=gpu:
-    CUDA_VISIBLE_DEVICES={{gpu_id}} {{py}} -m quettabench.probes.elementwise --gpu-label {{gpu}}
+    {{visible}}={{gpu_id}} {{py}} -m quettabench.probes.elementwise --gpu-label {{gpu}}
 
 flash gpu=gpu *args:
-    CUDA_VISIBLE_DEVICES={{gpu_id}} {{py}} -m quettabench.probes.flash_attn --gpu-label {{gpu}} --tag {{tag}} --n-heads {{nh}} --n-kv-heads {{nkv}} --head-dim {{hd}} --layers {{layers}} {{args}}
+    {{visible}}={{gpu_id}} {{py}} -m quettabench.probes.flash_attn --gpu-label {{gpu}} --tag {{tag}} --n-heads {{nh}} --n-kv-heads {{nkv}} --head-dim {{hd}} --layers {{layers}} {{args}}
 
 moe gpu=gpu geoms="qwen3-30b-a3b,mixtral-8x7b,gpt-oss-20b,gpt-oss-120b" tp="1,2,4":
-    CUDA_VISIBLE_DEVICES={{gpu_id}} {{py}} -m quettabench.probes.moe --gpu-label {{gpu}} --geometries {{geoms}} --tp {{tp}}
+    {{visible}}={{gpu_id}} {{py}} -m quettabench.probes.moe --gpu-label {{gpu}} --geometries {{geoms}} --tp {{tp}}
 
 # One MoE block's input, output and routing decision, for slice verification
 moe-routing model gpu=gpu layer="1" *args:
-    CUDA_VISIBLE_DEVICES={{gpu_id}} {{py}} -m quettabench.probes.moe --routing --gpu-label {{gpu}} --model {{model}} --layer {{layer}} {{args}}
+    {{visible}}={{gpu_id}} {{py}} -m quettabench.probes.moe --routing --gpu-label {{gpu}} --model {{model}} --layer {{layer}} {{args}}
 
 gdn gpu=gpu *args:
-    CUDA_VISIBLE_DEVICES={{gpu_id}} {{py}} -m quettabench.probes.gdn --gpu-label {{gpu}} --geometry-tag {{geom}} --hv {{hv}} --dk {{dk}} --dv {{dv}} --n-linear {{nlin}} --mode {{mode}} {{args}}
+    {{visible}}={{gpu_id}} {{py}} -m quettabench.probes.gdn --gpu-label {{gpu}} --geometry-tag {{geom}} --hv {{hv}} --dk {{dk}} --dv {{dv}} --n-linear {{nlin}} --mode {{mode}} {{args}}
 
 # NCCL grid; also prints tp_comm scalars as a YAML block.
 collectives gpu=gpu world="2" hidden="4096" layers="32" ops="all_reduce,all_gather,reduce_scatter,all_to_all" gpu_ids="0,1":
-    CUDA_VISIBLE_DEVICES={{gpu_ids}} {{py}} -m torch.distributed.run --nproc_per_node={{world}} -m quettabench.probes.collective --gpu-label {{gpu}} --hidden {{hidden}} --layers {{layers}} --ops {{ops}}
+    {{visible}}={{gpu_ids}} {{py}} -m torch.distributed.run --nproc_per_node={{world}} -m quettabench.probes.collective --gpu-label {{gpu}} --hidden {{hidden}} --layers {{layers}} --ops {{ops}}
 
 # Chunked-prefill attention grid, one head config per run.
 cross-attn gpu=gpu nh="16" nkv="2" hd="128":
-    CUDA_VISIBLE_DEVICES={{gpu_id}} {{py}} -m quettabench.probes.cross_attn --gpu-label {{gpu}} --n-heads {{nh}} --n-kv-heads {{nkv}} --head-dim {{hd}}
+    {{visible}}={{gpu_id}} {{py}} -m quettabench.probes.cross_attn --gpu-label {{gpu}} --n-heads {{nh}} --n-kv-heads {{nkv}} --head-dim {{hd}}
 
 # TP all-reduce through vLLM's GroupCoordinator next to plain NCCL.
 vllm-allreduce gpu=gpu world="2" gpu_ids="0,1":
-    CUDA_VISIBLE_DEVICES={{gpu_ids}} {{py}} -m torch.distributed.run --nproc_per_node={{world}} -m quettabench.probes.vllm_allreduce --gpu-label {{gpu}}
+    {{visible}}={{gpu_ids}} {{py}} -m torch.distributed.run --nproc_per_node={{world}} -m quettabench.probes.vllm_allreduce --gpu-label {{gpu}}
 
 # Parallelism-switch cost (mode: tp | dp | ep | xnode | plan); xnode needs 2-node torchrun.
 reparallel gpu=gpu world="8" mode="tp" gpu_ids="0,1,2,3,4,5,6,7":
-    CUDA_VISIBLE_DEVICES={{gpu_ids}} {{py}} -m torch.distributed.run --nproc_per_node={{world}} -m quettabench.probes.reparallel --gpu-label {{gpu}} --mode {{mode}}
+    {{visible}}={{gpu_ids}} {{py}} -m torch.distributed.run --nproc_per_node={{world}} -m quettabench.probes.reparallel --gpu-label {{gpu}} --mode {{mode}}
 
 _default_model_yaml := sim_root / "device_spec/models/qwen3.5-9b.yaml"
 
