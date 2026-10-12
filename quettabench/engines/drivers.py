@@ -6,6 +6,7 @@ vllm, torch and transformers exist only on GPU boxes, so they are imported insid
 
 import asyncio
 import contextlib
+import functools
 import http.client
 import json
 import os
@@ -406,9 +407,9 @@ class HttpDriver(Driver):
         """Device 0 of this box's accelerator (launcher.accelerator)."""
         return launcher.accelerator(self.accelerator)
 
-    @property
+    @functools.cached_property
     def version(self):
-        """The server's GET /version; None without a bound url or an answer."""
+        """The server's GET /version, asked once; None without a bound url or an answer."""
         if not self.url:
             return None
         try:

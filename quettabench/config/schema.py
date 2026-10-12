@@ -53,7 +53,7 @@ DICT_KEYS = {
 @dataclass(frozen=True)
 class EngineCfg:
     name: str = "vllm"
-    model: str | None = None       # weights dir or HF id (the old serve --grid --model)
+    model: str | None = None       # weights dir or HF id
     model_name: str = ""              # display name: grid META model=, crossval comm_bound_bs match
     tp: int = 1
     pp: int = 1
@@ -66,8 +66,8 @@ class EngineCfg:
     gpu_util: float = 0.9
     prefix_caching: bool = False
     serving_style: str = "aggregated"
-    cudagraph: bool = True            # inverse of the old serve --grid --nograph
-    port: int = 8000                  # launch_server.sh default
+    cudagraph: bool = True            # false: --enforce-eager
+    port: int = 8000                  # server port
     instrumentation: str = "none"     # armed at launch: none | nsys | torch
     image: str | None = None          # the server's docker image; required by hardware.launcher=docker
     extra: Mapping[str, Any] = field(default_factory=dict)  # quettaserve bench block lives here
@@ -83,8 +83,7 @@ class EngineCfg:
 class WorkloadCfg:
     kind: str = "live"
     source: str = ""                  # trace path, profile name, or XVAL_CORPUS/XVAL_TRACE file
-    # One arrival syntax (trace_serve's): steady | trace | poisson:<rate> |
-    # ramp:<start>:<end> | burst:<n>x<size>@<gap_s>
+    # steady | trace | poisson:<rate> | ramp:<start>:<end> | burst:<n>x<size>@<gap_s>
     arrival: str = "steady"
     speed: float = 1.0
     prompt_mode: str = "distinct"     # grid runs only
@@ -121,7 +120,7 @@ class ModeCfg:
     sla_ttft_ms: float | None = None
     sla_tpot_ms: float | None = None
     goodput_sweep: bool = False
-    returns: str = "none"             # text replaces the old serve --grid --dump-tokens
+    returns: str = "none"             # none | text | logits
     grid: str | None = None        # name in grids.yaml; set => step metrics
     vmin_attempts: int = 4         # grid: fit passes per cell, best r2 kept
     fit_r2_stop: float = 0.999     # grid: a pass fitting at least this r2 ends the cell
@@ -148,7 +147,7 @@ class HardwareCfg:
     max_seq_headroom: int = 28
     collective: Mapping[str, str] = field(default_factory=dict)
     provision: Mapping[str, str] = field(default_factory=dict)
-    visible_devices: str | None = None  # CUDA_VISIBLE_DEVICES: trace_serve power sampler
+    visible_devices: str | None = None  # CUDA_VISIBLE_DEVICES; rocm/tpu/neuron runs must set it
     ready_timeout_s: int = 1800         # seconds the launcher waits for the server health check
     launcher: str = "local"             # local: a host process | docker: engine.image in a container
     shm_size: str = "16g"               # docker --shm-size

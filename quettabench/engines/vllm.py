@@ -1,6 +1,6 @@
 """vLLM adapter: one field table gives the `vllm serve` argv and the in-process vllm.LLM kwargs.
 
-A value with no server flag (pp > 1, cudagraph=False) lands in server_unsupported: a launch or a timing grid refuses it, a mode.returns run builds in-process.
+A value with no server flag lands in server_unsupported and the launcher refuses it.
 quant adds no server flag, since the server reads it from the checkpoint; a slice run is engine.model naming a truncated checkpoint dir.
 """
 
@@ -34,6 +34,10 @@ def flag(name):
 
 def switch(name):
     return lambda v: [name] if v else []
+
+
+def switch_off(name):
+    return lambda v: [] if v else [name]
 
 
 def only(default):
@@ -70,7 +74,7 @@ FIELDS = {
     "model":          (lambda v: [],                       kw("model")),  # positional
     "port":           (flag("--port"),                     nothing),
     "tp":             (flag("--tensor-parallel-size"),     kw("tensor_parallel_size")),
-    "pp":             (only(1),                            kw("pipeline_parallel_size")),
+    "pp":             (unless(1, "--pipeline-parallel-size"), kw("pipeline_parallel_size")),
     "ep":             (switch("--enable-expert-parallel"), kw_when("enable_expert_parallel", bool)),
     "dtype":          (flag("--dtype"),                    kw("dtype")),
     "kv_dtype":       (unless("auto", "--kv-cache-dtype"), kw_when("kv_cache_dtype", lambda v: v != "auto")),
@@ -79,7 +83,7 @@ FIELDS = {
     "gpu_util":       (flag("--gpu-memory-utilization"),   kw("gpu_memory_utilization")),
     "prefix_caching": (lambda v: ["--enable-prefix-caching" if v else "--no-enable-prefix-caching"],
                        kw("enable_prefix_caching")),
-    "cudagraph":      (only(True),                         lambda v: {} if v else
+    "cudagraph":      (switch_off("--enforce-eager"),      lambda v: {} if v else
                        {"compilation_config": {"cudagraph_mode": "NONE"}}),
     "serving_style":  (only("aggregated"),                 aggregated_only),
 }
@@ -127,9 +131,6 @@ class VllmAdapter(EngineAdapter):
             else:
                 argv += part
             kwargs.update(to_kwargs(value))
-        if unsupported and cfg.mode.grid is not None and self.needs_server(cfg):
-            raise ConfigError(f"vllm: {', '.join(unsupported)} has no server flag and a timing "
-                              "grid runs over HTTP; only a mode.returns run builds vLLM in-process")
         extra = engine.extra.get("vllm", {})
         extra_argv, extra_kwargs = extra_fragments(extra, kwargs)
         kwargs.update(extra_kwargs)

@@ -42,9 +42,9 @@ vLLM over HTTP against a launched server (bs concurrent completions per
 batch, prefix cache reset per cell), QuettaServe through its cargo bench
 (`--set engine.name=quettaserve`). A vLLM grid run with `mode.returns`
 text or logits builds vLLM in-process instead, the only path that returns
-token ids, text or logits; only such a run takes `engine.pp > 1`,
-`engine.cudagraph=false` or `prompt_mode=corpus`, which a timing grid
-refuses. `tests/parity/slope_gate.json` holds the HTTP-vs-in-process gate
+token ids, text or logits; only such a run takes `prompt_mode=corpus`,
+which a timing grid refuses. `engine.pp` and `engine.cudagraph=false`
+reach the server as `--pipeline-parallel-size` and `--enforce-eager`. `tests/parity/slope_gate.json` holds the HTTP-vs-in-process gate
 both paths passed (8x H200, vLLM 0.30.1: 15 cells, worst |delta| 0.228 ms). A serve run (`mode.grid` unset)
 launches the server and replays the workload against it. `mode: probe`
 runs a kernel probe (`mode.probe`, `mode.probe_args`) with `--out
@@ -80,7 +80,7 @@ engines, or the vLLM line alone for a model yaml without a `quettaserve:` block.
 | tpu | `vllm/vllm-tpu:v0.30.0` | Docker Hub; tpu-inference docs |
 | neuron | `public.ecr.aws/neuron/pytorch-inference-vllm-neuronx:0.24.0.1.1.0-neuronx-py313-sdk2.32.0-ubuntu24.04` (vLLM 0.24 with vllm-neuron) | AWS Neuron DLC quickstart (SDK 2.32.0) |
 
-`hardware.backend` picks the devices a launched server sees (`CUDA_VISIBLE_DEVICES`; `HIP_VISIBLE_DEVICES` and `CUDA_VISIBLE_DEVICES` on rocm; `TPU_VISIBLE_CHIPS` with its process bounds on tpu; `NEURON_VISIBLE_DEVICES` on neuron, with `NEURON_RT_VISIBLE_CORES` unset) and, with `hardware.launcher: docker`, the device flags. On tpu `engine.dtype=float16` is refused; the kernel probes, nsys, `hardware.provision.nccl_lib` and the transformers reference are cuda only. amd-smi, neuron-ls and tpu report no memory size, so grids there run without the KV SKIP.
+`hardware.backend` picks the devices a launched server sees (`CUDA_VISIBLE_DEVICES`; `HIP_VISIBLE_DEVICES` and `CUDA_VISIBLE_DEVICES` on rocm; `TPU_VISIBLE_CHIPS` with its process bounds on tpu; `NEURON_VISIBLE_DEVICES` on neuron, with `NEURON_RT_VISIBLE_CORES` unset) and, with `hardware.launcher: docker`, the device flags. On tpu `engine.dtype=float16` is refused; the kernel probes, nsys, `hardware.provision.nccl_lib`, the transformers reference and `mode.returns` grids (in-process vLLM) are cuda only. Only cuda checks which GPUs are busy; rocm, tpu and neuron runs must set `hardware.visible_devices`, else they take devices 0..n-1. amd-smi, neuron-ls and tpu report no memory size, so grids there run without the KV SKIP.
 
 Mount the HF cache, so `engine.model` can be a repo id, the vLLM compile cache and `results/`:
 
@@ -97,7 +97,7 @@ docker run --rm --gpus '"device=0"' --network host --ipc host \
     -v ~/hf:/root/.cache/huggingface -v ~/qbt-run2/docker:/opt/qbench/results \
     -e HF_HUB_OFFLINE=1 -e HF_HOME=/root/.cache/huggingface \
     qbench:81ac0e4 run configs/runs/llama.yaml --results-dir results \
-    --set engine.driver=http --set hardware.link_profile=pcie --allow-unverified \
+    --set hardware.link_profile=pcie --allow-unverified \
     --set engine.model=/root/.cache/huggingface/hub/models--Qwen--Qwen3-4B/snapshots/1cfa9a7208912126459214e8b04321603b3df60c \
     --set engine.port=8040 --set run_name=docker_qwen4b
 ```
@@ -286,7 +286,7 @@ are withheld. glm53 and glm53flash have no engine bench yet: vLLM side only.
 | `benchmark.sh`, `scripts/bench.sh`, `scripts/launch_server.sh` + `python -m src.benchmark.runner --profile P --concurrency N` | `just run configs/runs/<model>.yaml --set mode.grid=null --set workload.kind=live --set workload.source=P --set mode.concurrency=N --set engine.model=<weights>` (the runner launches the server) |
 | `scripts/sweep_*_profiles[_sglang].sh` | a `matrix:` block in the run yaml, `just sweep <yaml>` (sglang has no adapter yet; `engine.name: sglang` is refused at load) |
 | `python -m quettabench.modes.serve ...` (and its `--output` file) | `just run ...`; results in `results/<run>/` |
-| `vmin_fit.py <wl>` / `serve --grid --workload <wl>` | `just run configs/runs/<wl>.yaml --set engine.model=<weights>` (`--dump-tokens`: `--set mode.returns=text`; `--nograph`: `--set engine.cudagraph=false`, with `mode.returns` only) |
+| `vmin_fit.py <wl>` / `serve --grid --workload <wl>` | `just run configs/runs/<wl>.yaml --set engine.model=<weights>` (`--dump-tokens`: `--set mode.returns=text`; `--nograph`: `--set engine.cudagraph=false`) |
 | `trace_serve.py <trace> --model <w>` | `just run <yaml> --set mode.grid=null --set workload.kind=live --set workload.source=<trace> --set mode.load=open --set workload.arrival=trace`; energy, cost, gsm8k: `just profile --source energy|cost|gsm8k` |
 | `cache.py <log> <out>` | nothing: grid runs no longer write `results/baselines/*.json`; old files are still readable by `qbench xval` |
 | `python3 table.py <bench-log> <baseline>` | `qbench xval <ours> <theirs>` (`just xval`); each side a results dir, an old baselines json or a bench log |

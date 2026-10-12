@@ -382,8 +382,7 @@ class RunWriter:
         return run
 
 
-# The crossval summary lines, in exactly the formats trace_serve.py printed
-# (retired in b2eaa97) and xval.sh grepped (retired in bd9815f).
+# The crossval summary lines; the format is pinned by tests/golden.
 PCTS = (50, 90, 95, 99)
 
 
@@ -398,8 +397,7 @@ def goodprobe_line(p):
 
 
 def legacy_lines(summary):
-    """SERVESUM, SLASUM, BURSTSUM, SPECSUM and GOODPUTSUM for the sections
-    summary has, then WORKLOADSUM/WORKLOADVOID, in trace_serve's order."""
+    """SERVESUM, SLASUM, BURSTSUM, SPECSUM and GOODPUTSUM for the sections summary has, then WORKLOADSUM/WORKLOADVOID."""
     lines = []
     w = summary.get("workload")
     if w is not None:
@@ -451,13 +449,12 @@ def legacy_lines(summary):
 
 
 def print_legacy_lines(summary):
-    """Print legacy_lines(summary), flushed, as trace_serve did."""
+    """Print legacy_lines(summary), flushed."""
     for line in legacy_lines(summary):
         print(line, flush=True)
 
 
-# A grid run's stdout, in exactly the formats vmin_fit.py printed (retired
-# in 0b71b64); vllm.sh grepped META/RESULT/SKIP/CAPACITY until bd9815f.
+# A grid run's stdout lines; the format is pinned by tests/golden.
 def grid_event_line(run, event):
     """The SKIP, NOTE or RESULT line for one event of a grid run."""
     ctx, bs = event["ctx"], event["bs"]
@@ -497,9 +494,7 @@ def legacy_grid_lines(run):
 
 
 def print_legacy_grid_lines(run, shown=0):
-    """Print, flushed, the lines of legacy_grid_lines(run) past the first
-    `shown`; returns the new count. Called as the run advances, so each line
-    appears when vmin_fit would have printed it."""
+    """Print, flushed, the lines of legacy_grid_lines(run) past the first `shown`; returns the new count."""
     lines = legacy_grid_lines(run)
     for line in lines[shown:]:
         print(line, flush=True)

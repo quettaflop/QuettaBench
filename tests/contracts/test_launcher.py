@@ -310,9 +310,9 @@ class NoProxy(unittest.TestCase):
 
 
 class IdleGpus(unittest.TestCase):
-    def test_non_cuda_takes_visible_devices_or_the_first_n(self):
+    def test_non_cuda_takes_the_first_n(self):
         self.assertEqual(launcher.idle_gpus(3, "rocm"), "0,1,2")
-        self.assertEqual(launcher.idle_gpus(2, "cpu", "4,5"), "4,5")
+        self.assertEqual(launcher.idle_gpus(2, "cpu"), "0,1")
 
     def test_cuda_picks_gpus_under_1000_mib(self):
         smi = "0, 70000 MiB\n1, 3 MiB\n2, 999 MiB\n3, 1000 MiB\n"
@@ -342,6 +342,12 @@ class Backends(unittest.TestCase):
                            "TPU_PROCESS_BOUNDS": "1,1,1"}, ()))
         self.assertEqual(launcher.visible_env("neuron", "0,1"),
                          ({"NEURON_VISIBLE_DEVICES": "0,1"}, ("NEURON_RT_VISIBLE_CORES",)))
+
+    def test_rocm_is_detected_from_rocm_smi_or_amd_smi(self):
+        for tool in ("rocm-smi", "amd-smi"):
+            with self.subTest(tool=tool), tempfile.TemporaryDirectory() as td, \
+                    tools_on_path(td, **{tool: ""}):
+                self.assertEqual(loader.detect_backend(None), "rocm")
 
     def child_spec(self, backend, *sets):
         """The spec runner.serve_one hands launcher.start for a serve run on backend."""
@@ -378,6 +384,7 @@ class Backends(unittest.TestCase):
                 argv = launcher.docker_argv(spec, cfg, "0,1", "/r/run")
                 self.assertEqual(argv[7:7 + len(want)], want)
                 self.assertNotIn("--gpus", argv)
+                self.assertEqual("-p" in argv, backend != "tpu")
         cfg, spec = docker_spec("hardware.backend=neuron")
         with mock.patch.object(launcher.glob, "glob", return_value=[]), \
                 self.assertRaisesRegex(ConfigError, "no /dev/neuron"):

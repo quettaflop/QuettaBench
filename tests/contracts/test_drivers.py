@@ -146,6 +146,14 @@ class BoundDriver(unittest.TestCase):
 
         return drv, session
 
+    def test_version_asks_the_server_once(self):
+        drv, _ = self.driver()
+        reply = mock.MagicMock()
+        reply.__enter__.return_value = io.BytesIO(b'{"version": "0.30.1"}')
+        with mock.patch.object(drivers.launcher, "urlopen", return_value=reply) as urlopen:
+            self.assertEqual((drv.version, drv.version), ("0.30.1", "0.30.1"))
+        urlopen.assert_called_once_with("http://h:8000/version", timeout=10)
+
     def test_send_routes_token_ids_and_sampling(self):
         drv, session = self.driver()
 

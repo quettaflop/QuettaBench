@@ -77,7 +77,7 @@ class KwargsMatchVminFit(unittest.TestCase):
             with self.subTest(name=name):
                 spec = spec_for(name, sets=["engine.cudagraph=false", "mode.returns=text"])
                 self.assertEqual(spec.engine_kwargs, GOLDEN[name]["vmin_fit_nograph"])
-                self.assertIn("cudagraph=False", spec.server_unsupported)
+                self.assertIn("--enforce-eager", spec.server_argv)
 
 
 class ServerArgv(unittest.TestCase):
@@ -92,11 +92,12 @@ class ServerArgv(unittest.TestCase):
                                     "VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS": "1"})
         self.assertEqual((spec.health_path, spec.port), ("/health", 8000))
 
-    def test_fields_without_a_flag_block_the_server_only(self):
-        blocked = spec_for("glm53", sets=["engine.pp=2", "mode.returns=text"])
-        self.assertEqual(blocked.server_unsupported, ("pp=2",))
-        self.assertEqual(blocked.server_argv, ())
-        self.assertEqual(blocked.engine_kwargs["pipeline_parallel_size"], 2)
+    def test_pp_is_pipeline_parallel_size(self):
+        spec = spec_for("glm53", sets=["engine.pp=2"])
+        argv = list(spec.server_argv)
+        self.assertEqual(argv[argv.index("--pipeline-parallel-size") + 1], "2")
+        self.assertEqual(spec.engine_kwargs["pipeline_parallel_size"], 2)
+        self.assertNotIn("--pipeline-parallel-size", spec_for("glm53").server_argv)
 
     def test_quant_is_read_from_the_checkpoint_on_the_server(self):
         spec = spec_for("glm53")
@@ -193,15 +194,16 @@ class GridDriver(unittest.TestCase):
                 driver = adapter.driver(adapter.translate(cfg), launcher.NoServer(Path("r")))
                 self.assertIsInstance(driver, InProcessDriver)
 
-    def test_settings_without_a_server_flag_need_returns(self):
+    def test_pp_and_eager_timing_grids_launch_the_server(self):
         adapter = vllm_adapter.ADAPTER
-        for setting, field in (("engine.pp=2", "pp=2"), ("engine.cudagraph=false", "cudagraph=False")):
+        for setting, flag in (("engine.pp=2", "--pipeline-parallel-size"),
+                              ("engine.cudagraph=false", "--enforce-eager")):
             with self.subTest(setting=setting):
-                with self.assertRaisesRegex(ConfigError, f"{field} has no server flag and a "
-                                            "timing grid runs over HTTP"):
-                    adapter.translate(self.cfg(setting))
-                spec = adapter.translate(self.cfg(setting, "mode.returns=text"))
-                self.assertEqual(spec.server_unsupported, (field,))
+                cfg = self.cfg(setting)
+                spec = adapter.translate(cfg)
+                self.assertTrue(adapter.needs_server(cfg))
+                self.assertEqual(spec.server_unsupported, ())
+                self.assertIn(flag, spec.server_argv)
 
     def test_a_timing_grid_launches_the_server(self):
         cfg = self.cfg()

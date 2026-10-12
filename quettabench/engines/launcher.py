@@ -122,11 +122,10 @@ def device_flags(backend, gpus):
     return ["--gpus", f'"device={gpus}"']
 
 
-def idle_gpus(n, backend, visible_devices=None):
-    """On cuda the first n GPUs using under 1000 MiB (free_gpu.sh's rule);
-    other backends take the caller's CUDA_VISIBLE_DEVICES or 0..n-1."""
+def idle_gpus(n, backend):
+    """On cuda the first n GPUs using under 1000 MiB; other backends have no busy check and take 0..n-1."""
     if backend != "cuda":
-        return visible_devices or ",".join(str(i) for i in range(n))
+        return ",".join(str(i) for i in range(n))
     rows = subprocess.run(
         ["nvidia-smi", "--query-gpu=index,memory.used", "--format=csv,noheader"],
         capture_output=True, text=True, check=True).stdout.splitlines()
@@ -228,10 +227,11 @@ def docker_argv(spec, cfg, gpus, results_dir):
     env = {**spec.env, **{k: v for k, v in hw.collective.items() if v},
            **({"HF_HOME": hw.hf_home} if hw.hf_home else {})}
     hidden = docker_secrets(spec)
+    devices = device_flags(hw.backend, gpus)
+    ports = [] if "--net=host" in devices else ["-p", f"{spec.port}:{spec.port}"]
     return ["docker", "run", "-d", "--pull=never", "--init",
             "--name", container_name(cfg.run_name),
-            *device_flags(hw.backend, gpus), "--ipc=host", f"--shm-size={hw.shm_size}",
-            "-p", f"{spec.port}:{spec.port}",
+            *devices, "--ipc=host", f"--shm-size={hw.shm_size}", *ports,
             *(a for path in [*mounts, REPO] for a in ("-v", f"{path}:{path}:ro")),
             "-v", f"{run_dir}:{run_dir}",
             *(a for k, v in env.items() for a in ("-e", k if k in hidden else f"{k}={v}")),
@@ -283,9 +283,9 @@ def start(spec, results_dir, *, backend="local", cfg=None, gpus="", timeout_s=18
             remove(container)
         raise
     endpoint = f"http://127.0.0.1:{spec.port}"
-    backend = cfg.hardware.backend if cfg else "cuda"
-    handle = Handle(spec.adapter, endpoint, proc.pid, results_dir, proc, accelerator(backend)[0],
-                    container, container_id, backend)
+    accel = cfg.hardware.backend if cfg else "cuda"
+    handle = Handle(spec.adapter, endpoint, proc.pid, results_dir, proc, accelerator(accel)[0],
+                    container, container_id, accel)
     try:
         wait_healthy(proc, endpoint + spec.health_path, timeout_s, poll_s)
         record = {

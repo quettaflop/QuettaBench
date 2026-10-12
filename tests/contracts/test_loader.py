@@ -235,6 +235,12 @@ class LoaderRules(unittest.TestCase):
                 self.load(run)
         with self.assertRaisesRegex(ConfigError, "a timing grid runs over HTTP with no tokenizer"):
             self.load({"mode": {"grid": "toy"}, "workload": {"prompt_mode": "corpus"}})
+        for backend in ("rocm", "tpu", "neuron"):
+            with self.subTest(backend), self.assertRaisesRegex(
+                    ConfigError, f"hardware.backend={backend} has no CUDA"):
+                self.load({"mode": {"grid": "toy", "returns": "text"}},
+                          [f"hardware.backend={backend}", "engine.dtype=bfloat16"])
+        self.one({"mode": {"grid": "toy", "returns": "text"}}, ["hardware.backend=cuda"])
 
     def test_empty_step_points_are_refused(self):
         self.write("grids.yaml", {**GRIDS, "step_points": []})

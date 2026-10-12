@@ -142,8 +142,9 @@ def arrival_kind(spec, num_requests=0):
 
 
 def detect_backend(tpu_name):
-    """The accelerator from the tooling on PATH: nvidia-smi cuda, rocm-smi rocm, neuron-ls neuron, libtpu (or TPU_NAME) tpu, else cpu."""
-    for tool, backend in (("nvidia-smi", "cuda"), ("rocm-smi", "rocm"), ("neuron-ls", "neuron")):
+    """The accelerator from the tooling on PATH: nvidia-smi cuda, rocm-smi or amd-smi rocm, neuron-ls neuron, libtpu (or TPU_NAME) tpu, else cpu."""
+    for tool, backend in (("nvidia-smi", "cuda"), ("rocm-smi", "rocm"), ("amd-smi", "rocm"),
+                          ("neuron-ls", "neuron")):
         if shutil.which(tool):
             return backend
     if tpu_name or Path("/lib/libtpu.so").exists():
@@ -265,6 +266,10 @@ def _validate(values, origins, allow_unverified, where):
             and values["mode.returns"] == "none"):
         raise ConfigError(f"{where}: prompt_mode=corpus tokenizes in-process, which only a "
                           "mode.returns run builds; a timing grid runs over HTTP with no tokenizer")
+    if values["mode.grid"] and values["mode.returns"] != "none" and backend in OTHER_ACCELERATORS:
+        raise ConfigError(f"{where}: mode.returns={values['mode.returns']} builds vLLM in-process, "
+                          f"which reads the device through torch.cuda; hardware.backend={backend} "
+                          "has no CUDA")
 
 
 def _grid(values, grids, step_points, where):
