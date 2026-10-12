@@ -763,7 +763,7 @@ def main(argv=None):
         if not Path(path).exists():
             sys.exit(f"no results at {path}")
     if args.floor and not all(Path(p).is_dir() for p in (args.ours, args.theirs, *args.floor)):
-        sys.exit("--floor compares logits runs: ours, theirs and every floor must be run dirs")
+        ap.error("--floor compares logits runs: ours, theirs and every floor must be run dirs")
 
     values = env_map.read_env(only=ENV)
     ours = read_side(args.ours, values)

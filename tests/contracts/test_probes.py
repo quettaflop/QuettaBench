@@ -471,6 +471,20 @@ def test_append_cannot_be_abbreviated(name, capsys):
     assert stop.value.code == 2 and "unrecognized" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize(
+    "name,flags,said",
+    [
+        ("moe", ["--geometries", "nope"], "unknown --geometries"),
+        ("gemm", ["--model-shapes", "nope"], "unknown --model-shapes"),
+        ("gemm", ["--dtype", "fp8", "--ncu"], "no --ncu path"),
+    ],
+)
+def test_bad_probe_flags_fail_at_parse_time(name, flags, said, capsys):
+    with pytest.raises(SystemExit) as stop:
+        import_without_torch(name).main(["--gpu-label", "H100", *flags])
+    assert stop.value.code == 2 and said in capsys.readouterr().err
+
+
 def test_moe_routing_flag_takes_the_routing_parser(capsys):
     """--routing parses the block-dump flags, not the kernel grid's."""
     with pytest.raises(SystemExit) as stop:

@@ -1031,6 +1031,13 @@ def run(argv, env=None):
 
 
 class Door(unittest.TestCase):
+    def test_floor_with_a_file_input_is_a_parse_error(self):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as stop:
+            run([FIXTURES / "bench_loop.log", BASELINE, "--floor", FIXTURES])
+        self.assertEqual(stop.exception.code, 2)
+        self.assertIn("must be run dirs", err.getvalue())
+
     def test_json_report(self):
         with tempfile.TemporaryDirectory() as td:
             out = Path(td) / "r.json"

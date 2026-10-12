@@ -1145,21 +1145,11 @@ def export(
     replace_tables: bool = False,
 ) -> list[Path]:
     """Run the builders (all, or the named ones) over the results dirs; return the files written.
-    kernel_tables needs kernel_dest and the others need dest; each writes a manifest of the runs it read.
+    kernel_tables writes under kernel_dest and the others under dest; each writes a manifest of the runs it read.
     """
     results_dirs = [Path(d) for d in results_dirs]
     names = list(only) if only else list(BUILDERS)
-    unknown = [n for n in names if n not in BUILDERS]
-    if unknown:
-        raise SystemExit(f"unknown builder {unknown}; choose from {sorted(BUILDERS)}")
-    if only:
-        if "kernel_tables" in names and kernel_dest is None:
-            raise SystemExit("kernel_tables writes under --kernel-dest (QuettaSim's data root); give it")
-        if any(n != "kernel_tables" for n in names) and dest is None:
-            raise SystemExit("the builders other than kernel_tables write under --dest; give it")
     names = [n for n in names if (kernel_dest if n == "kernel_tables" else dest) is not None]
-    if not names:
-        raise SystemExit("give --dest, --kernel-dest or both")
     if "kernel_tables" in names:
         path = Path(kernel_dest) / "kernel_data" / "qbench_manifest.json"
         kernel = manifest(results_dirs)
@@ -1226,6 +1216,13 @@ def main(argv=None) -> None:
     )
     ap.add_argument("--only", nargs="+", choices=sorted(BUILDERS), help="run just these builders (default: all)")
     a = ap.parse_args(argv)
+    names = a.only or list(BUILDERS)
+    if a.only and "kernel_tables" in names and a.kernel_dest is None:
+        ap.error("--only kernel_tables writes under --kernel-dest (QuettaSim's data root); give it")
+    if a.only and any(n != "kernel_tables" for n in names) and a.dest is None:
+        ap.error("--only builders other than kernel_tables write under --dest; give it")
+    if a.dest is None and a.kernel_dest is None:
+        ap.error("give --dest, --kernel-dest or both")
     for path in export(a.results, a.dest, a.only, kernel_dest=a.kernel_dest, replace_tables=a.replace_tables):
         print(path)
 

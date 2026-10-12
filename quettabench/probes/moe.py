@@ -404,6 +404,9 @@ def main(argv=None) -> None:
         "vLLM >= 0.28 actually serves for unquantized bf16 MoE.",
     )
     a = ap.parse_args(argv)
+    unknown = [k for k in a.geometries.split(",") if k.strip() and k.strip() not in GEOMETRIES]
+    if unknown and not a.geometry_spec:
+        ap.error(f"unknown --geometries {unknown}; use {','.join(GEOMETRIES)}")
     global _GRAPH, _FP8, _BACKEND
     _GRAPH = a.graph
     _FP8 = a.dtype == "fp8"
@@ -434,9 +437,6 @@ def main(argv=None) -> None:
     for key in ("" if a.geometry_spec else a.geometries).split(","):
         key = key.strip()
         if not key:
-            continue
-        if key not in GEOMETRIES:
-            print(f"  unknown geometry {key!r}, skipping", flush=True)
             continue
         e, k, inter, hidden = GEOMETRIES[key]
         for tp in tps:

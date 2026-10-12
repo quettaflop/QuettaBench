@@ -844,13 +844,15 @@ def test_kernel_tables_go_to_their_own_dest_and_only_when_given(tmp_path: Path, 
     main(["--results", str(results), "--kernel-dest", str(data), "--only", "kernel_tables"])
     assert tree(data / "kernel_data") == {"eager/gdn/H100_9b_decode.csv": "g\n1\n"}
     assert "kernel_tables" in json.loads((data / "kernel_data" / "qbench_manifest.json").read_text())
-    for argv in (
-        ["--only", "kernel_tables", "--dest", str(dest)],
-        ["--only", "tp_comm"],
-        ["--kernel-dest", str(data), "--only", "tp_comm"],
+    for argv, said in (
+        (["--only", "kernel_tables", "--dest", str(dest)], "--kernel-dest"),
+        (["--only", "tp_comm"], "write under --dest"),
+        (["--kernel-dest", str(data), "--only", "tp_comm"], "--dest"),
+        ([], "give --dest, --kernel-dest or both"),
     ):
-        with pytest.raises(SystemExit):
+        with pytest.raises(SystemExit) as stop:
             main(["--results", str(results), *argv])
+        assert stop.value.code == 2 and said in capsys.readouterr().err
 
 
 GEMM = "graph/gemm/H100.csv"

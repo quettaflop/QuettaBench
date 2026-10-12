@@ -214,8 +214,6 @@ class GemmProbe(Probe):
                     pairs.add((int(n_s), int(k_s)))
                 for name in (a.model_shapes or "").split(","):
                     if name.strip():
-                        if name.strip() not in MODEL_SHAPES:
-                            raise SystemExit(f"unknown --model-shapes {name!r}; have {sorted(MODEL_SHAPES)}")
                         pairs.update(MODEL_SHAPES[name.strip()])
             else:
                 dims = a.dims if a.dims else DIMS
@@ -310,11 +308,11 @@ def main(argv=None):
         "without it the export drops the rows of runs that finished before it",
     )
     a = ap.parse_args(argv)
+    unknown = [n for n in (a.model_shapes or "").split(",") if n.strip() and n.strip() not in MODEL_SHAPES]
+    if unknown:
+        ap.error(f"unknown --model-shapes {unknown}; use {','.join(sorted(MODEL_SHAPES))}")
     if a.dtype == "fp8" and a.ncu:
-        raise SystemExit(
-            "--dtype fp8 has no --ncu path (the op is a Python-level "
-            "dispatch, not one kernel); use --graph for dispatch-free timing."
-        )
+        ap.error("--dtype fp8 has no --ncu path (the op is a Python-level dispatch, not one kernel); use --graph")
     fp8_op = fp8_linear_op() if a.dtype == "fp8" else None
     probe = GemmProbe(a, fp8_op)
     n = probe.run()
