@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
-"""Stand-in for a QuettaServe decode_loop bench: one LOOP line from the QW_* env.
-
-FAKE_BENCH_EXIT sets the exit code; FAKE_BENCH_SILENT=1 prints no LOOP line;
-FAKE_BENCH_SLEEP=<s> sleeps that long before exiting; FAKE_BENCH_CHILD=<file>
-starts a sleeping child first, its output to /dev/null so it does not hold
-the bench's stdout open, and writes its pid there.
-"""
+"""Stand-in decode_loop bench: prints one LOOP line from the QW_* env; FAKE_BENCH_EXIT, _SILENT, _SLEEP and _CHILD=<pidfile> steer it."""
 
 import os
 import subprocess

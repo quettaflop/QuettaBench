@@ -483,8 +483,7 @@ class CaptureTextTests(unittest.TestCase):
         self.assertIn("503", str(r.error))
 
 
-# aiohttp is a runtime dependency of the client (requirements.txt) but, like
-# runner.py, we import it lazily so metric-only tests run without it.
+# aiohttp is imported lazily so metric-only tests run without it.
 try:
     import aiohttp
     from aiohttp import web
@@ -536,8 +535,7 @@ def _chunk(delta, finish_reason=None):
 
 
 async def _serve_and_request(chunks):
-    """Stream the given SSE chunk payloads from a local server through
-    send_request and return the RequestResult."""
+    """Stream the given SSE chunk payloads from a local server through send_request and return the RequestResult."""
     from quettabench.engines.drivers import HttpDriver
 
     send_request = HttpDriver("chat", "openai").send_request
@@ -573,8 +571,7 @@ async def _serve_and_request(chunks):
 @unittest.skipUnless(HAVE_AIOHTTP, "aiohttp not installed")
 class TestReasoningChunksCounted(unittest.TestCase):
     def test_reasoning_content_chunks_are_token_events(self):
-        # vllm 0.19 gpt-oss harmony shape: role chunk, analysis-channel
-        # deltas (content absent), then final-channel content deltas.
+        # gpt-oss harmony shape: role chunk, reasoning deltas, then content deltas.
         chunks = (
             [_chunk({"role": "assistant", "content": ""})]
             + [_chunk({"reasoning_content": "r"}) for _ in range(3)]
@@ -585,7 +582,6 @@ class TestReasoningChunksCounted(unittest.TestCase):
         r = asyncio.run(_serve_and_request(chunks))
         self.assertTrue(r.success)
         # 8 token events (1 role + 3 reasoning + 4 content): ttft + 7 ITLs.
-        # Before the fix the 3 reasoning chunks were dropped (4 ITLs).
         self.assertIsNotNone(r.ttft)
         self.assertEqual(len(r.itl), 7)
         self.assertEqual(r.output_tokens, 8)
@@ -709,8 +705,7 @@ class CellLoop(unittest.TestCase):
         self.assertFalse(alive(pid))
 
     def test_a_finished_cell_leaves_no_bench_child(self):
-        """A bench that exits on its own can leave a child (cargo's bench
-        binary) holding the GPUs; its group is killed all the same."""
+        """A bench that exits on its own can leave a child (cargo's bench binary) holding the GPUs; its group is killed all the same."""
         pid_file = self.log.with_name("child.pid")
         rows = list(BenchDriver(self.log).run([(1, 1, cell_spec(1, 1, FAKE_BENCH_CHILD=str(pid_file)))]))
         self.assertEqual(len(rows), 1)
@@ -967,8 +962,7 @@ class QuettaServeBenchRun(unittest.TestCase):
 
 
 class QuettaServeThroughCli(unittest.TestCase):
-    """qwen3's 16 cells on the fake bench: max_model_len 10000 drops the four
-    ctx=16384 cells, a 141 GiB GPU at cap_frac 0.3 drops (8192, 64)."""
+    """qwen3's 16 cells on the fake bench: max_model_len 10000 drops the four ctx=16384 cells, a 141 GiB GPU at cap_frac 0.3 drops (8192, 64)."""
 
     SETS = [
         *PINNED,
@@ -1010,8 +1004,7 @@ class QuettaServeThroughCli(unittest.TestCase):
             doc = json.loads((run / "run.json").read_text())
             rows = [json.loads(line) for line in (run / "requests.jsonl").read_text().splitlines()]
         skips = [line for line in out.splitlines() if line.startswith("SKIP")]
-        # cap: (141 * 0.9 - 54 weights - 5 reserve) GiB / 65536 B per token;
-        # need: (8192 + 100 timing steps + 28 headroom) * 64 > 0.3 * cap.
+        # cap = (141 * 0.9 - 54 weights - 5 reserve) GiB / 65536 B per token; need = (8192 + 100 + 28) * 64 > 0.3 * cap.
         self.assertEqual(
             skips,
             [

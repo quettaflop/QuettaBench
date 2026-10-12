@@ -47,9 +47,7 @@ class LocalLauncher(unittest.TestCase):
         self.port = free_port()
 
     def start(self, **kw):
-        """launcher.start of the fake server; a port taken between free_port
-        and the bind (the server exits 98) is retried on a fresh one, and the
-        server that answered must be ours."""
+        """launcher.start of the fake server; a port taken between free_port and the bind (the server exits 98) is retried on a fresh one, and the server that answered must be ours."""
         for _ in range(5):
             try:
                 handle = launcher.start(self.spec(**kw), self.dir / "run", timeout_s=30, poll_s=0.1)
@@ -216,8 +214,7 @@ class DockerArgv(unittest.TestCase):
         )
 
     def test_a_secret_env_goes_by_name_only(self):
-        """docker run -e NAME (no value) takes NAME from the docker client's
-        env, so the key is never in an argv that ps or the dry run shows."""
+        """docker run -e NAME (no value) takes NAME from the docker client's env, so the key is never in an argv that ps or the dry run shows."""
         cfg, spec = keyed_docker_spec("sk-live")
         argv = launcher.docker_argv(spec, cfg, "0", "/r/run")
         self.assertEqual(argv[argv.index("VLLM_API_KEY") - 1], "-e")

@@ -415,8 +415,7 @@ class Sections(unittest.TestCase):
 
 
 class GoodputSweep(unittest.TestCase):
-    """measure() is replaced by one whose TTFT grows with speed, so the SLA
-    flips at a known speed: 100 ms per unit of speed against a 450 ms bound."""
+    """measure() is replaced by one whose TTFT grows with speed, so the SLA flips at a known speed: 100 ms per unit of speed against a 450 ms bound."""
 
     def fake_measure(self, speeds):
         async def measure(trace, driver, mode, emit, workload, request_id):
@@ -537,8 +536,7 @@ class ModelConfig(unittest.TestCase):
 
 
 class GridRunOverHttp(unittest.TestCase):
-    """runner.run_one of a timing grid: the launched server (the fake
-    endpoint) gets every batch, and run.json's steps come from the fit."""
+    """runner.run_one of a timing grid: the launched server (the fake endpoint) gets every batch, and run.json's steps come from the fit."""
 
     def test_smoke_grid_end_to_end(self):
         with tempfile.TemporaryDirectory() as td, helpers.serve() as (endpoint, posts):

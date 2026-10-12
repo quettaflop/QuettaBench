@@ -46,8 +46,7 @@ RUNS = REPO / "configs" / "runs"
 PINNED = ["engine.model=<MODEL>", "allow_unverified=true", "hardware.backend=cpu", "hardware.link_profile=nvlink"]
 
 
-# The loader refuses qwen (hybrid without kv_bytes, a capacity-gate fact);
-# kv_bytes is not a launch field, so any value unblocks the snapshot.
+# The loader refuses qwen without kv_bytes; it is not a launch field, so any value unblocks the snapshot.
 UNBLOCK = {"qwen": ["engine.kv_bytes=1"]}
 
 
@@ -209,8 +208,7 @@ class Extra(unittest.TestCase):
 
 
 class GridDriver(unittest.TestCase):
-    """mode.returns picks how a grid run reaches vLLM: a timing grid over HTTP,
-    a grid that returns text or logits in-process."""
+    """mode.returns picks how a grid run reaches vLLM: a timing grid over HTTP, a grid that returns text or logits in-process."""
 
     def cfg(self, *sets):
         (cfg,) = loader.load(RUNS / "llama.yaml", [*PINNED, *sets], env={})

@@ -1,7 +1,4 @@
-"""Shared plumbing for the golden tests: fixture compare and regen, crossval imports, and a CPU grid run through `qbench run` on the vllm/torch stubs, served by StandInServer (an InProcessDriver for a mode.returns run).
-
-QBENCH_GOLDEN_REGEN=1 rewrites every fixture from the current code instead of comparing.
-"""
+"""Golden test plumbing: fixture compare, crossval imports and a CPU grid run through `qbench run` on the stubs; QBENCH_GOLDEN_REGEN=1 rewrites the fixtures."""
 
 import asyncio
 import contextlib
@@ -109,9 +106,7 @@ def fake_generate_seconds(prompt_len, batch, max_tokens, call_no):
 
 
 class StandInServer:
-    """`vllm serve` on the stubs, reached through the aiohttp session
-    HttpDriver opens: the requests a grid batch posts together run as one
-    vllm.run_batch on the fake clock, as in-process generate() ran them."""
+    """`vllm serve` on the stubs, reached through the aiohttp session HttpDriver opens: the requests a grid batch posts together run as one vllm.run_batch on the fake clock, as in-process generate() ran them."""
 
     URL = "http://stand-in:8000"
 
@@ -143,8 +138,7 @@ class StandInServer:
         yield await self.answer(url, json)
 
     async def answer(self, url, body):
-        """Every post of a gather is pending before the first one resumes, so
-        that one runs them all as one batch."""
+        """Every post of a gather is pending before the first one resumes, so that one runs them all as one batch."""
         if url.endswith("/reset_prefix_cache"):
             return Reply([])
         entry = {"body": body}
@@ -194,11 +188,7 @@ def loader_message(exit_msg):
 
 
 def run_grid_cli(argv, env, model_config=None):
-    """Run cli.main(argv) on the stubs with os.environ replaced by `env`, the fake clock, nvidia-smi hidden, one idle GPU and the server launch swapped for StandInServer.
-
-    Results go to a throwaway dir unless argv names --results-dir.
-    Returns stdout lines, LLM kwargs, the generate() call count and the SystemExit message if any.
-    """
+    """Run cli.main(argv) on the stubs under `env`; returns stdout lines, LLM kwargs, the generate() count and the SystemExit message if any."""
     with tempfile.TemporaryDirectory() as model_dir:
         Path(model_dir, "config.json").write_text(json.dumps(model_config or DENSE_CONFIG))
         argv = [a.replace("<MODEL>", model_dir) for a in argv]

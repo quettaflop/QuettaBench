@@ -112,8 +112,7 @@ def test_unfinished_unreadable_and_failed_runs_are_skipped(tmp_path: Path, capsy
 
 @pytest.mark.parametrize("fails", [False, True])
 def test_a_failed_probe_run_keeps_its_tables_out(tmp_path: Path, fails: bool) -> None:
-    """`just probe serving_stage_split` writes its legs and run.json in one dir;
-    a run that raised after writing them exports nothing."""
+    """`just probe serving_stage_split` writes its legs and run.json in one dir; a run that raised after writing them exports nothing."""
     results = tmp_path / "results"
     leg = results / "H100" / "serving_stage_split" / "serving_stage_split_H100.csv"
 
@@ -135,8 +134,7 @@ def test_a_failed_probe_run_keeps_its_tables_out(tmp_path: Path, fails: bool) ->
 
 
 def test_a_killed_probe_run_leaves_its_tables_out(tmp_path: Path) -> None:
-    """A probe killed before run_recorded's finally (SIGKILL, OOM) leaves its
-    tables beside requests.jsonl and no run.json: export skips them."""
+    """A probe killed before run_recorded's finally (SIGKILL, OOM) leaves its tables beside requests.jsonl and no run.json: export skips them."""
     leg = tmp_path / "results" / "H100" / "serving_stage_split" / "serving_stage_split_H100.csv"
     seen = []
 
@@ -156,9 +154,7 @@ def test_a_killed_probe_run_leaves_its_tables_out(tmp_path: Path) -> None:
 
 
 def test_a_second_run_into_one_dir_is_refused(tmp_path: Path) -> None:
-    """A probe that names its output file records the dir that file is in; a
-    second run there would make one run.json stand for both, so it is refused
-    and the first run's record is kept."""
+    """A probe that names its output file records the dir that file is in; a second run there would make one run.json stand for both, so it is refused and the first run's record is kept."""
     out = tmp_path / "h100" / "raw.jsonl.gz"
     with mock.patch.object(sys, "argv", ["probe", "--out-raw", str(out)]):
         run_recorded(lambda argv: None, "serving_decode_grid", file_flag="--out-raw")
@@ -171,8 +167,7 @@ def test_a_second_run_into_one_dir_is_refused(tmp_path: Path) -> None:
 
 
 def test_a_file_belongs_to_its_nearest_run_dir(tmp_path: Path) -> None:
-    """A failed run dir outside a table's own run dir does not drop it, and a
-    table under a failed run's subdirs is dropped."""
+    """A failed run dir outside a table's own run dir does not drop it, and a table under a failed run's subdirs is dropped."""
     for run, status in (("H100/gemm", "ok"), ("H100/flash_attn", "failed"), ("H100", "failed")):
         (tmp_path / run).mkdir(parents=True, exist_ok=True)
         (tmp_path / run / "run.json").write_text(json.dumps({"run_status": {"status": status}}))
@@ -185,8 +180,7 @@ def test_a_file_belongs_to_its_nearest_run_dir(tmp_path: Path) -> None:
 
 
 def test_a_launched_servers_dir_belongs_to_its_run(tmp_path: Path, capsys) -> None:
-    """A live-server probe launches into <run>/server/ (engine.json there):
-    that dir is part of the run, not a run of its own without a run.json."""
+    """A live-server probe launches into <run>/server/ (engine.json there): that dir is part of the run, not a run of its own without a run.json."""
     run = tmp_path / "results" / "H100" / "pool_capacity" / "20261011T120000.000000Z"
     (run / "server").mkdir(parents=True)
     (run / "server" / "engine.json").write_text("{}")
@@ -209,8 +203,7 @@ def test_a_launched_servers_dir_belongs_to_its_run(tmp_path: Path, capsys) -> No
 
 
 def test_each_builder_reads_run_status_fresh(tmp_path: Path, capsys) -> None:
-    """A run whose run.json changes while export runs is judged by what is on
-    disk when each builder (and the manifest) reads it."""
+    """A run whose run.json changes while export runs is judged by what is on disk when each builder (and the manifest) reads it."""
     results = tmp_path / "results"
     run = results / "r"
     run.mkdir(parents=True)
@@ -253,8 +246,7 @@ def stage_split_run(root: Path, run_id: str, finished: str, status: str, scale: 
 
 
 def test_stage_split_legs_come_from_the_latest_finished_ok_run(tmp_path: Path) -> None:
-    """Run dirs sort by start; the run that finished last is read, a newer
-    failed run never is, and both legs follow the one rule."""
+    """Run dirs sort by start; the run that finished last is read, a newer failed run never is, and both legs follow the one rule."""
     results = tmp_path / "results"
     old = stage_split_run(results, "20261001", "2026-10-01T02:00:00+00:00", "ok", 1.0)
     new = stage_split_run(results, "20261002", "2026-10-02T02:00:00+00:00", "ok", 2.0)
@@ -279,8 +271,7 @@ def test_stage_split_legs_come_from_the_latest_finished_ok_run(tmp_path: Path) -
 
 
 def test_files_and_find_skip_a_clearing_dir(tmp_path: Path) -> None:
-    """A run dir clear_run_dir renamed to .clearing-* and did not finish
-    removing: its files are no run's, and export reads none of them."""
+    """A run dir clear_run_dir renamed to .clearing-* and did not finish removing: its files are no run's, and export reads none of them."""
     results = tmp_path / "results"
     run = stage_split_run(results, "20261001", "2026-10-01T02:00:00+00:00", "ok", 1.0)
     run.rename(run.with_name(".clearing-abc123"))
@@ -290,8 +281,7 @@ def test_files_and_find_skip_a_clearing_dir(tmp_path: Path) -> None:
 
 
 def test_a_pulled_run_is_ordered_by_its_pulled_time(tmp_path: Path) -> None:
-    """A remote run's finished is on the remote clock; its pulled, on this
-    one, orders it when present."""
+    """A remote run's finished is on the remote clock; its pulled, on this one, orders it when present."""
     results = tmp_path / "results"
     local = stage_split_run(results, "20261001", "2026-10-05T00:00:00+00:00", "ok", 1.0)
     pulled = stage_split_run(results, "20261002", "2099-01-01T00:00:00+00:00", "ok", 2.0)
@@ -304,8 +294,7 @@ def test_a_pulled_run_is_ordered_by_its_pulled_time(tmp_path: Path) -> None:
 
 
 def test_tp_comm_builds_without_ttft_queue_sim(tmp_path):
-    """QuettaSim main has no simulator.ttft_queue_sim; build_tpn leaves the
-    fallback it replaces empty instead of raising ImportError."""
+    """QuettaSim main has no simulator.ttft_queue_sim; build_tpn leaves the fallback it replaces empty instead of raising ImportError."""
     write_leg(tmp_path / "tp1.csv", 1.0)
     write_leg(tmp_path / "tp4.csv", 0.4)
     quettasim.build_tpn(4, tmp_path / "tp4.csv", tmp_path / "out.json", tmp_path / "tp1.csv")
@@ -421,15 +410,13 @@ def test_builder_merge_latest_wins(tmp_path: Path) -> None:
     assert len(rows) == 1
     assert rows[0]["decode_step_ms"] == 7.0  # run2 (latest) wins
     assert rows[0]["source_file"] == "run2.jsonl.gz"
-    # snap rule: effective (prompt 1820 + ~progress) lands within 2% of nominal 2048 -> snapped,
-    # measured effective preserved in the diagnostic column
+    # within 2% of nominal 2048 snaps; the measured effective is kept in the diagnostic column
     assert rows[0]["context_len"] == 2048
     assert abs(rows[0]["effective_context_len"] - 2048) / 2048 <= 0.02
 
 
 def test_builder_snap_flags_large_deviation(tmp_path: Path) -> None:
-    # an effective context >2% off nominal (asymmetric steady window) keeps the measured
-    # effective and is flagged check
+    # more than 2% off nominal keeps the measured effective and is flagged check
     run = tmp_path / "serving_decode_grid_H100x4_2026-10-01.jsonl.gz"
     with gzip.open(run, "wt") as f:
         for i in range(2):
@@ -475,8 +462,7 @@ def _write_run(path: Path, cell: list[int], itl: float, lag: float, n: int = 4, 
 
 
 def test_lag_upgrade_default_off_keeps_check(tmp_path: Path) -> None:
-    # L13 amendment is OPT-IN: without --lag-upgrade a reproducible lag-only cell stays check
-    # (pre-L13 artifacts regenerate byte-identically).
+    # L13 amendment is OPT-IN: without --lag-upgrade a reproducible lag-only cell stays check (pre-L13 artifacts regenerate byte-identically).
     r1, r2 = tmp_path / "r1.jsonl.gz", tmp_path / "r2.jsonl.gz"
     _write_run(r1, [4, 2048], itl=7.0, lag=2.1)
     _write_run(r2, [4, 2048], itl=7.0, lag=2.05)
@@ -531,10 +517,7 @@ def probe_run(
     finished: int | None = None,
     args=(),
 ) -> None:
-    """One `python -m quettabench.probes.<probe>` run through run_recorded:
-    emits tables {<dir>/<kind>/<file>: CSV or JSON text} as ProbeRows, timed
-    as the probe would for that dir and args; any other path is a plain file
-    in the run dir. It starts at T0+at and, given finished, finishes at T0+finished."""
+    """One `python -m quettabench.probes.<probe>` run through run_recorded: emits tables {<dir>/<kind>/<file>: CSV or JSON text} as ProbeRows, timed as the probe would for that dir and args; any other path is a plain file in the run dir. It starts at T0+at and, given finished, finishes at T0+finished."""
 
     def main(argv):
         ap = argparse.ArgumentParser()
@@ -603,8 +586,7 @@ VLLM = csv_text(
 
 
 def test_probe_runs_export_to_the_quettasim_layout(tmp_path: Path) -> None:
-    """Every table lands where kernel_artifact_paths looks for it, in the dir
-    its rows' timing picks; files outside the rows stay home."""
+    """Every table lands where kernel_artifact_paths looks for it, in the dir its rows' timing picks; files outside the rows stay home."""
     results, dest = tmp_path / "results", tmp_path / "out"
     probe_run(
         results,
@@ -666,8 +648,7 @@ def test_probe_runs_export_to_the_quettasim_layout(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("vllm_first", [False, True])
 def test_vllm_all_reduce_rows_merge_over_the_collective_ones(tmp_path: Path, vllm_first) -> None:
-    """vllm_allreduce's all_reduce rows replace the collective probe's, and
-    the other ops keep their NCCL rows with path nccl, whichever ran last."""
+    """vllm_allreduce's all_reduce rows replace the collective probe's, and the other ops keep their NCCL rows with path nccl, whichever ran last."""
     results, dest = tmp_path / "results", tmp_path / "out"
     probe_run(results, "collective", {"graph/collectives/H100_tp2.csv": COLLECTIVE}, 1 - vllm_first)
     probe_run(results, "vllm_allreduce", {"graph/collectives/H100_tp2.csv": VLLM}, vllm_first)
@@ -742,9 +723,7 @@ FA_HEAD = ("n_heads", "n_kv_heads", "head_dim", "q_len", "latency_us")
 
 
 def test_overlapping_runs_union_their_rows(tmp_path: Path) -> None:
-    """Run A starts first and finishes last, run B starts later and finishes
-    first; each measured its own head config, so the export holds both, and
-    the head config both measured comes from A, the run that finished last."""
+    """Run A starts first and finishes last, run B starts later and finishes first; each measured its own head config, so the export holds both, and the head config both measured comes from A, the run that finished last."""
     results, dest = tmp_path / "results", tmp_path / "out"
     a = csv_text([FA_HEAD, (32, 8, 128, 1, 10.0), (32, 8, 128, 2, 11.0), (16, 2, 128, 1, 7.0)])
     b = csv_text([FA_HEAD, (64, 8, 128, 1, 20.0), (16, 2, 128, 1, 9.0), (16, 2, 128, 2, 9.5)])
@@ -769,8 +748,7 @@ GEMM_HEAD = ("M", "N", "K", "dtype_bytes", "latency_us")
 
 
 def test_gemm_rows_union_with_append_and_reset_without(tmp_path: Path) -> None:
-    """A gemm run without --append replaces the table, as it did when it
-    wrote the whole file; a run with --append adds its cells over it."""
+    """A gemm run without --append replaces the table, as it did when it wrote the whole file; a run with --append adds its cells over it."""
     results, dest = tmp_path / "results", tmp_path / "out"
     table = "graph/gemm/H100.csv"
     probe_run(results, "gemm", {table: csv_text([GEMM_HEAD, (1, 2, 3, 2, 9.0)])}, 0)
@@ -801,8 +779,7 @@ def test_reparallel_rows_upsert_on_their_key_and_sort(tmp_path: Path) -> None:
 
 
 def test_a_whole_table_comes_from_the_run_that_finished_last(tmp_path: Path) -> None:
-    """gdn writes its whole table each run (no row key): the latest finished
-    run's file, byte for byte, even when it started first."""
+    """gdn writes its whole table each run (no row key): the latest finished run's file, byte for byte, even when it started first."""
     results, dest = tmp_path / "results", tmp_path / "out"
     table = "eager/gdn/H100_9b_decode.csv"
     probe_run(results, "gdn", {table: "batch,us\n1,5\n"}, at=0, finished=100)
@@ -812,8 +789,7 @@ def test_a_whole_table_comes_from_the_run_that_finished_last(tmp_path: Path) -> 
 
 
 def test_elementwise_entries_union_with_gemm_fp8_quant(tmp_path: Path) -> None:
-    """The elementwise probe's latest run gives its entries whole; every gemm
-    run's fp8_act_quant goes over them, the later finished run winning a key."""
+    """The elementwise probe's latest run gives its entries whole; every gemm run's fp8_act_quant goes over them, the later finished run winning a key."""
     results, dest = tmp_path / "results", tmp_path / "out"
     table = "graph/elementwise/H100.json"
     probe_run(results, "elementwise", {table: '{"rms_norm": 1, "silu": 1}'}, 0)
@@ -838,8 +814,7 @@ def test_an_unmergeable_file_stops_the_export_before_anything_is_written(tmp_pat
 
 
 def test_the_manifest_names_only_runs_whose_rows_were_copied(tmp_path: Path) -> None:
-    """A run every one of whose rows a later run replaced, and a collective
-    run with only all_reduce rows, put nothing in the export."""
+    """A run every one of whose rows a later run replaced, and a collective run with only all_reduce rows, put nothing in the export."""
     results, dest = tmp_path / "results", tmp_path / "out"
     fa = "graph/flash_attn/H100.csv"
     probe_run(results, "flash_attn", {fa: csv_text([FA_HEAD, (32, 8, 128, 1, 9.0)])}, 0)
@@ -857,8 +832,7 @@ def test_the_manifest_names_only_runs_whose_rows_were_copied(tmp_path: Path) -> 
 
 
 def test_kernel_tables_go_to_their_own_dest_and_only_when_given(tmp_path: Path, capsys) -> None:
-    """--dest takes the other builders' files; the kernel tables go to the
-    QuettaSim data root given as --kernel-dest, and without it they are not built."""
+    """--dest takes the other builders' files; the kernel tables go to the QuettaSim data root given as --kernel-dest, and without it they are not built."""
     results, dest, data = tmp_path / "results", tmp_path / "out", tmp_path / "QuettaSim" / "data"
     probe_run(results, "gdn", {"eager/gdn/H100_9b_decode.csv": "g\r\n1\r\n"}, 0)
     with mock.patch.dict(
@@ -886,8 +860,7 @@ GEMM = "graph/gemm/H100.csv"
     "bad", ["M,N,K,us\r\n2,2\r\n", "M,N,K,us\r\n,2,2,6\r\n", "M,N,K,us\r\nx,2,2,6\r\n", "M,N,K,us\r\n1.0,1,1,9\r\n"]
 )
 def test_a_malformed_row_stops_the_export_and_leaves_dest_as_it_was(tmp_path: Path, bad) -> None:
-    """A row missing a key column, an empty or unparsable key (gemm's M is
-    an int, as the old upsert's int() read it): nothing is replaced."""
+    """A row missing a key column, an empty or unparsable key (gemm's M is an int, as the old upsert's int() read it): nothing is replaced."""
     results, dest = tmp_path / "results", tmp_path / "out"
     probe_run(results, "gdn", {"eager/gdn/H100_9b_decode.csv": "g\r\n1\r\n"}, 0)
     probe_run(results, "gemm", {GEMM: "M,N,K,us\r\n1,1,1,5\r\n"}, 1)
@@ -922,8 +895,7 @@ def test_a_malformed_rows_line_stops_the_export_naming_its_run(tmp_path: Path, b
 
 
 def test_numeric_keys_compare_as_numbers_and_a_runs_last_row_wins(tmp_path: Path) -> None:
-    """total_weight_gb 16 and 16.0 are one key; within one run's table the
-    last row on a key wins."""
+    """total_weight_gb 16 and 16.0 are one key; within one run's table the last row on a key wins."""
     head = ("gpu", "world", "tp_from", "tp_to", "total_weight_gb", "comm_ms")
     results, dest = tmp_path / "results", tmp_path / "out"
     table = "eager/reparallel/H100_reshard.csv"
@@ -939,8 +911,7 @@ def test_numeric_keys_compare_as_numbers_and_a_runs_last_row_wins(tmp_path: Path
 
 
 def test_a_gemm_csv_beside_the_elementwise_json_is_not_unioned(tmp_path: Path) -> None:
-    """Only gemm's elementwise .json unions across runs; any other file there
-    is the latest run's."""
+    """Only gemm's elementwise .json unions across runs; any other file there is the latest run's."""
     results, dest = tmp_path / "results", tmp_path / "out"
     probe_run(results, "gemm", {"graph/elementwise/H100.csv": "a\n1\n"}, 0)
     probe_run(results, "gemm", {"graph/elementwise/H100.csv": "a\n2\n"}, 1)
@@ -1063,8 +1034,7 @@ GEMM_ROW = "M,N,K,us\r\n1,1,1,5\r\n"
     ],
 )
 def test_each_probe_exports_to_a_quettasim_table_path(tmp_path: Path, probe, gpu, args, tables, want) -> None:
-    """Every exported table is a path QuettaSim main holds, with a sidecar
-    whose mode is in its vocabulary and belongs in the table's dir."""
+    """Every exported table is a path QuettaSim main holds, with a sidecar whose mode is in its vocabulary and belongs in the table's dir."""
     results, dest = tmp_path / "results", tmp_path / "out"
     probe_run(results, probe, tables, 0, gpu=gpu, args=args, finished=0)
     export([results], kernel_dest=dest, only=["kernel_tables"])
@@ -1118,8 +1088,7 @@ def test_kv_transfer_run_exports_to_eager_with_a_host_wallclock_sidecar(tmp_path
 
 
 def test_kv_transfer_rows_union_on_the_old_upsert_key(tmp_path: Path) -> None:
-    """The row key is kv_transfer.py's KEY, the columns its upsert replaced on;
-    layout stays a string, and the union is sorted on the key."""
+    """The row key is kv_transfer.py's KEY, the columns its upsert replaced on; layout stays a string, and the union is sorted on the key."""
     source = (Path(quettasim.__file__).parents[1] / "profiling" / "kv_transfer.py").read_text()
     (key,) = [
         ast.literal_eval(n.value)
@@ -1186,8 +1155,7 @@ def test_no_tables_found_writes_no_manifest(tmp_path: Path) -> None:
 
 
 def test_a_run_that_measured_no_rows_writes_no_table(tmp_path: Path) -> None:
-    """A table exists only through its rows: a gemm run with none neither
-    writes an empty table nor resets the earlier runs' rows."""
+    """A table exists only through its rows: a gemm run with none neither writes an empty table nor resets the earlier runs' rows."""
     results, dest = tmp_path / "results", tmp_path / "out"
     probe_run(results, "gemm", {GEMM: GEMM_ROW}, 0)
     probe_run(results, "gemm", {GEMM: "M,N,K,us\r\n"}, 1)
@@ -1217,8 +1185,7 @@ def seed(dest: Path, rel: str, text: str, meta: dict | None = None) -> Path:
 
 
 def test_a_dest_table_keeps_its_rows_and_a_newer_run_wins_a_key(tmp_path: Path) -> None:
-    """The dest table is the oldest source: its rows stay unless a run holds
-    their key, and a run's row replaces the dest row on the same key."""
+    """The dest table is the oldest source: its rows stay unless a run holds their key, and a run's row replaces the dest row on the same key."""
     results, dest = tmp_path / "results", tmp_path / "data"
     table = seed(dest, "graph/gemm/H100.csv", csv_text([GEMM_HEAD, (1, 1, 1, 2, 3.0), (2, 2, 2, 2, 4.0)]))
     probe_run(
@@ -1278,9 +1245,7 @@ def test_a_dest_json_table_is_the_oldest_source(tmp_path: Path) -> None:
     ],
 )
 def test_dropping_dest_rows_stops_unless_replace_tables(tmp_path: Path, capsys, probe, rel, old, new) -> None:
-    """A gemm run without --append, or a table with no row key, would drop
-    rows dest holds: the export stops naming the file and the row counts,
-    and --replace-tables (through the qbench export door) replaces it."""
+    """A gemm run without --append, or a table with no row key, would drop rows dest holds: the export stops naming the file and the row counts, and --replace-tables (through the qbench export door) replaces it."""
     from quettabench import cli
 
     results, dest = tmp_path / "results", tmp_path / "data"
@@ -1305,8 +1270,7 @@ def test_an_export_over_its_own_tables_changes_nothing(tmp_path: Path) -> None:
 
 
 def test_the_dest_sidecar_keeps_its_notes(tmp_path: Path) -> None:
-    """Fields qbench does not own (notes, and any QuettaSim adds) survive;
-    the ones it owns follow the export."""
+    """Fields qbench does not own (notes, and any QuettaSim adds) survive; the ones it owns follow the export."""
     results, dest = tmp_path / "results", tmp_path / "data"
     rel = "graph/gemm/H100.csv"
     table = seed(
@@ -1350,8 +1314,7 @@ def test_kept_dest_rows_timed_another_way_make_mode_unknown(tmp_path: Path) -> N
 
 
 def test_the_manifest_merges_per_table(tmp_path: Path) -> None:
-    """A second export of other tables keeps the first export's entries; each
-    entry names its runs, bench commit and export time."""
+    """A second export of other tables keeps the first export's entries; each entry names its runs, bench commit and export time."""
     first, second, dest = tmp_path / "a", tmp_path / "b", tmp_path / "data"
     probe_run(first, "gemm", {GEMM: GEMM_ROW}, 0)
     export([first], kernel_dest=dest, only=["kernel_tables"])
@@ -1379,8 +1342,7 @@ QS_FA_HEAD = (
 
 
 def test_a_flash_attn_run_over_quettasim_keeps_the_other_head_configs(tmp_path: Path) -> None:
-    """QuettaSim's graph/flash_attn holds several head configs; a run of one
-    replaces that config's rows only."""
+    """QuettaSim's graph/flash_attn holds several head configs; a run of one replaces that config's rows only."""
     results, dest = tmp_path / "results", tmp_path / "data"
     heads = [(32, 4, 128), (32, 8, 128), (64, 8, 128)]
     table = seed(
@@ -1404,9 +1366,7 @@ def test_a_flash_attn_run_over_quettasim_keeps_the_other_head_configs(tmp_path: 
 
 
 def test_a_vllm_allreduce_run_over_quettasim_collectives_keeps_the_nccl_ops(tmp_path: Path) -> None:
-    """QuettaSim's <gpu>_tp<N>.csv holds every op; a vllm_allreduce run's
-    all_reduce rows replace every all_reduce row of its world, as its upsert
-    did, and the other ops stay."""
+    """QuettaSim's <gpu>_tp<N>.csv holds every op; a vllm_allreduce run's all_reduce rows replace every all_reduce row of its world, as its upsert did, and the other ops stay."""
     results, dest = tmp_path / "results", tmp_path / "data"
     head = ("op", "world", "bytes", "latency_us", "dtype_bytes", "path")
     old = [
@@ -1459,8 +1419,7 @@ def test_a_stopped_merge_leaves_the_manifest_as_it_was(tmp_path: Path) -> None:
 
 
 def test_an_unreadable_source_run_stops_before_a_table_moves(tmp_path: Path) -> None:
-    """The kernel manifest reads the runs before kernel_tables builds, so its
-    sidecars never point at a manifest that was not written."""
+    """The kernel manifest reads the runs before kernel_tables builds, so its sidecars never point at a manifest that was not written."""
     results, dest = tmp_path / "results", tmp_path / "data"
     probe_run(results, "gemm", {GEMM: GEMM_ROW}, 0)
     (results / "other").mkdir()
@@ -1471,8 +1430,7 @@ def test_an_unreadable_source_run_stops_before_a_table_moves(tmp_path: Path) -> 
 
 
 def test_repeated_dest_samples_survive_an_append_on_another_key(tmp_path: Path) -> None:
-    """QuettaSim's gemm tables repeat (M, N, K) samples, which its loader
-    reduces by min: an --append run on another key keeps every one."""
+    """QuettaSim's gemm tables repeat (M, N, K) samples, which its loader reduces by min: an --append run on another key keeps every one."""
     results, dest = tmp_path / "results", tmp_path / "data"
     old = [GEMM_HEAD, (1, 1, 1, 2, 3.0), (1, 1, 1, 2, 2.5), (2, 2, 2, 2, 4.0)]
     table = seed(dest, "graph/gemm/H100.csv", csv_text(old))
@@ -1492,8 +1450,7 @@ def test_a_run_on_a_repeated_dest_key_replaces_every_sample(tmp_path: Path) -> N
 
 
 def test_many_repeated_dest_samples_all_stay(tmp_path: Path) -> None:
-    """63 dest rows over 38 keys, as QuettaSim's graph/gemm/H100.csv: an
-    --append run on a new key keeps all 63 and adds its one."""
+    """63 dest rows over 38 keys, as QuettaSim's graph/gemm/H100.csv: an --append run on a new key keeps all 63 and adds its one."""
     results, dest = tmp_path / "results", tmp_path / "data"
     old = [(m, 4096, 4096, 2, 1.0 + i) for i, m in enumerate([*range(1, 39), *range(1, 26)])]
     table = seed(dest, "graph/gemm/H100.csv", csv_text([GEMM_HEAD, *old]))
@@ -1506,8 +1463,7 @@ def test_many_repeated_dest_samples_all_stay(tmp_path: Path) -> None:
 
 
 def test_a_dict_upserted_dest_table_keeps_its_last_row_on_a_key(tmp_path: Path) -> None:
-    """reparallel's old upsert held its rows in a dict, so a dest key repeated
-    keeps its last row, as the run's own table does."""
+    """reparallel's old upsert held its rows in a dict, so a dest key repeated keeps its last row, as the run's own table does."""
     head = ("gpu", "world", "tp_from", "tp_to", "total_weight_gb", "comm_ms")
     results, dest = tmp_path / "results", tmp_path / "data"
     table = seed(
@@ -1535,8 +1491,7 @@ def test_dropping_a_dest_column_stops_unless_replace_tables(tmp_path: Path) -> N
 
 
 def test_replace_tables_replaces_only_the_tables_that_would_stop(tmp_path: Path) -> None:
-    """A gemm --append merge stays a merge under --replace-tables; a gdn
-    table that would lose rows is replaced."""
+    """A gemm --append merge stays a merge under --replace-tables; a gdn table that would lose rows is replaced."""
     results, dest = tmp_path / "results", tmp_path / "data"
     gemm = seed(dest, "graph/gemm/H100.csv", csv_text([GEMM_HEAD, (1, 1, 1, 2, 3.0), (2, 2, 2, 2, 4.0)]))
     gdn = seed(dest, "eager/gdn/H100_9b_decode.csv", "batch,us\n1,5\n2,6\n")
@@ -1553,9 +1508,7 @@ TP4_HEAD = ("op", "world", "bytes", "latency_us", "dtype_bytes")
 
 
 def test_a_collective_rerun_over_dest_updates_its_all_reduce_rows(tmp_path: Path) -> None:
-    """With no vllm_allreduce run beside it, a collective run's all_reduce
-    rows are its own measurement and replace dest's; a dest table with no
-    path column gets none."""
+    """With no vllm_allreduce run beside it, a collective run's all_reduce rows are its own measurement and replace dest's; a dest table with no path column gets none."""
     results, dest = tmp_path / "results", tmp_path / "data"
     old = [TP4_HEAD, ("all_reduce", 4, 2048, 26.0, 2), ("all_gather", 4, 2048, 13.0, 2)]
     table = seed(dest, "graph/collectives/H200_tp4.csv", csv_text(old))
@@ -1615,8 +1568,7 @@ def test_two_fresh_exports_in_a_row_give_the_same_tree(tmp_path: Path) -> None:
 
 
 def test_an_export_of_unchanged_tables_leaves_dest_bytes_alone(tmp_path: Path) -> None:
-    """Runs that hold what dest holds rewrite nothing: JSON keeps its
-    indent and final newline (or none), CSV its line ending."""
+    """Runs that hold what dest holds rewrite nothing: JSON keeps its indent and final newline (or none), CSV its line ending."""
     results, dest = tmp_path / "results", tmp_path / "data"
     tables = {
         "graph/elementwise/H100.json": '{\n    "rms_norm": {\n        "floor_us": 1.5\n    }\n}',
@@ -1633,8 +1585,7 @@ def test_an_export_of_unchanged_tables_leaves_dest_bytes_alone(tmp_path: Path) -
 
 
 def test_the_manifest_chains_runs_across_exports(tmp_path: Path) -> None:
-    """Dest rows a later export keeps carry the runs an earlier export
-    recorded for them, then the new runs."""
+    """Dest rows a later export keeps carry the runs an earlier export recorded for them, then the new runs."""
     first, second, dest = tmp_path / "a", tmp_path / "b", tmp_path / "data"
     probe_run(first, "gemm", {GEMM: csv_text([GEMM_HEAD, (1, 1, 1, 2, 3.0)])}, 0)
     export([first], kernel_dest=dest, only=["kernel_tables"])
@@ -1663,8 +1614,7 @@ def test_the_kernel_manifest_keeps_its_other_keys(tmp_path: Path) -> None:
 
 
 def test_a_kept_dest_sidecar_joins_notes_and_keeps_known_fields(tmp_path: Path) -> None:
-    """qbench's note is appended to dest's; a field qbench leaves null keeps
-    the value dest's sidecar had."""
+    """qbench's note is appended to dest's; a field qbench leaves null keeps the value dest's sidecar had."""
     results, dest = tmp_path / "results", tmp_path / "data"
     rel = "graph/gemm/H100.csv"
     table = seed(
@@ -1719,9 +1669,7 @@ def exported(work: Path) -> dict[str, bytes]:
 
 
 def test_rows_export_matches_the_per_probe_tables_export(tmp_path: Path) -> None:
-    """Every probe at TABLES_BASE and here, on the same mocked timings, over
-    QuettaSim's own H200 tables (cut to 40 rows) and into an empty dest,
-    exports byte-identical kernel_data: every table, sidecar and manifest entry."""
+    """Every probe at TABLES_BASE and here, on the same mocked timings, over QuettaSim's own H200 tables (cut to 40 rows) and into an empty dest, exports byte-identical kernel_data: every table, sidecar and manifest entry."""
     archive = subprocess.run(["git", "-C", str(ROOT), "archive", TABLES_BASE, "quettabench"], capture_output=True)
     if archive.returncode:
         pytest.skip(f"no {TABLES_BASE} in this clone")

@@ -79,8 +79,7 @@ def _error(fn, *args, **kwargs):
 
 
 def resolve(name, env, *sets):
-    """The loader's Config for one run yaml under exactly `env`, no tooling on
-    PATH; qwen as vmin_fit sized it (dense)."""
+    """The loader's Config for one run yaml under exactly `env`, no tooling on PATH; qwen as vmin_fit sized it (dense)."""
     with mock.patch.dict(os.environ, env, clear=True), mock.patch("shutil.which", return_value=None):
         (cfg,) = loader.load(RUNS / f"{name}.yaml", ["allow_unverified=true", *AS_VMIN_FIT.get(name, []), *sets])
     return cfg

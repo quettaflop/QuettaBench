@@ -1,6 +1,4 @@
-"""CPU stand-in for the transformers calls ReferenceDriver makes; records
-them in CALLS. The model's logits are torch.toy_logits of its input; the
-checkpoint has 4 decoder layers."""
+"""CPU stand-in for the transformers calls ReferenceDriver makes: records them in CALLS, logits are torch.toy_logits, 4 decoder layers."""
 
 import types
 

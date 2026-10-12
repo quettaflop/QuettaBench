@@ -829,8 +829,7 @@ class FitTest(unittest.TestCase):
         self.assertAlmostEqual(r2, 1.0)
 
     def test_noisy_three_points(self):
-        # xs mean 2, ys mean 2; sxx = 2, sxy = 1 -> slope 0.5, intercept 1.
-        # residuals (-0.5, 1, -0.5): ss_res 1.5, ss_tot 2 -> r2 0.25.
+        # slope 0.5, intercept 1; residuals (-0.5, 1, -0.5) give ss_res 1.5 of ss_tot 2, r2 0.25.
         self.assertEqual(fit([1, 2, 3], [1, 3, 2]), (0.5, 1.0, 0.25))
 
     def test_flat_ys_gives_r2_zero(self):

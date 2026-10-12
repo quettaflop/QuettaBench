@@ -1,7 +1,4 @@
-"""GPU smoke: the kernel probes on tiny grids each write a non-empty table, and with MODEL set a qbench run on the one-cell smoke grid writes run.json with a step and gpu metadata; the module skips without CUDA.
-
-MODEL=/path/to/weights python -m pytest tests/contracts/test_probes_gpu.py -v
-"""
+"""GPU smoke: each kernel probe writes a table on a tiny grid, and with MODEL set a one-cell qbench run writes run.json; skips without CUDA."""
 
 from __future__ import annotations
 

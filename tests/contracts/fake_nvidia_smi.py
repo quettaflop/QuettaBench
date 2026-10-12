@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""Stand-in nvidia-smi for power queries: GPU i draws 100 + 10*i watts.
-
-`-i 0,2` limits the reply to those ids; without it the box has four GPUs.
-"""
+"""Stand-in nvidia-smi power query: four GPUs, GPU i draws 100 + 10*i watts; `-i 0,2` limits the ids."""
 
 import sys
 

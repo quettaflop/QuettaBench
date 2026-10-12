@@ -1,9 +1,4 @@
-"""CPU stand-in for the two torch.cuda calls InProcessDriver.device makes,
-and for the tensor ops ReferenceDriver.score runs, on nested lists.
-
-toy_logits is the one model both the transformers and the vllm stubs
-score with, so their summaries must agree position for position.
-"""
+"""CPU stand-in for the torch.cuda calls and tensor ops the drivers use, on nested lists; toy_logits is the one model the transformers and vllm stubs share."""
 
 import contextlib
 import math
@@ -14,8 +9,7 @@ _TopK = namedtuple("_TopK", "values indices")
 
 
 def toy_logits(ids):
-    """Row p scores the token after ids[p] over a vocab of max(ids) + 2:
-    ids[p] + 1 wins by 0.5."""
+    """Row p scores the token after ids[p] over a vocab of max(ids) + 2: ids[p] + 1 wins by 0.5."""
     vocab = max(ids) + 2
     return [[-0.5 * (v - t - 1) ** 2 for v in range(vocab)] for t in ids]
 

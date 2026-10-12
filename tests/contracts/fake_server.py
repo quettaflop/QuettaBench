@@ -1,11 +1,4 @@
-"""Stand-in engine server: answers 200 on /health and keeps one child alive,
-as a tensor-parallel server keeps its workers.
-
-usage: fake_server.py <port> <state.json>; with --child it only sleeps.
-It binds first (port 0 takes a free one; a taken port exits 98), then
-state.json gets {pid, child_pid, mark, port}: mark is FAKE_MARK, port the
-one it bound, so a test can check it reached this server and no other.
-"""
+"""Stand-in server: 200 on /health, one child alive, writes {pid, child_pid, mark, port} to state.json; a taken port exits 98."""
 
 import errno
 import http.server

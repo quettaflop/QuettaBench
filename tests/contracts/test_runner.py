@@ -25,8 +25,7 @@ from tests.golden._harness import REPO
 
 
 def setUpModule():
-    """The loader reads os.environ when no env is given; run on an empty one,
-    so a caller's NCCL_*, GPU_UTIL or CUDA_VISIBLE_DEVICES never moves a result."""
+    """The loader reads os.environ when no env is given; run on an empty one, so a caller's NCCL_*, GPU_UTIL or CUDA_VISIBLE_DEVICES never moves a result."""
     patch = mock.patch.dict(os.environ, {}, clear=True)
     patch.start()
     unittest.addModuleCleanup(patch.stop)
@@ -213,8 +212,7 @@ class InProcessEnv(unittest.TestCase):
         self.assertEqual(run_one.call_count, 2)
 
     def test_probe_points_count_as_in_process(self):
-        """A probe point exports CUDA_VISIBLE_DEVICES into this process like an
-        in-process grid point, so the same rules hold for it."""
+        """A probe point exports CUDA_VISIBLE_DEVICES into this process like an in-process grid point, so the same rules hold for it."""
         probe = {"mode": "probe", "probe": "gemm", "probe_args": "--gpu-label A100"}
         for matrix, sets, refused in (
             ({"mode.probe_args": ["--gpu-label A", "--gpu-label B"]}, [], "set hardware.visible_devices"),
@@ -512,8 +510,7 @@ class ProbeMode(unittest.TestCase):
         self.assertEqual(doc["summary"], {"probe": "fake", "argv": argv})
 
     def test_probe_runs_on_the_runs_gpus(self):
-        """CUDA_VISIBLE_DEVICES is exported before the probe module is imported,
-        from hardware.visible_devices or else the idle GPUs, and recorded."""
+        """CUDA_VISIBLE_DEVICES is exported before the probe module is imported, from hardware.visible_devices or else the idle GPUs, and recorded."""
         seen = []
 
         def import_probe(name):
@@ -575,8 +572,7 @@ class ProbeMode(unittest.TestCase):
         self.assertEqual(prof["sources_run"], ["cost"])
 
     def test_overwrite_never_empties_a_dir_qbench_did_not_make(self):
-        """--overwrite empties only results/<run>/ itself, a real dir holding a
-        run marker; a symlink or a foreign dir is refused with its files kept."""
+        """--overwrite empties only results/<run>/ itself, a real dir holding a run marker; a symlink or a foreign dir is refused with its files kept."""
         run = {"mode": {"mode": "probe", "probe": "fake"}}
         with (
             scratch_configs("p", run) as (path, td),
@@ -611,8 +607,7 @@ class ProbeMode(unittest.TestCase):
                 (out / "run.json").unlink()
 
     def test_clearing_never_follows_a_dir_swapped_for_a_symlink(self):
-        """A run dir replaced by a symlink between the checks and the emptying
-        is moved aside as the link itself; the files it points at stay."""
+        """A run dir replaced by a symlink between the checks and the emptying is moved aside as the link itself; the files it points at stay."""
         with tempfile.TemporaryDirectory() as td:
             results, elsewhere = Path(td, "results"), Path(td, "elsewhere")
             out = results / "p"
@@ -645,8 +640,7 @@ class ProbeMode(unittest.TestCase):
             self.assertEqual(list(results.iterdir()), [])
 
     def test_an_interrupted_clear_leaves_no_run_export_reads(self):
-        """rmtree interrupted: the .clearing-* dir left holds no run marker,
-        and export never counts a .clearing-* dir as a run."""
+        """rmtree interrupted: the .clearing-* dir left holds no run marker, and export never counts a .clearing-* dir as a run."""
         from quettabench.export import quettasim
 
         with tempfile.TemporaryDirectory() as td:

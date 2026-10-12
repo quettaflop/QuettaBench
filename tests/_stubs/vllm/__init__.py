@@ -1,10 +1,4 @@
-"""CPU stand-in for the slice of vLLM the grid run touches.
-
-Records every constructor's kwargs in CALLS and runs generate() on a fake
-clock, so a test can drive a grid run (qbench run with mode.grid) end to end without a
-GPU. The real code targets an unpinned vLLM (see tests/golden/REPORT.md);
-only the names the InProcessDriver imports exist here.
-"""
+"""CPU stand-in for the slice of vLLM a grid run touches: records constructor kwargs in CALLS and runs generate() on a fake clock."""
 
 __version__ = "0.0.0+stub"
 
@@ -57,8 +51,7 @@ class Logprob:
 
 
 def _prompt_logprobs(ids, k):
-    """vLLM's shape: None at position 0, then per position the top-k tokens
-    plus the prompt token, scored by torch.toy_logits of the prefix."""
+    """vLLM's shape: None at position 0, then per position the top-k tokens plus the prompt token, scored by torch.toy_logits of the prefix."""
     import torch
 
     out = [None]
@@ -78,8 +71,7 @@ class _RequestOutput:
 
 
 def run_batch(prompts, sampling_params):
-    """One batch on the fake clock: LLM.generate's body, which the golden
-    harness's HTTP stand-in also runs for what a grid batch posts."""
+    """One batch on the fake clock: LLM.generate's body, which the golden harness's HTTP stand-in also runs for what a grid batch posts."""
     CLOCK.generate_calls += 1
     prompt_len = len(prompts[0]["prompt_token_ids"])
     n = sampling_params.max_tokens

@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
-"""Every kernel probe's main on CPU, then kernel_tables: the identity proof's driver.
-
-Usage: fake_probe_runs.py <code root> <work dir> <dest seed json>. torch, vLLM
-and NIXL are mocks and each timing call returns the next value of one counter,
-so two code trees that time the same points in the same order export the same
-tables. Writes <work>/data (seeded, then exported over twice), <work>/fresh and <work>/stop.txt.
-"""
+"""Runs every kernel probe's main on CPU with mocked timings, then kernel_tables: fake_probe_runs.py <code root> <work dir> <dest seed json>."""
 
 import contextlib
 import io
