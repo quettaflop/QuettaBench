@@ -1,4 +1,4 @@
-"""Aggregate request results into BenchmarkSummary: TTFT, TPOT, ITL and E2EL percentiles, failures counted apart."""
+"""Aggregate request results into BenchmarkSummary; failures are counted apart."""
 
 import re
 import statistics
@@ -7,40 +7,37 @@ from dataclasses import dataclass, field
 
 @dataclass
 class RequestResult:
-    """Per-request benchmark result, shared by every backend."""
-
     success: bool
-    ttft: float | None = None  # seconds
-    itl: list = field(default_factory=list)  # seconds
-    e2el: float | None = None  # seconds
+    ttft: float | None = None
+    itl: list = field(default_factory=list)
+    e2el: float | None = None
     input_tokens: int = 0
     output_tokens: int = 0
     error: str | None = None
-    # A timeout means the client cut the stream, so the slowest requests are missing from the latency tail.
+    # A timeout means the client cut the stream: the slowest requests are missing from the tail.
     error_kind: str | None = None  # "timeout" | "http_error" | "client_error"
-    # Without a usage block the token counts are 0 and throughputs are meaningless.
+    # Without a usage block token counts are 0 and throughputs are meaningless.
     usage_reported: bool = False
     # Held out of the summary by --discard-first; still kept in per_request.
     excluded_from_summary: bool = False
 
-    # Captured only when asked, to splice the engine reply into later turns; not written to the result JSON.
+    # Captured only on request, to splice the reply into later turns; not written to run.json.
     generated_text: str | None = None
-    # First-token rule: the chat endpoint's "first_payload_chunk" or completions' "first_nonempty_text".
+    # "first_payload_chunk" (chat) or "first_nonempty_text" (completions).
     ttft_rule: str | None = None
-    # TTFT start: "slot" (closed loop, the concurrency slot grant) or "arrival" (open loop, the scheduled arrival).
+    # "slot" (closed loop, concurrency slot grant) or "arrival" (open loop, scheduled arrival).
     ttft_basis: str | None = None
-    # Leading generated tokens equal to the trace's reference reply; None without output_token_ids and returned tokens.
+    # Leading tokens equal to the trace's reference reply; None without returned tokens.
     accepted_tokens: int | None = None
-    # Generated token ids, when the driver returns them. Not written.
+    # Not written to run.json.
     generated_token_ids: list | None = None
-    # {ctx, bs, tp, step_point, phase, attempt} for grid runs, else None.
+    # None outside grid runs.
     cell: dict | None = None
-    # Wall time of the one generate() the whole batch ran in; every row of the batch carries it.
+    # Every row of the batch carries the wall time of the one generate().
     batch_wall_s: float | None = None
-    # mode.returns=logits: {argmax, top2_gap, logprob}, entry i scoring prompt token i + 1.
+    # mode.returns=logits; entry i scores prompt token i + 1.
     logits: dict | None = None
 
-    # Client-side request shape and timing.
     request_index: int | None = None
     max_tokens_requested: int | None = None
     message_count: int | None = None
@@ -53,10 +50,10 @@ class RequestResult:
     client_queue_wait_s: float | None = None
     client_request_wall_s: float | None = None
 
-    turn_index: int | None = None  # 0-indexed
+    turn_index: int | None = None
     session_id: int | None = None
 
-    # Multi-turn cache estimate from per-session prompt-token deltas, not engine-reported prefix-cache hits.
+    # From per-session prompt-token deltas, not engine-reported prefix-cache hits.
     previous_context_tokens: int | None = None
     total_context_tokens: int | None = None
     new_prefill_tokens: int | None = None
@@ -75,7 +72,7 @@ class RequestResult:
 
     @property
     def tpot(self) -> float | None:
-        """Mean ITL past the first token; falls back to (e2el - ttft) / (output_tokens - 1) when ITL covers under 80% of tokens."""
+        """Falls back to (e2el - ttft) / (output_tokens - 1) when ITL covers under 80% of tokens."""
         wall_clock_ok = self.e2el is not None and self.ttft is not None and self.output_tokens > 1
         if self.itl:
             incomplete = self.output_tokens > 1 and len(self.itl) < 0.8 * (self.output_tokens - 1)
@@ -98,7 +95,6 @@ def annotate_request_observability(
     semaphore_acquired_at_s: float,
     completed_at_s: float,
 ) -> RequestResult:
-    """Attach client-side request shape and scheduling metadata."""
     result.request_index = request_index
     result.max_tokens_requested = int(getattr(request, "max_tokens", 0) or 0)
     messages = getattr(request, "messages", None) or ()
@@ -128,7 +124,7 @@ def annotate_multi_turn_cache_estimate(
     previous_output_tokens: int = 0,
     reply_in_cache: bool = False,
 ) -> RequestResult:
-    """Attach the cache estimate to a multi-turn result; with reply_in_cache the previous output counts as reusable prefix."""
+    """With reply_in_cache the previous output counts as reusable prefix."""
     result.session_id = session_id
     result.turn_index = turn_index
     result.previous_context_tokens = max(0, int(previous_context_tokens or 0))
@@ -169,18 +165,16 @@ def annotate_multi_turn_cache_estimate(
 
 @dataclass
 class BenchmarkSummary:
-    """Aggregated metrics for a benchmark run."""
-
     model: str = ""
     profile: str = ""
     concurrency: int = 0
     # Closed loop caps in flight at `concurrency`; open loop only sizes warmup with it.
     load_mode: str = ""
-    # Open-loop offered rate: sessions/s for multi-turn, requests/s for single-turn.
+    # Sessions/s for multi-turn, requests/s for single-turn.
     target_rate: float = 0.0
     sessions_completed: int = 0
     session_throughput: float = 0.0
-    warmup_concurrency: int = 0  # batch width warmup exercised
+    warmup_concurrency: int = 0
     num_requests: int = 0
     duration_s: float = 0.0
 
@@ -190,14 +184,14 @@ class BenchmarkSummary:
 
     successful_requests: int = 0
     failed_requests: int = 0
-    # Above 0 means the latency tail is censored: the slowest requests were cut off and are in no percentile.
+    # Above 0 the latency tail is censored and in no percentile.
     timeout_requests: int = 0
     error_kinds: dict = field(default_factory=dict)
     failed_with_partial_ttft: int = 0
-    # 0 means every token count and throughput is zero-filled, not measured.
+    # 0 means token counts and throughputs are zero-filled, not measured.
     usage_reported_requests: int = 0
 
-    # Over total wall clock; an open-loop run below saturation measures the offered rate here.
+    # Over total wall clock; below saturation this is the offered rate.
     request_throughput: float = 0.0  # req/s
     input_token_throughput: float = 0.0  # tok/s
     output_token_throughput: float = 0.0  # tok/s
@@ -210,10 +204,10 @@ class BenchmarkSummary:
     busy_output_token_throughput: float = 0.0
     busy_total_token_throughput: float = 0.0
 
-    # Time-weighted in-flight count over the busy window; far below concurrency means the run mostly drained.
+    # Far below concurrency means the run mostly drained.
     mean_inflight_requests: float = 0.0
     max_inflight_requests: int = 0
-    # Mean in-flight over each half of the run; rising means the queue is growing.
+    # Rising means the queue is growing.
     mean_inflight_first_half: float = 0.0
     mean_inflight_second_half: float = 0.0
 
@@ -230,7 +224,6 @@ class BenchmarkSummary:
     p90_tpot_ms: float = 0.0
     p99_tpot_ms: float = 0.0
 
-    # Every inter-token latency pooled across requests.
     mean_itl_ms: float = 0.0
     median_itl_ms: float = 0.0
     p90_itl_ms: float = 0.0
@@ -250,7 +243,7 @@ class BenchmarkSummary:
 
 
 def _busy_time_and_load(results) -> tuple[float, float, int]:
-    """(busy_time_s, mean_inflight, max_inflight); busy time is the union of in-flight intervals. Failed requests count, since they occupied the server."""
+    """Failed requests count: they occupied the server."""
     intervals = [
         (r.semaphore_acquired_at_s, r.completed_at_s)
         for r in results
@@ -265,7 +258,7 @@ def _busy_time_and_load(results) -> tuple[float, float, int]:
     busy = 0.0
     cur_start, cur_end = intervals[0]
     for start, end in intervals[1:]:
-        if start > cur_end:  # idle gap
+        if start > cur_end:
             busy += cur_end - cur_start
             cur_start, cur_end = start, end
         else:
@@ -287,7 +280,7 @@ def _busy_time_and_load(results) -> tuple[float, float, int]:
 
 
 def _inflight_halves(results) -> tuple[float, float]:
-    """Time-weighted mean in-flight over each half of the run; rising means the queue is growing, falling means drain dominates."""
+    """Falling means drain dominates."""
     intervals = [
         (r.semaphore_acquired_at_s, r.completed_at_s)
         for r in results
@@ -318,7 +311,7 @@ PERCENTILE_METHODS = ("nearest", "linear")
 
 
 def percentile(values, p: float, method: str) -> float:
-    """p-th percentile (0-100) of values; "nearest" raises on no values, "linear" returns 0.0, and the two disagree on most inputs."""
+    """ "nearest" raises on no values, "linear" returns 0.0; they disagree on most inputs."""
     if method not in PERCENTILE_METHODS:
         raise ValueError(f"unknown percentile method {method!r}; expected one of {PERCENTILE_METHODS}")
     sorted_data = sorted(values)
@@ -339,12 +332,10 @@ def percentile(values, p: float, method: str) -> float:
 
 
 def pcts(values, method: str) -> dict:
-    """{"p50", "p90", "p95", "p99"} percentiles of values by method."""
     return {f"p{q}": percentile(values, q, method) for q in (50, 90, 95, 99)}
 
 
 def summarize_serve(records, wall_s: float, method: str) -> dict:
-    """Serving summary of replay records: n, ttft/tpot percentiles, req/s and output tok/s over wall_s; raises on no records."""
     if not records:
         raise ValueError("no completed requests")
     ttft = [r["ttft_ms"] for r in records]
@@ -361,7 +352,7 @@ def summarize_serve(records, wall_s: float, method: str) -> dict:
 
 
 def sla_verdict(summary: dict, sla_ttft_ms, sla_tpot_ms) -> list[str]:
-    """Names of the p99 bounds summary breaks ("ttft_p99", "tpot_p99"); empty means PASS. A bound of None or 0 is not checked."""
+    """A bound of None or 0 is not checked; empty means PASS."""
     bound = []
     if sla_ttft_ms and summary["ttft_ms"]["p99"] > sla_ttft_ms:
         bound.append("ttft_p99")
@@ -372,7 +363,6 @@ def sla_verdict(summary: dict, sla_ttft_ms, sla_tpot_ms) -> list[str]:
 
 
 def acceptance(reference_ids, generated_ids) -> tuple[int, float]:
-    """Matched leading-token length and rate between the trace's real assistant tokens and what the engine generated."""
     n = 0
     for a, b in zip(reference_ids, generated_ids):
         if a != b:
@@ -382,7 +372,7 @@ def acceptance(reference_ids, generated_ids) -> tuple[int, float]:
 
 
 def burst_recovery(records, sla_ttft_ms, window_s: float = 5.0):
-    """(recovery_s, peak_p99) over arrival buckets of window_s seconds; recovery_s is the time from the worst bucket back under the SLA, else None."""
+    """recovery_s is the time from the worst bucket back under the SLA, else None."""
     if not records or sla_ttft_ms is None:
         return None, None
     rs = sorted(records, key=lambda r: r["arrival_s"])
@@ -408,7 +398,7 @@ def aggregate(
     target_rate: float = 0.0,
     warmup_concurrency: int = 0,
 ) -> BenchmarkSummary:
-    """Aggregate RequestResults into a BenchmarkSummary; requests held out by --discard-first are in no statistic, busy time included."""
+    """Requests held out by --discard-first are in no statistic, busy time included."""
     excluded = sum(1 for r in results if r.excluded_from_summary)
     results = [r for r in results if not r.excluded_from_summary]
 
@@ -446,7 +436,7 @@ def aggregate(
             if r.e2el is not None:
                 e2els.append(r.e2el * 1000)
         else:
-            # Failed requests stay out of every percentile; they are counted by kind so a censored tail shows.
+            # Failed requests stay out of percentiles; counted by kind so a censored tail shows.
             summary.failed_requests += 1
             kind = r.error_kind or "unknown"
             summary.error_kinds[kind] = summary.error_kinds.get(kind, 0) + 1
@@ -457,7 +447,6 @@ def aggregate(
             if r.error:
                 summary.errors.append(r.error)
 
-    # With held-out requests the window is the span of the kept ones.
     window_s = duration_s
     if excluded:
         spans = [
@@ -469,7 +458,7 @@ def aggregate(
             window_s = max(e for _, e in spans) - min(s for s, _ in spans)
     summary.measured_window_s = window_s
 
-    # Multi-turn open loop offers sessions, so the served rate to compare is session completions, not turns.
+    # Multi-turn open loop offers sessions, so the served rate counts session completions.
     session_ids = {r.session_id for r in results if r.session_id is not None}
     summary.sessions_completed = len(session_ids)
     if session_ids and window_s > 0:
@@ -523,8 +512,6 @@ def aggregate(
 
 @dataclass
 class TurnSummary:
-    """Per-turn metrics for a multi-turn run."""
-
     turn_index: int
     num_requests: int = 0
     successful: int = 0
@@ -561,7 +548,6 @@ class TurnSummary:
 
 
 def aggregate_per_turn(results_by_turn: dict[int, list]) -> list[TurnSummary]:
-    """Aggregate metrics per turn."""
     summaries = []
     for turn_idx in sorted(results_by_turn.keys()):
         results = results_by_turn[turn_idx]
@@ -658,11 +644,10 @@ def aggregate_per_turn(results_by_turn: dict[int, list]) -> list[TurnSummary]:
     return summaries
 
 
-# Run gates return (verdict, message): verdict is "pass", "warn" or "abort", message is None on pass.
+# Gates return (verdict, message): "pass", "warn" or "abort"; message None on pass.
 
 
 def success_rate_gate(summary, min_rate: float) -> tuple[str, str | None]:
-    """Abort when no request completed or the success rate is below min_rate."""
     if summary.num_requests == 0:
         return "abort", f"ABORT: No requests completed. Minimum success rate: {min_rate:.0%}"
     rate = summary.successful_requests / summary.num_requests
@@ -676,7 +661,7 @@ def success_rate_gate(summary, min_rate: float) -> tuple[str, str | None]:
 
 
 def usage_gate(summary, allow_missing: bool) -> tuple[str, str | None]:
-    """Abort (warn with allow_missing) when no successful response carried usage, since every token count and throughput would read 0."""
+    """Every token count and throughput would read 0."""
     if summary.successful_requests == 0 or summary.usage_reported_requests > 0:
         return "pass", None
     if allow_missing:
@@ -693,7 +678,7 @@ def usage_gate(summary, allow_missing: bool) -> tuple[str, str | None]:
 
 
 def transient_gate(num_requests: int, concurrency: int) -> tuple[str, str | None]:
-    """Warn when a closed-loop run has under 4 requests per slot: it is all startup wave and drain."""
+    """It is all startup wave and drain."""
     if concurrency <= 1 or num_requests <= 0:
         return "pass", None
     per_slot = num_requests / concurrency
@@ -711,7 +696,6 @@ def transient_gate(num_requests: int, concurrency: int) -> tuple[str, str | None
 
 
 def first_error(results) -> str:
-    """First recorded error text, for abort messages that name a cause."""
     for r in results:
         if r is not None and not r.success and r.error:
             return str(r.error)
@@ -768,13 +752,12 @@ def print_summary(s: BenchmarkSummary) -> None:
     print(
         f" Total token throughput:   {s.total_token_throughput:.0f} tok/s (busy: {s.busy_total_token_throughput:.0f})"
     )
-    # Open loop: did the server keep up with the offered rate.
     if s.load_mode == "open-loop" and s.target_rate > 0:
         if s.sessions_completed:
             served, unit = s.session_throughput, "sess/s"
         else:
             served, unit = s.request_throughput, "req/s"
-        # Overload shows as in-flight growth or served under 0.75x offered (the final drain reads slightly low).
+        # Overload shows as in-flight growth or served under 0.75x offered.
         growing = s.mean_inflight_first_half > 0.5 and s.mean_inflight_second_half > 1.5 * s.mean_inflight_first_half
         rate_short = served < 0.75 * s.target_rate
         print(
@@ -800,7 +783,7 @@ def print_summary(s: BenchmarkSummary) -> None:
         print("       The server was idle or draining for much of the run, so the")
         print("       throughput above reflects the schedule, not its capacity.")
 
-    # Growing in-flight means arrivals outran departures, so the averages depend on when measurement stopped.
+    # Growing in-flight means arrivals outran departures.
     _f, _s2 = s.mean_inflight_first_half, s.mean_inflight_second_half
     if _f > 0.5 and _s2 > 1.5 * _f:
         print(f" WARNING: in-flight grew {_f:.1f} -> {_s2:.1f} across the run ({_s2 / _f:.1f}x).")
@@ -808,7 +791,7 @@ def print_summary(s: BenchmarkSummary) -> None:
         print("          length and are not a steady-state measurement. Lower the")
         print("          offered load, or run long enough to reach equilibrium.")
 
-    # Steady decode has TPOT mean near median; a mean well above it means intermittent stalls.
+    # Steady decode has TPOT mean near median; a higher mean means stalls.
     if s.median_tpot_ms > 0 and s.mean_tpot_ms > 2.0 * s.median_tpot_ms:
         print(
             f" WARNING: TPOT mean ({s.mean_tpot_ms:.1f} ms) is "
@@ -819,7 +802,7 @@ def print_summary(s: BenchmarkSummary) -> None:
         print("          Usual causes: kernel JIT at an unwarmed batch shape, scheduler")
         print("          preemption, or host stalls. The median is the reliable figure.")
 
-    # Kernel JIT compiles per batch shape, so a width beyond what warmup exercised compiles during measurement.
+    # Kernel JIT compiles per batch shape: a width beyond warmup compiles during measurement.
     if s.warmup_concurrency and s.max_inflight_requests > s.warmup_concurrency:
         print(
             f" WARNING: peak in-flight ({s.max_inflight_requests}) exceeded the warmup width ({s.warmup_concurrency})."
@@ -864,7 +847,7 @@ def print_summary(s: BenchmarkSummary) -> None:
         print()
 
 
-# vLLM's speculative-decoding counters; they exist only on a server with spec decoding.
+# Only on a server with spec decoding.
 SPEC_COUNTERS = {
     "accepted_tokens": "vllm:spec_decode_num_accepted_tokens",
     "draft_tokens": "vllm:spec_decode_num_draft_tokens",
@@ -877,7 +860,7 @@ LABEL = re.compile(r'([a-zA-Z_][a-zA-Z0-9_]*)="((?:[^"\\]|\\.)*)"')
 
 
 def parse_prometheus(text):
-    """{name: value} for unlabeled samples and {(name, labels): value} for labeled ones; unparsable lines are skipped."""
+    """Unparsable lines are skipped."""
     out = {}
     for line in text.splitlines():
         line = line.strip()
@@ -897,21 +880,19 @@ def parse_prometheus(text):
 
 
 def counter_total(metrics, name):
-    """Sum of a counter over every label set, counting both X and X_total; None when absent."""
+    """Counts both X and X_total."""
     names = (name, name + "_total")
     vals = [v for k, v in metrics.items() if (k[0] if isinstance(k, tuple) else k) in names]
     return sum(vals) if vals else None
 
 
 def spec_counts(metrics):
-    """{accepted_tokens, draft_tokens, drafts} from parsed /metrics, each summed over engines; None when a counter is missing."""
     counts = {key: counter_total(metrics, name) for key, name in SPEC_COUNTERS.items()}
     return None if None in counts.values() else counts
 
 
-# A record's event k>0 arrives at t_first_wall + sum(deltas_ms[:k])/1e3.
+# Event k>0 arrives at t_first_wall + sum(deltas_ms[:k])/1e3.
 def summarize_cell(records: list[dict], min_samples: int = 64, lag_limit_ms: float = 2.0) -> dict:
-    """Cell row from raw per-request records."""
     if not records:
         raise ValueError("empty cell")
     b = len(records)

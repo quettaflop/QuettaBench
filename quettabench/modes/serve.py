@@ -1,4 +1,4 @@
-"""Send a Trace's requests through a Driver and collect one RequestResult row per request."""
+"""Send a Trace's requests through a Driver; one RequestResult row per request."""
 
 import asyncio
 import dataclasses
@@ -41,12 +41,12 @@ from ..workloads.sessions import SessionTrace, inter_turn_wait_s, sleep_until_el
 TRACE_REQUEST_ID_PREFIX = "agenticbench"
 IDENTITY_EXIT = 3
 DEFAULT_WORKLOAD = WorkloadCfg()
-RESERVE_GIB = 5.0  # per GPU, held back from the KV budget for activations and graphs
-TEXT_TOKENS = 64  # mode.returns=text: greedy tokens decoded per cell
+RESERVE_GIB = 5.0  # Per GPU, held back from the KV budget for activations and graphs.
+TEXT_TOKENS = 64
 
 
 class RunAborted(Exception):
-    """The run cannot produce a measurement; the message is the ABORT line."""
+    """The message is the ABORT line."""
 
 
 @asynccontextmanager
@@ -56,8 +56,6 @@ async def no_limit():
 
 @dataclass
 class Summary:
-    """One run: the aggregate (None for a grid run), the rows in summary order, the per-turn breakdown (multi-turn only) and extra run.json sections."""
-
     core: BenchmarkSummary
     rows: list
     turns: list = field(default_factory=list)
@@ -66,7 +64,7 @@ class Summary:
     reason: str | None = None
 
     def to_dict(self):
-        """run.json's summary; aggregate and per_turn percentiles are linear, serve/sla/burst nearest-rank."""
+        """aggregate and per_turn percentiles are linear; serve/sla/burst nearest-rank."""
         core = {**self.core.to_dict(), "percentile_method": "linear"} if self.core else {}
         out = {**core, **self.sections}
         if self.turns:
@@ -97,7 +95,7 @@ def trace_name(trace) -> str:
 
 
 def sampling(mode, request) -> dict:
-    """Sampling fields for one request; exact_output_length pins min_tokens."""
+    """exact_output_length pins min_tokens."""
     return {
         "ignore_eos": mode.ignore_eos or mode.exact_output_length,
         "temperature": mode.temperature,
@@ -107,7 +105,7 @@ def sampling(mode, request) -> dict:
 
 
 def arrival_offsets(trace, workload) -> list:
-    """Submission offsets for a single-turn trace; an injected schedule is stamped on arrival_ts so it joins the workload hash."""
+    """An injected schedule is stamped on arrival_ts so it joins the workload hash."""
     reqs = trace.requests()
     injected = parse_arrival(workload.arrival, len(reqs), workload.seed)
     if injected is None:
@@ -118,7 +116,7 @@ def arrival_offsets(trace, workload) -> list:
 
 
 async def warmup(trace, driver, mode, count, multi_turn):
-    """Send warmup requests over the run's own session, so its connections exist before timing; abort when none succeeds."""
+    """So connections exist before timing; abort when none succeeds."""
     if multi_turn and not mode.reset_prefix_cache:
         # Multi-turn warmup duplicates measured prompts rather than consuming them.
         print("WARNING: multi-turn warmup replays prompts the measured run will also send,")
@@ -142,7 +140,6 @@ async def warmup(trace, driver, mode, count, multi_turn):
 
 
 def emitter(mode, writer, probe=None):
-    """emit(request, result): stamp the TTFT basis, score acceptance against the trace's reply when the driver returned tokens, write the row."""
     basis = "arrival" if mode.load == "open" else "slot"
     tag = {} if probe is None else {"probe": probe}
 
@@ -156,7 +153,7 @@ def emitter(mode, writer, probe=None):
 
 
 async def replay(trace, driver, mode, emit, offsets, request_id):
-    """Single-turn dispatch; returns ([(request, result)] by index, start time). The first mode.discard_first requests stay out of the summary."""
+    """The first mode.discard_first requests stay out of the summary."""
     open_loop = mode.load == "open"
     slots = asyncio.Semaphore(mode.concurrency)
     reqs = trace.requests()
@@ -197,13 +194,11 @@ async def replay(trace, driver, mode, emit, offsets, request_id):
 
 
 def server_counters(driver):
-    """Spec-decode counters of the driver's server, or None."""
     counters = getattr(driver, "spec_counters", None)
     return counters() if counters else None
 
 
 async def measure(trace, driver, mode, emit, workload, request_id):
-    """Warm, reset, dispatch: (results, results_by_turn | None, [(request, result)], duration, server SPECSUM | None)."""
     multi = isinstance(trace, SessionTrace)
     offsets = None if multi else arrival_offsets(trace, workload)
     sessions = None
@@ -230,7 +225,6 @@ async def measure(trace, driver, mode, emit, workload, request_id):
 
 
 def serve_records(pairs, open_loop):
-    """Serving records from the successful counted rows: TTFT, wall-clock TPOT, output tokens and the burst bucket time."""
     out = []
     for _, r in pairs:
         if not r.success or r.excluded_from_summary:
@@ -249,7 +243,6 @@ def serve_records(pairs, open_loop):
 
 
 def spec_section(pairs):
-    """SPECSUM: mean accepted leading tokens and rate over the scored rows."""
     scored = [(r.accepted_tokens, len(q.output_token_ids)) for q, r in pairs if r.accepted_tokens is not None]
     if not scored:
         return {"spec": "off"}
@@ -262,7 +255,7 @@ def spec_section(pairs):
 
 
 def server_spec_section(before, after):
-    """SPECSUM from the server's counter deltas as vllm bench serve defines them; None without both scrapes or a draft in the window."""
+    """As vllm bench serve defines them; None without both scrapes or a draft in the window."""
     if before is None or after is None:
         return None
     d = {key: int(after[key] - before[key]) for key in after}
@@ -279,7 +272,7 @@ def server_spec_section(before, after):
 
 
 def crossval_sections(pairs, duration, mode, server_spec=None):
-    """serve (nearest-rank), sla, burst and spec; spec prefers the server's counters over the rows'."""
+    """spec prefers the server's counters over the rows'."""
     out = {"spec": server_spec or spec_section(pairs)}
     records = serve_records(pairs, mode.load == "open")
     if not records:
@@ -309,7 +302,7 @@ def crossval_sections(pairs, duration, mode, server_spec=None):
 
 
 def goodput_search(start=1.0, max_iters=6, tol=0.1):
-    """Generator bisection over speed: send() whether the last probe met the SLA; at most max_iters probes."""
+    """Generator bisection over speed: send() whether the last probe met the SLA."""
     lo = hi = None
     speed = start
     for _ in range(max_iters):
@@ -329,7 +322,7 @@ def goodput_search(start=1.0, max_iters=6, tol=0.1):
 
 
 def sweep(trace, driver, mode, writer, workload, request_id):
-    """--goodput-sweep: one measure() per probe speed, stopping at the first probe that breaks workload identity."""
+    """Stops at the first probe that breaks workload identity."""
     gen, probes, best, fail_bound = goodput_search(start=workload.speed), [], None, []
     speed = next(gen)
     while True:
@@ -370,13 +363,11 @@ def sweep(trace, driver, mode, writer, workload, request_id):
 
 
 def stop(writer, summary, status, reason, code):
-    """Close run.json with status and exit with code."""
     writer.finish(summary, status=status, reason=reason)
     sys.exit(code)
 
 
 def enforce(gate, writer, summary):
-    """Print a metrics.core gate's message; on abort close the run and exit 1."""
     verdict, message = gate
     if message:
         print(message)
@@ -385,12 +376,11 @@ def enforce(gate, writer, summary):
 
 
 def served(pairs):
-    """The requests the identity gate hashes: every one dispatched, failed or not, so the hash moves only when what was sent differs from the trace."""
+    """Failed or not: the hash moves only when what was sent differs."""
     return [q for q, _ in pairs]
 
 
 def identity(trace, served) -> dict:
-    """The served requests hashed the way the trace hashes itself."""
     expected, replayed = trace.workload_hash(), workload_hash(served)
     return {
         "expected": expected,
@@ -402,7 +392,6 @@ def identity(trace, served) -> dict:
 
 
 def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
-    """One measured run of trace through driver; a grid run reads its engine facts from writer.cfg."""
     if mode.grid:
         record, steps, rows = run_grid(trace, driver, writer.cfg, writer)
         summary = Summary(None, rows, sections={"grid": record})
@@ -467,7 +456,7 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
 
 
 def model_dir(model):
-    """engine.model when it is a local dir, else that Hugging Face repo id's snapshot in the local HF cache; never downloads."""
+    """Never downloads."""
     if os.path.isdir(model):
         return model
     try:
@@ -481,7 +470,7 @@ def model_dir(model):
 
 
 def kv_bytes_per_token(engine):
-    """engine.kv_bytes, else the dense formula over config.json, which counts every layer; hybrid and MLA stacks must set kv_bytes."""
+    """Hybrid and MLA stacks must set kv_bytes."""
     if engine.kv_bytes:
         return int(engine.kv_bytes)
     with open(os.path.join(model_dir(engine.model), "config.json")) as f:
@@ -497,7 +486,7 @@ def graph_mode(engine):
 
 
 def meta(cfg, gpu, version, eval_pos, steps):
-    """META key -> value, in the grid log's order; expert_parallel only when on."""
+    """expert_parallel only when on."""
     e, h = cfg.engine, cfg.hardware
     out = {
         "gpu": gpu,
@@ -522,14 +511,12 @@ def meta(cfg, gpu, version, eval_pos, steps):
 
 
 def capacity(engine, gpu_bytes, kv_b):
-    """(free GiB for KV across tp GPUs, KV tokens that fit; 0 when none)."""
     gpu_gib = gpu_bytes / GIB
     free_gib = engine.tp * (gpu_gib * engine.gpu_util) - engine.weights_gib - engine.tp * RESERVE_GIB
     return free_gib, int(free_gib * GIB / kv_b) if free_gib > 0 else 0
 
 
 def measure_cell(driver, writer, mode, steps, prompts, cell):
-    """The cell's batches in order: text run when asked, warm run at max(steps), then the fit passes; returns the fit rows."""
 
     def batch(step, phase, attempt=None, **extra):
         requests = [Request(ids, len(ids), output_length=step) for ids in prompts]
@@ -563,7 +550,6 @@ def measure_cell(driver, writer, mode, steps, prompts, cell):
 
 
 def score(driver, writer, prompts, cell):
-    """One scoring pass over the cell's prompts; rows carry logits, no time."""
     requests = [Request(ids, len(ids)) for ids in prompts]
     for r in driver.run(
         requests, cell={**cell, "step_point": None, "phase": "logits", "attempt": None}, returns="logits"
@@ -573,7 +559,7 @@ def score(driver, writer, prompts, cell):
 
 
 def score_grid(trace, driver, cfg, writer):
-    """One scoring pass per cell for a score-only driver; maxlen SKIPs apply and nothing is timed."""
+    """maxlen SKIPs apply and nothing is timed."""
     record, over = {"events": []}, set(trace.cells_over_maxlen)
     for ctx, bs in trace.cells:
         if (ctx, bs) in over:
@@ -586,7 +572,7 @@ def score_grid(trace, driver, cfg, writer):
 
 
 def run_bench(driver, cfg, writer):
-    """driver.cells past the SKIP rules, measured in one driver.run call; a KV SKIP needs engine.kv_bytes, engine.weights_gib and device memory."""
+    """A KV SKIP needs engine.kv_bytes, engine.weights_gib and device memory."""
     engine, hw, grid = cfg.engine, cfg.hardware, cfg.grid
     device = driver.device() if engine.kv_bytes and engine.weights_gib is not None else None
     cap = capacity(engine, device[1], engine.kv_bytes)[1] if device and device[1] else 0
@@ -610,7 +596,7 @@ def run_bench(driver, cfg, writer):
 
 
 def run_grid(trace, driver, cfg, writer):
-    """One grid run; returns (record, steps, rows): record feeds the grid stdout lines and run.json's grid section, steps is fit_run over the fit rows."""
+    """record feeds the grid stdout lines and run.json; steps is fit_run over fit rows."""
     if getattr(driver, "measures_steps", False):
         return run_bench(driver, cfg, writer)
     if getattr(driver, "scores_only", False):
@@ -674,7 +660,7 @@ def run_grid(trace, driver, cfg, writer):
 
 
 class SessionDispatcher:
-    """One multi-turn replay; send is the driver call, request_id names a request or returns None, emit takes each finished result."""
+    """request_id names a request or returns None; emit takes each result."""
 
     def __init__(self, trace, mode, workload, send, request_id, emit):
         self.trace, self.mode, self.workload = trace, mode, workload
@@ -696,7 +682,6 @@ class SessionDispatcher:
                 )
 
     async def run(self):
-        """(results in turn order, results_by_turn, [(request, result)] served, start)."""
         self.slots = asyncio.Semaphore(self.mode.concurrency)
         self.by_turn = {i: [] for i in range(self.max_turns)}
         self.served = []
@@ -792,7 +777,6 @@ class SessionDispatcher:
             )
 
     async def _turns(self, turns, index_of, arrive_at_s=None):
-        """One session's turns in order; stop at the first failure."""
         last = len(turns) - 1
         for request in turns:
             result = await self._dispatch(request, index_of(request), arrive_at_s if request.turn == 0 else None)

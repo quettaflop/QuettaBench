@@ -1,10 +1,10 @@
-"""Per-cell step fit: the slope of batch time against step count is the decode cost per step, the intercept the fixed cost (prefill and launch)."""
+"""Per-cell step fit: slope of batch time on step count is decode cost per step; intercept is fixed cost."""
 
 GIB = 1 << 30
 
 
 def fit(xs, ys):
-    """Least-squares line through (xs, ys) as (slope, intercept, r2); r2 is 0.0 when ys has no spread."""
+    """r2 is 0.0 when ys has no spread."""
     n = len(xs)
     mx, my = sum(xs) / n, sum(ys) / n
     sxx = sum((x - mx) ** 2 for x in xs)
@@ -18,17 +18,16 @@ def fit(xs, ys):
 
 
 def ms_at_eval(ms_slope, attn_share, eval_pos, mean_steps, ctx):
-    """ms_slope evaluated at ctx + eval_pos instead of the fit centroid; only attn_share grows with KV."""
+    """Only attn_share grows with KV."""
     return ms_slope * (1 + attn_share * (eval_pos - mean_steps) / (ctx + mean_steps))
 
 
 def _get(row, name):
-    """A row field from a RequestResult or from a BenchDriver dict row."""
     return row.get(name) if isinstance(row, dict) else getattr(row, name, None)
 
 
 def fit_run(rows, eval_pos, kv_bytes, weights_gib):
-    """One step entry per grid cell in order of first appearance; fit rows are fit per attempt and the highest r2 wins."""
+    """Rows are fit per attempt; the highest r2 wins."""
     cells = {}
     for row in rows:
         cell = _get(row, "cell")
@@ -49,7 +48,7 @@ def fit_run(rows, eval_pos, kv_bytes, weights_gib):
 
 def _fit_cell(key, attempts, eval_pos, kv_bytes, weights_gib):
     ctx, bs, tp = key
-    best = None  # (r2, slope, intercept, xs, ys)
+    best = None
     for walls in attempts.values():
         xs, ys = list(walls), list(walls.values())
         slope, inter, r2 = fit(xs, ys)

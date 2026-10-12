@@ -1,4 +1,4 @@
-"""RunWriter owns results/<run>/: requests.jsonl and rows.jsonl as rows finish, run.json once at the end."""
+"""RunWriter owns results/<run>/: rows as they finish, run.json at the end."""
 
 import dataclasses
 import json
@@ -13,16 +13,15 @@ from quettabench.config import env_map
 
 RUN_SCHEMA_VERSION = 1
 RUN_STATUSES = ("ok", "partial", "aborted", "failed")
-# Files only a run dir holds; a dir with one of them is a run dir.
 RUN_MARKERS = ("run.json", "requests.jsonl", "engine.json")
-# A name whose value is a secret, read after camelCase is split into words (authToken as auth_Token): one of these words anywhere in it, between _ . - or the ends ...
+# Secret name, after splitting camelCase into words: one of these words anywhere ...
 SECRET_WORD = (
     r"secrets?|password|passwd|pass|passphrase|credentials?|bearer|auth|oauth"
     r"|authorization|cookie"
 )
-# ... or one of these as its last word, so num_key_value_heads and prompt_token_ids are not secrets while HF_TOKEN is ...
+# ... or one of these as its last word (HF_TOKEN yes, num_key_value_heads no) ...
 SECRET_LAST = r"token|apikey|pat"
-# ... or key(s) as its last word after one of these, so OPENAI_API_KEY and private_key are secrets while cache_keys and --num-keys are not.
+# ... or key(s) as the last word after one of these (OPENAI_API_KEY yes, cache_keys no).
 KEY_OWNER = r"api|secret|private|access|auth|ssh|encryption|signing"
 # AWS_ACCESS_KEY_ID names the key pair.
 KEY_ID = r"access[_.-]key[_.-]id"
@@ -36,12 +35,12 @@ SPECIAL_TOKEN = re.compile(r"(?:eos|bos|pad|unk|sep|cls|mask)[_.-]token", re.IGN
 CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
 # One `Name: value` HTTP header as an argv item (curl -H).
 HEADER = re.compile(r"\s*(?P<name>[A-Za-z0-9_.-]+)\s*:\s*\S.*", re.DOTALL)
-# A string that holds a flag, or a NAME=value whose NAME is secret: a command line.
+# A flag, or a NAME=value whose NAME is secret: a command line.
 FLAG = re.compile(r"(^|\s)-")
 ASSIGN = re.compile(r"(?:^|[\s,])([A-Za-z_][A-Za-z0-9_.-]*)=")
 # One NAME=value of a comma-separated list (A=1,HF_TOKEN=X).
 LISTED = re.compile(r"(^|,)([A-Za-z_][A-Za-z0-9_.-]*)=([^,]*)")
-# NAME=value as a shell word in a command line, its value quoted or not (HF_TOKEN='X Y').
+# NAME=value as a shell word, value quoted or not (HF_TOKEN='X Y').
 SHELL_ASSIGN = re.compile(r"""(^|[\s;&|(])([A-Za-z_][A-Za-z0-9_.-]*)=((?:'[^']*'|"(?:[^"\\]|\\.)*"|[^\s'";&|()<>])+)""")
 # The password in scheme://user:password@host.
 URL_PASSWORD = re.compile(r"([A-Za-z][A-Za-z0-9+.-]*://[^\s/:@]*:)[^\s/@]+@")
@@ -58,14 +57,13 @@ def secret(name):
 
 
 def _secret_header(text):
-    """`Name: REDACTED` when text is one HTTP header with a secret name, else None."""
     header = HEADER.fullmatch(text)
     return f"{header['name']}: REDACTED" if header and secret(header["name"]) else None
 
 
 def redact_argv(argv, command=False):
-    """argv with every secret-named item's value replaced by REDACTED, across flag, NAME=X, header, comma-list and URL forms."""
-    # In a command line only a flag, bearer or authorization hides the next item, so a bare "pass" in free text hides nothing.
+    """Covers flag, NAME=X, header, comma-list and URL forms."""
+    # Only a flag, bearer or authorization hides the next item, so a bare "pass" hides nothing.
     out, hide = [], False
     for arg in argv:
         if isinstance(arg, (dict, list, tuple)):
@@ -108,7 +106,7 @@ def redact_argv(argv, command=False):
 
 
 def _redact_command(text):
-    """A one-string command line redacted as its shlex argv; a secret NAME=value word loses its whole value, quoted parts included."""
+    """A secret NAME=value word loses its whole value, quoted parts included."""
     words = SHELL_ASSIGN.sub(lambda m: f"{m[1]}{m[2]}=REDACTED" if secret(m[2]) else m[0], text)
     lexer = shlex.shlex(words, posix=True, punctuation_chars=True)
     lexer.whitespace_split, lexer.commenters = True, ""
@@ -123,7 +121,7 @@ def _redact_command(text):
 
 
 def redact(obj):
-    """obj with every secret replaced by REDACTED; the one rule for everything under results/."""
+    """The one rule for everything under results/."""
     if isinstance(obj, dict):
         out = {}
         for k, v in obj.items():
@@ -144,7 +142,7 @@ def redact(obj):
 
 
 def exit_status(exc):
-    """(status, reason) for a run that raised exc: aborted on Ctrl-C, ok on a clean SystemExit, failed otherwise."""
+    """aborted on Ctrl-C, ok on a clean SystemExit, failed otherwise."""
     if isinstance(exc, SystemExit) and exc.code in (None, 0):
         return "ok", None
     status = "aborted" if isinstance(exc, KeyboardInterrupt) else "failed"
@@ -152,14 +150,13 @@ def exit_status(exc):
 
 
 def write_atomic(path, text):
-    """Write via <path>.tmp and os.replace, so a poller (the profiler waits on run.json) sees the old file or the whole new one."""
+    """Via <path>.tmp and os.replace, so a poller sees the old file or the whole new one."""
     tmp = Path(f"{path}.tmp")
     tmp.write_text(text)
     os.replace(tmp, path)
 
 
 def stamp_pulled(path):
-    """Stamp provenance.pulled in UTC on a run pulled from another host."""
     doc = json.loads(Path(path).read_text())
     if not isinstance(doc, dict) or not isinstance(doc.setdefault("provenance", {}), dict):
         raise TypeError("run.json or its provenance is not an object")
@@ -168,7 +165,7 @@ def stamp_pulled(path):
 
 
 def bench_sha(repo=REPO):
-    """This checkout's commit, else QBENCH_SHA (set in the image), else empty; never raises."""
+    """Else QBENCH_SHA (set in the image), else empty; never raises."""
     try:
         sha = subprocess.run(
             ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=False
@@ -186,7 +183,7 @@ def _ms(seconds, digits=2):
     return round(seconds * 1000, digits)
 
 
-# RequestResult field -> jsonl key, written only when not None; seconds become milliseconds, rates keep four digits.
+# Written only when not None; seconds become milliseconds, rates keep four digits.
 OPTIONAL_MS = (
     "scheduled_at",
     "dispatch_started_at",
@@ -216,12 +213,10 @@ OPTIONAL_CACHE = (
     "new_prefill_blocks",
 )
 RATES = ("cache_hit_rate", "block_aligned_cache_hit_rate")
-# Fields written as they are when set.
 NEW_FIELDS = ("ttft_basis", "ttft_rule", "accepted_tokens", "cell", "batch_wall_s", "logits")
 
 
 def jsonl_row(r, **extra):
-    """One requests.jsonl line: timings in ms, the optional fields that are set, then extra."""
     row = {
         "success": r.success,
         "ttft_ms": _ms(r.ttft) if r.ttft else None,
@@ -257,12 +252,11 @@ def jsonl_row(r, **extra):
 
 
 def measured_row(row, **extra):
-    """A driver's dict row as a jsonl line, success and error first like a RequestResult row."""
+    """Success and error first, like a RequestResult row."""
     return {"success": True, "error": None, **row, **extra}
 
 
 def provenance(cfg, handle=None, driver=None, launch_env=None):
-    """Where a run's numbers came from: hardware, engine, code and launch env."""
     engine, hardware = cfg.engine, cfg.hardware
     return {
         "gpu": getattr(handle, "gpu", "") or "",
@@ -281,7 +275,7 @@ def provenance(cfg, handle=None, driver=None, launch_env=None):
 
 
 class RunWriter:
-    """results/<run>/requests.jsonl as rows finish, run.json at finish(); results_dir None writes nothing."""
+    """results_dir None writes nothing."""
 
     def __init__(self, results_dir, cfg, *, handle=None, driver=None, launch_env=None, exclusive=False):
         self.dir = Path(results_dir) if results_dir else None
@@ -298,7 +292,7 @@ class RunWriter:
             self._fh = (self.dir / "requests.jsonl").open("a")
 
     def discard(self):
-        """Remove requests.jsonl and the run dir while empty, for a run this process does not record."""
+        """For a run this process does not record."""
         self._close_probe_rows()
         if self._fh is not None:
             self._fh.close()
@@ -309,18 +303,16 @@ class RunWriter:
                     self.dir.rmdir()
 
     def bind(self, handle=None, driver=None):
-        """Fill in the provenance only a launch knows: the GPU and the engine version."""
         self.provenance["gpu"] = getattr(handle, "gpu", "") or ""
         self.provenance["engine_version"] = getattr(driver, "version", None)
 
     def fail(self, exc):
-        """run.json for a run that raised exc, unless finish() already wrote one."""
+        """Unless finish() already wrote one."""
         if not self.finished:
             status, reason = exit_status(exc)
             self.finish(None, status=status, reason=reason)
 
     def append(self, result, **extra):
-        """Write and flush one row; result is a RequestResult or a driver's dict row."""
         self.rows += 1
         row = measured_row(result, **extra) if isinstance(result, dict) else jsonl_row(result, **extra)
         if self._fh is not None:
@@ -328,7 +320,7 @@ class RunWriter:
             self._fh.flush()
 
     def probe_row(self, row):
-        """Append and flush one ProbeRow, so a crash keeps every row measured."""
+        """Flushed, so a crash keeps every row measured."""
         line = json.dumps(dataclasses.asdict(row)) + "\n"
         if self.dir is not None:
             if self._probe_fh is None:
@@ -342,7 +334,6 @@ class RunWriter:
             self._probe_fh = None
 
     def finish(self, summary, steps=None, status="ok", reason=None):
-        """Write run.json; returns its content. summary is a plain dict."""
         if status not in RUN_STATUSES:
             raise ValueError(f"run_status {status!r}; use one of {RUN_STATUSES}")
         self.provenance["finished"] = _now()
@@ -366,7 +357,7 @@ class RunWriter:
         return run
 
 
-# The crossval summary lines; the format is pinned by tests/golden.
+# Format pinned by tests/golden.
 PCTS = (50, 90, 95, 99)
 
 
@@ -382,7 +373,6 @@ def goodprobe_line(p):
 
 
 def summary_tag_lines(summary):
-    """SERVESUM, SLASUM, BURSTSUM, SPECSUM and GOODPUTSUM for the sections summary has, then WORKLOADSUM/WORKLOADVOID."""
     lines = []
     w = summary.get("workload")
     if w is not None:
@@ -442,14 +432,12 @@ def summary_tag_lines(summary):
 
 
 def print_summary_tag_lines(summary):
-    """Print summary_tag_lines(summary), flushed."""
     for line in summary_tag_lines(summary):
         print(line, flush=True)
 
 
-# A grid run's stdout lines; the format is pinned by tests/golden.
+# Format pinned by tests/golden.
 def grid_event_line(run, event):
-    """The SKIP, NOTE or RESULT line for one event of a grid run."""
     ctx, bs = event["ctx"], event["bs"]
     if event["event"] == "skip_maxlen":
         return f"SKIP ctx={ctx} bs={bs} reason=maxlen"
@@ -468,7 +456,7 @@ def grid_event_line(run, event):
 
 
 def grid_tag_lines(run):
-    """Every line a grid run record has reached so far, META through DONE."""
+    """META through DONE."""
     lines = []
     t = run.get("trace")
     if t is not None:
@@ -490,7 +478,7 @@ def grid_tag_lines(run):
 
 
 def print_grid_tag_lines(run, shown=0):
-    """Print the lines of grid_tag_lines(run) past the first `shown`; returns the new count."""
+    """Returns the new shown count."""
     lines = grid_tag_lines(run)
     for line in lines[shown:]:
         print(line, flush=True)
