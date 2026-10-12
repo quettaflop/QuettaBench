@@ -293,7 +293,7 @@ class LaunchVllm(unittest.TestCase):
         self.assertEqual(after, str(Path(sys.executable).with_name("vllm")))
 
     def test_each_live_probe_launch_is_pinned(self):
-        """argv and env of the two live-server probes' launches; what changed against their own launches before d7287c5 is in tests/golden/REPORT.md."""
+        """argv and env of the two live-server probes' launches."""
         from quettabench.probes import serving_decode_grid, serving_stage_split
 
         def launched(fn):

@@ -462,7 +462,7 @@ def _write_run(path: Path, cell: list[int], itl: float, lag: float, n: int = 4, 
 
 
 def test_lag_upgrade_default_off_keeps_check(tmp_path: Path) -> None:
-    # L13 amendment is OPT-IN: without --lag-upgrade a reproducible lag-only cell stays check (pre-L13 artifacts regenerate byte-identically).
+    # lag_upgrade is opt-in; without it a lag-only cell stays check.
     r1, r2 = tmp_path / "r1.jsonl.gz", tmp_path / "r2.jsonl.gz"
     _write_run(r1, [4, 2048], itl=7.0, lag=2.1)
     _write_run(r2, [4, 2048], itl=7.0, lag=2.05)
@@ -860,7 +860,7 @@ GEMM = "graph/gemm/H100.csv"
     "bad", ["M,N,K,us\r\n2,2\r\n", "M,N,K,us\r\n,2,2,6\r\n", "M,N,K,us\r\nx,2,2,6\r\n", "M,N,K,us\r\n1.0,1,1,9\r\n"]
 )
 def test_a_malformed_row_stops_the_export_and_leaves_dest_as_it_was(tmp_path: Path, bad) -> None:
-    """A row missing a key column, an empty or unparsable key (gemm's M is an int, as the old upsert's int() read it): nothing is replaced."""
+    """A row missing a key column, an empty or unparsable key (gemm's M is an int): nothing is replaced."""
     results, dest = tmp_path / "results", tmp_path / "out"
     probe_run(results, "gdn", {"eager/gdn/H100_9b_decode.csv": "g\r\n1\r\n"}, 0)
     probe_run(results, "gemm", {GEMM: "M,N,K,us\r\n1,1,1,5\r\n"}, 1)
@@ -1088,7 +1088,7 @@ def test_kv_transfer_run_exports_to_eager_with_a_host_wallclock_sidecar(tmp_path
 
 
 def test_kv_transfer_rows_union_on_the_old_upsert_key(tmp_path: Path) -> None:
-    """The row key is kv_transfer.py's KEY, the columns its upsert replaced on; layout stays a string, and the union is sorted on the key."""
+    """The row key is kv_transfer.py's KEY; layout stays a string, and the union is sorted on the key."""
     source = (Path(quettasim.__file__).parents[1] / "profiling" / "kv_transfer.py").read_text()
     (key,) = [
         ast.literal_eval(n.value)
@@ -1366,7 +1366,7 @@ def test_a_flash_attn_run_over_quettasim_keeps_the_other_head_configs(tmp_path: 
 
 
 def test_a_vllm_allreduce_run_over_quettasim_collectives_keeps_the_nccl_ops(tmp_path: Path) -> None:
-    """QuettaSim's <gpu>_tp<N>.csv holds every op; a vllm_allreduce run's all_reduce rows replace every all_reduce row of its world, as its upsert did, and the other ops stay."""
+    """QuettaSim's <gpu>_tp<N>.csv holds every op; a vllm_allreduce run's all_reduce rows replace every all_reduce row of its world, and the other ops stay."""
     results, dest = tmp_path / "results", tmp_path / "data"
     head = ("op", "world", "bytes", "latency_us", "dtype_bytes", "path")
     old = [
@@ -1463,7 +1463,7 @@ def test_many_repeated_dest_samples_all_stay(tmp_path: Path) -> None:
 
 
 def test_a_dict_upserted_dest_table_keeps_its_last_row_on_a_key(tmp_path: Path) -> None:
-    """reparallel's old upsert held its rows in a dict, so a dest key repeated keeps its last row, as the run's own table does."""
+    """A dest key repeated in the table keeps its last row, as the run's own table does."""
     head = ("gpu", "world", "tp_from", "tp_to", "total_weight_gb", "comm_ms")
     results, dest = tmp_path / "results", tmp_path / "data"
     table = seed(

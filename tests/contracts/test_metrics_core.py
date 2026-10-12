@@ -526,7 +526,7 @@ class TestUsageAccounting(unittest.TestCase):
         s = aggregate(results, duration_s=1.0)
         self.assertEqual(s.successful_requests, 1)
         self.assertEqual(s.usage_reported_requests, 0)
-        # This is exactly the shape that used to pass silently.
+        # a request with no usage block shows as zero tokens, not as a silent pass
         self.assertEqual(s.total_output_tokens, 0)
         self.assertEqual(s.output_token_throughput, 0.0)
 

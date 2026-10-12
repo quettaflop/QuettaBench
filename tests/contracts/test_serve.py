@@ -238,7 +238,7 @@ def tail(out, tag):
 
 
 class LineFormats(unittest.TestCase):
-    """Inputs and expected text taken from trace_serve.py's print statements."""
+    """Summary line text for fixed inputs."""
 
     def test_every_line(self):
         summary = {

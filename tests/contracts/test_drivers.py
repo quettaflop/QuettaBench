@@ -503,7 +503,7 @@ class TestTpotCoverageGuard(unittest.TestCase):
         # gpt-oss-on-vllm signature: 54 chunks for 269 tokens, one giant gap.
         itl = [2.505] + [0.0104] * 53
         r = RequestResult(success=True, ttft=0.25, e2el=3.32, itl=itl, output_tokens=269)
-        # Old definition: mean(itl) ~ 57 ms/token. Corrected: ~11.5 ms/token.
+        # wall clock gives ~11.5 ms/token; mean(itl) would say ~57.
         self.assertAlmostEqual(r.tpot, (3.32 - 0.25) / 268)
         self.assertLess(r.tpot, 0.013)
 

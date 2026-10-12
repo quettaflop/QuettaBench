@@ -23,7 +23,7 @@ def vmin_fit_kwargs(name, env, extra_argv=()):
 
 
 def serve_kwargs(name):
-    """engine_kwargs of the run yaml with --model and the workload's --tp, as the retired trace_serve.py built them, or the loader's refusal."""
+    """engine_kwargs for the workload's model and tp, or the loader's refusal."""
     tp = WORKLOADS[name].get("tp", 1)
     try:
         (cfg,) = loader.load(

@@ -17,7 +17,7 @@ from tests.golden._harness import FIXTURES, check_text, crossval_path, fresh_imp
 
 VMIN_FIT_LOG = "vmin_fit_llama.log"
 BASELINE = "baseline_llama.json"
-LEGACY_RESULT = (
+RESULT_LINE = (
     "RESULT mode=FULL tp=1 kv=float16 ctx=4096 bs=64 ms_per_step=19.874 "
     "r2=0.99950 prefill_s=1.10 raw=[2.29, 5.67, 9.05]"
 )
@@ -29,7 +29,7 @@ class VminFitLogGolden(unittest.TestCase):
         run = run_grid_cli(grid_argv("llama"), {})
         self.assertIsNone(run["exit"])
         log = "\n".join(line for line in run["stdout"] if VLLM_SH_FILTER.match(line)) + "\n"
-        check_text(self, VMIN_FIT_LOG, log + LEGACY_RESULT + "\n")
+        check_text(self, VMIN_FIT_LOG, log + RESULT_LINE + "\n")
 
 
 class CompatReaderGolden(unittest.TestCase):
