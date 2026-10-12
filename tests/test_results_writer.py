@@ -228,6 +228,30 @@ class Redaction(unittest.TestCase):
         self.assertEqual(results.redact(["-H", "Content-Type: application/json"]),
                          ["-H", "Content-Type: application/json"])
 
+    def test_a_bare_word_in_a_command_line_hides_nothing(self):
+        """In free text only a flag hides the next word: "pass" is a secret
+        word, but "pass the salt" is no secret."""
+        for text in ("Please - pass the salt", "You are a pass-through bot"):
+            self.assertEqual(results.redact({"note": text}), {"note": text})
+            self.assertEqual(results.redact(["--system-prompt", text]), ["--system-prompt", text])
+        self.assertEqual(results.redact({"cmd": "vllm serve m --api-key x"}),
+                         {"cmd": "vllm serve m --api-key REDACTED"})
+
+    def test_a_secret_assignment_without_a_flag_is_redacted(self):
+        self.assertEqual(results.redact({"cmd": "HF_TOKEN=sk vllm serve m"}),
+                         {"cmd": "HF_TOKEN=REDACTED vllm serve m"})
+        self.assertEqual(results.redact({"cmd": "export HF_TOKEN=sk; vllm serve"}),
+                         {"cmd": "export HF_TOKEN=REDACTED vllm serve"})
+        self.assertEqual(results.redact({"cmd": "HF_HOME=/h vllm serve m"}),
+                         {"cmd": "HF_HOME=/h vllm serve m"})
+
+    def test_a_json_value_in_an_argv_is_redacted_as_json(self):
+        self.assertEqual(results.redact(["vllm", "--hf-overrides", '{"api_key": "sk", "n": 1}']),
+                         ["vllm", "--hf-overrides", '{"api_key": "REDACTED", "n": 1}'])
+        self.assertEqual(results.redact({"cmd": """vllm serve --hf-overrides '{"api_key": "sk"}'"""}),
+                         {"cmd": """vllm serve --hf-overrides '{"api_key": "REDACTED"}'"""})
+        self.assertEqual(results.redact(["--x", '{"n":  1}']), ["--x", '{"n":  1}'])
+
     def test_passphrase_and_ssh_encryption_signing_keys_are_secret(self):
         names = {"passphrase": True, "SSH_KEY": True, "encryption_key": True,
                  "signing-key": True, "routing_key": False}

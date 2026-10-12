@@ -642,3 +642,14 @@ still removed; before, it raised and the remote dir was kept. Every
 probe parser takes no abbreviated flag (`add_output_args`, and
 `serving_stage_split` and `serving_decode_grid` themselves), and
 `remote_probe` refuses `--gpu-label` and `--gpu` among the probe args.
+
+2026-10-12: no fixture changed. In a command line held as one string,
+only a flag item hides the next word, so free text such as `Please -
+pass the salt` or `You are a pass-through bot` is kept whole; before, a
+bare secret word there (`pass`) replaced the next word with REDACTED. A
+mapping value with no flag but a secret `NAME=value` (`HF_TOKEN=sk vllm
+serve m`, `export HF_TOKEN=sk; vllm serve`) is redacted as a command
+line, rejoined by `shlex.join`, so the `;` stuck to the value goes with
+it. An argv item that is a JSON object or list (`--hf-overrides
+'{"api_key": "sk"}'`) is parsed, redacted and dumped again, and kept as
+written when it holds no secret.

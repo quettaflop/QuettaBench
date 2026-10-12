@@ -50,8 +50,9 @@ SPECIAL_TOKEN = re.compile(r"(?:eos|bos|pad|unk|sep|cls|mask)[_.-]token", re.IGN
 CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
 # One `Name: value` HTTP header as an argv item (curl -H).
 HEADER = re.compile(r"\s*(?P<name>[A-Za-z0-9_.-]+)\s*:\s*\S.*", re.DOTALL)
-# A string that holds a flag: a command line.
+# A string that holds a flag, or a NAME=value whose NAME is secret: a command line.
 FLAG = re.compile(r"(^|\s)-")
+ASSIGN = re.compile(r"(?:^|\s)([A-Za-z_][A-Za-z0-9_.-]*)=")
 REPO = Path(__file__).resolve().parents[2]
 
 
@@ -66,14 +67,16 @@ def _secret_header(text):
     return f"{header['name']}: REDACTED" if header and secret(header["name"]) else None
 
 
-def redact_argv(argv):
+def redact_argv(argv, command=False):
     """argv with the value of every secret-named item replaced by REDACTED,
     in the `--api-key X`, `password X`, `--api-key=X`, `NAME=X` (docker -e),
     `Authorization: Bearer X` (an HTTP header) and `--header=Name: X` forms;
     an item starting with '-' after a secret name is the next flag, kept.
-    An item holding whitespace (`sh -c "... --api-key X"`) is a command
-    line, redacted as one. Items need not be strings; a dict or list item (a header pair) goes
-    through redact."""
+    In a command line (command) only a flag hides the next item, so a bare
+    word like "pass" in free text hides nothing. An item holding whitespace
+    (`sh -c "... --api-key X"`) is a command line, redacted as one; a JSON
+    object or list item is redacted as JSON. Items need not be strings; a
+    dict or list item (a header pair) goes through redact."""
     out, hide = [], False
     for arg in argv:
         if isinstance(arg, (dict, list, tuple)):
@@ -90,10 +93,19 @@ def redact_argv(argv):
         if header:
             out.append(header)
             continue
+        if text[:1] in ("{", "["):
+            try:
+                doc = json.loads(text)
+            except ValueError:
+                doc = None
+            if isinstance(doc, (dict, list)):
+                hidden = redact(doc)
+                out.append(arg if hidden == doc else json.dumps(hidden))
+                continue
         name, eq, value = text.partition("=")
         if secret(name):
             arg = f"{name}=REDACTED" if eq else arg
-            hide = not eq
+            hide = not eq and (not command or text.startswith("-"))
         elif eq and _secret_header(value):
             arg = f"{name}={_secret_header(value)}"
         elif any(c.isspace() for c in text):
@@ -109,7 +121,7 @@ def _redact_command(text):
         parts, join = shlex.split(text), shlex.join
     except ValueError:
         parts, join = text.split(), " ".join
-    hidden = redact_argv(parts)
+    hidden = redact_argv(parts, command=True)
     return text if hidden == parts else join(hidden)
 
 
@@ -118,7 +130,8 @@ def redact(obj):
     In a mapping (an env, engine kwargs, a config) the value of every
     secret-named key, each item of it when it is a list; in a list (an argv)
     the value of every secret-named flag or NAME=; a mapping value that is a
-    command line in one string (holds a flag, as probe_args does) likewise.
+    command line in one string (holds a flag, as probe_args does, or a
+    secret NAME=value) likewise.
     run.json's provenance and config, the probe argv and the launcher's
     engine.json all go through it."""
     if isinstance(obj, dict):
@@ -127,7 +140,7 @@ def redact(obj):
             if secret(k) and not isinstance(v, dict):
                 out[k] = (["REDACTED" if not isinstance(x, dict) else redact(x) for x in v]
                           if isinstance(v, (list, tuple)) else "REDACTED")
-            elif isinstance(v, str) and FLAG.search(v):
+            elif isinstance(v, str) and (FLAG.search(v) or any(map(secret, ASSIGN.findall(v)))):
                 out[k] = _redact_command(v)
             else:
                 out[k] = redact(v)
