@@ -1,16 +1,12 @@
-"""commit-msg hook: the owner's commit rules (AGENTS.md, "How to change things").
-
-Usage: check_commit_msg.py <message-file>
-"""
+"""commit-msg hook: the owner's commit rules (AGENTS.md, "How to change things")."""
 
 import re
 import sys
 
 MAX_SUBJECT = 72
 SUBJECT = re.compile(r"^[a-z][a-z0-9_./-]*: \S")
-# Messages git writes itself, left as git writes them.
 GIT_SUBJECT = re.compile(r"^(Merge |Revert \"|fixup! |squash! )")
-# Any "<Word>-by:" trailer or "generated with/by" line: commits carry no authorship beyond the author field.
+# Commits carry no authorship beyond the author field.
 ATTRIBUTION = re.compile(r"^\s*[A-Za-z]+(?:-[A-Za-z]+)*-by:|generated (?:with|by)\b", re.IGNORECASE)
 DASHES = ("\u2014", "\u2013")
 

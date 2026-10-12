@@ -16,14 +16,13 @@ ABSENT = "<absent>"
 
 
 def returns_grid_kwargs(name, env, extra_argv=()):
-    """vllm.LLM's kwargs in a mode.returns grid run, the one path that still builds it."""
+    """The one path that still builds vllm.LLM."""
     run = run_grid_cli(grid_argv(name, "--allow-unverified", "--set", "mode.returns=text", *extra_argv), env)
     (kwargs,) = run["llm_kwargs"]
     return kwargs
 
 
 def serve_kwargs(name):
-    """engine_kwargs for the workload's model and tp, or the loader's refusal."""
     tp = WORKLOADS[name].get("tp", 1)
     try:
         (cfg,) = loader.load(
@@ -35,7 +34,6 @@ def serve_kwargs(name):
 
 
 def kwargs_diff(a, b):
-    """{key: [a value, b value]} for every key whose value differs."""
     return {
         k: [a.get(k, ABSENT), b.get(k, ABSENT)] for k in sorted(set(a) | set(b)) if a.get(k, ABSENT) != b.get(k, ABSENT)
     }

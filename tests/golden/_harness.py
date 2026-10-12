@@ -1,4 +1,4 @@
-"""Golden test plumbing: fixture compare and a CPU grid run through `qbench run` on the stubs; QBENCH_GOLDEN_REGEN=1 rewrites fixtures."""
+"""Golden plumbing: fixture compare and a CPU grid run on the stubs; QBENCH_GOLDEN_REGEN=1 rewrites."""
 
 import asyncio
 import contextlib
@@ -23,7 +23,7 @@ REGEN = os.environ.get("QBENCH_GOLDEN_REGEN") == "1"
 CROSSVAL_MODULES = ("quettabench",)
 STUB_MODULE_ROOTS = ("vllm", "torch", "transformers")
 
-# Llama-3.1-8B shaped config.json, 131072 KV bytes per token
+# Llama-3.1-8B shaped config.json, 131072 KV bytes per token.
 DENSE_CONFIG = {
     "hidden_size": 4096,
     "num_attention_heads": 32,
@@ -44,17 +44,16 @@ ENV_OVERRIDE = {
 
 RUNS = REPO / "configs" / "runs"
 
-# the loader refuses hybrid attention without kv_bytes, so the qwen golden run says dense
+# The loader refuses hybrid attention without kv_bytes, so the qwen golden run says dense.
 AS_VMIN_FIT = {"qwen": ["engine.attention=dense"]}
 
-# the one (ctx, bs) cell the fake clock makes noisy, to produce a RESULT line with r2 < 0.999
+# The one cell the fake clock makes noisy, to produce a RESULT line with r2 < 0.999.
 NOISY_CELL = (1024, 16)
 
 
 def check_json(case, name, actual):
-    """Compare actual against fixtures/<name>.json (or rewrite it under REGEN)."""
     path = FIXTURES / f"{name}.json"
-    actual = json.loads(json.dumps(actual))  # tuples become lists, as on disk
+    actual = json.loads(json.dumps(actual))  # Tuples become lists, as on disk.
     if REGEN:
         path.write_text(json.dumps(actual, indent=1, sort_keys=True) + "\n")
         return
@@ -62,7 +61,6 @@ def check_json(case, name, actual):
 
 
 def check_text(case, name, actual):
-    """Compare actual text against fixtures/<name> byte for byte (or rewrite it)."""
     path = FIXTURES / name
     if REGEN:
         path.write_text(actual)
@@ -78,7 +76,7 @@ def _drop_modules(roots):
 
 @contextlib.contextmanager
 def crossval_path(stubs=False):
-    """Fresh imports of quettabench, with the vllm/torch stubs if asked; dropped again on exit."""
+    """Dropped again on exit."""
     added = [str(REPO)] + ([str(STUBS)] if stubs else [])
     roots = CROSSVAL_MODULES + (STUB_MODULE_ROOTS if stubs else ())
     _drop_modules(roots)
@@ -98,7 +96,7 @@ def fresh_import(name):
 
 
 def fake_generate_seconds(prompt_len, batch, max_tokens, call_no):
-    """Linear decode cost in max_tokens (r2 is 1); NOISY_CELL bends one point so every attempt fits r2 < 0.999."""
+    """NOISY_CELL bends one point so every attempt fits r2 < 0.999."""
     step_ms = 4.0 + 0.0005 * prompt_len * batch / 8
     prefill_s = 0.02 + 2e-6 * prompt_len * batch
     bend = 0.3 if (prompt_len, batch) == NOISY_CELL and max_tokens == 230 else 0.0
@@ -106,7 +104,7 @@ def fake_generate_seconds(prompt_len, batch, max_tokens, call_no):
 
 
 class StandInServer:
-    """`vllm serve` on the stubs, reached through the aiohttp session HttpDriver opens; a grid batch runs as one vllm.run_batch."""
+    """A grid batch runs as one vllm.run_batch."""
 
     URL = "http://stand-in:8000"
 
@@ -114,7 +112,6 @@ class StandInServer:
         self.vllm, self.launcher, self.pending = vllm, launcher, []
 
     def start(self, spec, results_dir, **kwargs):
-        """launcher.start: the spec must name a server; the handle points here."""
         if not spec.server_argv:
             raise ValueError(f"{spec.adapter}: the spec has no server to launch")
         return self.launcher.NoServer(Path(results_dir), endpoint=self.URL)
@@ -138,7 +135,7 @@ class StandInServer:
         yield await self.answer(url, json)
 
     async def answer(self, url, body):
-        """Every post of a gather is pending before the first one resumes, so that one runs them all as one batch."""
+        """Every post of a gather is pending first, so one runs them all as one batch."""
         if url.endswith("/reset_prefix_cache"):
             return Reply([])
         entry = {"body": body}
@@ -157,8 +154,6 @@ class StandInServer:
 
 
 class Reply:
-    """An SSE response: one `data:` line per chunk, then [DONE]."""
-
     status = 200
 
     def __init__(self, chunks):
@@ -177,18 +172,15 @@ class Reply:
 
 
 def grid_argv(name, *extra):
-    """`qbench run` argv for a workload's grid run on the stub weights dir."""
     sets = ["engine.model=<MODEL>", *AS_VMIN_FIT.get(name, [])]
     return ["run", str(RUNS / f"{name}.yaml"), *[a for s in sets for a in ("--set", s)], *extra]
 
 
 def loader_message(exit_msg):
-    """A loader refusal without its `<file> [<run>]: ` prefix."""
     return exit_msg.split(": ", 1)[1]
 
 
 def run_grid_cli(argv, env, model_config=None):
-    """Run cli.main(argv) on the stubs under `env`; returns stdout lines, LLM kwargs, the generate() count and the SystemExit message if any."""
     with tempfile.TemporaryDirectory() as model_dir:
         Path(model_dir, "config.json").write_text(json.dumps(model_config or DENSE_CONFIG))
         argv = [a.replace("<MODEL>", model_dir) for a in argv]

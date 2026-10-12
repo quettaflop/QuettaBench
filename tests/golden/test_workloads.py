@@ -16,7 +16,6 @@ BLOCK = 512
 
 
 def describe_ids(ids, first_ids):
-    """Length, digest, head, and how many leading 512-token blocks match request 0."""
     shared = 0
     while (shared + 1) * BLOCK <= min(len(ids), len(first_ids)) and ids[
         shared * BLOCK : (shared + 1) * BLOCK
@@ -33,12 +32,12 @@ def describe_ids(ids, first_ids):
 
 
 def read_all(case, path):
-    """The trace through both entry points; ids must agree across them."""
+    """Ids must agree across both entry points."""
     with crossval_path(), mock.patch.dict(os.environ, {}, clear=True):
         live = fresh_import("quettabench.workloads.live")
         trace = live.RealTrace.from_jsonl(str(path))
         ds = live.MooncakeTrace(str(path))
-        served = [ds.get_next_request() for _ in range(6)]  # five lines, then the wrap
+        served = [ds.get_next_request() for _ in range(6)]
     reqs = [r.to_dict() for r in trace.requests()]
     case.assertEqual(
         [r["prompt_token_ids"] for r in reqs] + [reqs[0]["prompt_token_ids"]],

@@ -109,7 +109,7 @@ ARRAYS = {
 def _call(fn, *args):
     try:
         return fn(*args)
-    except Exception as e:  # the empty-array failure mode is part of the pin
+    except Exception as e:
         return {"error": type(e).__name__, "message": str(e)}
 
 

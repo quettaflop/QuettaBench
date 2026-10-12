@@ -1,7 +1,4 @@
-"""Fail on an em-dash or en-dash in the given files (owner rule: write -- instead).
-
-Usage: check_em_dash.py <file>...
-"""
+"""Fail on an em-dash or en-dash in the given files (write -- instead)."""
 
 import sys
 

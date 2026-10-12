@@ -27,14 +27,12 @@ from tests.golden._harness import (
 )
 
 SCENARIOS = {"cleared": {}, "override": ENV_OVERRIDE}
-# runs and grids added after the golden capture have no fixture entry
 ADDED_RUNS = {"decode_batch_llama", "llama-tp1-docker"}
 ADDED_GRIDS = {"decode_batch"}
 WORKLOAD_NAMES = sorted(p.stem for p in RUNS.glob("*.yaml") if p.stem not in ADDED_RUNS)
 WORKLOADS = json.loads((FIXTURES / "config_workloads.json").read_text())
 DRY_RUN_KEYS = ("engine.tp ", "engine.pp ", "engine.extra.quettaserve ", "grid.cells ")
 
-# An MLA stack (DeepSeek-V3 shaped config) declared without kv_bytes.
 MLA_CONFIG = {
     "hidden_size": 7168,
     "num_attention_heads": 128,
@@ -58,7 +56,6 @@ MLA_RUN = {"model": "mla_probe", "workload": {"kind": "grid"}, "mode": {"grid": 
 
 @contextlib.contextmanager
 def mla_run_yaml():
-    """configs/ copied to a scratch dir with the MLA model and its run added."""
     with tempfile.TemporaryDirectory() as td:
         configs = Path(td, "configs")
         shutil.copytree(REPO / "configs", configs)
@@ -69,24 +66,22 @@ def mla_run_yaml():
 
 
 def _error(fn, *args, **kwargs):
-    """The exception's builtin class (a ConfigError is a ValueError) and message."""
     try:
         fn(*args, **kwargs)
-    except Exception as e:  # the type is part of what is pinned
+    except Exception as e:  # The type is part of what is pinned.
         kind = next(c.__name__ for c in type(e).__mro__ if c.__module__ == "builtins")
         return {"type": kind, "message": str(e)}
     return None
 
 
 def resolve(name, env, *sets):
-    """The loader's Config for one run yaml under exactly `env`, no tooling on PATH; qwen as vmin_fit sized it (dense)."""
+    """qwen as vmin_fit sized it (dense)."""
     with mock.patch.dict(os.environ, env, clear=True), mock.patch("shutil.which", return_value=None):
         (cfg,) = loader.load(RUNS / f"{name}.yaml", ["allow_unverified=true", *AS_VMIN_FIT.get(name, []), *sets])
     return cfg
 
 
 def check_record(case, cfg, old, env):
-    """cfg holds every value xval_config resolved for the workload."""
     wl, e, m = old["workload"], cfg.engine, cfg.mode
     case.assertEqual(
         (e.model_name, e.dtype, e.weights_gib, e.max_model_len),
@@ -129,7 +124,6 @@ def resolve_dry_run(name, env):
 
 
 def resolve_global(env):
-    """Workload-independent values, as the loader resolves them for llama."""
     cfg = resolve("llama", env)
     grids, step_points = loader._read_grids(REPO / "configs")
     h = cfg.hardware
@@ -196,7 +190,7 @@ class ParseTimeFailuresGolden(unittest.TestCase):
             n: loader_message(run_grid_cli(grid_argv(n), {})["exit"]) for n in unverified
         }
         failures["run_yaml_missing"] = run_grid_cli(grid_argv("nope"), {})["exit"].replace(str(REPO), "<REPO>")
-        # the message lists every grid; drop the ones added after the capture
+        # The message lists every grid; drop the ones added after the capture.
         unknown_grid = loader_message(run_grid_cli(grid_argv("llama", "--set", "mode.grid=nope"), {})["exit"])
         for added in ADDED_GRIDS:
             unknown_grid = unknown_grid.replace(f", {added}", "")

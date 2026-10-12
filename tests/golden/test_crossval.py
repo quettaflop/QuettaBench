@@ -46,7 +46,6 @@ NOW = calendar.timegm(time.strptime("2026-09-21T14:13:20Z", "%Y-%m-%dT%H:%M:%SZ"
 
 
 def run_crossval(ours, theirs):
-    """crossval.main stdout, plus the SystemExit message when it exits."""
     out = io.StringIO()
     with tempfile.TemporaryDirectory() as td, crossval_path(), mock.patch.dict(os.environ, {}, clear=True):
         crossval = fresh_import("quettabench.crossval")
@@ -59,7 +58,6 @@ def run_crossval(ours, theirs):
 
 
 def run_dirs_text(bench_log, td):
-    """The text from run dirs built from bench_log and the golden baseline's data."""
     with contextlib.redirect_stdout(io.StringIO()):
         ours = bench_run_dir(Path(td) / "qs-llama", FIXTURES / bench_log)
         theirs = grid_run_dir(Path(td) / "vllm-llama")

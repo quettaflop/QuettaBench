@@ -111,8 +111,6 @@ class ProvisionPlanGolden(unittest.TestCase):
 
 
 class DockerCheck(unittest.TestCase):
-    """--backend docker: docker on PATH and the image present; never pulled."""
-
     def provision(self, run, *extra, docker="/usr/bin/docker", inspect_ok=False):
         calls = []
 
@@ -155,7 +153,7 @@ class DockerCheck(unittest.TestCase):
             lines,
         )
         self.assertIn(["docker", "image", "inspect", "vllm/vllm-openai:v0.26.0"], calls)
-        self.assertEqual([c for c in calls if "pip" in c], [])  # vllm lives in the image
+        self.assertEqual([c for c in calls if "pip" in c], [])
         self.assertIn("[provision] vllm: in the docker image", lines)
 
     def test_present_image_and_no_docker(self):
