@@ -759,3 +759,5 @@ points at `just run configs/runs/<wl>.yaml` instead of the removed
 2026-10-12: `bootstrap_plan.json` changed. A model yaml without a `quettaserve:` block no longer counts as MISSING: provision logs `llama: no quettaserve: block in its model yaml; vLLM side only` and resolves the vLLM side, so the gaps record shows llama's weights gap in place of the old block gap. Exit code and every other line are unchanged.
 
 2026-10-12: no fixture changed. `RealTrace.from_mooncake` is deleted (only tests called it); `test_workloads.py` reads the Mooncake fixtures through `RealTrace.from_jsonl` and `MooncakeTrace`, which give the same requests.
+
+2026-10-12: no fixture changed. `LegacyRandomTokenTrace` and `DoubleWrapRandomTokenTrace` are deleted with the runner's `random-legacy` and `random-doublewrap` datasets and their two pins above: no profile named them.
