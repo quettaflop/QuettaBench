@@ -1,4 +1,3 @@
-# Converted once from the retired configs/workloads.json + configs/xval.yaml; edit here.
 grids:
   llama:
   - [4096, 1]
@@ -21,7 +20,7 @@ grids:
   - [1024, 1]
   - [4096, 1]
   - [8192, 1]
-  table_h200:
+  table_big:
   - [1024, 1]
   - [1024, 4]
   - [1024, 16]
@@ -34,7 +33,7 @@ grids:
   - [16384, 4]
   - [16384, 16]
   - [16384, 64]
-  table_h200_big:
+  table_16k_bs64:
   - [16384, 64]
   prof:
   - [8192, 64]

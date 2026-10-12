@@ -1,4 +1,3 @@
-# Converted once from the retired configs/workloads.json + configs/xval.yaml; edit here.
 model: llama31_8b
 engine:
   dtype: bfloat16
@@ -10,4 +9,4 @@ workload:
   kind: grid
 mode:
   mode: serve
-  grid: table_h200_big
+  grid: table_16k_bs64

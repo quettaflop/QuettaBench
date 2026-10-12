@@ -90,8 +90,8 @@ For every workload the two kwargs dicts differ. Cells are
 | glm53 | `true` / absent | same | `true` / `false` | same | `33280` / `40960` | absent / `1` | `"fp8"` / absent |
 | glm53flash | `true` / absent | same | `true` / `false` | same | `33280` / `40960` | absent / `1` | `"fp8"` / absent |
 | llama | `true` / absent | `"float16"` / `"bfloat16"` | absent / `false` | same | `9216` / `40960` | absent / `1` | same |
-| llama-h200 | `true` / absent | `"float16"` / `"bfloat16"` | absent / `false` | same | `17408` / `40960` | absent / `1` | same |
-| llama-h200-fp8kv | `true` / absent | same | absent / `false` | `"fp8"` / absent | `17408` / `40960` | absent / `1` | same |
+| llama-big | `true` / absent | `"float16"` / `"bfloat16"` | absent / `false` | same | `17408` / `40960` | absent / `1` | same |
+| llama-big-fp8kv | `true` / absent | same | absent / `false` | `"fp8"` / absent | `17408` / `40960` | absent / `1` | same |
 | llama-tp1 | `true` / absent | `"float16"` / `"bfloat16"` | absent / `false` | same | `9216` / `40960` | absent / `1` | same |
 | llama-tp2 | `true` / absent | `"float16"` / `"bfloat16"` | absent / `false` | same | `9216` / `40960` | absent / `1` | same |
 | llama-tp4 | `true` / absent | `"float16"` / `"bfloat16"` | absent / `false` | same | `9216` / `40960` | absent / `1` | same |
@@ -107,7 +107,7 @@ kv_dtype, quant, expert_parallel; `XVAL_PP`/`GPU_UTIL` from env), trace_serve
 reads only its own argparse defaults plus `--tp`. These are semantic
 differences, not spelling: llama replays in bf16 against an fp16 baseline;
 deepseek, glm53 and glm53flash replay without expert parallel; deepseek and
-llama-h200-fp8kv replay with the default KV dtype instead of the workload's;
+llama-big-fp8kv replay with the default KV dtype instead of the workload's;
 glm53/glm53flash replay without `quantization="fp8"`. `XVAL_SERVE_ARGS` can
 add `--ep`, `--dtype`, `--max-model-len`, `--gpu-util`, but nothing derives
 them from the workload. `pipeline_parallel_size=1` vs absent is only a
@@ -769,3 +769,5 @@ points at `just run configs/runs/<wl>.yaml` instead of the removed
 2026-10-12: grid timing runs over HTTP; the golden harness serves them with `StandInServer`, which runs each posted batch on the stub engine, and every grid fixture (`vmin_fit_llama.log`, `config_workloads.json`, `engine_args.json`, the crossval tables) is byte-identical. The eleven `override` `vmin_fit` records in `config_workloads.json` are back: vLLM now serves `engine.pp` as `--pipeline-parallel-size` and `engine.cudagraph=false` as `--enforce-eager`, so the `XVAL_PP=2` timing grid launches the server again, and regenerating through `StandInServer` gives a file byte-identical to the one before c402771. `engine_args.json`'s kwargs are taken from a `mode.returns=text` run, the path that still builds `vllm.LLM`; they are unchanged.
 
 2026-10-12: deleted from `config_failures.json`: `disagg_oversubscribed` and `kv_role`, the messages of `schema.disagg_gpu_sets` and `schema.disagg_kv_config`. No adapter or run called either function; only these pins and their contract tests did, so the functions and their tests are deleted with them. Every other key is unchanged.
+
+2026-10-12: renamed, values unchanged. The runs `llama-h200` and `llama-h200-fp8kv` are now `llama-big` and `llama-big-fp8kv`, and the grids `table_h200` and `table_h200_big` are now `table_big` and `table_16k_bs64` (its one cell is ctx 16384 at batch 64), in `config_global.json`, `config_workloads.json`, `engine_args.json` and `config_failures.json`. Regenerating moved `table_16k_bs64` ahead of `table_big` in `config_global.json`'s sorted keys; no value changed.

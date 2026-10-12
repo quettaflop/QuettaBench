@@ -223,7 +223,7 @@
    "trust_remote_code": true
   }
  },
- "llama-h200": {
+ "llama-big": {
   "diff_vmin_fit_vs_trace_serve": {},
   "trace_serve": {
    "disable_log_stats": true,
@@ -273,7 +273,7 @@
    "trust_remote_code": true
   }
  },
- "llama-h200-fp8kv": {
+ "llama-big-fp8kv": {
   "diff_vmin_fit_vs_trace_serve": {},
   "trace_serve": {
    "disable_log_stats": true,

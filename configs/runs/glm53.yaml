@@ -1,4 +1,3 @@
-# Converted once from the retired configs/workloads.json + configs/xval.yaml; edit here.
 model: glm53
 workload:
   kind: grid

@@ -937,7 +937,7 @@
    }
   }
  },
- "llama-h200": {
+ "llama-big": {
   "cleared": {
    "dry_run": [
     "engine.tp = 1  (run)",
@@ -952,7 +952,7 @@
      "META vllm=0.0.0+stub",
      "META model=Llama-3.1-8B-Instruct",
      "META dtype=float16",
-     "META grid=table_h200",
+     "META grid=table_big",
      "META mode=FULL",
      "META eval_pos=50",
      "META step_points=[60, 230, 400]",
@@ -1036,7 +1036,7 @@
     },
     "workload": {
      "dtype": "float16",
-     "grid": "table_h200",
+     "grid": "table_big",
      "maxlen": 17408,
      "name": "Llama-3.1-8B-Instruct",
      "tp": 1,
@@ -1059,7 +1059,7 @@
      "META vllm=0.0.0+stub",
      "META model=Llama-3.1-8B-Instruct",
      "META dtype=float16",
-     "META grid=table_h200",
+     "META grid=table_big",
      "META mode=FULL",
      "META eval_pos=25",
      "META step_points=[60, 230, 400]",
@@ -1143,7 +1143,7 @@
     },
     "workload": {
      "dtype": "float16",
-     "grid": "table_h200",
+     "grid": "table_big",
      "maxlen": 17408,
      "name": "Llama-3.1-8B-Instruct",
      "tp": 1,
@@ -1153,7 +1153,7 @@
    }
   }
  },
- "llama-h200-fp8kv": {
+ "llama-big-fp8kv": {
   "cleared": {
    "dry_run": [
     "engine.tp = 1  (run)",
@@ -1168,7 +1168,7 @@
      "META vllm=0.0.0+stub",
      "META model=Llama-3.1-8B-Instruct",
      "META dtype=bfloat16",
-     "META grid=table_h200_big",
+     "META grid=table_16k_bs64",
      "META mode=FULL",
      "META eval_pos=50",
      "META step_points=[60, 230, 400]",
@@ -1197,7 +1197,7 @@
     },
     "workload": {
      "dtype": "bfloat16",
-     "grid": "table_h200_big",
+     "grid": "table_16k_bs64",
      "kv_bytes": 65536,
      "kv_dtype": "fp8",
      "maxlen": 17408,
@@ -1222,7 +1222,7 @@
      "META vllm=0.0.0+stub",
      "META model=Llama-3.1-8B-Instruct",
      "META dtype=bfloat16",
-     "META grid=table_h200_big",
+     "META grid=table_16k_bs64",
      "META mode=FULL",
      "META eval_pos=25",
      "META step_points=[60, 230, 400]",
@@ -1251,7 +1251,7 @@
     },
     "workload": {
      "dtype": "bfloat16",
-     "grid": "table_h200_big",
+     "grid": "table_16k_bs64",
      "kv_bytes": 65536,
      "kv_dtype": "fp8",
      "maxlen": 17408,

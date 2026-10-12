@@ -618,7 +618,7 @@ class TableParity(unittest.TestCase):
         self.assertNotIn("synchronized step", out)
 
     def test_h200_grid_is_the_table(self):
-        grid = {tuple(c) for c in _load_workloads()["grids"]["table_h200"]}
+        grid = {tuple(c) for c in _load_workloads()["grids"]["table_big"]}
         expected = {(c, b) for c in (1024, 8192, 16384) for b in (1, 4, 16, 64)}
         self.assertEqual(grid, expected)
 

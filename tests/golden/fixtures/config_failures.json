@@ -52,7 +52,7 @@
    "type": "ValueError"
   }
  },
- "vmin_fit_unknown_grid": "unknown grid 'nope'; grids: llama, llama_single, table_h200, table_h200_big, prof, deepseek, qwen, qwen3, smoke",
+ "vmin_fit_unknown_grid": "unknown grid 'nope'; grids: llama, llama_single, table_big, table_16k_bs64, prof, deepseek, qwen, qwen3, smoke",
  "vmin_fit_unknown_prompt_mode": "unknown prompt_mode 'random'; use distinct, clone, corpus or trace",
  "vmin_fit_unverified": {
   "deepseek": "deepseek is not validated yet; pass --allow-unverified to bring it up",
