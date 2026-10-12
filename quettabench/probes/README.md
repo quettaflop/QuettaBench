@@ -33,11 +33,11 @@ the rows of every ok run of its probe, keyed as the probe's old upsert was (flas
 and cross_attn on the head config `n_heads, n_kv_heads, head_dim`; gemm on `M, N, K`;
 moe on `tokens, n_experts, top_k, intermediate, hidden`; reparallel on
 `gpu, world, tp_from, tp_to, total_weight_gb`; gemm's `fp8_act_quant` on its JSON key),
-and on a key conflict the run with the latest `provenance.finished` wins. A gemm or moe
+and on a key conflict the run with the latest `provenance.pulled` (else `provenance.finished`) wins. A gemm or moe
 run without `--append` drops the rows of runs that finished before it. A table with no
 row key (one table per run: collective, vllm_allreduce, elementwise, gdn, moe routing)
-comes from the run with the latest `provenance.finished`; collective and vllm_allreduce
-then merge as below. A probe that names its output file
+comes from the run with the latest `provenance.pulled` (else `provenance.finished`); collective
+and vllm_allreduce then merge as below. A probe that names its output file
 (`serving_stage_split --out`, `serving_decode_grid --out-raw`) writes its `run.json`
 beside that file and refuses a dir that already exists, so give each run a file
 in a new dir. Every probe run opens its `requests.jsonl` before it starts, so a run killed
@@ -54,8 +54,15 @@ sidecar QuettaSim's `tools/kernel_manifest.py check` requires (mode, tool, reduc
 gpu, measured). Two merges: the collective
 probe's and vllm_allreduce's `ncu/collectives/{gpu}_tp{N}.csv` become one table,
 vllm_allreduce's `all_reduce` rows over the collective probe's; gemm's `fp8_act_quant`
-joins the elementwise probe's `elementwise/{gpu}.json`. `kernel_data/qbench_manifest.json` names the runs
-with rows in each table; with no table found it is not written. The R2 mirror (`just mirror-up`, `mirror-down`) is a backup of
+joins the elementwise probe's `elementwise/{gpu}.json`. A table QuettaSim already holds is
+the oldest source: its rows stay unless a run holds their key (collectives on `op, world,
+bytes`), a JSON table's entries likewise, and its sidecar keeps its `notes` and other fields.
+Where its rows would be dropped (a table with no row key, a gemm or moe run without `--append`)
+the export stops naming the file and its row counts; `--replace-tables` replaces the tables
+and sidecars instead. `kernel_data/qbench_manifest.json` names the runs with rows in each
+table (`adopted from dest` first when dest rows stayed), with the bench commit and export
+time, and keeps the entries of tables this export did not write; with no table found it is
+not written. The R2 mirror (`just mirror-up`, `mirror-down`) is a backup of
 `results/probes/` under `profiling/qbench_probes/`, in the same `<gpu>/<probe>/<run-id>/`
 layout; QuettaSim never reads it. Schema
 contract: filenames `{gpu}[_tpN].csv`, method split `ncu/` (graphed decode) vs
@@ -149,7 +156,7 @@ PYTHON_BIN=/home/<user>/miniconda3/envs/vllm/bin/python \
 | `moe_routing` | `moe_routing/{model}_layer{L}.safetensors` | one MoE block's input, output, routing (topk_idx/topk_weight or router_logits) and stage tensors from one prefill, for an engine-side diff of routing, dispatch and combine; `--layers N` cuts the model like `engine.layers` (slice verification, see `crossval/agreement.py`) |
 | `reparallel` | `cuda_event/reparallel/{gpu}_reshard[_dp\|_ep].csv` | torchrun; NVLink cost of switching parallelism in place (tp reshard, dp replica broadcast, ep expert restage; `--mode xnode/plan` for cross-node, see the probe header) |
 | `kv_transfer` (now `quettabench/profiling/kv_transfer.py`, run under torchrun and recorded like a probe; the export unions its runs on the old upsert key; profiler source reads one run's CSV) | `cuda_event/kv_transfer/{gpu}_nixl.csv` | PD KV hand-off through NIXL/UCX, laid out as vLLM's NixlConnector issues it (descriptor list per (layer, block)) |
-| `pd_host` (now `quettabench/profiling/pd_host.py`, a profiler source) | `cuda_event/pd_host/{gpu}.csv` | per-request HOST cost of a PD pair by prompt length (parse/template/tokenize/hash, paid on P and again on D) |
+| `pd_host` (now `quettabench/profiling/pd_host.py`, a profiler source; profile only, not exported) | the CSV at `--out` (e.g. `results/pd_host/{gpu}_pd_host.csv`), and profile.json `pd_host` | per-request HOST cost of a PD pair by prompt length (parse/template/tokenize/hash, paid on P and again on D) |
 | `fused_block` | `validation/fused_block_profile_{model}_tp{N}_{gpu}.csv` | ONE real transformer-block forward, to check the additivity assumption in `fused_step_ms` without a checkpoint; model shapes from QuettaSim's `engine/device_spec/models/` (`--spec-dir`) |
 
 The decode-step-vs-batch curve the old `decode_batch_probe.py` measured is a grid run now:

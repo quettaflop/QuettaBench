@@ -4,7 +4,7 @@ vLLM's production kernel (`vllm_flash_attn.flash_attn_varlen_func`, fa_version=3
 on Hopper). Emits the kernel_floor loader schemas with the grids' ALL-LAYERS
 convention (per-call median x --layers).
 
-  python3 -m quettabench.probes.fa_grid --n-heads 16 --n-kv-heads 4 --tag fa3-tp2 --out <dir>
+  python3 -m quettabench.probes.flash_attn --n-heads 16 --n-kv-heads 4 --tag fa3-tp2 --gpu-label H200
 
 The unsharded config (32/8) doubles as cross-validation against the NCU grid.
 """

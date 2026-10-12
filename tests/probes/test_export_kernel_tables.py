@@ -109,7 +109,7 @@ def test_probe_runs_export_to_the_quettasim_layout(tmp_path: Path) -> None:
     manifest = json.loads((dest / "kernel_data" / "qbench_manifest.json").read_text())
     runs = manifest["kernel_tables"]
     assert set(runs) == set(got)
-    assert [Path(r).parent.name for r in runs["graph/collectives/H100_tp2.csv"]] == [
+    assert [Path(r).parent.name for r in runs["graph/collectives/H100_tp2.csv"]["runs"]] == [
         "collective", "vllm_allreduce"]
 
 
@@ -188,7 +188,7 @@ def test_overlapping_runs_union_their_rows(tmp_path: Path) -> None:
         ["32", "8", "128", "1", "10.0"], ["32", "8", "128", "2", "11.0"],
         ["16", "2", "128", "1", "7.0"]]
     runs = json.loads((dest / "kernel_data" / "qbench_manifest.json").read_text())["kernel_tables"]
-    assert [Path(r).name for r in runs["graph/flash_attn/H100.csv"]] == [
+    assert [Path(r).name for r in runs["graph/flash_attn/H100.csv"]["runs"]] == [
         "20261011T120001.000000Z", "20261011T120000.000000Z"]
 
 
@@ -272,7 +272,8 @@ def test_the_manifest_names_only_runs_whose_rows_were_copied(tmp_path: Path) -> 
     assert [Path(r).parent.name for r in used["graph/collectives/H100_tp2.csv"]] == ["vllm_allreduce"]
     assert [Path(r).name for r in used["graph/flash_attn/H100.csv"]] == ["20261011T120001.000000Z"]
     export([results], kernel_dest=dest, only=["kernel_tables"])
-    assert json.loads((dest / "kernel_data" / "qbench_manifest.json").read_text())["kernel_tables"] == used
+    manifest = json.loads((dest / "kernel_data" / "qbench_manifest.json").read_text())
+    assert {rel: entry["runs"] for rel, entry in manifest["kernel_tables"].items()} == used
 
 
 def test_kernel_tables_go_to_their_own_dest_and_only_when_given(tmp_path: Path, capsys) -> None:
@@ -314,7 +315,7 @@ def test_a_malformed_row_stops_the_export_and_leaves_dest_as_it_was(tmp_path: Pa
     probe_run(results, "gdn", {"cuda_event/gdn/H100_9b_decode.csv": "g2\n"}, 2)
     probe_run(results, "gemm", {GEMM: bad}, 3, args=["--append"])
     with pytest.raises(SystemExit, match=r"graph/gemm/H100.csv: .*20261011T120003.000000Z row 1 malformed"):
-        export([results], kernel_dest=dest, only=["kernel_tables"])
+        export([results], kernel_dest=dest, only=["kernel_tables"], replace_tables=True)
     assert tree(dest) == before
 
 
@@ -511,3 +512,196 @@ def test_unparsable_probe_args_stop_the_export_naming_the_run(tmp_path: Path) ->
     record.write_text(json.dumps(doc))
     with pytest.raises(SystemExit, match=r"20261011T120000.000000Z.*probe_args"):
         kernel_tables.run([results], tmp_path / "out")
+
+
+def seed(dest: Path, rel: str, text: str, meta: dict | None = None) -> Path:
+    """A table QuettaSim already holds at dest/kernel_data/rel, with its sidecar."""
+    path = dest / "kernel_data" / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+    if meta is not None:
+        path.with_name(path.name + ".meta.json").write_text(json.dumps(meta))
+    return path
+
+
+def test_a_dest_table_keeps_its_rows_and_a_newer_run_wins_a_key(tmp_path: Path) -> None:
+    """The dest table is the oldest source: its rows stay unless a run holds
+    their key, and a run's row replaces the dest row on the same key."""
+    results, dest = tmp_path / "results", tmp_path / "data"
+    table = seed(dest, "graph/gemm/H100.csv", csv_text([GEMM_HEAD, (1, 1, 1, 2, 3.0), (2, 2, 2, 2, 4.0)]))
+    probe_run(results, "gemm", {GEMM: csv_text([GEMM_HEAD, (2, 2, 2, 2, 9.0), (3, 3, 3, 2, 5.0)])}, 0,
+              args=["--append"])
+    export([results], kernel_dest=dest, only=["kernel_tables"])
+    assert rows(table) == [list(GEMM_HEAD), ["1", "1", "1", "2", "3.0"], ["2", "2", "2", "2", "9.0"],
+                           ["3", "3", "3", "2", "5.0"]]
+    runs = json.loads((dest / "kernel_data" / "qbench_manifest.json").read_text())["kernel_tables"]
+    assert [Path(r).name for r in runs["graph/gemm/H100.csv"]["runs"]] == [
+        "adopted from dest", "20261011T120000.000000Z"]
+
+
+def test_a_dest_table_with_other_columns_unions_them(tmp_path: Path) -> None:
+    results, dest = tmp_path / "results", tmp_path / "data"
+    table = seed(dest, "graph/gemm/H100.csv", csv_text([("M", "N", "K", "us", "note"), (1, 1, 1, 3, "x")]))
+    probe_run(results, "gemm", {GEMM: csv_text([("M", "N", "K", "us", "dtype_bytes"), (2, 2, 2, 4, 2)])}, 0,
+              args=["--append"])
+    export([results], kernel_dest=dest, only=["kernel_tables"])
+    assert rows(table) == [["M", "N", "K", "us", "note", "dtype_bytes"], ["1", "1", "1", "3", "x", ""],
+                           ["2", "2", "2", "4", "", "2"]]
+
+
+def test_a_dest_json_table_is_the_oldest_source(tmp_path: Path) -> None:
+    results, dest = tmp_path / "results", tmp_path / "data"
+    table = seed(dest, "graph/elementwise/H100.json", '{"rms_norm": 1, "silu": 1}')
+    probe_run(results, "elementwise", {"ncu/elementwise/H100.json": '{"rms_norm": 2}'}, 0)
+    export([results], kernel_dest=dest, only=["kernel_tables"])
+    assert json.loads(table.read_text()) == {"rms_norm": 2, "silu": 1}
+
+
+@pytest.mark.parametrize("probe,rel,old,new", [
+    ("gemm", "graph/gemm/H100.csv", csv_text([GEMM_HEAD, (1, 1, 1, 2, 3.0), (2, 2, 2, 2, 4.0)]),
+     {GEMM: csv_text([GEMM_HEAD, (2, 2, 2, 2, 9.0)])}),
+    ("gdn", "eager/gdn/H100_9b_decode.csv", "batch,us\n1,5\n2,6\n",
+     {"cuda_event/gdn/H100_9b_decode.csv": "batch,us\n1,5\n"}),
+])
+def test_dropping_dest_rows_stops_unless_replace_tables(tmp_path: Path, capsys, probe, rel, old, new) -> None:
+    """A gemm run without --append, or a table with no row key, would drop
+    rows dest holds: the export stops naming the file and the row counts,
+    and --replace-tables (through the qbench export door) replaces it."""
+    from quettabench import cli
+    results, dest = tmp_path / "results", tmp_path / "data"
+    table = seed(dest, rel, old)
+    probe_run(results, probe, new, 0)
+    argv = ["export", "--results", str(results), "--kernel-dest", str(dest), "--only", "kernel_tables"]
+    with pytest.raises(SystemExit, match=rf"{rel}: .* keep 1 of its 2 rows.*--replace-tables"):
+        cli.main(argv)
+    assert table.read_bytes() == old.encode()
+    cli.main([*argv, "--replace-tables"])
+    assert table.read_bytes() == next(iter(new.values())).encode()
+
+
+def test_an_export_over_its_own_tables_changes_nothing(tmp_path: Path) -> None:
+    results, dest = tmp_path / "results", tmp_path / "data"
+    probe_run(results, "gdn", {"cuda_event/gdn/H100_9b_decode.csv": "batch,us\n1,5\n"}, 0)
+    probe_run(results, "gemm", {GEMM: csv_text([GEMM_HEAD, (1, 1, 1, 2, 3.0)])}, 1)
+    export([results], kernel_dest=dest, only=["kernel_tables"])
+    before = tree(dest)
+    export([results], kernel_dest=dest, only=["kernel_tables"])
+    assert tree(dest) == before
+
+
+def test_the_dest_sidecar_keeps_its_notes(tmp_path: Path) -> None:
+    """Fields qbench does not own (notes, and any QuettaSim adds) survive;
+    the ones it owns follow the export."""
+    results, dest = tmp_path / "results", tmp_path / "data"
+    rel = "graph/gemm/H100.csv"
+    table = seed(dest, rel, csv_text([GEMM_HEAD, (1, 1, 1, 2, 3.0)]),
+                 {"schema": 1, "table": rel, "dir": "graph", "gpu": "H100", "mode": "graph_replay",
+                  "tool": "gemm_probe.py --graph", "reduce": "min", "measured": "2026-08-20",
+                  "notes": "NCU counters locked", "reviewed_by": "kw", "provenance": "backfilled"})
+    probe_run(results, "gemm", {GEMM: csv_text([GEMM_HEAD, (2, 2, 2, 2, 4.0)])}, 0,
+              args=["--graph", "--append"], finished=0)
+    export([results], kernel_dest=dest, only=["kernel_tables"])
+    meta = json.loads(table.with_name(table.name + ".meta.json").read_text())
+    assert (meta["notes"], meta["reviewed_by"]) == ("NCU counters locked", "kw")
+    assert (meta["tool"], meta["measured"], meta["mode"]) == ("quettabench.probes.gemm", "2026-10-11",
+                                                               "graph_replay")
+
+
+def test_kept_dest_rows_timed_another_way_make_mode_unknown(tmp_path: Path) -> None:
+    results, dest = tmp_path / "results", tmp_path / "data"
+    rel = "graph/gemm/H100.csv"
+    table = seed(dest, rel, csv_text([GEMM_HEAD, (1, 1, 1, 2, 3.0)]), {"mode": "ncu", "notes": ""})
+    probe_run(results, "gemm", {GEMM: csv_text([GEMM_HEAD, (2, 2, 2, 2, 4.0)])}, 0,
+              args=["--graph", "--append"])
+    export([results], kernel_dest=dest, only=["kernel_tables"])
+    assert json.loads(table.with_name(table.name + ".meta.json").read_text())["mode"] == "unknown"
+
+
+def test_the_manifest_merges_per_table(tmp_path: Path) -> None:
+    """A second export of other tables keeps the first export's entries; each
+    entry names its runs, bench commit and export time."""
+    first, second, dest = tmp_path / "a", tmp_path / "b", tmp_path / "data"
+    probe_run(first, "gemm", {GEMM: GEMM_ROW}, 0)
+    export([first], kernel_dest=dest, only=["kernel_tables"])
+    probe_run(second, "flash_attn", {"ncu/flash_attn/H100.csv": FA}, 1)
+    export([second], kernel_dest=dest, only=["kernel_tables"])
+    manifest = json.loads((dest / "kernel_data" / "qbench_manifest.json").read_text())
+    assert sorted(manifest["kernel_tables"]) == ["graph/flash_attn/H100.csv", "graph/gemm/H100.csv"]
+    gemm = manifest["kernel_tables"]["graph/gemm/H100.csv"]
+    assert sorted(gemm) == ["bench_sha", "exported_at", "runs"]
+    assert [Path(r).parents[3].name for r in gemm["runs"]] == ["a"]
+
+
+QS_FA_HEAD = ("q_len", "kv_len", "n_heads", "n_kv_heads", "head_dim", "batch", "causal", "phase",
+              "layers", "latency_us")
+
+
+def test_a_flash_attn_run_over_quettasim_keeps_the_other_head_configs(tmp_path: Path) -> None:
+    """QuettaSim's graph/flash_attn holds several head configs; a run of one
+    replaces that config's rows only."""
+    results, dest = tmp_path / "results", tmp_path / "data"
+    heads = [(32, 4, 128), (32, 8, 128), (64, 8, 128)]
+    table = seed(dest, "graph/flash_attn/H200.csv", csv_text(
+        [QS_FA_HEAD, *[(1, kv, *h, 1, False, "decode", "", 9.0) for h in heads for kv in (128, 256)]]))
+    probe_run(results, "flash_attn", {"ncu/flash_attn/H200.csv": csv_text(
+        [QS_FA_HEAD, (1, 512, 32, 8, 128, 1, False, "decode", "", 5.0)])}, 0, gpu="H200", args=["--graph"])
+    export([results], kernel_dest=dest, only=["kernel_tables"])
+    got = rows(table)[1:]
+    assert sorted({tuple(r[2:5]) for r in got}) == [("32", "4", "128"), ("32", "8", "128"), ("64", "8", "128")]
+    assert [r[1] for r in got if r[2:5] == ["32", "8", "128"]] == ["512"]
+    assert len(got) == 5
+
+
+def test_a_vllm_allreduce_run_over_quettasim_collectives_keeps_the_nccl_ops(tmp_path: Path) -> None:
+    """QuettaSim's <gpu>_tp<N>.csv holds every op; a vllm_allreduce run adds its
+    all_reduce rows over the ones on its (op, world, bytes) and the other ops stay."""
+    results, dest = tmp_path / "results", tmp_path / "data"
+    head = ("op", "world", "bytes", "latency_us", "dtype_bytes", "path")
+    old = [(op, 2, b, 10.0, 2, "nccl") for op in ("all_gather", "all_to_all", "reduce_scatter")
+           for b in (2048, 4096)] + [("all_reduce", 2, b, 8.0, 2, "vllm") for b in (2048, 4096)]
+    table = seed(dest, "graph/collectives/H200_tp2.csv", csv_text([head, *old]))
+    probe_run(results, "vllm_allreduce", {"ncu/collectives/H200_tp2.csv": csv_text(
+        [head, ("all_reduce", 2, 4096, 7.0, 2, "vllm")])}, 0, gpu="H200")
+    export([results], kernel_dest=dest, only=["kernel_tables"])
+    got = rows(table)
+    assert got[0] == list(head)
+    assert sorted({r[0] for r in got[1:]}) == ["all_gather", "all_reduce", "all_to_all", "reduce_scatter"]
+    assert [r for r in got if r[0] == "all_reduce"] == [["all_reduce", "2", "2048", "8.0", "2", "vllm"],
+                                                         ["all_reduce", "2", "4096", "7.0", "2", "vllm"]]
+    assert len(got) == 9
+
+
+def test_a_gemm_append_run_over_quettasim_keeps_its_rows(tmp_path: Path) -> None:
+    results, dest = tmp_path / "results", tmp_path / "data"
+    old = [(m, 4096, 4096, 2, 1.0 + m) for m in range(1, 200)]
+    table = seed(dest, "graph/gemm/H200.csv", csv_text([GEMM_HEAD, *old]))
+    probe_run(results, "gemm", {"ncu/gemm/H200.csv": csv_text([GEMM_HEAD, (1, 4096, 4096, 2, 5.0)])}, 0,
+              gpu="H200", args=["--graph", "--append"])
+    export([results], kernel_dest=dest, only=["kernel_tables"])
+    got = rows(table)[1:]
+    assert len(got) == 199 and got[-1] == ["1", "4096", "4096", "2", "5.0"]
+
+
+def test_a_stopped_merge_leaves_the_manifest_as_it_was(tmp_path: Path) -> None:
+    """The manifest is checked before any table moves, and a stop writes neither."""
+    results, dest = tmp_path / "results", tmp_path / "data"
+    probe_run(results, "gemm", {GEMM: GEMM_ROW}, 0)
+    export([results], kernel_dest=dest, only=["kernel_tables"])
+    before = (dest / "kernel_data" / "qbench_manifest.json").read_text()
+    seed(dest, "eager/gdn/H100_9b_decode.csv", "batch,us\n1,5\n")
+    probe_run(results, "gdn", {"cuda_event/gdn/H100_9b_decode.csv": "batch,us\n2,6\n"}, 1)
+    with pytest.raises(SystemExit, match="keep 0 of its 1 rows"):
+        export([results], kernel_dest=dest, only=["kernel_tables"])
+    assert (dest / "kernel_data" / "qbench_manifest.json").read_text() == before
+
+
+def test_an_unreadable_source_run_stops_before_a_table_moves(tmp_path: Path) -> None:
+    """The kernel manifest reads the runs before kernel_tables builds, so its
+    sidecars never point at a manifest that was not written."""
+    results, dest = tmp_path / "results", tmp_path / "data"
+    probe_run(results, "gemm", {GEMM: GEMM_ROW}, 0)
+    (results / "other").mkdir()
+    (results / "other" / "run.json").write_text(json.dumps({"run_status": {"status": "ok"}, "config": {}}))
+    with pytest.raises(KeyError):
+        export([results], kernel_dest=dest, only=["kernel_tables"])
+    assert not dest.exists()

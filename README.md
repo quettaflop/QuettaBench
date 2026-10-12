@@ -110,7 +110,9 @@ e.g. `20261011T120000.000000Z`) and records itself beside its tables in
 run measured. `just export` unions every ok run's rows per table on the key
 the probe's old upsert used, the run that finished last winning a key, and
 takes a table with no row key from the run that finished last
-(`quettabench/probes/README.md`). It is the only route to QuettaSim.
+(`quettabench/probes/README.md`). It merges into the tables QuettaSim already
+holds, keeping their rows unless a run supersedes them, and stops where it
+would drop one unless given `--replace-tables`. It is the only route to QuettaSim.
 
 ## Cross-validation
 

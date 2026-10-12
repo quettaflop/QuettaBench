@@ -4,7 +4,10 @@
 Method B for the kernel-composed backend. Sweeps message size across the ranks for
 EVERY collective LLM inference emits, and writes the whole curve to
 
-    kernel_data/ncu/collectives/{GPU}_tp{world}.csv   (op, world, bytes, latency_us, ...)
+    <run dir>/ncu/collectives/{GPU}_tp{world}.csv   (op, world, bytes, latency_us, ...)
+
+under results/probes/<gpu>/collective/<run-id>/; `qbench export --only kernel_tables`
+carries it to QuettaSim's kernel_data/graph/collectives/.
 
   all_reduce      TP: 2 per layer (after o-proj, after down-proj)
   reduce_scatter  TP + sequence parallelism: replaces half of each all-reduce

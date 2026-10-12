@@ -59,17 +59,31 @@ def source_runs(results_dirs: list[Path]) -> list[dict]:
     return runs
 
 
+def manifest(results_dirs: list[Path]) -> dict:
+    return {
+        "source_dirs": [str(d) for d in results_dirs],
+        "runs": source_runs(results_dirs),
+        "bench_sha": bench_sha(),
+        "exported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+
+
 def export(results_dirs: Iterable[Path], dest: Path | None = None, only: Iterable[str] | None = None,
-           kernel_dest: Path | None = None) -> list[Path]:
+           kernel_dest: Path | None = None, replace_tables: bool = False) -> list[Path]:
     """Run the builders (all, or the named ones) over the results dirs; return the files written.
 
     kernel_tables writes under kernel_dest (QuettaSim's data root) and runs
     only when it is given; the other builders write under dest and run only
-    when it is given. A builder named in only without its dest stops the
+    when it is given; kernel_tables merges into the tables kernel_dest holds
+    unless replace_tables. A builder named in only without its dest stops the
     export. dest gets manifest.json, kernel_dest kernel_data/qbench_manifest.json
     when kernel_tables found a table (not at QuettaSim's data root): where the inputs came from, the runs
     recorded there (run.json), which bench commit, when, and for kernel_dest
-    the run dirs whose rows each kernel table holds.
+    per kernel table the run dirs whose rows it holds, the bench commit and
+    when, kept for the tables this export did not write. dest's manifest
+    reads the runs after its builders; kernel_dest's reads them, and the old
+    kernel manifest, before kernel_tables builds, so one that does not parse
+    stops the export with kernel_dest as it was.
     """
     results_dirs = [Path(d) for d in results_dirs]
     names = list(only) if only else list(BUILDERS)
@@ -84,27 +98,25 @@ def export(results_dirs: Iterable[Path], dest: Path | None = None, only: Iterabl
     names = [n for n in names if (kernel_dest if n == "kernel_tables" else dest) is not None]
     if not names:
         raise SystemExit("give --dest, --kernel-dest or both")
+    if "kernel_tables" in names:
+        path = Path(kernel_dest) / "kernel_data" / "qbench_manifest.json"
+        kernel = manifest(results_dirs)
+        old = json.loads(path.read_text()).get("kernel_tables", {}) if path.is_file() else {}
     written: list[Path] = []
     tables = None
     for name in names:
         _inputs.run_dirs.cache_clear()
         if name == "kernel_tables":
-            paths, tables = kernel_tables.run(results_dirs, Path(kernel_dest))
+            paths, tables = kernel_tables.run(results_dirs, Path(kernel_dest), replace_tables)
             written.extend(paths)
         else:
             written.extend(BUILDERS[name].run(results_dirs, Path(dest)))
     _inputs.run_dirs.cache_clear()
-    manifest = {
-        "source_dirs": [str(d) for d in results_dirs],
-        "runs": source_runs(results_dirs),
-        "bench_sha": bench_sha(),
-        "exported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-    }
     if any(n != "kernel_tables" for n in names):
         Path(dest).mkdir(parents=True, exist_ok=True)
-        (Path(dest) / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+        (Path(dest) / "manifest.json").write_text(json.dumps(manifest(results_dirs), indent=2) + "\n")
     if tables:
-        (Path(kernel_dest) / "kernel_data").mkdir(parents=True, exist_ok=True)
-        (Path(kernel_dest) / "kernel_data" / "qbench_manifest.json").write_text(
-            json.dumps({**manifest, "kernel_tables": tables}, indent=2) + "\n")
+        new = {rel: {"runs": runs, "bench_sha": kernel["bench_sha"],
+                     "exported_at": kernel["exported_at"]} for rel, runs in tables.items()}
+        path.write_text(json.dumps({**kernel, "kernel_tables": {**old, **new}}, indent=2) + "\n")
     return written

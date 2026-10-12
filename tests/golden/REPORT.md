@@ -666,3 +666,23 @@ and the docstring pointed `--out-dir` at QuettaSim's `data/kernel_data`.
 sidecar whose tool is `quettabench.profiling.kv_transfer`, unioned on the
 old upsert key (`layout` compared as text) and sorted on it, the run that
 finished last winning a key.
+
+2026-10-12: no fixture changed. `kernel_tables` merges into the tables
+`--kernel-dest` holds instead of replacing them: before, an export over
+QuettaSim's data root left `graph/gemm/H200.csv` (1949 rows),
+`eager/kv_transfer/H200_nixl.csv`, `graph/flash_attn/H200.csv` (ten head
+configs) and `graph/collectives/H200_tp2.csv` (69 rows) with only the rows
+the runs held, and dropped the sidecars' notes. A dest table is now the
+oldest source on the same row key (collectives on `op, world, bytes`), its
+columns join the union and a JSON table's entries join too; where its rows
+would be dropped (no row key, or a gemm or moe run without `--append`) the
+export stops naming the file and its row counts unless `--replace-tables`
+is given. A dest sidecar keeps `notes` and the fields qbench does not
+write, and kept rows timed in another mode make `mode` unknown.
+`qbench_manifest.json` merges per table, each entry with its own `runs`
+(`adopted from dest` first when dest rows stayed), `bench_sha` and
+`exported_at`, and its runs are read before any table moves. `HOST_KINDS`
+dropped `decode_batch` and `frontend`, which no probe exports; `pd_host`'s
+example writes under `results/` and is profile only. kv_transfer's union
+sorts on `gpu, kv_heads_per_rank, layout, tokens`, then the other key
+columns.

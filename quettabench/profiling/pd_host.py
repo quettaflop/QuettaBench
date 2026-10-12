@@ -36,14 +36,15 @@ contention multiplier at that concurrency.
   # servers + proxy up (see scratchpad/pd_probe/launch.sh for the E6-shaped pair)
   /opt/vllm-local/bin/python -m quettabench.profiling.pd_host --gpu-label H200 \\
       --device-yaml ../QuettaSim/device_spec/h200.yaml \\
-      --proxy-log <dir>/proxy_requests.jsonl --out data/kernel_data/eager/frontend/H200_pd_host.csv
+      --proxy-log <dir>/proxy_requests.jsonl --out results/pd_host/H200_pd_host.csv
 
 Prints per-row residuals and the least-squares floor + per-token slopes for P (cold /
 warm) and D; does NOT edit the YAML.
 
 A profiler source: `qbench profile --source pd_host` calls probe() and keeps its
 rows in profile.json. main() stays runnable for the transition and still writes
-the --out CSV. Imports QuettaSim's `engine` package, so QuettaSim must be on
+the --out CSV, inside this repo; it is profile only, and `qbench export` does
+not carry it to QuettaSim's kernel_data/eager/frontend/. Imports QuettaSim's `engine` package, so QuettaSim must be on
 PYTHONPATH (the profiler imports this module only when the source is asked for).
 """
 from __future__ import annotations

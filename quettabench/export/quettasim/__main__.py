@@ -1,5 +1,5 @@
 """python3 -m quettabench.export.quettasim --results results/<run> ... --dest <dir>
-[--kernel-dest <QuettaSim data root>]"""
+[--kernel-dest <QuettaSim data root> [--replace-tables]]"""
 from __future__ import annotations
 
 import argparse
@@ -20,10 +20,14 @@ def main(argv=None) -> None:
                     help="QuettaSim's data root ($QUETTASIM_DATA, e.g. ../QuettaSim/data): "
                          "kernel_tables writes its kernel_data/ (with qbench_manifest.json) there, "
                          "and runs only when given")
+    ap.add_argument("--replace-tables", action="store_true",
+                    help="replace the kernel tables and sidecars --kernel-dest holds instead of "
+                         "merging into them, even where that drops their rows")
     ap.add_argument("--only", nargs="+", choices=sorted(BUILDERS),
                     help="run just these builders (default: all)")
     a = ap.parse_args(argv)
-    for path in export(a.results, a.dest, a.only, kernel_dest=a.kernel_dest):
+    for path in export(a.results, a.dest, a.only, kernel_dest=a.kernel_dest,
+                       replace_tables=a.replace_tables):
         print(path)
 
 

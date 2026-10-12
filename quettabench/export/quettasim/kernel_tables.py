@@ -13,7 +13,7 @@ kind), tool, reduce, gpu and the date it was measured. Each run holds only
 the rows it measured; _inputs.files leaves out failed and unfinished runs.
 
 Per dest file, over every ok run of the probe(s) that wrote it, in the
-order the runs finished (run.json provenance.finished):
+order the runs finished (run.json provenance.pulled, else provenance.finished):
 - a table with a row key (ROW_KEYS, the key each probe's old upsert
   replaced on) is the union of the runs' rows, and on a key the run that
   finished last wins; gemm and moe runs without --append drop the rows of
@@ -23,6 +23,16 @@ order the runs finished (run.json provenance.finished):
 A keyed table's key columns compare as numbers (int, total_weight_gb a
 float; gpu and layout as text), and within one run's table the last row on
 a key wins.
+A table dest already holds is the oldest source, so its rows stay unless
+a run holds their key (QuettaSim's tables were upserted in place); its
+header's columns join the union, and a JSON table's entries join it too.
+Where its rows would be dropped (a table with no row key, or a gemm or moe
+run without --append), the export stops naming the file and its row
+counts, unless replace is given (--replace-tables), which replaces dest's
+tables and sidecars as built. The manifest names a table that kept dest
+rows "adopted from dest" before its runs. Its sidecar keeps the fields qbench does not
+write (notes and any other), and a mode its kept rows were timed in that
+differs from the runs' makes mode unknown.
 Every table is built and checked in a temp dir under dest first: a row
 with too many or too few cells, an empty or unparsable key, or JSON that
 does not parse (or, for a union, is no object) stops the export with dest
@@ -30,7 +40,9 @@ as it was; then each file replaces its dest file.
 Two probes write one dest file in two cases, and they merge:
 - collective and vllm_allreduce, graph/collectives/<gpu>_tp<N>.csv: the
   collective probe's rows other than all_reduce (path nccl), then
-  vllm_allreduce's all_reduce rows, as vllm_allreduce's upsert did;
+  vllm_allreduce's all_reduce rows, as vllm_allreduce's upsert did; over a
+  dest table each replaces its rows on (op, world, bytes), and either probe
+  alone merges over it;
 - gemm and elementwise, <dir>/elementwise/<gpu>.json: the elementwise
   probe's latest table, with every gemm run's entries (fp8_act_quant)
   unioned over it, the later finished run winning a key.
@@ -46,7 +58,7 @@ import shlex
 import shutil
 import tempfile
 from collections.abc import Iterable
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from quettabench.export.quettasim import _inputs
@@ -54,11 +66,13 @@ from quettabench.export.quettasim import _inputs
 # A probe run's method dir -> QuettaSim's kernel_data dir (kernel_composed/provenance.py DIRS).
 DIRS = {"ncu": "graph", "cuda_event": "eager"}
 # eager/ kinds timed by host clocks around a whole operation (mode host_wallclock).
-HOST_KINDS = ("reparallel", "kv_transfer", "decode_batch", "frontend")
+HOST_KINDS = ("reparallel", "kv_transfer")
 # The reduce each probe takes over its timings, for graph_replay and eager tables.
 REDUCE = {"gemm": "min", "moe": "min", "elementwise": "median", "flash_attn": "median",
           "cross_attn": "median", "gdn": "median"}
 COLLECTIVE_FIELDS = ("op", "world", "bytes", "latency_us", "dtype_bytes", "path")
+# The key a collectives row replaces a dest row on.
+COLLECTIVE_KEY = ("op", "world", "bytes")
 GEOMETRY = ("n_heads", "n_kv_heads", "head_dim")
 # (probe, kind) -> the columns a CSV row is keyed on: flash_attn and
 # cross_attn replace every row of a head config, the others one row.
@@ -73,14 +87,18 @@ ROW_KEYS = {
     ("kv_transfer", "kv_transfer"): ("gpu", "kv_heads_per_rank", "head_dim", "block_size", "layers",
                                      "layout", "tokens"),
 }
-# Keyed tables whose union is sorted on the key, as their old upserts wrote them.
-SORTED = {("reparallel", "reparallel"), ("kv_transfer", "kv_transfer")}
+# Keyed tables whose union is sorted, on these columns, as their old upserts wrote them.
+SORTED = {("reparallel", "reparallel"): ROW_KEYS[("reparallel", "reparallel")],
+          ("kv_transfer", "kv_transfer"): ("gpu", "kv_heads_per_rank", "layout", "tokens",
+                                           "head_dim", "block_size", "layers")}
 # Probes that live outside quettabench/probes/, by their sidecar tool.
 TOOLS = {"kv_transfer": "quettabench.profiling.kv_transfer"}
 # Probes whose run without --append replaced the whole table.
 RESET_WITHOUT_APPEND = ("gemm", "moe")
 # (probe, kind) whose JSON entries union across runs (gemm's fp8_act_quant).
 JSON_UNION = {("gemm", "elementwise")}
+# When a dest table finished, as a source: before every run.
+OLDEST = datetime.min.replace(tzinfo=timezone.utc)
 
 
 def _record(run_dir: Path) -> tuple[str | None, list[str], str | None]:
@@ -137,6 +155,20 @@ def _sidecar(rel: Path, by_probe: dict[str, list[Source]], runs: set[Path]) -> d
             "provenance": "qbench export kernel_tables; source runs in kernel_data/qbench_manifest.json"}
 
 
+def _keep_sidecar(meta: dict, table: Path, kept: bool) -> dict:
+    """meta over the sidecar dest has beside table: its other fields and notes
+    stay; when its rows were kept and were timed in another mode, mode is unknown."""
+    path = table.with_name(table.name + ".meta.json")
+    try:
+        prior = json.loads(path.read_text()) if path.is_file() else {}
+    except ValueError:
+        prior = None
+    if not isinstance(prior, dict):
+        raise SystemExit(f"{path}: malformed JSON (not an object)")
+    mode = "unknown" if kept and prior.get("mode") not in (None, meta["mode"]) else meta["mode"]
+    return {**prior, **meta, "mode": mode, "notes": prior.get("notes", meta["notes"])}
+
+
 Source = tuple[datetime, Path, Path, bool]  # (finished, table, its run dir, ran with --append)
 
 
@@ -179,7 +211,7 @@ def _runs_used(probe: str, rel: Path, sources: list[Source]) -> list[Source]:
 
 def _key(row: dict, key: tuple[str, ...]) -> tuple:
     """row's key, numbers parsed as the old upserts' int() read them."""
-    return tuple(row[c] if c in ("gpu", "layout") else float(row[c]) if c == "total_weight_gb"
+    return tuple(row[c] if c in ("gpu", "layout", "op") else float(row[c]) if c == "total_weight_gb"
                  else int(row[c]) for c in key)
 
 
@@ -223,8 +255,9 @@ def _union_csv(rel: Path, sources: list[Source], key: tuple[str, ...], out: Path
         mine = {_key(r, key) for r in rows}
         kept = [(r, d) for r, d in kept if _key(r, key) not in mine]
         kept += [(r, run) for r in rows]
-    if key in (ROW_KEYS[k] for k in SORTED):
-        kept.sort(key=lambda rd: _key(rd[0], key))
+    order = next((cols for k, cols in SORTED.items() if ROW_KEYS[k] == key), None)
+    if order:
+        kept.sort(key=lambda rd: _key(rd[0], order))
     with out.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fields, restval="")
         w.writeheader()
@@ -244,18 +277,32 @@ def _union_json(rel: Path, sources: list[Source], out: Path) -> list[Path]:
     return list(dict.fromkeys(run for _, run in merged.values()))
 
 
-def _merge_collectives(rel: Path, collective: Source, vllm: Source, out: Path) -> list[Path]:
-    kept = [r for r in _read_csv(rel, collective[1], collective[2])[1]
-            if (r.get("op") or "all_reduce") != "all_reduce"]
-    ours = [r for r in _read_csv(rel, vllm[1], vllm[2])[1]
-            if (r.get("op") or "all_reduce") == "all_reduce"]
+def _merge_collectives(rel: Path, collective: Source | None, vllm: Source | None, out: Path,
+                       old: Source | None = None) -> list[Path]:
+    """The dest table old's rows, then the collective run's other ops (path
+    nccl), then vllm_allreduce's all_reduce rows, each replacing the earlier
+    rows on its COLLECTIVE_KEY."""
+    parts = []
+    if old:
+        parts.append((old[2], _read_csv(rel, old[1], old[2], COLLECTIVE_KEY)[1]))
+    if collective:
+        parts.append((collective[2], [{**r, "dtype_bytes": r.get("dtype_bytes") or 2,
+                                       "path": r.get("path") or "nccl"}
+                                      for r in _read_csv(rel, collective[1], collective[2])[1]
+                                      if (r.get("op") or "all_reduce") != "all_reduce"]))
+    if vllm:
+        parts.append((vllm[2], [r for r in _read_csv(rel, vllm[1], vllm[2])[1]
+                                if (r.get("op") or "all_reduce") == "all_reduce"]))
+    kept: list[tuple[dict, Path]] = []
+    for run, rows in parts:
+        mine = {_key(r, COLLECTIVE_KEY) for r in rows} if old else set()
+        kept = [(r, d) for r, d in kept if _key(r, COLLECTIVE_KEY) not in mine]
+        kept += [(r, run) for r in rows]
     with out.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=COLLECTIVE_FIELDS, extrasaction="ignore")
         w.writeheader()
-        for r in kept:
-            w.writerow({**r, "dtype_bytes": r.get("dtype_bytes") or 2, "path": r.get("path") or "nccl"})
-        w.writerows(ours)
-    return [s[2] for s, rows in ((collective, kept), (vllm, ours)) if rows]
+        w.writerows(r for r, _ in kept)
+    return list(dict.fromkeys(d for _, d in kept))
 
 
 def _check(rel: Path, by_probe: dict[str, list[Source]]) -> None:
@@ -267,17 +314,51 @@ def _check(rel: Path, by_probe: dict[str, list[Source]]) -> None:
                          "merges only collective+vllm_allreduce and elementwise+gemm")
 
 
-def _write(rel: Path, by_probe: dict[str, list[Source]], out: Path) -> list[Path]:
-    """Build one dest file (_check passed); returns the run dirs whose rows it holds."""
+def _lost(rel: Path, old: Source, out: Path, key: tuple[str, ...]) -> None:
+    """Stop when out drops a row of the dest table old: a row whose key out
+    lacks or, with no key, a row out does not hold."""
+    rows = _read_csv(rel, old[1], old[1], key)[1]
+    kept = _read_csv(rel, out, out, key)[1]
+    if key:
+        have = {_key(r, key) for r in kept}
+        left = sum(_key(r, key) in have for r in rows)
+    else:
+        left = sum(any(_same(r, k) for k in kept) for r in rows)
+    if left < len(rows):
+        raise SystemExit(f"{rel.as_posix()}: the export would keep {left} of its {len(rows)} rows in "
+                         f"{old[1]}; give --replace-tables to replace it")
+
+
+def _same(row: dict, other: dict) -> bool:
+    """row and other hold the same cells, a column one lacks being empty."""
+    return all((row.get(c) or "") == (other.get(c) or "") for c in {*row, *other})
+
+
+def _write(rel: Path, by_probe: dict[str, list[Source]], out: Path,
+           old: Source | None = None) -> list[Path]:
+    """Build one dest file (_check passed) over the dest table old, when there
+    is one; returns the run dirs (and old's path) whose rows it holds."""
     used = {probe: _runs_used(probe, rel, sources) for probe, sources in by_probe.items()}
     probes = sorted(used)
-    if probes == ["collective", "vllm_allreduce"]:
-        return _merge_collectives(rel, used["collective"][-1], used["vllm_allreduce"][-1], out)
+    olds = [old] if old else []
+    tp_table = rel.parts[-2] == "collectives" and not rel.stem.endswith("_nccl_vs_vllm")
+    if probes == ["collective", "vllm_allreduce"] or (old and tp_table):
+        return _merge_collectives(rel, *(used[p][-1] if p in used else None
+                                         for p in ("collective", "vllm_allreduce")), out, old)
     if probes == ["elementwise", "gemm"]:
-        return _union_json(rel, used["elementwise"] + used["gemm"], out)
+        return _union_json(rel, olds + used["elementwise"] + used["gemm"], out)
     (probe,) = probes
     sources = used[probe]
     key = ROW_KEYS.get((probe, rel.parts[-2]), ())
+    if old and rel.suffix == ".json":
+        return _union_json(rel, olds + sources, out)
+    if old and rel.suffix == ".csv":
+        reset = probe in RESET_WITHOUT_APPEND and not all(s[3] for s in sources)
+        if key and not reset:
+            return _union_csv(rel, olds + sources, key, out)
+        runs = _write(rel, by_probe, out)
+        _lost(rel, old, out, key)
+        return runs
     if len(sources) == 1:
         _, table, run, _ = sources[0]
         if rel.suffix == ".json":
@@ -291,10 +372,12 @@ def _write(rel: Path, by_probe: dict[str, list[Source]], out: Path) -> list[Path
     return _union_csv(rel, sources, key, out)
 
 
-def run(results_dirs: Iterable[Path], dest: Path) -> tuple[list[Path], dict[str, list[str]]]:
-    """Build every table and its sidecar in a temp dir under dest, then
-    replace the dest files, so a stop leaves the tables in dest as they were
-    (and no dest when this run made it). Returns the files written and, for
+def run(results_dirs: Iterable[Path], dest: Path,
+        replace: bool = False) -> tuple[list[Path], dict[str, list[str]]]:
+    """Build every table and its sidecar in a temp dir under dest, over the
+    tables dest holds unless replace, then replace the dest files, so a stop
+    leaves the tables in dest as they were (and no dest when this run made
+    it). Returns the files written and, for
     the manifest, {<dir>/<kind>/<file>: the run dirs with rows in it, in
     finished order}."""
     tables = sorted(found(results_dirs).items())
@@ -311,12 +394,18 @@ def run(results_dirs: Iterable[Path], dest: Path) -> tuple[list[Path], dict[str,
             for rel, by_probe in tables:
                 out = Path(tmp) / rel
                 out.parent.mkdir(parents=True, exist_ok=True)
-                runs = set(_write(rel, by_probe, out))
-                meta = json.dumps(_sidecar(rel, by_probe, runs), indent=1, sort_keys=True)
+                table = dest / "kernel_data" / rel
+                old = None if replace or not table.is_file() else (OLDEST, table, table, True)
+                runs = set(_write(rel, by_probe, out, old))
+                meta = _sidecar(rel, by_probe, runs)
+                if old:
+                    meta = _keep_sidecar(meta, table, table in runs)
+                meta = json.dumps(meta, indent=1, sort_keys=True)
                 out.with_name(out.name + ".meta.json").write_text(meta + "\n")
                 order = sorted((s[0], str(s[2])) for sources in by_probe.values() for s in sources
                                if s[2] in runs)
-                used[rel.as_posix()] = list(dict.fromkeys(run for _, run in order))
+                used[rel.as_posix()] = (["adopted from dest"] if table in runs else []) + list(
+                    dict.fromkeys(run for _, run in order))
             written = []
             for rel, by_probe in tables:
                 out = dest / "kernel_data" / rel
