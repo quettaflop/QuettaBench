@@ -63,7 +63,7 @@ in one results layer, `results/<run>/`, and leaves the repo by
 - `quettabench/crossval.py`: reads run files; its only write is the report json
   (default `results/xval/`).
 - `quettabench/export/quettasim.py`: the only measurement code that writes
-  outside the repo; its builders are `tp_comm`, `stage_split_rates`,
+  outside the repo; its builders are `tp_comm`,
   `roofline_utils`, `serving_decode_grid` and `kernel_tables`; `provision.py` sets the box up outside it (below).
 - `configs/`: `models/` holds per-model facts, once. `runs/` reference a model
   and never restate its facts. `grids.yaml` holds the grids and step points,

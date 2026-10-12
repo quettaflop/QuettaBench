@@ -311,8 +311,8 @@ quettabench/modes/serve.py  the one measurement procedure: replay, sessions, gri
 quettabench/metrics/      percentiles, step fit, the results writer
 quettabench/profiling/    sources the profiler attaches with
 quettabench/probes/       kernel probes
-quettabench/export/quettasim.py  the one route to QuettaSim: tp_comm, stage_split_rates, roofline_utils,
-                          serving_decode_grid, kernel_tables
+quettabench/export/quettasim.py  the one route to QuettaSim: tp_comm, roofline_utils, serving_decode_grid,
+                          kernel_tables
 configs/                  models, runs, grids, hardware
 docs/runbooks/            the probe guide (probes.md) and the GPU and verification runbooks
 tests/golden/             characterization fixtures from the pre-refactor code

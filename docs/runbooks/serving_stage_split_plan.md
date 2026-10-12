@@ -187,10 +187,10 @@ Emit a small `serving_stage_device_H100.csv` (`new,cached,device_kernel_ms`) for
 Historical: the analyzer this step ran (`serving_stage_split --csv ... --device-csv ...`,
 printing the SERVING-LEVEL COST BREAKDOWN table, the de-fit gates and the
 `device vs framework_dispatch` split) is retired, and no current command prints that table.
-The legs now reach QuettaSim through the export builders that read them:
+The legs now reach QuettaSim through the tp_comm export builder:
 
 ```bash
-just export --only stage_split_rates tp_comm \
+just export --only tp_comm \
   --results results/probes/H100/serving_stage_split --dest <export dir>
 ```
 
