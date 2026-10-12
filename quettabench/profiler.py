@@ -36,7 +36,7 @@ def check_args(sources, args):
     if unknown:
         raise ValueError(f"unknown source(s) {unknown}; known: {', '.join(SOURCES)}")
     needs = {"cost": ("gpu_cost_hr",), "gsm8k": ("gsm8k_file", "gsm8k_n"),
-             "kv_transfer": ("kv_transfer_csv",), "kernels": ("kernel_steps",)}
+             "kernels": ("kernel_steps",)}
     for source in sources:
         missing = [k for k in needs.get(source, ()) if args.get(k) is None]
         if missing:
@@ -96,7 +96,7 @@ def run_source(source, results_dir, engine, args, energy):
     if source == "pd_host":
         return native.pd_host(_endpoint(engine), model, args.get("pd_host_argv"))
     if source == "kv_transfer":
-        return native.kv_transfer(args["kv_transfer_csv"])
+        return native.kv_transfer(args.get("kv_transfer_run") or results_dir)
     if source == "kernels":
         return native.kernel_summary(results_dir, args["kernel_steps"], args.get("kernel_window"),
                                      args.get("kernel_subtract"))
@@ -161,7 +161,7 @@ def get_args(argv=None):
     ap.add_argument("--source", action="append", required=True, choices=SOURCES,
                     help="repeatable. metrics: one scrape of the endpoint; energy: board power until run.json "
                          "appears; cost: USD over the run's wall time; gsm8k: exact match through the endpoint; "
-                         "frontend, pd_host: live-server probes; kv_transfer: a NIXL probe CSV; "
+                         "frontend, pd_host: live-server probes; kv_transfer: a NIXL probe run's rows.jsonl; "
                          "kernels: per-kernel GPU time per decode step from the armed nsys trace")
     ap.add_argument("--nvidia-smi", default="nvidia-smi")
     ap.add_argument("--interval-s", type=float, default=1.0)
@@ -175,9 +175,9 @@ def get_args(argv=None):
                     help='frontend source flags, e.g. '
                          '"--gpu-label H200 --device-yaml ../QuettaSim/device_spec/h200.yaml"')
     ap.add_argument("--pd-host-args", default="", help="pd_host flags")
-    ap.add_argument("--kv-transfer-csv",
-                    help="the CSV one kv_transfer torchrun run wrote, results/probes/<gpu>/"
-                         "kv_transfer/<run-id>/cuda_event/kv_transfer/<gpu>_nixl.csv")
+    ap.add_argument("--kv-transfer-run",
+                    help="the kv_transfer probe's run dir, results/probes/<gpu>/kv_transfer/<run-id>; "
+                         "default --run")
     ap.add_argument("--kernel-steps", type=int, help="decode steps the kernels window holds")
     ap.add_argument("--kernel-window", help="NVTX range the kernels source reads (default all)")
     ap.add_argument("--kernel-subtract", help="NVTX range whose kernel totals come off first")
@@ -190,7 +190,7 @@ def main(argv=None):
             "gpu_cost_hr": a.gpu_cost_hr, "gsm8k_file": a.gsm8k_file, "gsm8k_n": a.gsm8k_n,
             "tokenizer": a.tokenizer, "served_model": a.served_model,
             "frontend_argv": shlex.split(a.frontend_args),
-            "pd_host_argv": shlex.split(a.pd_host_args), "kv_transfer_csv": a.kv_transfer_csv,
+            "pd_host_argv": shlex.split(a.pd_host_args), "kv_transfer_run": a.kv_transfer_run,
             "kernel_steps": a.kernel_steps, "kernel_window": a.kernel_window,
             "kernel_subtract": a.kernel_subtract}
     try:

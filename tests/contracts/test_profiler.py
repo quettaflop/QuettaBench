@@ -116,12 +116,13 @@ class Profile(unittest.TestCase):
     def test_later_profile_merges(self):
         write_run(self.dir, "http://127.0.0.1:9")
         profiler.profile(self.dir, ["cost"], gpu_cost_hr=1.0)
-        csv_path = self.dir / "nixl.csv"
-        csv_path.write_text("gpu,total_ms\nH200,1.5\n")
-        out = profiler.profile(self.dir, ["kv_transfer"], kv_transfer_csv=csv_path)
+        (self.dir / "rows.jsonl").write_text(json.dumps(
+            {"probe": "kv_transfer", "table": "kv_transfer/H200_nixl.csv", "key": {"gpu": "H200"},
+             "value": {"total_ms": 1.5}, "timing": "cuda_event"}) + "\n")
+        out = profiler.profile(self.dir, ["kv_transfer"])
         self.assertEqual(out["sources_run"], ["cost", "kv_transfer"])
         self.assertIn("cost", out)
-        self.assertEqual(out["kv_transfer"]["rows"], [{"gpu": "H200", "total_ms": "1.5"}])
+        self.assertEqual(out["kv_transfer"]["rows"], [{"gpu": "H200", "total_ms": 1.5}])
 
     def test_kernels_reads_the_armed_trace(self):
         write_run(self.dir, "http://127.0.0.1:9")
@@ -133,7 +134,7 @@ class Profile(unittest.TestCase):
 
     def test_missing_source_args_fail_before_anything_runs(self):
         for sources, args in ((["cost"], {}), (["gsm8k"], {"gsm8k_file": "x"}),
-                              (["kv_transfer"], {}), (["kernels"], {}), (["bogus"], {})):
+                              (["kernels"], {}), (["bogus"], {})):
             with self.subTest(sources), self.assertRaises(ValueError):
                 profiler.profile(self.dir, sources, **args)
         self.assertFalse((self.dir / "profile.json").exists())

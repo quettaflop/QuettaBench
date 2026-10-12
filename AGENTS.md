@@ -42,7 +42,7 @@ in one results layer, `results/<run>/`, and leaves the repo by
 - `quettabench/profiling/` and `profiler.py`: attach only. They never launch
   an engine. `native.py` and `wrapped.py` are the sources; `frontend.py` holds
   the two that import QuettaSim, loaded only when asked for; `kv_transfer.py`
-  is a torchrun target whose CSV the `kv_transfer` source reads.
+  is a torchrun target whose `rows.jsonl` the `kv_transfer` source reads.
 - `quettabench/probes/`: kernel microbenchmarks and live-server probes. Each
   run records itself in `run.json` through `metrics/results.py`
   (`probes/base.py` `run_recorded`). A kernel probe emits `ProbeRow`s

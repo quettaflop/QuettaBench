@@ -108,9 +108,9 @@ image *args:
 export *args:
     {{py}} -m quettabench.cli export {{args}}
 
-# Storage is method-explicit: ncu/ = graphed-decode-faithful, cuda_event/ =
-# eager-prefill-faithful. The QuettaSim loader reads decode+gemm+elementwise from
-# ncu/, prefill from cuda_event/.
+# Each probe run writes its rows to rows.jsonl; a row's timing (ncu = graphed-decode-faithful,
+# cuda_event = eager-prefill-faithful) picks its QuettaSim dir at export. The QuettaSim loader
+# reads decode+gemm+elementwise from ncu, prefill from cuda_event.
 
 gemm-cuda-event gpu=gpu:
     CUDA_VISIBLE_DEVICES={{gpu_id}} {{py}} -m quettabench.probes.gemm --gpu-label {{gpu}}
@@ -147,7 +147,7 @@ gdn gpu=gpu geom="9b" hv="32" dk="128" dv="128" nlin="24" mode="full":
 gdn-ncu gpu=gpu geom="9b" hv="32" dk="128" dv="128" nlin="24":
     CUDA_VISIBLE_DEVICES={{gpu_id}} {{py}} -m quettabench.probes.gdn --gpu-label {{gpu}} --geometry-tag {{geom}} --hv {{hv}} --dk {{dk}} --dv {{dv}} --n-linear {{nlin}} --ncu
 
-# NCCL grid -> results/probes/<gpu>/collective/<run-id>/ncu/collectives/. Also prints a legacy tp_comm: YAML block.
+# NCCL grid -> results/probes/<gpu>/collective/<run-id>/rows.jsonl. Also prints a legacy tp_comm: YAML block.
 collectives gpu=gpu world="2" hidden="4096" layers="32" ops="all_reduce,all_gather,reduce_scatter,all_to_all" gpu_ids="0,1":
     CUDA_VISIBLE_DEVICES={{gpu_ids}} {{py}} -m torch.distributed.run --nproc_per_node={{world}} -m quettabench.probes.collective --gpu-label {{gpu}} --hidden {{hidden}} --layers {{layers}} --ops {{ops}}
 

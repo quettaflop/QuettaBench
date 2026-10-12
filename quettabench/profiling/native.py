@@ -2,8 +2,8 @@
 
 Counters on /metrics are cumulative since the server started, so a scrape after a run includes warmup."""
 
-import csv
 import importlib
+import json
 import re
 import sqlite3
 import subprocess
@@ -221,7 +221,12 @@ def pd_host(endpoint, model, argv=()):
     return {"rows": probe.pd_host_probe(a)}
 
 
-def kv_transfer(csv_path):
-    """profile.json `kv_transfer`: the csv rows as written, read directly because the probe module needs torch."""
-    with Path(csv_path).open() as fh:
-        return {"csv": str(csv_path), "rows": list(csv.DictReader(fh))}
+def kv_transfer(run_dir):
+    """profile.json `kv_transfer`: the kv_transfer ProbeRows in run_dir/rows.jsonl, each as its key then value columns.
+
+    Read as JSON because the probe module needs torch."""
+    path = Path(run_dir) / "rows.jsonl"
+    with path.open() as fh:
+        rows = [json.loads(line) for line in fh if line.strip()]
+    return {"rows_jsonl": str(path),
+            "rows": [{**r["key"], **r["value"]} for r in rows if r["probe"] == "kv_transfer"]}

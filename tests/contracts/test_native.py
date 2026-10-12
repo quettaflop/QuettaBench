@@ -2,6 +2,7 @@
 
 import argparse
 import ast
+import json
 import sqlite3
 import sys
 import tempfile
@@ -182,13 +183,17 @@ class LiveProbes(unittest.TestCase):
             got = native.pd_host("http://h:1", "m", ["--model", "served"])
         self.assertEqual(got, {"rows": [{"proxy": "http://h:1", "model": "served"}]})
 
-    def test_kv_transfer_reads_the_csv(self):
+    def test_kv_transfer_reads_its_probe_rows(self):
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "H200_nixl.csv"
-            path.write_text("gpu,layout,total_ms\nH200,contig,1.5\n")
-            self.assertEqual(native.kv_transfer(path),
-                             {"csv": str(path), "rows": [{"gpu": "H200", "layout": "contig",
-                                                          "total_ms": "1.5"}]})
+            path = Path(tmp) / "rows.jsonl"
+            path.write_text(json.dumps({"probe": "kv_transfer", "table": "kv_transfer/H200_nixl.csv",
+                                        "key": {"gpu": "H200", "layout": "contig"},
+                                        "value": {"total_ms": 1.5}, "timing": "cuda_event"}) + "\n"
+                            + json.dumps({"probe": "gemm", "table": "gemm/H200.csv", "key": {"m": 1},
+                                          "value": {"ms": 2.0}, "timing": "ncu"}) + "\n")
+            self.assertEqual(native.kv_transfer(tmp),
+                             {"rows_jsonl": str(path), "rows": [{"gpu": "H200", "layout": "contig",
+                                                                 "total_ms": 1.5}]})
 
     def test_moved_probes_keep_a_runnable_main_with_out(self):
         tree = ast.parse((Path(native.__file__).parent / "frontend.py").read_text())
