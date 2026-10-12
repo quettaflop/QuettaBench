@@ -127,3 +127,7 @@ Run `python3 -m pytest tests/golden -q`. `QBENCH_GOLDEN_REGEN=1` rewrites the fi
 2026-10-12: `percentiles.json` changed by rename only: the keys `crossval_pct` and `crossval_pcts` are `compare_pct` and `compare_pcts`; no value changed.
 
 2026-10-12: `table_criterion.txt` changed by rename only: the force hint names `QBENCH_ALLOW_METHOD_MISMATCH=1`, not `XVAL_ALLOW_METHOD_MISMATCH=1`; no value changed.
+
+2026-10-12: `config_global.json` changed by rename only: the provision keys `qs_repo` and `qs_commit` are `quettaserve_repo` and `quettaserve_commit`; no value changed.
+
+2026-10-12: `bootstrap_plan.json` changed by rename only: the missing-setting hints name `quettaserve_checkpoint` and `quettaserve_config`, not `qs_ckpt` and `qs_cfg`; no value changed.

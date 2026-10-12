@@ -19,9 +19,9 @@
    "[provision] llama: no quettaserve: block in its model yaml; vLLM side only",
    "[provision] MISSING: llama weights: set llama:hardware.provision.weights=<dir> or llama:hardware.provision.hf_id=<hf-repo-id>",
    "[provision] would: build qwen/decode_loop in <TMP>/cache/QuettaServe",
-   "[provision] MISSING: qwen3 engine checkpoint: set qwen3:hardware.provision.qs_ckpt",
+   "[provision] MISSING: qwen3 engine checkpoint: set qwen3:hardware.provision.quettaserve_checkpoint",
    "[provision] would: build deepseek/batch_bench in <TMP>/cache/QuettaServe",
-   "[provision] MISSING: deepseek moe config: set deepseek:hardware.provision.qs_cfg",
+   "[provision] MISSING: deepseek moe config: set deepseek:hardware.provision.quettaserve_config",
    "[provision] would: <TMP>/vllm-python -m huggingface_hub.commands.huggingface_cli download deepseek-ai/DeepSeek-V4-Flash --local-dir <TMP>/cache/models/deepseek",
    "[provision] provisioning incomplete; resolve the MISSING items above"
   ],

@@ -13,6 +13,6 @@ provision:
   cache_root: /workspace/.qbench-cache
   py: ''
   vllm_spec: ''
-  qs_repo: ''
-  qs_commit: ''
+  quettaserve_repo: ''
+  quettaserve_commit: ''
   nccl_lib: ''

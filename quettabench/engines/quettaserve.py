@@ -20,21 +20,21 @@ OK_BY_TEST = {
 
 def moe_rule(p, extra, world):
     """The moe bench needs <P>_CFG and must not see an inherited <P>_LAYERS."""
-    if not extra.get("qs_cfg"):
-        raise ConfigError(f"quettaserve moe: set engine.extra.qs_cfg ({p}_CFG)")
-    return {f"{p}_CFG": extra["qs_cfg"]}, (f"{p}_LAYERS",), ""
+    if not extra.get("quettaserve_config"):
+        raise ConfigError(f"quettaserve moe: set engine.extra.quettaserve_config ({p}_CFG)")
+    return {f"{p}_CFG": extra["quettaserve_config"]}, (f"{p}_LAYERS",), ""
 
 
 def gdn_rule(p, extra, world):
     """Exact kernels need a vLLM GDN cubin dir; eager under exact, CUDA graphs under rust."""
     gdn_dir = extra.get("gdn_dir")
-    kernels = extra.get("qs_kernels") or ("exact" if gdn_dir else "rust")
+    kernels = extra.get("quettaserve_kernels") or ("exact" if gdn_dir else "rust")
     env = {"QS_KERNELS": kernels}
     if gdn_dir:
         env["QS_VLLM_GDN_DIR"] = gdn_dir
     if world >= 2:
-        env["QS_CUSTOM_AR"] = str(extra.get("qs_custom_ar") or "1")
-    mode = extra.get("qs_mode") or ("eager" if kernels == "exact" else "graph")
+        env["QS_CUSTOM_AR"] = str(extra.get("quettaserve_custom_allreduce") or "1")
+    mode = extra.get("quettaserve_mode") or ("eager" if kernels == "exact" else "graph")
     env[f"{p}_MODE"] = mode
     header = f" kern={kernels} ar={env.get('QS_CUSTOM_AR', '0')} mode={mode} gdn_dir={gdn_dir or 'none'}"
     return env, (), header
@@ -111,7 +111,7 @@ class QuettaServeAdapter(EngineAdapter):
             bench_argv=tuple(argv),
             env=env,
             env_drop=drop,
-            cwd=engine.extra.get("qs_dir") or ".",
+            cwd=engine.extra.get("quettaserve_dir") or ".",
             instrumentation=engine.instrumentation,
             ok_pattern=ok,
             log_header=header,

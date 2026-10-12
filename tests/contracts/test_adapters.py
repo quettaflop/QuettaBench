@@ -298,7 +298,7 @@ def quettaserve_spec(name, cell, link="nvlink", sets=()):
     return quettaserve.ADAPTER.translate(cfg, cell=cell)
 
 
-DS = ["engine.model=/ckpt/ds", "engine.extra.qs_cfg=/ckpt/ds/config.json"]
+DS = ["engine.model=/ckpt/ds", "engine.extra.quettaserve_config=/ckpt/ds/config.json"]
 QW = ["engine.model=/ckpt/qw"]
 
 
@@ -418,14 +418,14 @@ class DeepseekMoe(unittest.TestCase):
                     "--set",
                     "engine.model=/x",
                     "--set",
-                    "engine.extra.qs_cfg=/c",
+                    "engine.extra.quettaserve_config=/c",
                 ]
             )
         self.assertIn("quettaserve: pp=2 has no launch flag", str(e.exception.code))
 
     def test_prebuilt_binary_and_qs_dir(self):
         spec = quettaserve_spec(
-            "deepseek", None, sets=[*DS, "engine.extra.bench_bin=/b/batch_bench", "engine.extra.qs_dir=/qs"]
+            "deepseek", None, sets=[*DS, "engine.extra.bench_bin=/b/batch_bench", "engine.extra.quettaserve_dir=/qs"]
         )
         self.assertEqual(list(spec.bench_argv), ["/b/batch_bench", "--nocapture"])
         self.assertEqual(spec.cwd, "/qs")

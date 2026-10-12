@@ -129,11 +129,14 @@ def machine(plan, prov, docker=False, backend="cuda"):
             "hardware.provision.nccl_lib to a newer NCCL's lib dir"
         )
 
-    qs = Path(prov.get("qs_dir") or cache / "QuettaServe")
-    if not (qs / ".git").is_dir() and prov.get("qs_repo"):
-        plan.act(["git", "clone", prov["qs_repo"], str(qs)], f"git clone {prov['qs_repo']} failed")
-        if prov.get("qs_commit"):
-            plan.act(["git", "-C", str(qs), "checkout", prov["qs_commit"]], f"git checkout {prov['qs_commit']} failed")
+    qs = Path(prov.get("quettaserve_dir") or cache / "QuettaServe")
+    if not (qs / ".git").is_dir() and prov.get("quettaserve_repo"):
+        plan.act(["git", "clone", prov["quettaserve_repo"], str(qs)], f"git clone {prov['quettaserve_repo']} failed")
+        if prov.get("quettaserve_commit"):
+            plan.act(
+                ["git", "-C", str(qs), "checkout", prov["quettaserve_commit"]],
+                f"git checkout {prov['quettaserve_commit']} failed",
+            )
     return py, qs
 
 
@@ -147,7 +150,7 @@ def bench_binary(plan, name, bench, prov, qs):
     if not (qs / crate / "Cargo.toml").exists():
         return plan.need(
             f"{name} engine: set {name}:hardware.provision.bench_bin, or "
-            "hardware.provision.qs_repo, or hardware.provision.qs_dir to a "
+            "hardware.provision.quettaserve_repo, or hardware.provision.quettaserve_dir to a "
             "QuettaServe checkout"
         )
     plan.act(
@@ -169,10 +172,10 @@ def run(plan, name, cfg, py, qs):
     binary = None
     if bench:
         binary = bench_binary(plan, name, bench, prov, qs)
-        if not prov.get("qs_ckpt"):
-            plan.need(f"{name} engine checkpoint: set {name}:hardware.provision.qs_ckpt")
-        if bench["family"] == "moe" and not prov.get("qs_cfg"):
-            plan.need(f"{name} moe config: set {name}:hardware.provision.qs_cfg")
+        if not prov.get("quettaserve_checkpoint"):
+            plan.need(f"{name} engine checkpoint: set {name}:hardware.provision.quettaserve_checkpoint")
+        if bench["family"] == "moe" and not prov.get("quettaserve_config"):
+            plan.need(f"{name} moe config: set {name}:hardware.provision.quettaserve_config")
     else:
         plan.log(f"{name}: no quettaserve: block in its model yaml; vLLM side only")
     weights = prov.get("weights")
@@ -203,9 +206,9 @@ def run(plan, name, cfg, py, qs):
     if bench:
         qs_sets = [
             ("engine.name", "quettaserve"),
-            ("engine.model", prov.get("qs_ckpt")),
+            ("engine.model", prov.get("quettaserve_checkpoint")),
             ("engine.extra.bench_bin", binary),
-            ("engine.extra.qs_cfg", prov.get("qs_cfg")),
+            ("engine.extra.quettaserve_config", prov.get("quettaserve_config")),
         ]
         lines.append(
             shlex.join(["qbench", "run", yaml_path, *[a for k, v in qs_sets if v for a in ("--set", f"{k}={v}")]])

@@ -371,8 +371,8 @@
    "cache_root": "/workspace/.qbench-cache",
    "nccl_lib": "",
    "py": "",
-   "qs_commit": "",
-   "qs_repo": "",
+   "quettaserve_commit": "",
+   "quettaserve_repo": "",
    "vllm_spec": ""
   },
   "run_params": {
@@ -758,8 +758,8 @@
    "cache_root": "/workspace/.qbench-cache",
    "nccl_lib": "",
    "py": "",
-   "qs_commit": "",
-   "qs_repo": "",
+   "quettaserve_commit": "",
+   "quettaserve_repo": "",
    "vllm_spec": ""
   },
   "run_params": {

@@ -260,7 +260,7 @@ class CompareScripts(unittest.TestCase):
                 "--set",
                 f"engine.extra.bench_bin={stub}",
                 "--set",
-                f"engine.extra.qs_dir={td}",
+                f"engine.extra.quettaserve_dir={td}",
             ]
             for item in sets:
                 argv += ["--set", item]
@@ -282,7 +282,9 @@ class CompareScripts(unittest.TestCase):
     )
 
     def test_bench_runs_the_deepseek_grid_at_the_workload_tp(self):
-        out, log = self._bench("deepseek", self.BENCH_LINE, ["engine.extra.qs_cfg=/dev/null"], env={"DS_LAYERS": "6"})
+        out, log = self._bench(
+            "deepseek", self.BENCH_LINE, ["engine.extra.quettaserve_config=/dev/null"], env={"DS_LAYERS": "6"}
+        )
         self.assertEqual(out.returncode, 0, out.stderr)
         cfg = _config("deepseek")
         tp = cfg.engine.tp
@@ -291,7 +293,7 @@ class CompareScripts(unittest.TestCase):
         self.assertEqual(set(cells), {(str(tp), "all")})
 
     def test_bench_fails_when_a_cell_produces_no_line(self):
-        out, _ = self._bench("deepseek", "exit 0", ["engine.extra.qs_cfg=/dev/null"])
+        out, _ = self._bench("deepseek", "exit 0", ["engine.extra.quettaserve_config=/dev/null"])
         self.assertEqual(out.returncode, 1)
         self.assertIn("FAIL", out.stderr)
 

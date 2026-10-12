@@ -30,7 +30,7 @@ A grid run (`mode.grid` set) times decode ms per step per (ctx, bs) cell: vLLM o
 
 ## Provisioning
 
-`quettabench/provision.py <run.yaml>...` checks, and sets up when missing: cache dirs under `hardware.provision.cache_root`, a python with vLLM (`provision.py`, else pip install `provision.vllm_spec`), `provision.nccl_lib` (Blackwell needs NCCL >= 2.28), a QuettaServe checkout (`qs_dir`, else cloned from `qs_repo` at `qs_commit`), and per run the bench binary (`bench_bin`, else built), the engine checkpoint (`qs_ckpt`), the moe config (`qs_cfg`) and the vLLM weights (`weights`, else `hf_id` downloaded). Per-run values take a `<run>:` prefix: `--set qwen3:hardware.provision.weights=/w/qwen3`.
+`quettabench/provision.py <run.yaml>...` checks, and sets up when missing: cache dirs under `hardware.provision.cache_root`, a python with vLLM (`provision.py`, else pip install `provision.vllm_spec`), `provision.nccl_lib` (Blackwell needs NCCL >= 2.28), a QuettaServe checkout (`quettaserve_dir`, else cloned from `quettaserve_repo` at `quettaserve_commit`), and per run the bench binary (`bench_bin`, else built), the engine checkpoint (`quettaserve_checkpoint`), the moe config (`quettaserve_config`) and the vLLM weights (`weights`, else `hf_id` downloaded). Per-run values take a `<run>:` prefix: `--set qwen3:hardware.provision.weights=/w/qwen3`.
 
 It is idempotent. Anything it cannot resolve prints `MISSING: <what>`, and it exits 1 after listing them all; nothing is guessed. `--dry-run` prints the plan and writes nothing. A complete pass writes `.env` (caches, PYTHON_BIN, LD_LIBRARY_PATH; `just` loads it) and prints the `qbench run` lines for both engines, or the vLLM line alone for a model yaml without a `quettaserve:` block.
 
@@ -118,7 +118,7 @@ The baseline records the mode and the table prints it.
 
 The model yaml's `quettaserve:` block names the cargo `crate` and `test`, the env prefix (`DS_`, `QW_`) and the family:
 
-- `moe` (deepseek): needs `engine.extra.qs_cfg`; an inherited `<P>_LAYERS` is removed, since layer truncation would invalidate the run. `engine.layers=N` sets it on purpose for a slice run; compare ignores the `layers=N` lines.
+- `moe` (deepseek): needs `engine.extra.quettaserve_config`; an inherited `<P>_LAYERS` is removed, since layer truncation would invalidate the run. `engine.layers=N` sets it on purpose for a slice run; compare ignores the `layers=N` lines.
 - `gdn` (qwen3 and other linear-attention hybrids): exact kernels only when `engine.extra.gdn_dir` holds the vLLM GDN cubins (the loader panics without them), else the tiled rust suite; custom all-reduce at tp >= 2; the exact suite has no CUDA-graph wiring, so it runs eager, rust runs graph.
 - `dense`: nothing extra.
 

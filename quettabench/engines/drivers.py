@@ -570,7 +570,7 @@ class BenchDriver(Driver):
     def _run_cell(self, ctx, bs, spec):
         if spec.bench_argv[0] == "cargo" and not (Path(spec.cwd) / spec.bench_argv[3] / "Cargo.toml").exists():
             raise BenchFailed(
-                f"no {spec.bench_argv[3]} crate under {spec.cwd!r}; set engine.extra.qs_dir or engine.extra.bench_bin"
+                f"no {spec.bench_argv[3]} crate under {spec.cwd!r}; set engine.extra.quettaserve_dir or engine.extra.bench_bin"
             )
         self._log(spec.log_header)
         ok = re.compile(spec.ok_pattern)

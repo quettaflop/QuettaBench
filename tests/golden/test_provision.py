@@ -49,7 +49,7 @@ class ProvisionPlanGolden(unittest.TestCase):
             "gaps": run_dry_provision(
                 ["llama", "qwen3", "deepseek"],
                 [
-                    "deepseek:hardware.provision.qs_ckpt=/ckpt/ds-0731-tp8-fp4",
+                    "deepseek:hardware.provision.quettaserve_checkpoint=/ckpt/ds-0731-tp8-fp4",
                     "qwen3:hardware.provision.weights=/weights/qwen3",
                     "deepseek:hardware.provision.hf_id=deepseek-ai/DeepSeek-V4-Flash",
                 ],
@@ -58,7 +58,7 @@ class ProvisionPlanGolden(unittest.TestCase):
                 ["qwen3"],
                 [
                     "qwen3:hardware.provision.bench_bin=<TMP>/vllm-python",
-                    "qwen3:hardware.provision.qs_ckpt=/ckpt/qwen3",
+                    "qwen3:hardware.provision.quettaserve_checkpoint=/ckpt/qwen3",
                     "qwen3:hardware.provision.weights=/weights/qwen3",
                 ],
             ),
