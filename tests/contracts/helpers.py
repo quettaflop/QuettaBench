@@ -34,7 +34,6 @@ vllm:label_escape{path="a\\"b"} 1.0 1712345678000
 
 @contextmanager
 def serve(metrics=METRICS):
-    """Yields (endpoint, posts) for a server on a free localhost port."""
     posts = []
 
     class Handler(http.server.BaseHTTPRequestHandler):
@@ -108,7 +107,6 @@ def _edit_run_json(path, edit):
 
 
 def grid_run_dir(out):
-    """results/<run>/ of the llama grid on the stubs, as the golden baseline's run."""
     out = Path(out)
     fake_git = types.SimpleNamespace(stdout=FAKE_BENCH_SHA + "\n")
     with mock.patch("subprocess.run", return_value=fake_git):
@@ -125,7 +123,6 @@ def grid_run_dir(out):
 
 
 def bench_run_dir(out, bench_log):
-    """results/<run>/ of a QuettaServe bench run whose log is bench_log."""
     out = Path(out)
     out.mkdir(parents=True)
     shutil.copy(bench_log, out / "bench.log")

@@ -1,4 +1,4 @@
-"""qbench run's sequence without a GPU: dry runs, sweeps, probe runs and the run dir rules."""
+"""qbench run without a GPU: dry runs, sweeps, probe runs, run dir rules."""
 
 import contextlib
 import functools
@@ -25,19 +25,17 @@ from tests.golden._harness import REPO
 
 
 def setUpModule():
-    """The loader reads os.environ when no env is given; run on an empty one, so a caller's NCCL_*, GPU_UTIL or CUDA_VISIBLE_DEVICES never moves a result."""
+    """An empty env so a caller's NCCL_*, GPU_UTIL or CUDA_VISIBLE_DEVICES never moves a result."""
     patch = mock.patch.dict(os.environ, {}, clear=True)
     patch.start()
     unittest.addModuleCleanup(patch.stop)
 
 
 RUNS = sorted((REPO / "configs" / "runs").glob("*.yaml"))
-# Hybrid attention without kv_bytes: the loader refuses on purpose.
 REFUSED = {"qwen": "attention=hybrid needs kv_bytes"}
 
 
 def qbench(*argv):
-    """(stdout, SystemExit message or None) of cli.main(argv)."""
     out = io.StringIO()
     with contextlib.redirect_stdout(out), mock.patch("shutil.which", return_value=None):
         try:
@@ -49,7 +47,6 @@ def qbench(*argv):
 
 @contextlib.contextmanager
 def scratch_configs(name, run):
-    """configs/ copied to a scratch dir with one more run yaml."""
     with tempfile.TemporaryDirectory() as td:
         configs = Path(td, "configs")
         shutil.copytree(REPO / "configs", configs)
@@ -86,7 +83,7 @@ class DryRun(unittest.TestCase):
             out, exit_msg = qbench("run", str(path), "--dry-run", "--set", "engine.model=/w")
         self.assertIsNone(exit_msg)
         self.assertEqual([line for line in out.splitlines() if line.startswith("==")], ["== sweep-tp1", "== sweep-tp2"])
-        self.assertIn("launch = server", out)  # a timing grid runs over HTTP
+        self.assertIn("launch = server", out)
 
     def test_refusal_is_the_exit_message(self):
         _, exit_msg = qbench("run", str(RUNS[0].with_name("llama.yaml")), "--dry-run", "--set", "mode.grid=nope")
@@ -95,7 +92,6 @@ class DryRun(unittest.TestCase):
 
 class GpuPick(unittest.TestCase):
     def child_env(self, *sets):
-        """The env run_one gives the child, with the engine stubbed out."""
         (cfg,) = loader.load(
             RUNS[0].with_name("llama-tp2.yaml"), ["engine.model=/w", "hardware.backend=cuda", *sets], env={}
         )
@@ -112,7 +108,7 @@ class GpuPick(unittest.TestCase):
             tempfile.TemporaryDirectory() as td,
         ):
             runner.run_one(cfg, Path(td))
-        export.assert_not_called()  # a bench child gets its env, this process keeps its own
+        export.assert_not_called()
         return adapter.driver.call_args.args[0].env["CUDA_VISIBLE_DEVICES"], idle.call_args
 
     def test_idle_gpus_for_tp_times_pp(self):
@@ -212,7 +208,6 @@ class InProcessEnv(unittest.TestCase):
         self.assertEqual(run_one.call_count, 2)
 
     def test_probe_points_count_as_in_process(self):
-        """A probe point exports CUDA_VISIBLE_DEVICES into this process like an in-process grid point, so the same rules hold for it."""
         probe = {"mode": "probe", "probe": "gemm", "probe_args": "--gpu-label A100"}
         for matrix, sets, refused in (
             ({"mode.probe_args": ["--gpu-label A", "--gpu-label B"]}, [], "set hardware.visible_devices"),
@@ -374,7 +369,6 @@ class DockerDryRun(unittest.TestCase):
 
 
 def session_trace(td):
-    """Two sessions of three turns, each turn's messages the whole conversation."""
     sessions = []
     for s in range(2):
         history, turns = [], []
@@ -415,8 +409,6 @@ class ChatOverHttp(unittest.TestCase):
 
 
 class FailureRecord(unittest.TestCase):
-    """A run that raises anywhere after its Config resolved leaves run.json."""
-
     def setUp(self):
         """run_probe exports CUDA_VISIBLE_DEVICES into os.environ; undo it per test."""
         patch = mock.patch.dict(os.environ, {}, clear=True)
@@ -490,7 +482,6 @@ class FailureRecord(unittest.TestCase):
 
 class ProbeMode(unittest.TestCase):
     def setUp(self):
-        """run_probe exports CUDA_VISIBLE_DEVICES into os.environ; undo it per test."""
         patch = mock.patch.dict(os.environ, {}, clear=True)
         patch.start()
         self.addCleanup(patch.stop)
@@ -510,7 +501,6 @@ class ProbeMode(unittest.TestCase):
         self.assertEqual(doc["summary"], {"probe": "fake", "argv": argv})
 
     def test_probe_runs_on_the_runs_gpus(self):
-        """CUDA_VISIBLE_DEVICES is exported before the probe module is imported, from hardware.visible_devices or else the idle GPUs, and recorded."""
         seen = []
 
         def import_probe(name):
@@ -572,7 +562,6 @@ class ProbeMode(unittest.TestCase):
         self.assertEqual(prof["sources_run"], ["cost"])
 
     def test_overwrite_never_empties_a_dir_qbench_did_not_make(self):
-        """--overwrite empties only results/<run>/ itself, a real dir holding a run marker; a symlink or a foreign dir is refused with its files kept."""
         run = {"mode": {"mode": "probe", "probe": "fake"}}
         with (
             scratch_configs("p", run) as (path, td),
@@ -607,7 +596,6 @@ class ProbeMode(unittest.TestCase):
                 (out / "run.json").unlink()
 
     def test_clearing_never_follows_a_dir_swapped_for_a_symlink(self):
-        """A run dir replaced by a symlink between the checks and the emptying is moved aside as the link itself; the files it points at stay."""
         with tempfile.TemporaryDirectory() as td:
             results, elsewhere = Path(td, "results"), Path(td, "elsewhere")
             out = results / "p"
@@ -640,7 +628,6 @@ class ProbeMode(unittest.TestCase):
             self.assertEqual(list(results.iterdir()), [])
 
     def test_an_interrupted_clear_leaves_no_run_export_reads(self):
-        """rmtree interrupted: the .clearing-* dir left holds no run marker, and export never counts a .clearing-* dir as a run."""
         from quettabench.export import quettasim
 
         with tempfile.TemporaryDirectory() as td:

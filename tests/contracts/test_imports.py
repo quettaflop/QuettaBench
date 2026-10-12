@@ -1,4 +1,4 @@
-"""Every quettabench module imports on its own, and the package never imports data/."""
+"""Every quettabench module imports on its own; the package never imports data/."""
 
 import ast
 import os
@@ -18,7 +18,7 @@ STUBS = ROOT / "tests" / "_stubs"
 MODULES = sorted(
     m.name for m in pkgutil.walk_packages(quettabench.__path__, "quettabench.") if not m.name.endswith(".__main__")
 )
-# GPU-only or external packages the CPU suite lacks; any other missing module is a typo or a bug.
+# GPU-only or external packages the CPU suite lacks; any other missing module is a bug.
 OPTIONAL_PACKAGES = {"torch", "vllm", "triton", "fla", "safetensors", "engine"}
 
 

@@ -1,4 +1,4 @@
-"""CPU stand-in for the transformers calls ReferenceDriver makes: records them in CALLS, logits are torch.toy_logits, 4 decoder layers."""
+"""CPU stand-in for the transformers calls ReferenceDriver makes."""
 
 import types
 

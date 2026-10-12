@@ -56,8 +56,6 @@ class LoaderRules(unittest.TestCase):
         self.assertEqual(len(configs), 1)
         return configs[0]
 
-    # precedence and origins
-
     def test_origin_recorded_for_each_level(self):
         cfg = self.one({"engine": {"tp": 2}}, ["mode.concurrency=4"], {"GPU_UTIL": "0.8"})
         o = cfg.origins
@@ -113,8 +111,6 @@ class LoaderRules(unittest.TestCase):
             cfg = load(path, env={})[0]
         self.assertEqual((cfg.hardware.backend, cfg.hardware.link_profile), ("cpu", "nvlink"))
 
-    # unknown keys
-
     def test_unknown_key_names_file_and_key(self):
         cases = [
             ("runs/r.yaml", lambda: self.load({"engine": {"tpp": 2}}), "engine.tpp"),
@@ -147,8 +143,6 @@ class LoaderRules(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, r"--set: unknown key 'engine.tensor_parallel'"):
             self.load(overrides=["engine.tensor_parallel=2"])
 
-    # parse-time refusals
-
     def test_malformed_serving_style_keeps_parse_serving_style_message(self):
         with self.assertRaises(ConfigError) as ctx:
             self.load({"engine": {"serving_style": "disagg:2p"}})
@@ -165,7 +159,7 @@ class LoaderRules(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "ep=3 does not divide 256 experts"):
             self.load({"engine": {"tp": 3}}, model={"ep": True, "num_experts": 256})
         self.one({"engine": {"tp": 8}}, model={"ep": True, "num_experts": 256})
-        self.one({"engine": {"tp": 3}}, model={"ep": True})  # num_experts unknown: skipped
+        self.one({"engine": {"tp": 3}}, model={"ep": True})
 
     def test_unverified_needs_allow_unverified(self):
         with self.assertRaisesRegex(ConfigError, "is not validated yet; pass --allow-unverified"):
@@ -190,8 +184,6 @@ class LoaderRules(unittest.TestCase):
         for source in ("random-1k", "synthetic"):
             with self.subTest(source), self.assertRaisesRegex(ConfigError, "names a synthetic workload"):
                 self.load(run={"workload": {"source": source}})
-
-    # serve profile and load rules
 
     def test_stress_test_forces_ignore_eos_and_no_prefix_caching(self):
         cfg = self.one({"mode": {"serve_profile": "stress-test"}})
@@ -218,7 +210,6 @@ class LoaderRules(unittest.TestCase):
         self.assertFalse(
             self.one({"workload": {"source": "chat-singleturn"}, "mode": {"grid": "toy"}}).engine.prefix_caching
         )
-        # a false from a level that states the checkpoint or box, not the run, is turned on
         for origin in ("default", "model", "hardware"):
             values = {"workload.source": "chat-singleturn", "mode.grid": None, "engine.prefix_caching": False}
             origins = {"engine.prefix_caching": origin}
@@ -292,8 +283,6 @@ class LoaderRules(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "step_points needs at least two distinct values"):
             self.load()
 
-    # matrix, grid, --set
-
     def test_matrix_expands_cartesian_product_with_suffixed_names(self):
         configs = self.load({"matrix": {"engine.tp": [1, 2], "mode.concurrency": [4, 8]}})
         got = [(c.run_name, c.engine.tp, c.mode.concurrency) for c in configs]
@@ -348,7 +337,6 @@ class LoaderRules(unittest.TestCase):
         self.assertEqual((cfg.run_name, cfg.origins["run_name"]), ("mine", "cli"))
 
     def test_a_run_name_that_is_no_plain_dir_name_is_refused(self):
-        """run_name becomes results/<run_name>/, which --overwrite empties."""
         for name in (
             "..",
             ".",

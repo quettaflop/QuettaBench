@@ -1,4 +1,4 @@
-"""GPU smoke: each kernel probe writes a table on a tiny grid, and with MODEL set a one-cell qbench run writes run.json; skips without CUDA."""
+"""GPU smoke: each kernel probe writes a table on a tiny grid; skips without CUDA."""
 
 from __future__ import annotations
 
@@ -21,7 +21,6 @@ LABEL = "SMOKE"
 
 
 def run_probe(out_dir: Path, probe: str, *args: str, torchrun_world: int = 0) -> None:
-    """Run one probe to completion against out_dir; raises on nonzero exit."""
     launcher = [sys.executable]
     if torchrun_world:
         launcher += ["-m", "torch.distributed.run", f"--nproc_per_node={torchrun_world}"]
@@ -41,7 +40,6 @@ def run_probe(out_dir: Path, probe: str, *args: str, torchrun_world: int = 0) ->
 
 
 def written_tables(out_dir: Path) -> list[Path]:
-    """Non-empty CSV/JSON tables the probe left under out_dir."""
     return [p for suffix in ("*.csv", "*.json") for p in out_dir.rglob(suffix) if p.stat().st_size > 0]
 
 

@@ -1,4 +1,4 @@
-"""The drivers: HttpDriver streaming, BenchDriver, InProcessDriver, the reference scorer and driver choice."""
+"""HttpDriver, BenchDriver, InProcessDriver, reference scorer and driver choice."""
 
 import asyncio
 import contextlib
@@ -144,8 +144,6 @@ class Reset(unittest.TestCase):
 
 
 class BoundDriver(unittest.TestCase):
-    """send/run/reset against the server the driver was built for."""
-
     def driver(self, endpoint="completions", chunks=({"choices": [{"text": "a"}]},)):
         drv = HttpDriver(
             endpoint, "vllm-completions", url="http://h:8000/v1/completions", model="m", api_key="k", timeout=9
@@ -223,8 +221,6 @@ class BoundDriver(unittest.TestCase):
 
 
 class GridOverHttp(unittest.TestCase):
-    """A grid batch is bs concurrent completions against the fake server."""
-
     def driver(self, endpoint):
         return HttpDriver("completions", url=endpoint + "/v1/completions", model="m", timeout=9)
 
@@ -349,8 +345,6 @@ class _ChatResp:
 
 
 class _ChatSession:
-    """Just enough aiohttp.ClientSession for `send_request`."""
-
     def __init__(self, lines, status=200):
         self._lines, self._status = lines, status
         self.payload = None
@@ -374,8 +368,6 @@ def _run(session):
 
 
 class PinnedOutputTests(unittest.TestCase):
-    """min_tokens must reach the payload, per request."""
-
     def test_min_tokens_is_sent_when_given(self):
         session = _ChatSession(_chat_sse([_delta("a")]))
         asyncio.run(
@@ -405,7 +397,6 @@ class PinnedOutputTests(unittest.TestCase):
         self.assertNotIn("min_tokens", session.payload)
 
     def test_each_turn_keeps_its_own_length(self):
-        """Pinning removes the early stop, not the variation between turns."""
         for planned in (37, 204, 91):
             session = _ChatSession(_chat_sse([_delta("a")]))
             asyncio.run(
@@ -439,7 +430,6 @@ class CaptureTextTests(unittest.TestCase):
         self.assertEqual(r.generated_text, "Hello there")
 
     def test_reasoning_and_tool_calls_are_not_transcript_content(self):
-        """Reasoning/tool_calls count as token events but are not transcript content."""
         r = _run(
             _ChatSession(
                 _chat_sse(
@@ -472,7 +462,6 @@ class CaptureTextTests(unittest.TestCase):
         self.assertIsNotNone(r.ttft)
 
     def test_empty_reply_is_not_an_error(self):
-        """Empty capture is a success with empty text, not a failure."""
         r = _run(_ChatSession(_chat_sse([_delta(None, tool_calls=[{"index": 0}])])))
         self.assertTrue(r.success, msg=r.error)
         self.assertEqual(r.generated_text, "")
@@ -495,7 +484,6 @@ except ModuleNotFoundError:
 
 class TestTpotCoverageGuard(unittest.TestCase):
     def test_full_coverage_keeps_mean_itl(self):
-        # Healthy stream: one ITL entry per token after the first.
         r = RequestResult(success=True, ttft=0.05, e2el=1.05, itl=[0.01] * 99, output_tokens=100)
         self.assertAlmostEqual(r.tpot, 0.01)
 
@@ -503,12 +491,11 @@ class TestTpotCoverageGuard(unittest.TestCase):
         # gpt-oss-on-vllm signature: 54 chunks for 269 tokens, one giant gap.
         itl = [2.505] + [0.0104] * 53
         r = RequestResult(success=True, ttft=0.25, e2el=3.32, itl=itl, output_tokens=269)
-        # wall clock gives ~11.5 ms/token; mean(itl) would say ~57.
+        # Wall clock gives ~11.5 ms/token; mean(itl) would say ~57.
         self.assertAlmostEqual(r.tpot, (3.32 - 0.25) / 268)
         self.assertLess(r.tpot, 0.013)
 
     def test_short_outputs_keep_mean_itl(self):
-        # len(itl) == output_tokens - 1 exactly: correct, must not trip guard.
         r = RequestResult(success=True, ttft=0.05, e2el=0.10, itl=[0.011, 0.012], output_tokens=3)
         self.assertAlmostEqual(r.tpot, (0.011 + 0.012) / 2)
 
@@ -521,7 +508,6 @@ class TestTpotCoverageGuard(unittest.TestCase):
         self.assertIsNone(r.tpot)
 
     def test_sparse_coverage_without_wall_clock_keeps_mean(self):
-        # Guard cannot fire without e2el/ttft; degrade gracefully to mean.
         r = RequestResult(success=True, itl=[0.5, 0.01], output_tokens=100)
         self.assertAlmostEqual(r.tpot, 0.255)
 
@@ -535,7 +521,6 @@ def _chunk(delta, finish_reason=None):
 
 
 async def _serve_and_request(chunks):
-    """Stream the given SSE chunk payloads from a local server through send_request and return the RequestResult."""
     from quettabench.engines.drivers import HttpDriver
 
     send_request = HttpDriver("chat", "openai").send_request
@@ -576,7 +561,7 @@ class TestReasoningChunksCounted(unittest.TestCase):
             [_chunk({"role": "assistant", "content": ""})]
             + [_chunk({"reasoning_content": "r"}) for _ in range(3)]
             + [_chunk({"content": "t"}) for _ in range(4)]
-            + [_chunk({}, finish_reason="stop")]  # must NOT count
+            + [_chunk({}, finish_reason="stop")]
             + [{"choices": [], "usage": {"prompt_tokens": 10, "completion_tokens": 8}}]
         )
         r = asyncio.run(_serve_and_request(chunks))
@@ -598,7 +583,6 @@ class TestReasoningChunksCounted(unittest.TestCase):
         self.assertEqual(len(r.itl), 5)
 
     def test_plain_content_stream_unchanged(self):
-        # Clean backends (Llama, Qwen, sglang) must behave exactly as before.
         chunks = (
             [_chunk({"role": "assistant", "content": ""})]
             + [_chunk({"content": "t"}) for _ in range(5)]
@@ -624,7 +608,7 @@ def cell_spec(ctx, bs, **env):
 
 
 def alive(pid):
-    """Whether pid runs: a zombie waiting for its reaper counts as gone."""
+    """A zombie waiting for its reaper counts as gone."""
     try:
         return Path(f"/proc/{pid}/stat").read_text().split(") ")[1][0] != "Z"
     except (OSError, IndexError):
@@ -690,7 +674,7 @@ class CellLoop(unittest.TestCase):
             out.write.side_effect = KeyboardInterrupt
             list(BenchDriver(self.log).run([(1, 1, cell_spec(1, 1, FAKE_BENCH_SLEEP="60"))]))
         (proc,) = started
-        self.assertIsNotNone(proc.poll())  # killed and reaped, not left sleeping
+        self.assertIsNotNone(proc.poll())
 
     def test_an_interrupted_cell_kills_the_bench_children(self):
         pid_file = self.log.with_name("child.pid")
@@ -705,7 +689,7 @@ class CellLoop(unittest.TestCase):
         self.assertFalse(alive(pid))
 
     def test_a_finished_cell_leaves_no_bench_child(self):
-        """A bench that exits on its own can leave a child (cargo's bench binary) holding the GPUs; its group is killed all the same."""
+        """A bench that exits on its own can leave a child (cargo's) holding the GPUs."""
         pid_file = self.log.with_name("child.pid")
         rows = list(BenchDriver(self.log).run([(1, 1, cell_spec(1, 1, FAKE_BENCH_CHILD=str(pid_file)))]))
         self.assertEqual(len(rows), 1)
@@ -752,7 +736,6 @@ class Builders(unittest.TestCase):
 
             with mock.patch.object(vllm, "LLM", llm):
                 InProcessDriver(LaunchSpec(adapter="vllm", engine_kwargs=KWARGS, env=env)).llm()
-        # the spec's value replaces the inherited one, as a launched server's env does
         self.assertEqual(seen, env)
 
 
@@ -772,7 +755,7 @@ class GridBatch(unittest.TestCase):
 
     def test_one_generate_shared_wall(self):
         rows, calls = self.run_batch(0.25)
-        self.assertEqual(calls, 2)  # warmup + the batch
+        self.assertEqual(calls, 2)
         self.assertEqual(len(rows), 3)
         for r in rows:
             self.assertEqual((r.e2el, r.batch_wall_s, r.ttft), (0.25, 0.25, None))
@@ -962,8 +945,6 @@ class QuettaServeBenchRun(unittest.TestCase):
 
 
 class QuettaServeThroughCli(unittest.TestCase):
-    """qwen3's 16 cells on the fake bench: max_model_len 10000 drops the four ctx=16384 cells, a 141 GiB GPU at cap_frac 0.3 drops (8192, 64)."""
-
     SETS = [
         *PINNED,
         "engine.name=quettaserve",
@@ -1004,7 +985,6 @@ class QuettaServeThroughCli(unittest.TestCase):
             doc = json.loads((run / "run.json").read_text())
             rows = [json.loads(line) for line in (run / "requests.jsonl").read_text().splitlines()]
         skips = [line for line in out.splitlines() if line.startswith("SKIP")]
-        # cap = (141 * 0.9 - 54 weights - 5 reserve) GiB / 65536 B per token; need = (8192 + 100 + 28) * 64 > 0.3 * cap.
         self.assertEqual(
             skips,
             [

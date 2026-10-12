@@ -1,4 +1,4 @@
-"""Contracts for profiling/native.py sources, the frontend and kv_transfer sources, and profiling/wrapped.py numbers on fixed inputs."""
+"""Contracts for profiling/native.py, frontend, kv_transfer and wrapped.py."""
 
 import argparse
 import ast
@@ -36,7 +36,7 @@ class Parse(unittest.TestCase):
         self.assertEqual(native.parse_prometheus("# only\n\nfoo bar\n"), {})
 
     def test_hit_rate_is_token_weighted_over_label_sets(self):
-        # (800 + 400) hit tokens / (1000 + 600) queried tokens; _created is not a count
+        # (800 + 400) hit tokens / (1000 + 600) queried tokens; _created is not a count.
         self.assertEqual(native.prefix_cache_hit_rate(self.m), 0.75)
         self.assertEqual(native.counter_total(self.m, native.QUERIES), 1600.0)
 
@@ -75,7 +75,6 @@ class Traces(unittest.TestCase):
 
 
 def fake_nsys_export(db):
-    """An nsys sqlite export: two 1000 ns decode steps on device 0, a 400 ns prefill-only range and one memcpy."""
     con = sqlite3.connect(db)
     con.executescript("""
         CREATE TABLE StringIds (id INTEGER, value TEXT);
@@ -130,7 +129,6 @@ class Kernels(unittest.TestCase):
             {"kernel": "nvjet_gemm", "launches_per_step": 1.0, "ms_per_step": 0.0004, "us_per_call": 0.4},
         )
         self.assertEqual(out["memops"], [{"kind": "memcpy", "per_step": 0.5, "ms_per_step": 0.000025}])
-        # 1400 ns of kernels covering 1200 ns of wall over a 3000 ns window
         (dev,) = out["devices"]
         self.assertAlmostEqual(dev["sum_ms_per_step"], 0.0007)
         self.assertAlmostEqual(dev["union_ms_per_step"], 0.0006)
@@ -140,7 +138,7 @@ class Kernels(unittest.TestCase):
     def test_a_stale_partial_export_is_removed_first(self):
         def export(argv, check):
             part = Path(argv[argv.index("-o") + 1])
-            self.assertFalse(part.exists())  # nsys refuses an existing -o file
+            self.assertFalse(part.exists())
             fake_nsys_export(part)
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -169,7 +167,6 @@ class Kernels(unittest.TestCase):
 
 
 def fake_probe(result):
-    """A frontend module whose two sources share one parser and one result."""
 
     def parser():
         ap = argparse.ArgumentParser()
@@ -245,7 +242,6 @@ class LiveProbes(unittest.TestCase):
                 self.assertTrue({f"{name}_probe", f"{name}_main"} <= set(funcs))
 
     def test_kv_transfer_records_a_probe_run(self):
-        """kv_transfer records its run through run_recorded, so its rows land in rows.jsonl and only `qbench export` moves them to kernel_data."""
         text = (Path(native.__file__).parent / "kv_transfer.py").read_text()
         calls = {
             (n.func.id, tuple(getattr(a, "id", getattr(a, "value", None)) for a in n.args))
@@ -259,7 +255,7 @@ class LiveProbes(unittest.TestCase):
         self.assertNotIn("data/kernel_data", text)
 
     def test_kv_transfer_fails_its_run_on_a_hang_or_sigterm(self):
-        """The gloo group times out after five minutes and SIGTERM raises SystemExit(143), so the run is recorded as failed."""
+        """The gloo group times out after five minutes; SIGTERM raises SystemExit(143)."""
         tree = ast.parse((Path(native.__file__).parent / "kv_transfer.py").read_text())
         (init,) = [
             n for n in ast.walk(tree) if isinstance(n, ast.Call) and getattr(n.func, "attr", "") == "init_process_group"
@@ -282,7 +278,6 @@ class LiveProbes(unittest.TestCase):
         self.assertEqual(results.exit_status(stop.exception)[0], "failed")
 
     def test_frontend_sources_take_quettasims_device_yaml(self):
-        """The frontend and pd_host sources take a required --device-yaml into QuettaSim's device_spec/."""
         here = Path(native.__file__).parent
         text = (here / "frontend.py").read_text()
         tree = ast.parse(text)
@@ -313,8 +308,6 @@ FAKE_SMI = str(Path(__file__).with_name("fake_nvidia_smi.py"))
 
 
 class Tokenizer:
-    """Stand-in tokenizer: one id per character."""
-
     def __call__(self, text):
         return {"input_ids": [ord(c) for c in text]}
 
@@ -382,7 +375,6 @@ class Sampler(unittest.TestCase):
 
 class Cost(unittest.TestCase):
     def test_cost_per_m_tokens(self):
-        # 2 GPUs x $3/h x 1800 s = $3.00; 3.00 * 1e6 / 1.5e6 tokens = $2.00 per M
         self.assertEqual(wrapped.cost_per_m_tokens(3.0, 2, 1800.0, 1_500_000), (3.0, 2.0))
         self.assertEqual(wrapped.cost_per_m_tokens(2.5, 4, 90.0, 0)[1], 0.25 * 1e6)
 

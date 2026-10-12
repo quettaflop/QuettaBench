@@ -1,17 +1,15 @@
-"""CPU stand-in for the slice of vLLM a grid run touches: records constructor kwargs in CALLS and runs generate() on a fake clock."""
+"""CPU stand-in for the vLLM slice a grid run touches; generate() runs on a fake clock."""
 
 __version__ = "0.0.0+stub"
 
-CALLS = []  # (constructor name, kwargs) in call order
+CALLS = []
 
 
 class StubHalt(Exception):
-    """Raised where a real engine would start serving; ends a capture run."""
+    """Ends a capture run."""
 
 
 class FakeClock:
-    """perf_counter replacement that only moves when generate() spends time."""
-
     def __init__(self):
         self.now = 0.0
         self.generate_calls = 0
@@ -24,7 +22,7 @@ CLOCK = FakeClock()
 
 
 def generate_seconds(prompt_len, batch, max_tokens, call_no):
-    """Seconds one generate() call costs on the fake clock; tests replace it."""
+    """Tests replace it."""
     return 0.0
 
 
@@ -51,7 +49,7 @@ class Logprob:
 
 
 def _prompt_logprobs(ids, k):
-    """vLLM's shape: None at position 0, then per position the top-k tokens plus the prompt token, scored by torch.toy_logits of the prefix."""
+    """None at position 0, then the top-k tokens plus the prompt token per position."""
     import torch
 
     out = [None]
@@ -71,7 +69,7 @@ class _RequestOutput:
 
 
 def run_batch(prompts, sampling_params):
-    """One batch on the fake clock: LLM.generate's body, which the golden harness's HTTP stand-in also runs for what a grid batch posts."""
+    """Also run by the golden harness's HTTP stand-in."""
     CLOCK.generate_calls += 1
     prompt_len = len(prompts[0]["prompt_token_ids"])
     n = sampling_params.max_tokens

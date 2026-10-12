@@ -1,4 +1,4 @@
-"""metrics/core.py: percentiles, serving summaries, run gates and per-request cache metadata; metrics/step_fit.py on hand-computed cases."""
+"""metrics/core.py and step_fit.py on hand-computed cases."""
 
 import json
 import tempfile
@@ -32,13 +32,12 @@ from quettabench.workloads.base import Request
 from quettabench.workloads.live import get_profile
 from quettabench.workloads.sessions import resolve_multi_turn_num_sessions
 
-SEVEN = [3.0, 9.0, 1.0, 7.0, 5.0, 11.0, 13.0]  # unsorted on purpose
+SEVEN = [3.0, 9.0, 1.0, 7.0, 5.0, 11.0, 13.0]
 TIES = [1.0, 2.0, 2.0, 2.0, 3.0]
 TWO = [10.0, 20.0]
 SINGLE = [42.0]
 ARANGE = [float(i) for i in range(1000)]
 
-# (array, {p: (nearest, linear)})
 TABLE = [
     (SINGLE, {50: (42.0, 42.0), 90: (42.0, 42.0), 95: (42.0, 42.0), 99: (42.0, 42.0)}),
     (TWO, {50: (20.0, 15.0), 90: (20.0, 19.0), 95: (20.0, 19.5), 99: (20.0, 19.900000000000002)}),
@@ -130,7 +129,7 @@ class SlaVerdictTest(unittest.TestCase):
     def test_bounds(self):
         self.assertEqual(sla_verdict(self.S, 500.0, 50.0), ["ttft_p99"])
         self.assertEqual(sla_verdict(self.S, 500.0, 30.0), ["ttft_p99", "tpot_p99"])
-        self.assertEqual(sla_verdict(self.S, 900.0, 40.0), [])  # at the bound passes
+        self.assertEqual(sla_verdict(self.S, 900.0, 40.0), [])
         self.assertEqual(sla_verdict(self.S, None, None), [])
         self.assertEqual(sla_verdict(self.S, 0, 0), [])
 
@@ -145,7 +144,6 @@ class BurstRecoveryTest(unittest.TestCase):
             + [{"arrival_s": t, "ttft_ms": 9000.0} for t in range(5, 10)]
             + [{"arrival_s": t, "ttft_ms": 100.0} for t in range(15, 20)]
         )
-        # peak in bucket 1, back under the SLA in bucket 3: (3 - 1) * 5 s
         self.assertEqual(burst_recovery(recs, 1000.0, 5.0), (10.0, 9000.0))
 
     def test_never_recovers(self):
@@ -153,7 +151,6 @@ class BurstRecoveryTest(unittest.TestCase):
         self.assertEqual(burst_recovery(recs, 1000.0, 5.0), (None, 9000.0))
 
     def test_bucket_p99_is_nearest_rank(self):
-        # nearest p99 of [1..10] is 10; linear would give 9.91
         recs = [{"arrival_s": 0.0, "ttft_ms": float(v)} for v in range(1, 11)]
         self.assertEqual(burst_recovery(recs, 1.0, 5.0), (None, 10.0))
 
@@ -185,7 +182,7 @@ class GateTest(unittest.TestCase):
         self.assertEqual(verdict, "warn")
         self.assertIn("--allow-missing-usage was passed", msg)
         self.assertEqual(usage_gate(_summary(10, 10, 3), False), ("pass", None))
-        self.assertEqual(usage_gate(_summary(10, 0, 0), False), ("pass", None))  # nothing succeeded
+        self.assertEqual(usage_gate(_summary(10, 0, 0), False), ("pass", None))
 
     def test_transient(self):
         verdict, msg = transient_gate(10, 4)
@@ -209,8 +206,6 @@ class GateTest(unittest.TestCase):
 
 
 class CacheEstimateTests(unittest.TestCase):
-    """Reusable prefix includes the previous reply only when it is the engine's output."""
-
     def _result(self, input_tokens=1000):
         from quettabench.metrics.core import RequestResult
 
@@ -288,7 +283,6 @@ class TestBusyTime(unittest.TestCase):
         self.assertEqual(peak, 1)
 
     def test_idle_gap_excluded_from_busy_time(self):
-        # 0-1 busy, 1-5 idle, 5-6 busy
         busy, mean, peak = _busy_time_and_load([_req(0, 1), _req(5, 6)])
         self.assertAlmostEqual(busy, 2.0)
         self.assertAlmostEqual(mean, 1.0)
@@ -301,7 +295,7 @@ class TestBusyTime(unittest.TestCase):
         self.assertEqual(peak, 3)
 
     def test_drain_is_busy_but_underutilized(self):
-        """Four requests finishing at 1s, 2s, 3s and 10s never leave the server idle, so only mean in-flight (1.6 against a peak of 4) shows the drain."""
+        """Mean in-flight (1.6 against a peak of 4) shows the drain."""
         busy, mean, peak = _busy_time_and_load([_req(0, 1), _req(0, 2), _req(0, 3), _req(0, 10)])
         self.assertAlmostEqual(busy, 10.0)
         self.assertEqual(peak, 4)
@@ -319,7 +313,6 @@ class TestBusyTime(unittest.TestCase):
 
 class TestBusyThroughput(unittest.TestCase):
     def test_busy_throughput_exceeds_wall_clock_when_idle(self):
-        # Two 1s requests inside a 10s window.
         results = [_req(0, 1), _req(9, 10)]
         s = aggregate(results, duration_s=10.0, concurrency=1)
         self.assertAlmostEqual(s.busy_time_s, 2.0)
@@ -329,7 +322,6 @@ class TestBusyThroughput(unittest.TestCase):
         self.assertAlmostEqual(s.busy_output_token_throughput, 5.0)
 
     def test_failed_requests_still_occupy_the_server(self):
-        """A timed-out request held a slot; excluding it would inflate busy throughput."""
         results = [_req(0, 1), _req(0, 30, success=False, error_kind="timeout")]
         s = aggregate(results, duration_s=30.0, concurrency=2)
         self.assertAlmostEqual(s.busy_time_s, 30.0)
@@ -349,7 +341,7 @@ class TestFailureTaxonomy(unittest.TestCase):
         self.assertEqual(s.error_kinds, {"timeout": 1, "http_error": 1})
 
     def test_partial_ttft_on_failures_is_retained_but_not_aggregated(self):
-        """Failed requests keep their partial TTFT for diagnosis only; their e2el is a timeout artifact, so they stay out of the percentiles."""
+        """Their e2el is a timeout artifact, so they stay out of the percentiles."""
         results = [
             _req(0, 1, ttft=0.010),
             _req(0, 30, success=False, error_kind="timeout", ttft=0.999),
@@ -365,7 +357,6 @@ class TestFailureTaxonomy(unittest.TestCase):
 
 class TestDiscardFirst(unittest.TestCase):
     def _run(self):
-        """10 sequential 1s requests; the first 3 are held out."""
         results = [_req(i, i + 1) for i in range(10)]
         for r in results[:3]:
             r.excluded_from_summary = True
@@ -378,7 +369,6 @@ class TestDiscardFirst(unittest.TestCase):
         self.assertEqual(s.successful_requests, 7)
 
     def test_window_excludes_the_held_out_span(self):
-        """Throughput must not be divided by time the numerator no longer counts."""
         s = aggregate(self._run(), duration_s=10.0, concurrency=1)
         self.assertAlmostEqual(s.measured_window_s, 7.0)
         self.assertAlmostEqual(s.request_throughput, 1.0)
@@ -395,8 +385,6 @@ class TestDiscardFirst(unittest.TestCase):
 
 
 class TestLoadModeDiagnostics(unittest.TestCase):
-    """Closed loop concurrency is the in-flight cap; open loop it only sizes warmup, so the question is whether the server kept up."""
-
     def test_open_loop_records_mode_and_offered_rate(self):
         s = aggregate(
             [_req(i, i + 1) for i in range(10)], duration_s=10.0, concurrency=40, load_mode="open-loop", target_rate=2.0
@@ -405,7 +393,6 @@ class TestLoadModeDiagnostics(unittest.TestCase):
         self.assertAlmostEqual(s.target_rate, 2.0)
 
     def test_open_loop_keeping_up_is_arrival_limited_not_draining(self):
-        """Mean in-flight 5.8 against concurrency 40 is not a drain when the server matches the offered rate."""
         results = [_req(i * 0.5, i * 0.5 + 1) for i in range(20)]
         s = aggregate(results, duration_s=10.0, concurrency=40, load_mode="open-loop", target_rate=2.0)
         self.assertAlmostEqual(s.request_throughput, 2.0)
@@ -418,8 +405,6 @@ class TestLoadModeDiagnostics(unittest.TestCase):
 
 
 class TestOpenLoopUnits(unittest.TestCase):
-    """--target-rate is sessions/s for multi-turn and requests/s for single-turn."""
-
     def _multi_turn(self, n_sessions=4, turns_each=5):
         out = []
         for sid in range(n_sessions):
@@ -442,8 +427,6 @@ class TestOpenLoopUnits(unittest.TestCase):
 
 
 class TestSaturationVerdict(unittest.TestCase):
-    """Saturation needs both signals: in-flight falls once the last session arrives, so only the served/offered ratio catches a slow server."""
-
     @staticmethod
     def _verdict(offered, served, first, second):
         growing = first > 0.5 and second > 1.5 * first
@@ -457,17 +440,14 @@ class TestSaturationVerdict(unittest.TestCase):
         self.assertTrue(self._verdict(2.0, 0.16, 125.6, 91.7))
 
     def test_growing_backlog_caught_even_when_rate_looks_fine(self):
-        """The rate can look healthy while the backlog builds."""
         self.assertTrue(self._verdict(1.0, 0.95, 10.0, 40.0))
 
     def test_drain_alone_does_not_trip_the_rate_check(self):
-        """A healthy run reads low by about one session duration, not by 25%."""
         self.assertFalse(self._verdict(0.5, 0.447, 9.8, 4.4))
 
 
 class TestWarmupWidthCoverage(unittest.TestCase):
     def test_peak_inflight_beyond_warmup_width_is_recorded(self):
-        """Warmup at width 8 with a peak of 39 leaves unseen batch shapes to compile mid-measurement."""
         results = [_req(0, 5) for _ in range(39)]
         s = aggregate(
             results, duration_s=5.0, concurrency=8, load_mode="open-loop", target_rate=2.0, warmup_concurrency=8
@@ -484,7 +464,7 @@ class TestWarmupWidthCoverage(unittest.TestCase):
 
 
 class TestStationarity(unittest.TestCase):
-    """Halving the window is the stationarity test; Little's Law cannot fail because mean_inflight is defined as sum(durations) / busy_time."""
+    """Little's Law cannot fail: mean_inflight is sum(durations) / busy_time."""
 
     def test_steady_run_shows_no_drift(self):
         results = [_req(i * 1.0, i * 1.0 + 2.0) for i in range(20)]
@@ -497,13 +477,11 @@ class TestStationarity(unittest.TestCase):
         self.assertGreater(s.mean_inflight_second_half, s.mean_inflight_first_half)
 
     def test_drain_dominated_run_falls(self):
-        """Closed-loop burst then drain: second half must be much lower."""
         results = [_req(0.0, 1.0 + i * 1.0) for i in range(20)]
         s = aggregate(results, duration_s=21.0)
         self.assertLess(s.mean_inflight_second_half, s.mean_inflight_first_half * 0.6)
 
     def test_littles_law_is_an_identity_not_a_check(self):
-        """busy_throughput x mean_duration equals mean_inflight by construction, so it checks nothing."""
         results = [_req(i * 0.5, i * 0.5 + 2.0) for i in range(30)]
         s = aggregate(results, duration_s=20.0)
         mean_duration = s.busy_time_s * s.mean_inflight_requests / s.successful_requests
@@ -526,7 +504,6 @@ class TestUsageAccounting(unittest.TestCase):
         s = aggregate(results, duration_s=1.0)
         self.assertEqual(s.successful_requests, 1)
         self.assertEqual(s.usage_reported_requests, 0)
-        # a request with no usage block shows as zero tokens, not as a silent pass
         self.assertEqual(s.total_output_tokens, 0)
         self.assertEqual(s.output_token_throughput, 0.0)
 
@@ -811,7 +788,6 @@ GIB = 1 << 30
 
 
 def batch(ctx, bs, step, wall, phase="fit", attempt=0, tp=1):
-    """bs rows of one InProcessDriver batch."""
     cell = {"ctx": ctx, "bs": bs, "tp": tp, "step_point": step, "phase": phase, "attempt": attempt}
     return [RequestResult(success=True, e2el=wall, batch_wall_s=wall, cell=dict(cell)) for _ in range(bs)]
 
@@ -822,14 +798,12 @@ def attempt_rows(ctx, bs, walls, attempt):
 
 class FitTest(unittest.TestCase):
     def test_exact_line(self):
-        # y = 0.5 + 0.01 x
         slope, inter, r2 = fit([64, 128, 256], [1.14, 1.78, 3.06])
         self.assertAlmostEqual(slope, 0.01)
         self.assertAlmostEqual(inter, 0.5)
         self.assertAlmostEqual(r2, 1.0)
 
     def test_noisy_three_points(self):
-        # slope 0.5, intercept 1; residuals (-0.5, 1, -0.5) give ss_res 1.5 of ss_tot 2, r2 0.25.
         self.assertEqual(fit([1, 2, 3], [1, 3, 2]), (0.5, 1.0, 0.25))
 
     def test_flat_ys_gives_r2_zero(self):
@@ -844,9 +818,7 @@ class MsAtEvalTest(unittest.TestCase):
         self.assertEqual(ms_at_eval(10.0, 0.0, 512, 128, 4096), 10.0)
 
     def test_shift_scales_with_attn_and_distance(self):
-        # 10 * (1 + 0.5 * (1000 - 100) / (800 + 100)) = 10 * 1.5
         self.assertEqual(ms_at_eval(10.0, 0.5, 1000, 100, 800), 15.0)
-        # eval before the centroid shrinks it: 10 * (1 - 0.5 * 100 / 1000) = 9.5
         self.assertEqual(ms_at_eval(10.0, 0.5, 0, 100, 900), 9.5)
 
 

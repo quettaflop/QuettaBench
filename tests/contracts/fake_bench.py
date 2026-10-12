@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stand-in decode_loop bench: prints one LOOP line from the QW_* env; FAKE_BENCH_EXIT, _SILENT, _SLEEP and _CHILD=<pidfile> steer it."""
+"""Stand-in decode_loop bench: prints one LOOP line from the QW_* env."""
 
 import os
 import subprocess

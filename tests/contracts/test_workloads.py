@@ -1,4 +1,4 @@
-"""Traces, arrivals, grid prompts, multi-turn pacing, the profile registry, real-trace datasets and each profile's pinned content hash."""
+"""Traces, arrivals, grid prompts, pacing, profiles and pinned content hashes."""
 
 import contextlib
 import dataclasses
@@ -97,7 +97,7 @@ class GridTraceTest(unittest.TestCase):
 
     def test_cells_over_maxlen_carry_no_requests(self):
         grid = GridTrace(self.CELLS, self.STEPS, "distinct", maxlen=1040)
-        self.assertEqual(grid.cells_over_maxlen, [(1000, 1)])  # 1000 + 40 + 2 > 1040
+        self.assertEqual(grid.cells_over_maxlen, [(1000, 1)])
         reqs = grid.requests()
         self.assertEqual(len(reqs), (2 + 3) * len(self.STEPS))
         self.assertEqual(sorted({r.output_length for r in reqs}), self.STEPS)
@@ -570,7 +570,6 @@ SEED = 7
 NUM_REQUESTS = 12
 WARMUP = 3
 
-# name: (workload_hash, content digest)
 PINS = {
     "chat-multiturn-short": ("c51f134d3946f53d", "5e2d31c9032a7cb8"),
     "chat-singleturn": ("1b84966cb9c4facc", "84b2b4875f8a177f"),
@@ -649,7 +648,7 @@ def write_fixtures(root):
 
 
 class FakeTokenizer:
-    """Lossy on purpose: encode drops ids divisible by 7, so the random-token profiles pad with their rng."""
+    """encode drops ids divisible by 7, so random-token profiles pad with their rng."""
 
     vocab_size = 1000
 

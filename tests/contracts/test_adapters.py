@@ -1,4 +1,4 @@
-"""Engine adapters: LaunchSpec data, and the vllm and quettaserve translations against their golden flags."""
+"""Engine adapters: LaunchSpec data and the vllm and quettaserve translations."""
 
 import contextlib
 import dataclasses
@@ -127,7 +127,6 @@ class ServerArgv(unittest.TestCase):
         self.assertEqual(list(spec.server_argv[:2]), ["/venv/bin/vllm", "serve"])
 
     def test_h200_campaign_flags(self):
-        """v4sweep.py glm_tep: kv fp8, EP, seq and batched-token caps via extra.vllm."""
         argv = list(
             spec_for(
                 "llama",
@@ -208,7 +207,7 @@ class Extra(unittest.TestCase):
 
 
 class GridDriver(unittest.TestCase):
-    """mode.returns picks how a grid run reaches vLLM: a timing grid over HTTP, a grid that returns text or logits in-process."""
+    """mode.returns picks how a grid run reaches vLLM."""
 
     def cfg(self, *sets):
         (cfg,) = loader.load(RUNS / "llama.yaml", [*PINNED, *sets], env={})
@@ -395,7 +394,7 @@ class DeepseekMoe(unittest.TestCase):
         ):
             with self.subTest(field), self.assertRaisesRegex(base.UnsupportedField, shown):
                 quettaserve_spec("deepseek", (1024, 1), sets=[*DS, field])
-        # model yaml facts (deepseek's dtype, kv_dtype, ep) describe the checkpoint
+        # Model yaml facts (dtype, kv_dtype, ep) describe the checkpoint.
         self.assertTrue(quettaserve_spec("deepseek", (1024, 1), sets=DS).bench_argv)
 
     def test_cli_refuses_pp_on_quettaserve(self):

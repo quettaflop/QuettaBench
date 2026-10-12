@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Runs every kernel probe's main on CPU with mocked timings, then kernel_tables: fake_probe_runs.py <code root> <work dir> <dest seed json>."""
+"""Runs every kernel probe's main on CPU with mocked timings, then kernel_tables."""
 
 import contextlib
 import io
@@ -19,7 +19,7 @@ CLOCK = [0]
 
 
 def tick() -> float:
-    """The next synthetic timing, in the probe's own unit."""
+    """In the probe's own unit."""
     STEP[0] += 1
     return 3.0 + STEP[0] * 0.7317
 
@@ -66,7 +66,6 @@ KV_ROWS = [
 
 
 def broadcast_object_list(objs, src=0, **kw):
-    """kv_transfer's rank 0 receives the rows rank 1 measured."""
     if src == 1:
         objs[0] = [dict(r) for r in KV_ROWS]
 
@@ -106,7 +105,7 @@ GDN_CALLS = [0]
 
 
 def gdn_time(*a, **k) -> float:
-    """gdn's second and fifth points fail, as its illegal-memory decode bug does."""
+    """gdn's second and fifth points fail, as its decode bug does."""
     GDN_CALLS[0] += 1
     if GDN_CALLS[0] in (2, 5):
         raise RuntimeError("illegal memory access")
@@ -128,7 +127,7 @@ TIMING = {
 }
 TORCHRUN = {"collective", "vllm_allreduce", "reparallel", "kv_transfer"}
 PAIRS = ["--pairs", "1024:1024", "1024:2048", "--m-axis", "1,64,3"]
-# (probe, flags) per run; the second batch lands in another results dir.
+# The second batch lands in another results dir.
 BATCHES = [
     [
         ("gemm", ["--graph", "--append", *PAIRS]),

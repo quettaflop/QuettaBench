@@ -1,4 +1,4 @@
-"""probes/base.py run recording and remote runs, and every probe's justfile and flag contracts."""
+"""probes/base.py run recording and remote runs; every probe's justfile and flag contracts."""
 
 from __future__ import annotations
 
@@ -36,7 +36,6 @@ RUN = "20261011T120000.123456Z"
 
 
 def recorded(argv, main, name="gemm", **kw):
-    """(raised exception or None, run.json dict or None, the out dir's files)."""
     with tempfile.TemporaryDirectory() as td:
         argv = [a.replace("<TD>", td) for a in argv]
         raised = None
@@ -155,8 +154,6 @@ class RunRecorded(unittest.TestCase):
             self.assertTrue(Path(td, "run.json").is_file())
 
     def test_each_invocation_gets_its_own_run_dir(self):
-        """Two runs of one probe never share a dir, so the second's run.json
-        cannot stand for the first's tables."""
         with tempfile.TemporaryDirectory() as td:
             argv = ["probe", "--gpu-label", "H100", "--out", td]
             for i, fails in enumerate((False, True)):
@@ -172,8 +169,6 @@ class RunRecorded(unittest.TestCase):
         self.assertEqual(docs, {RUN: "ok", run_id(NOW + timedelta(seconds=1)): "failed"})
 
     def test_a_run_dir_that_already_exists_is_refused(self):
-        """Two runs started in one microsecond, or a hand-made dir, would share
-        a run dir; the second run is refused before main, files untouched."""
         for argv, kw, made in (
             (["--gpu-label", "H100", "--out", "<TD>"], {}, f"gemm/{RUN}"),
             (
@@ -210,8 +205,6 @@ class RunRecorded(unittest.TestCase):
 
 @pytest.mark.parametrize("name", ["cross_attn", "flash_attn", "gemm", "moe", "reparallel"])
 def test_a_probe_run_writes_only_the_rows_it_measured(name):
-    """Earlier runs' rows reach the export through kernel_tables' union, never
-    through a probe run seeding its table from another run dir."""
     source = (PROBES / f"{name}.py").read_text()
     assert "prior_table" not in source, name
     assert "prior" not in ast.dump(ast.parse(source)).lower(), name
@@ -223,7 +216,6 @@ def probe_modules():
 
 
 def main_def(name):
-    """The probe's module-level `def main` node."""
     tree = ast.parse((PROBES / f"{name}.py").read_text())
     return next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main")
 
@@ -263,7 +255,7 @@ def test_probe_main_takes_argv_and_run_mode_decides(name):
 
 class LaunchVllm(unittest.TestCase):
     def test_server_goes_through_the_adapter_and_launcher(self):
-        # by name: other tests re-import quettabench.engines.launcher
+        # By name: other tests re-import quettabench.engines.launcher.
         with mock.patch("quettabench.engines.launcher.start") as start:
             launch_vllm(
                 Path("/r/serving_stage_split"),
@@ -297,8 +289,6 @@ class LaunchVllm(unittest.TestCase):
         self.assertEqual(after, str(Path(sys.executable).with_name("vllm")))
 
     def test_each_live_probe_launch_is_pinned(self):
-        """argv and env of the two live-server probes' launches; what changed
-        against their own launches before d7287c5 is in tests/golden/REPORT.md."""
         from quettabench.probes import serving_decode_grid, serving_stage_split
 
         def launched(fn):
@@ -389,8 +379,6 @@ class LaunchVllm(unittest.TestCase):
 
 
 class StageSplitKey(unittest.TestCase):
-    """serving_stage_split sends its --api-key and never prints it."""
-
     def test_requests_carry_the_api_key(self):
         from quettabench.probes import serving_stage_split as sss
 
@@ -424,8 +412,6 @@ class StageSplitKey(unittest.TestCase):
         self.assertIn("VLLM_API_KEY", out.getvalue())
 
     def test_out_is_required_so_the_run_is_recorded(self):
-        """With no --out the probe would write a table record_dir cannot place;
-        argparse refuses before anything is written."""
         from quettabench.probes import serving_stage_split as sss
 
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as stop:
@@ -435,19 +421,16 @@ class StageSplitKey(unittest.TestCase):
 
 
 def import_without_torch(name):
-    """quettabench.probes.<name> imported on CPU with an empty torch module."""
     fake = types.ModuleType("torch")
     fake.nn = types.ModuleType("torch.nn")
     fake.nn.functional = types.ModuleType("torch.nn.functional")
-    fake.bfloat16 = "bfloat16"  # moe's module-level dtype
+    fake.bfloat16 = "bfloat16"
     with mock.patch.dict(sys.modules, {"torch": fake, "torch.nn": fake.nn, "torch.nn.functional": fake.nn.functional}):
         sys.modules.pop(f"quettabench.probes.{name}", None)
         return importlib.import_module(f"quettabench.probes.{name}")
 
 
 def test_gemm_ncu_reads_kernels_through_the_shared_parser():
-    """gemm --ncu takes its kernel times from _timing.ncu_kernel_durations, the one
-    NCU CSV parser, and keeps the GEMM family's fastest launch."""
     gemm = import_without_torch("gemm")
     launches = [
         ("distribution_elementwise_kernel", 1.0),
@@ -465,8 +448,7 @@ def test_gemm_ncu_reads_kernels_through_the_shared_parser():
 
 @pytest.mark.parametrize("name", ["gemm", "moe"])
 def test_append_cannot_be_abbreviated(name, capsys):
-    """export reads --append from probe_args as written; --app would append
-    unseen, so the parser takes no abbreviation."""
+    """export reads --append from probe_args as written; --app would append unseen."""
     with pytest.raises(SystemExit) as stop:
         import_without_torch(name).main(["--gpu-label", "H100", "--app"])
     assert stop.value.code == 2 and "unrecognized" in capsys.readouterr().err
@@ -508,15 +490,12 @@ def test_event_time_us_warms_up_then_reduces_over_reps():
 
 
 def test_moe_routing_flag_takes_the_routing_parser(capsys):
-    """--routing parses the block-dump flags, not the kernel grid's."""
     with pytest.raises(SystemExit) as stop:
         import_without_torch("moe").main(["--routing", "--gpu-label", "H100"])
     assert stop.value.code == 2 and "--model" in capsys.readouterr().err
 
 
 def test_probe_flags_cannot_be_abbreviated():
-    """add_output_args makes every probe parser take flags only as written,
-    so --gpu-l or --ru never stand for --gpu-label or --run-id."""
     ap = argparse.ArgumentParser()
     probes_base.add_output_args(ap)
     for argv in (["--gpu-l", "H100"], ["--gpu", "H100", "--ru", "x"]):
@@ -537,8 +516,6 @@ def test_probes_without_output_args_take_no_abbreviation_either(name, out, capsy
 
 
 def test_record_dir_takes_no_abbreviation(tmp_path):
-    """--out-d is no --out-dir for record_dir either, so run.json goes where
-    the probe's own parser puts its tables."""
     argv = [
         "--run-id",
         "20260101T000000.000000Z",
@@ -559,7 +536,6 @@ PROFILING_DIR = ROOT / "quettabench" / "profiling"
 
 
 def argparse_flags(probe: Path) -> set[str]:
-    """Literal --flags the probe's add_argument calls define, shared base.py flags included."""
     flags = set()
     if probe.name != "base.py" and "add_output_args" in probe.read_text():
         flags |= argparse_flags(PROBES_DIR / "base.py")
@@ -572,7 +548,6 @@ def argparse_flags(probe: Path) -> set[str]:
 
 
 def defined_names(module: Path) -> set[str]:
-    """Top-level function, class and assignment names in a module."""
     names = set()
     for node in ast.parse(module.read_text()).body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -585,7 +560,6 @@ def defined_names(module: Path) -> set[str]:
 
 
 def recipe_blocks(justfile: Path) -> list[str]:
-    """Justfile split at non-indented lines, backslash continuations folded."""
     text = justfile.read_text().replace("\\\n", " ")
     blocks: list[list[str]] = []
     current: list[str] = []
@@ -600,7 +574,6 @@ def recipe_blocks(justfile: Path) -> list[str]:
 
 
 def probe_invocations() -> list[tuple[Path, set[str]]]:
-    """(probe file, flags passed) per recipe."""
     out = []
     for block in recipe_blocks(JUSTFILE):
         probes = [PROBES_DIR / f"{m}.py" for m in re.findall(r"-m quettabench\.probes\.([a-z0-9_]+)", block)]
@@ -627,13 +600,10 @@ def test_recipe_probes_exist_and_accept_their_flags():
         assert not missing, f"{probe.name} does not define recipe flags: {missing}"
 
 
-# Live-server probes name their output through --out/--out-raw, not a GPU label.
 LIVE_SERVER_PROBES = {"serving_decode_grid.py", "serving_stage_split.py"}
 
 
 def test_every_probe_labels_its_gpu():
-    """Tables are keyed by GPU name, so every kernel probe must take --gpu-label,
-    recipe-invoked or not."""
     for probe in sorted(PROBES_DIR.glob("[!_]*.py")):
         if probe.name in LIVE_SERVER_PROBES:
             continue
@@ -653,7 +623,6 @@ def test_sibling_helper_imports_resolve():
 
 
 def test_every_moved_probe_takes_out():
-    """The remote recipe and `just probe` pass --out; every packaged probe must accept it."""
     for probe in sorted(PROBES_DIR.glob("[!_]*.py")):
         if probe.name != "base.py" and probe.name not in LIVE_SERVER_PROBES:
             assert "--out" in argparse_flags(probe), f"{probe.name} has no --out"
@@ -667,8 +636,6 @@ def test_remote_recipe_is_one_line_into_base():
 
 
 def test_remote_probe_ships_what_base_imports():
-    """Exactly the files remote_probe ships, in a clean dir, import
-    quettabench.probes.base under an isolated interpreter."""
     from quettabench.probes.base import SHIPPED
 
     assert "quettabench/probes/" in SHIPPED and "quettabench/__init__.py" in SHIPPED
@@ -689,9 +656,6 @@ def test_remote_probe_ships_what_base_imports():
 
 
 class FakeHost:
-    """subprocess.run for remote_probe: records each command, answers mktemp
-    with rdir, and fails the remote probe run and the pull as told."""
-
     def __init__(self, rdir="/tmp/qbench-probes.Ab12Cd", probe_rc=0, pull_rc=0):
         self.rdir, self.probe_rc, self.pull_rc, self.calls = rdir, probe_rc, pull_rc, []
 
@@ -724,8 +688,6 @@ def remote(argv, host, tmp_path, monkeypatch):
 
 
 def test_remote_probe_runs_in_its_own_dir_and_always_pulls(tmp_path, monkeypatch):
-    """A failed remote run is still pulled back, then only its own mktemp dir
-    is removed, and the remote run's exit code is returned."""
     host = FakeHost(probe_rc=3)
     rc = remote(["gemm", "A100", "--probe-args=--ncu --wide"], host, tmp_path, monkeypatch)
     rdir = host.rdir
@@ -782,8 +744,6 @@ def test_a_failed_pull_names_the_probe_exit_code(tmp_path, monkeypatch):
 
 
 class Pulls(FakeHost):
-    """A pull that brings back the run with run.json text record."""
-
     def __init__(self, record, **kw):
         super().__init__(**kw)
         self.record = record
@@ -795,8 +755,7 @@ class Pulls(FakeHost):
 
 
 def test_the_pulled_run_is_stamped_on_the_local_clock(tmp_path, monkeypatch):
-    """The remote clock may be skewed: the pulled run.json keeps the remote
-    finished and gets pulled from this machine's clock."""
+    """The remote clock may be skewed: pulled gets this machine's clock."""
     remote(["gemm", "A100"], Pulls(json.dumps({"provenance": {"finished": "2099-01-01"}})), tmp_path, monkeypatch)
     doc = json.loads((tmp_path / "results/probes/A100/gemm/20261011T120000.123456Z/run.json").read_text())
     assert doc["provenance"]["finished"] == "2099-01-01" and "remote_finished" not in doc["provenance"]
@@ -812,7 +771,6 @@ def test_a_bad_pulled_run_json_warns_and_the_remote_dir_still_goes(record, tmp_p
 
 
 def test_probe_args_pass_through_intact(tmp_path, monkeypatch):
-    """Flags after `--` (the justfile's "$@") keep spaces, $ and quotes."""
     host = FakeHost()
     remote(["--", "gemm", "A100", "--model-shapes", 'a b$c"d'], host, tmp_path, monkeypatch)
     assert host.calls[2][-1].endswith("--model-shapes 'a b$c\"d'")
@@ -873,8 +831,6 @@ def test_remote_probe_refuses_odd_names(argv, tmp_path, monkeypatch):
 
 
 def test_the_r2_mirror_has_its_own_prefix_and_never_deletes():
-    """mirror-up/down sync results/probes/ with profiling/qbench_probes/ only;
-    a --delete onto a shared prefix would remove what other writers keep."""
     text = JUSTFILE.read_text()
     assert 'r2_prefix := "profiling/qbench_probes"' in text
     assert "--delete" not in text and "mirror-up-prune" not in text
@@ -882,8 +838,6 @@ def test_the_r2_mirror_has_its_own_prefix_and_never_deletes():
 
 
 def test_probes_import_their_siblings_at_the_top():
-    """_timing ships with every probe, so no probe imports them inside a
-    function; an inline import names its reason in a docstring, not a noqa."""
     for probe in sorted(PROBES_DIR.glob("*.py")):
         text = probe.read_text()
         assert "noqa: PLC0415" not in text, probe.name
@@ -894,7 +848,6 @@ def test_probes_import_their_siblings_at_the_top():
 
 
 def inline_imports_without_a_reason(path: Path) -> list[str]:
-    """Function-level imports in path with no comment above them and no mention in the enclosing function's docstring."""
     text = path.read_text()
     lines = text.splitlines()
     bare = []
@@ -918,8 +871,6 @@ def inline_imports_without_a_reason(path: Path) -> list[str]:
 
 
 def test_every_inline_import_states_why():
-    """An import inside a function says why it is not at the top, in a
-    comment above it or in the function's docstring; never a noqa."""
     bare = []
     for path in sorted([*PROBES_DIR.glob("*.py"), *PROFILING_DIR.rglob("*.py")]):
         assert "noqa: PLC0415" not in path.read_text(), path.name
@@ -936,7 +887,6 @@ RUNBOOKS = sorted((ROOT / "docs" / "runbooks").glob("*.md"))
 
 
 def runbook_drift(path: Path) -> list[str]:
-    """Commands in a runbook that no longer run here: an undefined probe flag, a gone just recipe, a missing script, or --api-key test."""
     found = []
     recipes = {b.split()[0].rstrip(":") for b in recipe_blocks(JUSTFILE)}
     text = path.read_text().replace("\\\n", " ")

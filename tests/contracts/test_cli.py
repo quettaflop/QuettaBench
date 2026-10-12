@@ -1,4 +1,4 @@
-"""qbench's doors hand argv to their module's main, and qbench run refuses bad values before anything starts."""
+"""qbench doors hand argv to their module's main; `qbench run` refuses bad values."""
 
 import subprocess
 import sys

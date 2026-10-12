@@ -1,4 +1,4 @@
-"""Stand-in server: 200 on /health, one child alive, writes {pid, child_pid, mark, port} to state.json; a taken port exits 98."""
+"""Stand-in server: /health 200, one child alive, state.json; a taken port exits 98."""
 
 import errno
 import http.server

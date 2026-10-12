@@ -1,4 +1,4 @@
-"""CPU stand-in for the torch.cuda calls and tensor ops the drivers use; toy_logits is the one model the stubs share."""
+"""CPU stand-in for the torch.cuda calls and tensor ops the drivers use."""
 
 import contextlib
 import math
@@ -9,7 +9,7 @@ _TopK = namedtuple("_TopK", "values indices")
 
 
 def toy_logits(ids):
-    """Row p scores the token after ids[p] over a vocab of max(ids) + 2: ids[p] + 1 wins by 0.5."""
+    """ids[p] + 1 wins by 0.5 over a vocab of max(ids) + 2."""
     vocab = max(ids) + 2
     return [[-0.5 * (v - t - 1) ** 2 for v in range(vocab)] for t in ids]
 

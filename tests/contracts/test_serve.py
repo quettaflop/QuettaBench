@@ -1,4 +1,4 @@
-"""serve.run over a Trace and a Driver with no server: the procedure, its crossval sections and grid runs."""
+"""serve.run over a Trace and a Driver with no server."""
 
 import contextlib
 import copy
@@ -28,8 +28,6 @@ from tests.golden._harness import DENSE_CONFIG, RUNS, grid_argv, run_grid_cli
 
 
 class FakeDriver:
-    """Answers every request at once; fail(request) picks the failures."""
-
     model, version = "m", None
 
     def __init__(self, fail=lambda r: False):
@@ -69,7 +67,6 @@ def single_trace(n=6):
 
 
 def session_trace(sessions=2, turns=3):
-    """Turn t's messages hold every earlier turn's assistant placeholder."""
     reqs, replies = [], {}
     for s in range(sessions):
         placeholders = [{"role": "assistant", "content": ""} for _ in range(turns)]
@@ -211,8 +208,6 @@ class Sessions(unittest.TestCase):
 
 
 class TokenDriver(FakeDriver):
-    """Returns generated token ids: the reference with token 3 changed."""
-
     async def send(self, request, **kw):
         result = await super().send(request, **kw)
         ref = request.output_token_ids or []
@@ -238,8 +233,6 @@ def tail(out, tag):
 
 
 class LineFormats(unittest.TestCase):
-    """Summary line text for fixed inputs."""
-
     def test_every_line(self):
         summary = {
             "workload": {"expected": "aa", "replayed": "aa", "match": True, "n": 4, "of": 4},
@@ -408,14 +401,14 @@ class Sections(unittest.TestCase):
         self.assertTrue(tail(out, "BURSTSUM peak_ttft_p99=1.0 recovery_s=na target_ms=0.5"))
         doc = summary.to_dict()
         self.assertEqual([doc[k]["percentile_method"] for k in ("serve", "sla", "burst")], ["nearest"] * 3)
-        self.assertEqual(doc["percentile_method"], "linear")  # the aggregate's p90/p99 fields
+        self.assertEqual(doc["percentile_method"], "linear")
         summary, out = run_sections(single_trace(4), FakeDriver(), ModeCfg(warmup=0, concurrency=4))
         self.assertNotIn("sla", summary.sections)
         self.assertFalse(tail(out, "SLASUM") or tail(out, "BURSTSUM"))
 
 
 class GoodputSweep(unittest.TestCase):
-    """measure() is replaced by one whose TTFT grows with speed, so the SLA flips at a known speed: 100 ms per unit of speed against a 450 ms bound."""
+    """100 ms per unit of speed against a 450 ms bound."""
 
     def fake_measure(self, speeds):
         async def measure(trace, driver, mode, emit, workload, request_id):
@@ -497,7 +490,6 @@ class GridRunFiles(unittest.TestCase):
             c = r["cell"]
             key = (c["ctx"], c["bs"], c["step_point"], c["phase"], c["attempt"])
             batches.setdefault(key, []).append(r)
-        # warmup has no cell; every other generate() is one batch of bs rows
         self.assertEqual(len(batches), self.cli["generate_calls"] - 1)
         for (ctx, bs, step, phase, _), rows in batches.items():
             self.assertEqual(len(rows), bs)
@@ -514,8 +506,6 @@ class GridRunFiles(unittest.TestCase):
 
 
 class ModelConfig(unittest.TestCase):
-    """The dense KV formula reads config.json from a local dir, or from a repo id's HF cache snapshot."""
-
     def test_a_repo_id_reads_its_cached_snapshot(self):
         with tempfile.TemporaryDirectory() as cache:
             repo = Path(cache, "models--org--toy")
@@ -536,8 +526,6 @@ class ModelConfig(unittest.TestCase):
 
 
 class GridRunOverHttp(unittest.TestCase):
-    """runner.run_one of a timing grid: the launched server (the fake endpoint) gets every batch, and run.json's steps come from the fit."""
-
     def test_smoke_grid_end_to_end(self):
         with tempfile.TemporaryDirectory() as td, helpers.serve() as (endpoint, posts):
             Path(td, "config.json").write_text(json.dumps(DENSE_CONFIG))
@@ -568,7 +556,7 @@ class GridRunOverHttp(unittest.TestCase):
         resets = [path for path, _ in posts if path == "/reset_prefix_cache"]
         self.assertEqual(len(resets), 1)
         sent = [b["max_tokens"] for path, b in posts if path == "/v1/completions"]
-        self.assertEqual(sent, [20, 400, 60, 230, 400])  # warmup, warm run, one fit pass
+        self.assertEqual(sent, [20, 400, 60, 230, 400])
 
 
 if __name__ == "__main__":

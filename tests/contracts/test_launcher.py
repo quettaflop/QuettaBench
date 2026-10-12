@@ -1,4 +1,4 @@
-"""start/health/engine.json/stop on a fake server, and no child survives stop."""
+"""start/health/engine.json/stop on a fake server; no child survives stop."""
 
 import dataclasses
 import json
@@ -35,7 +35,7 @@ def alive(pid):
     # A reparented zombie no longer runs; count it dead.
     try:
         stat = Path(f"/proc/{pid}/stat").read_text()
-    except FileNotFoundError:  # reaped between the kill and the read
+    except FileNotFoundError:
         return False
     return not stat.split(") ")[1].startswith("Z")
 
@@ -47,7 +47,7 @@ class LocalLauncher(unittest.TestCase):
         self.port = free_port()
 
     def start(self, **kw):
-        """launcher.start of the fake server; a port taken before the bind (exit 98) is retried on a fresh one."""
+        """A port taken before the bind (exit 98) is retried on a fresh one."""
         for _ in range(5):
             try:
                 handle = launcher.start(self.spec(**kw), self.dir / "run", timeout_s=30, poll_s=0.1)
@@ -88,7 +88,7 @@ class LocalLauncher(unittest.TestCase):
         self.assertEqual(record["instrumentation"], "none")
         self.assertEqual(
             record["launch_spec"]["env"], {"FAKE_MARK": "from-spec", "HF_TOKEN": "REDACTED", "DB_SECRET": "REDACTED"}
-        )  # the results.redact rule
+        )
         self.assertNotIn("secret", (self.dir / "run" / "engine.json").read_text())
         self.assertTrue(alive(state["child_pid"]))
         handle.stop(grace_s=5)
@@ -109,7 +109,6 @@ DOCKER_YAML = launcher.REPO / "configs" / "runs" / "llama-tp1-docker.yaml"
 
 
 def docker_spec(*sets):
-    """(cfg, spec) for the example docker run yaml on a pinned host."""
     (cfg,) = loader.load(
         DOCKER_YAML,
         ["engine.model=/hf/llama", "hardware.backend=cuda", "hardware.link_profile=nvlink", *sets],
@@ -119,7 +118,6 @@ def docker_spec(*sets):
 
 
 def keyed_docker_spec(key):
-    """docker_spec with engine.extra.vllm.api_key set."""
     cfg, _ = docker_spec()
     extra = {**cfg.engine.extra, "vllm": {**cfg.engine.extra.get("vllm", {}), "api_key": key}}
     cfg = dataclasses.replace(cfg, engine=dataclasses.replace(cfg.engine, extra=extra))
@@ -130,7 +128,6 @@ NAME = "qbench-llama-tp1-docker-77-abcdef"
 
 
 def fixed_name(case):
-    """Pin container_name's pid and random part for the rest of the test."""
     for name, value in (("getpid", 77), ("urandom", b"\xab\xcd\xef")):
         patch = mock.patch.object(launcher.os, name, return_value=value)
         patch.start()
@@ -214,7 +211,7 @@ class DockerArgv(unittest.TestCase):
         )
 
     def test_a_secret_env_goes_by_name_only(self):
-        """docker run -e NAME (no value) takes NAME from the docker client's env, so the key is never in an argv that ps or the dry run shows."""
+        """docker run -e NAME takes NAME from the client's env: the key is never in argv."""
         cfg, spec = keyed_docker_spec("sk-live")
         argv = launcher.docker_argv(spec, cfg, "0", "/r/run")
         self.assertEqual(argv[argv.index("VLLM_API_KEY") - 1], "-e")
@@ -228,8 +225,6 @@ class DockerArgv(unittest.TestCase):
 
 
 class DockerStart(unittest.TestCase):
-    """start/stop with backend docker; subprocess is mocked, no daemon runs."""
-
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp())
         fixed_name(self)
@@ -244,7 +239,6 @@ class DockerStart(unittest.TestCase):
 
     @staticmethod
     def docker_calls(run):
-        """The docker commands run after `docker run`."""
         return [c.args[0] for c in run.call_args_list if c.args[0][0] == "docker"][1:]
 
     def start(self, cfg, spec):
@@ -342,8 +336,6 @@ class DockerStart(unittest.TestCase):
 
 
 class NoProxy(unittest.TestCase):
-    """An http_proxy in the environment never carries engine traffic."""
-
     def test_endpoints_are_reached_directly(self):
         dead_proxy = {
             "http_proxy": "http://127.0.0.1:9",
@@ -371,7 +363,6 @@ class IdleGpus(unittest.TestCase):
 
 
 def tools_on_path(td, **outputs):
-    """A PATH holding one stand-in script per tool name that prints its output."""
     for tool, out in outputs.items():
         script = Path(td, tool)
         script.write_text(f"#!/bin/sh\nprintf '{out}'\n")
@@ -406,7 +397,6 @@ class Backends(unittest.TestCase):
                 self.assertEqual(loader.detect_backend(None), "rocm")
 
     def child_spec(self, backend, *sets):
-        """The spec runner.serve_one hands launcher.start for a serve run on backend."""
         (cfg,) = loader.load(
             DOCKER_YAML,
             [

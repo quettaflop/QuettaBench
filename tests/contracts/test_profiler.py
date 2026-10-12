@@ -86,7 +86,6 @@ class Profile(unittest.TestCase):
                 "out_tokens": 1_500_000,
             },
         )
-        # the fake answers "#### <prompt length>": 3 matches, 2 does not
         self.assertEqual(out["accuracy"]["exact_match"], 0.5)
         self.assertEqual([b["model"] for _, b in posts], ["m", "m"])
         self.assertEqual(out["traces"], {"instrumentation": "nsys", "files": ["nsys.nsys-rep"], "missing": False})
@@ -102,7 +101,7 @@ class Profile(unittest.TestCase):
 
         def finish_run():
             time.sleep(0.3)
-            write_atomic(run_json, body)  # as RunWriter does, so no half file is read
+            write_atomic(run_json, body)  # As RunWriter does, so no half file is read.
 
         writer = threading.Thread(target=finish_run)
         writer.start()
@@ -112,7 +111,7 @@ class Profile(unittest.TestCase):
         writer.join()
         e = out["energy"]
         self.assertEqual(e["window"], "run")
-        self.assertEqual(e["devices"], 2)  # engine.json's 0,2, not the Config's four
+        self.assertEqual(e["devices"], 2)
         self.assertGreater(e["samples"], 0)
         self.assertEqual(e["joules"], 220.0 * e["samples"] * 0.05)
         self.assertEqual(e["joules_per_token"], e["joules"] / 1_500_000)

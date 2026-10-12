@@ -166,7 +166,6 @@ class Redaction(unittest.TestCase):
         )
 
     def test_word_rules(self):
-        """token/key/apikey/pat only as the last word; secret, password, credential, bearer and auth anywhere as a word."""
         names = {
             "num_key_value_heads": False,
             "prompt_token_ids": False,
@@ -185,7 +184,6 @@ class Redaction(unittest.TestCase):
         self.assertEqual({n: results.secret(n) for n in names}, names)
 
     def test_each_listed_name_is_pinned(self):
-        """Secret-name rules: camelCase splits into words, and key or keys is secret only after api, secret, private, access or auth."""
         names = {
             "api_key": True,
             "hf_token": True,
@@ -420,7 +418,7 @@ class Redaction(unittest.TestCase):
         )
 
     def test_a_bare_word_in_a_command_line_hides_nothing(self):
-        """In free text only a flag hides the next word: "pass" is a secret word, but "pass the salt" is no secret."""
+        """In free text only a flag hides the next word: "pass the salt" is no secret."""
         for text in ("Please - pass the salt", "You are a pass-through bot"):
             self.assertEqual(results.redact({"note": text}), {"note": text})
             self.assertEqual(results.redact(["--system-prompt", text]), ["--system-prompt", text])

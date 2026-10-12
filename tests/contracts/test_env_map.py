@@ -1,4 +1,4 @@
-"""env_map.read_env maps each env var to its Config path, and no other module reads os.environ."""
+"""env_map.read_env maps each env var to its Config path; no other module reads os.environ."""
 
 import ast
 import unittest
@@ -82,7 +82,7 @@ ENV_NAMES = ("environ", "getenv")
 OWNER = "quettabench/config/env_map.py"
 
 ALLOWLIST = {
-    # kernel probes: torchrun's RANK/WORLD_SIZE/LOCAL_RANK are the launcher protocol, NCU_BIN names the profiler binary
+    # Probes: torchrun's RANK/WORLD_SIZE/LOCAL_RANK are the launcher protocol, NCU_BIN names the profiler binary.
     "quettabench/probes/flash_attn.py",
     "quettabench/probes/gdn.py",
     "quettabench/probes/gemm.py",
@@ -93,7 +93,6 @@ ALLOWLIST = {
 
 
 def reads_env(source):
-    """True when the module reads the process environment in any of the scanned forms."""
     for node in ast.walk(ast.parse(source)):
         if (
             isinstance(node, ast.Attribute)
@@ -110,7 +109,6 @@ def reads_env(source):
 
 
 def env_names(path):
-    """The literal names a module reads or sets through os.environ / os.getenv."""
     names = set()
     for node in ast.walk(ast.parse(path.read_text())):
         if (
@@ -154,7 +152,6 @@ class NoEnviron(unittest.TestCase):
         self.assertEqual(stale, [], "no longer reads env: drop it from ALLOWLIST")
 
     def test_agents_law_6_names_every_variable_the_allowlist_reads(self):
-        """AGENTS.md law 6 names every env var the allowlisted files read."""
         law = (REPO / "AGENTS.md").read_text().split("6. No module outside", 1)[1].split("\n7. ", 1)[0]
         for path in sorted(ALLOWLIST):
             for name in env_names(REPO / path):
