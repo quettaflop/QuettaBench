@@ -104,6 +104,30 @@ def find(results_dirs: Iterable[Path], name: str) -> Path | None:
     return best[1] if best else None
 
 
+def stage_split_gpus(results_dirs: Iterable[Path]) -> list[str]:
+    """The <gpu> labels with a tp1 stage-split leg (serving_stage_split_<gpu>.csv) in any results dir."""
+    gpus = set()
+    for root in map(Path, results_dirs):
+        for path in files(root, "serving_stage_split_*.csv"):
+            m = re.fullmatch(r"serving_stage_split_(.+)\.csv", path.name)
+            if m and not re.search(r"_tp\d+$", m.group(1)):
+                gpus.add(m.group(1))
+    return sorted(gpus)
+
+
+def leg_model(csv: Path) -> str | None:
+    """The --model the stage-split probe ran with, from the run.json beside its csv."""
+    path = csv.parent / "run.json"
+    if not path.is_file():
+        return None
+    try:
+        doc = json.loads(path.read_text())
+    except ValueError:
+        return None
+    argv = doc.get("argv") or (doc.get("summary") or {}).get("argv") or []
+    return next((argv[i + 1] for i in range(len(argv) - 1) if argv[i] == "--model"), None)
+
+
 def stage_split_legs(results_dirs: Iterable[Path], gpu: str) -> list[tuple[int, Path, Path]]:
     """(tp, tp1 csv, tpN csv) for every tp degree with both stage-split legs, each the last-finished one."""
     tp1 = find(results_dirs, f"serving_stage_split_{gpu}.csv")
@@ -627,8 +651,8 @@ def _span_new_rate(path: Path) -> dict:
     return {"floor_ms": beta[0], "new_ms_per_tok": beta[1], "cached_ms_per_tok": beta[2], "n_rows": n}
 
 
-def build_tpn(n: int, tpn_csv: Path, out_json: Path, tp1_csv: Path, gpu: str = "H100", host: str = "h100") -> None:
-    """Like-for-like stage-split estimate at tp n: comm_total = prefill_span.new(tpN) - span.new(tp1)/N, the per-new-token cost above the 1/N GEMM share, pinned per config as prefill_tp_comm_ms_per_token. Each GPU uses its own tp1 leg."""
+def build_tpn(n: int, tpn_csv: Path, out_json: Path, tp1_csv: Path, gpu: str) -> None:
+    """Stage-split estimate at tp n: comm_total = span.new(tpN) - span.new(tp1)/N per new token, written for the <gpu>x<n> config."""
     for p in (tp1_csv, tpn_csv):
         if not p.exists():
             raise SystemExit(f"missing {p} -- pull both stage-split legs first")
@@ -638,7 +662,7 @@ def build_tpn(n: int, tpn_csv: Path, out_json: Path, tp1_csv: Path, gpu: str = "
     payload = {
         "schema": "prefill_tp_comm.v1",
         "gpu": f"{gpu}x{n}",
-        "model": "Llama-3.1-8B",
+        "model": leg_model(tpn_csv),
         "tp": n,
         "method": (
             "like-for-like multiprocess api_server stage-split pair (same script both "
@@ -653,7 +677,7 @@ def build_tpn(n: int, tpn_csv: Path, out_json: Path, tp1_csv: Path, gpu: str = "
             f"deployment JSON key prefill_tp_comm_ms_per_token of the {gpu}x{n} config; "
             "every config without the pin keeps PREFILL_TP_COMM_MS_PER_TOKEN*(tp-1). "
             "Regenerate: just export. Sources: "
-            f"serving_stage_split.py --tensor-parallel-size {{1,{n}}} on {host}."
+            f"serving_stage_split.py --tensor-parallel-size {{1,{n}}} on {gpu}."
         ),
     }
     try:  # informational; QuettaSim may not have the constant
@@ -673,16 +697,16 @@ def build_tpn(n: int, tpn_csv: Path, out_json: Path, tp1_csv: Path, gpu: str = "
     print(f"wrote {out_json}")
 
 
-def build_tp2(tp1_csv: Path, tp2_csv: Path, out_json: Path) -> None:
-    """H100 tp1 vs tp2: comm = span.new(tp2) - span.new(tp1)/2."""
+def build_tp2(tp1_csv: Path, tp2_csv: Path, out_json: Path, gpu: str) -> None:
+    """tp1 vs tp2: comm = span.new(tp2) - span.new(tp1)/2, checked against the NCCL physics band."""
     tp1 = _span_new_rate(tp1_csv)
     tp2 = _span_new_rate(tp2_csv)
     comm = tp2["new_ms_per_tok"] - tp1["new_ms_per_tok"] / 2.0
     in_band = NCCL_PHYSICS_BAND_MS_PER_1K[0] <= comm * 1e3 <= NCCL_PHYSICS_BAND_MS_PER_1K[1] + 1.0
     payload = {
         "schema": "prefill_tp_comm.v1",
-        "gpu": "H100",
-        "model": "Llama-3.1-8B",
+        "gpu": gpu,
+        "model": leg_model(tp2_csv),
         "method": (
             "like-for-like multiprocess api_server stage-split pair (same script both "
             "legs); comm = prefill_span.new(tp2) − prefill_span.new(tp1)/2"
@@ -707,14 +731,14 @@ def build_tp2(tp1_csv: Path, tp2_csv: Path, out_json: Path) -> None:
 def run_tp_comm(results_dirs: Iterable[Path], dest: Path) -> list[Path]:
     """Write dest/kernels/prefill_tp_comm_<gpu>[x<tp>].json for every gpu/tp whose legs exist."""
     written = []
-    for gpu, host in (("H100", "h100"), ("RTX3090", "3090")):
+    for gpu in stage_split_gpus(results_dirs):
         for tp, tp1_csv, tpn_csv in stage_split_legs(results_dirs, gpu):
-            if gpu == "H100" and tp == 2:
-                out_json = Path(dest) / "kernels" / "prefill_tp_comm_H100.json"
-                build_tp2(tp1_csv, tpn_csv, out_json)
+            if tp == 2:  # QuettaSim reads the tp2 file without a tp suffix
+                out_json = Path(dest) / "kernels" / f"prefill_tp_comm_{gpu}.json"
+                build_tp2(tp1_csv, tpn_csv, out_json, gpu)
             else:
                 out_json = Path(dest) / "kernels" / f"prefill_tp_comm_{gpu}x{tp}.json"
-                build_tpn(tp, tpn_csv, out_json, tp1_csv, gpu=gpu, host=host)
+                build_tpn(tp, tpn_csv, out_json, tp1_csv, gpu)
             written.append(out_json)
     return written
 
@@ -727,7 +751,7 @@ TRACES = [
 ]
 
 # Fixed before measuring; SCHED_PRIOR only gates eligibility and never enters the output.
-SCHED_PRIOR_MS = 5.7
+SCHED_PRIOR_MS = 5.7  # scheduler ms per step the net-of-scheduler diagnostic subtracts
 FULL_BATCH_FRAC = 0.9  # a decode step counts only at >= 90% of max_batch
 WARMUP_STEP_ID = 5  # steps up to this id are warmup
 BW_DOMINANCE = 2.0  # bw_roofline_ms >= BW_DOMINANCE * SCHED_PRIOR_MS
@@ -932,12 +956,11 @@ def build_roofline_utils(gpu: str, params_path: Path, trace_paths: dict[str, Pat
         },
         "diagnostics": {
             "util_bw_net_of_sched_prior": round(statistics.median(bw_pool_net), 4) if bw_pool_net else None,
-            "util_bw_net_note": "same steps, ratio vs (engine_wall - 5.7ms), sched added separately. "
+            "util_bw_net_note": f"same steps, ratio vs (engine_wall - {SCHED_PRIOR_MS}ms), sched added separately. "
             "Headline uses the full engine wall: closed_form_tpot adds no sched term to tpot.",
             "util_flops_vs_engine_wall": round(statistics.median(flops_pool_engine), 4) if flops_pool_engine else None,
             "util_flops_thinness": "pure-prefill steps are rare in decode-heavy serving "
-            "traces; prefill_gemm_util_H100.json (R1 measured curve) remains the better "
-            "prefill-util source.",
+            "traces; the measured prefill_gemm_util table remains the better prefill-util source.",
             "util_bw_by_byte_quartile": quartile_medians(bw_pool),
         },
         "per_trace": per_trace,
@@ -955,8 +978,12 @@ def build_roofline_utils(gpu: str, params_path: Path, trace_paths: dict[str, Pat
 def run_roofline_utils(results_dirs: Iterable[Path], dest: Path) -> list[Path]:
     """Write dest/kernels/roofline_utils_<gpu>.json for every gpu with its params and all traces."""
     written = []
-    for gpu in ("H100", "A100"):
-        params_path = find(results_dirs, f"roofline_params_{gpu}_llama31_8b.json")
+    params = {}
+    for root in map(Path, results_dirs):
+        for path in files(root, "roofline_params_*.json"):
+            params.setdefault(path.name.split("_")[2], path.name)  # roofline_params_<gpu>_<model>.json
+    for gpu, name in sorted(params.items()):
+        params_path = find(results_dirs, name)
         trace_paths = {name: find(results_dirs, name) for name in TRACES}
         if params_path is None or None in trace_paths.values():
             print(f"SKIP roofline_utils {gpu}: params or pinned traces not in the results dirs")
@@ -1147,6 +1174,11 @@ def export(
     """
     results_dirs = [Path(d) for d in results_dirs]
     names = list(only) if only else list(BUILDERS)
+    unknown = [n for n in names if n not in BUILDERS]
+    if unknown:
+        raise ValueError(f"unknown builders {unknown}; builders: {', '.join(sorted(BUILDERS))}")
+    if only and any((kernel_dest if n == "kernel_tables" else dest) is None for n in names):
+        raise ValueError("kernel_tables needs kernel_dest and the other builders need dest")
     names = [n for n in names if (kernel_dest if n == "kernel_tables" else dest) is not None]
     if "kernel_tables" in names:
         path = Path(kernel_dest) / "kernel_data" / "qbench_manifest.json"

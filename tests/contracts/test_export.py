@@ -42,6 +42,13 @@ def write_leg(path: Path, scale: float) -> None:
                 w.writerow([new, cached, span, span + 2])
 
 
+def test_export_refuses_a_named_builder_without_its_dest(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="need dest"):
+        export([tmp_path], None, only=["tp_comm"])
+    with pytest.raises(ValueError, match="unknown builders"):
+        export([tmp_path], tmp_path / "out", only=["nope"])
+
+
 def test_tp_comm_reads_results_and_writes_dest(tmp_path: Path) -> None:
     results, dest = tmp_path / "results", tmp_path / "out"
     results.mkdir()
@@ -298,9 +305,16 @@ def test_tp_comm_builds_without_ttft_queue_sim(tmp_path):
     """QuettaSim main has no simulator.ttft_queue_sim; build_tpn leaves the fallback it replaces empty instead of raising ImportError."""
     write_leg(tmp_path / "tp1.csv", 1.0)
     write_leg(tmp_path / "tp4.csv", 0.4)
-    quettasim.build_tpn(4, tmp_path / "tp4.csv", tmp_path / "out.json", tmp_path / "tp1.csv")
+    quettasim.build_tpn(4, tmp_path / "tp4.csv", tmp_path / "out.json", tmp_path / "tp1.csv", "X")
     out = json.loads((tmp_path / "out.json").read_text())
     assert out["fallback_it_replaces_ms_per_token"] is None
+
+
+def test_tp_comm_finds_every_gpu_label_with_a_tp1_leg(tmp_path):
+    for name in ("serving_stage_split_X.csv", "serving_stage_split_X_tp2.csv", "serving_stage_split_Y_tp4.csv"):
+        (tmp_path / "r").mkdir(exist_ok=True)
+        write_leg(tmp_path / "r" / name, 1.0)
+    assert quettasim.stage_split_gpus([tmp_path / "r"]) == ["X"]
 
 
 solve_cell = _client.solve_cell
@@ -940,7 +954,7 @@ def test_finish_times_compare_as_instants(tmp_path: Path) -> None:
     assert tree(dest / "kernel_data")["eager/gdn/H100_9b_decode.csv"] == "later\n1\n"
 
 
-# QuettaSim origin/main's kernel_data tables and mode vocabulary, captured once.
+# QuettaSim main's kernel_data tables and mode vocabulary, captured once at d8503b8.
 QUETTASIM = json.loads((Path(__file__).parent / "quettasim_kernel_data.json").read_text())
 FA = "n_heads,n_kv_heads,head_dim,q_len,us\r\n32,8,128,1,5\r\n"
 MOE = "tokens,n_experts,top_k,intermediate,hidden,us\r\n8,128,8,768,2048,5\r\n"
