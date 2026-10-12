@@ -30,32 +30,16 @@ WARMUP = 3
 
 # name: (workload_hash, content digest)
 PINS = {
-    "chat-medium": ("1b84966cb9c4facc", "73ab40e8748e8f7e"),
-    "chat-multiturn-long": ("3101d70c80d8606c", "bef891c6940e60db"),
-    "chat-multiturn-medium": ("26a991f2b7529daf", "1b53f1e6c546d1e3"),
     "chat-multiturn-short": ("c51f134d3946f53d", "5e2d31c9032a7cb8"),
-    "chat-short": ("3d6dd927203af7fa", "79bb39e7e120588f"),
     "chat-singleturn": ("1b84966cb9c4facc", "84b2b4875f8a177f"),
-    "chat-singleturn-synth": ("1b84966cb9c4facc", "325e87f900350ef6"),
     "coding-singleturn": ("15384d696a4d7a1b", "0359e7a0be1623a2"),
-    "decode-heavy": ("adc88f3eae2adc96", "77345bbb26805e62"),
-    "fixed-seq128": ("3439077f38252544", "c0a7d2444b3654da"),
     "mooncake-trace": ("a03be7b0ed268d81", "b5ed59cd7a0d7aff"),
-    "osworld-multiturn-long": ("762312f6b602cb88", "7c281ff0cc772773"),
-    "osworld-multiturn-medium": ("29482f55adf89f20", "c8ecbee41859e40e"),
-    "osworld-multiturn-short": ("ab09ce8e07b841c8", "387a35fabdd98d42"),
-    "prefill-heavy": ("0964edcd447c2121", "832fe89da55a65fc"),
     "random-1k": ("00740b698acbf0f7", "e90e87f402815bd2"),
     "random-1k-random-doublewrap": ("633909c6f1f06765", "c4e5d1efa3c5ee45"),
     "random-1k-random-legacy": ("1635e8cfbd8dcba8", "8cc8f5f07ec127ef"),
-    "swebench-multiturn-long": ("60b6ad3b16fac67e", "ec78ec95a027a8e7"),
-    "swebench-multiturn-medium": ("f02e03a9e1282fc2", "d4ba4dd7703c762a"),
     "swebench-multiturn-short": ("9f0aa9d6f98e5bd3", "2e44a22e09c81ea1"),
-    "terminalbench-multiturn-long": ("716641f80b9ffb4e", "06dd564c6c54ed56"),
-    "terminalbench-multiturn-medium": ("6bc7cd20245181c3", "2f91359db9f0a799"),
-    "terminalbench-multiturn-short": ("2ab1e354437af5f0", "fb564412a27e3079"),
     "test": ("7ae706bdf8eeae1d", "a5c809ace7fb7a08"),
-    "cut": ("a7ffbc60a718ff0d", "00808563928dac5d"),
+    "cut": ("0e8b8a8de4442ecb", "c8f75cbcdd1e78dc"),
 }
 
 
@@ -106,8 +90,6 @@ def write_fixtures(root):
             {"timestamp": 10 * i, "input_length": 700 + 300 * i, "output_length": 5 + i,
              "hash_ids": list(range(i % 3, i % 3 + 1 + i))} for i in range(4)],
         "data/swebench_trajectories.jsonl": trajectory_rows("swe"),
-        "data/terminalbench_trajectories.jsonl": trajectory_rows("tb"),
-        "data/osworld_trajectories.jsonl": trajectory_rows("os"),
     }
     for rel, rows in files.items():
         path = Path(root) / rel
@@ -138,8 +120,7 @@ FAKE_MODULES = {
         AutoTokenizer=types.SimpleNamespace(from_pretrained=lambda *a, **k: FakeTokenizer())),
 }
 
-MULTI_TURN = ("sharegpt-multi-turn", "swebench-multi-turn", "terminalbench-multi-turn",
-              "osworld-multi-turn")
+MULTI_TURN = ("sharegpt-multi-turn", "swebench-multi-turn")
 
 
 def config(name, kind, max_turn_index=None):
@@ -187,7 +168,7 @@ def build(name, max_turn_index=None):
 
 
 def runnable():
-    return sorted(n for n, p in PROFILES.items() if p.dataset != "distributional-multi-turn")
+    return sorted(PROFILES)
 
 
 def variants():
@@ -204,7 +185,7 @@ class ProfileHashPins(unittest.TestCase):
     def test_profiles_build_the_pinned_traces(self):
         with fixture_cwd(), mock.patch.dict(PROFILES, variants()):
             got = {name: build(name) for name in runnable() + list(variants())}
-            got["cut"] = build("swebench-multiturn-medium", max_turn_index=3)
+            got["cut"] = build("swebench-multiturn-short", max_turn_index=3)
         for name, pin in PINS.items():
             with self.subTest(profile=name):
                 self.assertEqual(got[name], pin)

@@ -1,11 +1,7 @@
-"""Workload profiles: the registry over configs/workloads/<name>.yaml.
+"""Workload profiles: the registry over configs/workloads.yaml.
 
-A profile is data. One yaml per profile, named after it; its keys are
-WorkloadProfile's fields and an unknown key is an error at import. A profile
-with a sampler names synthetic sessions the package does not generate (see
-analysis/synthetic/); it keeps its tags for filtering and refuses to build.
-A profile with active: false is left out of listings (active_profiles, the
-unknown-name message) but still builds when named, unless it has a sampler.
+A profile is data: one entry per name, its keys WorkloadProfile's fields; an unknown key is an error at import.
+A profile with active: false is left out of listings (active_profiles, the unknown-name message) but still builds when named.
 """
 
 import dataclasses
@@ -14,7 +10,7 @@ from pathlib import Path
 
 import yaml
 
-WORKLOADS = Path(__file__).resolve().parents[2] / "configs" / "workloads"
+WORKLOADS = Path(__file__).resolve().parents[2] / "configs" / "workloads.yaml"
 
 
 @dataclass
@@ -25,7 +21,7 @@ class WorkloadProfile:
     isl_stddev: float        # stddev as fraction of isl (for Gaussian sampling)
     description: str
     dataset: str             # "sharegpt", "test", "random", "jsonl", "sharegpt-multi-turn", "swebench-multi-turn", "terminalbench-multi-turn"
-    file_path: str = ""      # used when dataset="jsonl" or "distributional-multi-turn"
+    file_path: str = ""      # used when the dataset reads a file
     system_prompt: str = "You are a helpful assistant."
     tokenizer_name: str = "" # used when dataset="random"
     mode: str = "single-turn"           # "stress-test" | "single-turn" | "multi-turn"
@@ -38,22 +34,21 @@ class WorkloadProfile:
     serving_style: str = "not-disaggregated"  # "disaggregated" | "not-disaggregated"
     data_source: str = ""          # "sharegpt" | "swebench" | "terminalbench" | "random" | "test"
     active: bool = True            # False = legacy/runnable, hidden from default sweeps/profile lists
-    sampler: str = ""              # set: synthetic sessions generated outside the package
 
 
-def load_profiles(directory=WORKLOADS):
-    """Every <name>.yaml under directory as a WorkloadProfile, by name."""
+def load_profiles(path=WORKLOADS):
+    """Every entry of the workloads yaml as a WorkloadProfile, by name."""
     keys = {f.name for f in dataclasses.fields(WorkloadProfile)} - {"name"}
     profiles = {}
-    for path in sorted(Path(directory).glob("*.yaml")):
-        data = yaml.safe_load(path.read_text()) or {}
+    for name, data in yaml.safe_load(Path(path).read_text()).items():
         unknown = sorted(set(data) - keys)
         if unknown:
-            raise ValueError(f"{path}: unknown profile key(s) {unknown}; allowed: {sorted(keys)}")
+            raise ValueError(f"{path}: {name}: unknown profile key(s) {unknown}; "
+                             f"allowed: {sorted(keys)}")
         try:
-            profiles[path.stem] = WorkloadProfile(name=path.stem, **data)
+            profiles[name] = WorkloadProfile(name=name, **data)
         except TypeError as e:
-            raise ValueError(f"{path}: {e}") from None
+            raise ValueError(f"{path}: {name}: {e}") from None
     return profiles
 
 

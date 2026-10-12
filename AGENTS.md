@@ -64,7 +64,7 @@ in one results layer, `results/<run>/`, and leaves the repo by
   repo; `provision.py` sets the box up outside it (below).
 - `configs/`: `models/` holds per-model facts, once. `runs/` reference a model
   and never restate its facts. `grids.yaml` holds the grids and step points,
-  `hardware/` the link profiles, `workloads/` one yaml per workload profile.
+  `hardware/` the link profiles, `workloads.yaml` every workload profile by name.
 - `data/` and `analysis/`: fetch scripts and one-off studies. Never imported by
   `quettabench/`, enforced by `tests/test_analysis_is_leaf.py`.
 - `tests/golden/`: characterization fixtures captured from the pre-refactor

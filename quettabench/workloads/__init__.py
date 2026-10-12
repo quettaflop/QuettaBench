@@ -62,7 +62,7 @@ def session_trace(profile, num_sessions, seed, **trace_kw):
 
 def build(cfg, tokenizer=None):
     """The run's Trace. A grid run (mode.grid) gets the GridTrace of its
-    cells; otherwise workload.source is a profile name (configs/workloads/),
+    cells; otherwise workload.source is a profile name (configs/workloads.yaml),
     drawn as single-turn or, for kind sessions, as multi-turn sessions, or a
     replay JSONL path. tokenizer is the engine's, called lazily by corpus
     grids."""
@@ -72,12 +72,6 @@ def build(cfg, tokenizer=None):
     if w.source not in PROFILES and w.source not in PROFILE_ALIASES:
         return RealTrace.from_jsonl(w.source, seed=w.seed)
     profile = get_profile(w.source)
-    if profile.sampler:
-        raise ValueError(
-            f"profile {profile.name!r} samples synthetic sessions from a trace distribution; "
-            "synthetic traces are not a quettabench workload. The sampler lives in "
-            "analysis/synthetic/ (distributional.py, trace_distributions.py); replay a real "
-            "trace instead (workload.kind=sessions with a trajectory profile, or a jsonl file).")
     if w.kind == "sessions":
         pacing = TurnPacing(w.pacing, w.tool_wait_ms, w.human_wait_ms, w.use_recorded_waits,
                             w.use_recorded_arrivals)

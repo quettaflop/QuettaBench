@@ -11,8 +11,6 @@ from analysis.synthetic.trace_distributions import (
     TraceDistributionError,
     parse_trace_distribution,
 )
-from quettabench import workloads
-from quettabench.config.schema import Config, EngineCfg, HardwareCfg, ModeCfg, WorkloadCfg
 
 
 class WhitespaceTokenizer:
@@ -386,15 +384,6 @@ class DistributionalMultiTurnDatasetTests(unittest.TestCase):
         first.metadata["mutated"] = True
 
         self.assertNotIn("mutated", second.metadata)
-
-    def test_build_refuses_and_names_analysis(self):
-        for name in ("chat-multiturn", "swebench-multiturn"):
-            for kind in ("live", "sessions"):
-                cfg = Config(engine=EngineCfg(), workload=WorkloadCfg(kind=kind, source=name),
-                             mode=ModeCfg(), hardware=HardwareCfg())
-                with self.subTest(name=name, kind=kind), \
-                        self.assertRaisesRegex(ValueError, f"'{name}'.*analysis/synthetic/"):
-                    workloads.build(cfg)
 
 
 class CacheEstimateTests(unittest.TestCase):

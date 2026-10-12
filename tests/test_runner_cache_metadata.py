@@ -258,7 +258,7 @@ class RunnerCacheMetadataTests(unittest.TestCase):
             previous_context_tokens=175,
             cache_block_size=16,
         )
-        cfg = Config(engine=EngineCfg(), workload=WorkloadCfg(source="chat-multiturn"),
+        cfg = Config(engine=EngineCfg(), workload=WorkloadCfg(source="chat-multiturn-short"),
                      mode=ModeCfg(prefix_cache_block_size=16), hardware=HardwareCfg())
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -280,7 +280,7 @@ class RunnerCacheMetadataTests(unittest.TestCase):
         self.assertAlmostEqual(row["client_queue_wait_ms"], 300.0)
 
     def test_synthetic_multiturn_sessions_floor_at_concurrency(self):
-        profile = get_profile("swebench-multiturn-synth")
+        profile = get_profile("swebench-multiturn-short")
 
         sessions, source = resolve_multi_turn_num_sessions(profile, concurrency=320)
 

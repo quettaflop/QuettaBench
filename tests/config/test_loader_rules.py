@@ -187,16 +187,16 @@ class LoaderRules(unittest.TestCase):
                        "engine": {"prefix_caching": True}})
 
     def test_workload_profile_turns_on_prefix_caching(self):
-        cfg = self.one({"workload": {"source": "chat-short"}})
+        cfg = self.one({"workload": {"source": "chat-singleturn"}})
         self.assertEqual((cfg.engine.prefix_caching, cfg.origins["engine.prefix_caching"]),
                          (True, "profile"))
-        with self.assertRaisesRegex(ConfigError, "contradicts workload profile chat-short"):
-            self.load({"workload": {"source": "chat-short"}}, ["engine.prefix_caching=false"])
-        self.assertFalse(self.one({"workload": {"source": "chat-short"},
+        with self.assertRaisesRegex(ConfigError, "contradicts workload profile chat-singleturn"):
+            self.load({"workload": {"source": "chat-singleturn"}}, ["engine.prefix_caching=false"])
+        self.assertFalse(self.one({"workload": {"source": "chat-singleturn"},
                                    "mode": {"grid": "toy"}}).engine.prefix_caching)
         # a false from a level that states the checkpoint or box, not the run, is turned on
         for origin in ("default", "model", "hardware"):
-            values = {"workload.source": "chat-short", "mode.grid": None,
+            values = {"workload.source": "chat-singleturn", "mode.grid": None,
                       "engine.prefix_caching": False}
             origins = {"engine.prefix_caching": origin}
             loader._profile_prefix_caching(values, origins, "w")
