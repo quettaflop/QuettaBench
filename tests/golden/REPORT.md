@@ -145,3 +145,4 @@ Run `python3 -m pytest tests/golden -q`. `QBENCH_GOLDEN_REGEN=1` rewrites the fi
 2026-10-12: `grid_fit_llama.log` is `vmin_fit_llama.log` renamed, content unchanged.
 
 2026-10-12: `config_failures.json`, `config_workloads.json` and `engine_args.json` changed by rename only: the `vmin_fit` keys (`vmin_fit_unknown_grid`, `vmin_fit_env_override`, `diff_vmin_fit_vs_trace_serve` and the rest) start `grid_fit`; no value changed.
+2026-10-12: no fixture changed. `RunWriter` writes `requests.jsonl` rows on one background thread in append order, so a slow disk never blocks the event loop; a hard kill keeps every row already written, which is every row older than a few milliseconds, and a failed row write marks the run failed.

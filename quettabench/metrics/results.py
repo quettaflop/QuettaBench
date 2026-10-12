@@ -6,6 +6,7 @@ import os
 import re
 import shlex
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -286,17 +287,31 @@ class RunWriter:
         self.finished = False
         self._fh = None
         self._probe_fh = None
+        self._row_errors = []
         if self.dir is not None:
             self.dir.parent.mkdir(parents=True, exist_ok=True)
             self.dir.mkdir(exist_ok=not exclusive)
             self._fh = (self.dir / "requests.jsonl").open("a")
+            # A flush can block for 100 ms on a network disk; on the event loop that stalls every stream.
+            self._row_pool = ThreadPoolExecutor(max_workers=1)
+
+    def _write_row(self, row):
+        try:
+            self._fh.write(json.dumps(row) + "\n")
+            self._fh.flush()
+        except OSError as e:
+            self._row_errors.append(e)
+
+    def _close_rows(self):
+        self._row_pool.shutdown(wait=True)
+        self._fh.close()
+        self._fh = None
 
     def discard(self):
         """For a run this process does not record."""
         self._close_probe_rows()
         if self._fh is not None:
-            self._fh.close()
-            self._fh = None
+            self._close_rows()
             if not self.rows:
                 (self.dir / "requests.jsonl").unlink(missing_ok=True)
                 if not any(self.dir.iterdir()):
@@ -313,11 +328,12 @@ class RunWriter:
             self.finish(None, status=status, reason=reason)
 
     def append(self, result, **extra):
+        if self._row_errors:
+            raise self._row_errors[0]
         self.rows += 1
         row = measured_row(result, **extra) if isinstance(result, dict) else jsonl_row(result, **extra)
         if self._fh is not None:
-            self._fh.write(json.dumps(row) + "\n")
-            self._fh.flush()
+            self._row_pool.submit(self._write_row, row)
 
     def probe_row(self, row):
         """Flushed, so a crash keeps every row measured."""
@@ -351,8 +367,12 @@ class RunWriter:
         }
         self._close_probe_rows()
         if self._fh is not None:
-            self._fh.close()
-            self._fh = None
+            self._close_rows()
+            if self._row_errors and status == "ok":
+                run["run_status"] = {
+                    "status": "failed",
+                    "reason": f"requests.jsonl write failed: {self._row_errors[0]}",
+                }
             write_atomic(self.dir / "run.json", json.dumps(run, indent=2, default=str) + "\n")
         return run
 

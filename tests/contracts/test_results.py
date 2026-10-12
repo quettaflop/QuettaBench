@@ -557,8 +557,14 @@ from quettabench.metrics.results import RunWriter
 from quettabench.metrics.summary import RequestResult
 from tests.contracts.test_results import config
 w = RunWriter(sys.argv[1], config())
-for i in range(int(sys.argv[2])):
+import time
+from pathlib import Path
+n = int(sys.argv[2])
+for i in range(n):
     w.append(RequestResult(success=True, request_index=i))
+deadline = time.monotonic() + 5
+while len(Path(sys.argv[1], "requests.jsonl").read_text().splitlines()) < n and time.monotonic() < deadline:
+    time.sleep(0.01)
 os._exit(9)
 """
 
