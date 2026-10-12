@@ -1,9 +1,6 @@
 # QuettaBench
 
-Measures LLM serving engines on production-shaped workloads, and
-cross-validates the QuettaServe engine against vLLM per decode step. One
-command, `qbench`, with four doors: `run | profile | xval | export`,
-and `just provision` for box setup.
+Measures LLM serving engines on production-shaped workloads, and cross-validates the QuettaServe engine against vLLM per decode step. One command, `qbench`, with four doors: `run | profile | xval | export`, and `just provision` for box setup.
 
 ## Quickstart
 
@@ -21,53 +18,21 @@ just export --results results/llama --dest <export dir>   # the builders but ker
 just export --only kernel_tables --results results/probes --kernel-dest ../QuettaSim/data   # -> kernel_data/{graph,eager}/
 ```
 
-Without `just`, every recipe is one line: `python3 -m quettabench.cli run ...`,
-`python3 -m quettabench.provision ...` for `just provision`. `just test` and `just lint` run pytest
-and ruff.
+Without `just`, every recipe is one line: `python3 -m quettabench.cli run ...`, `python3 -m quettabench.provision ...` for `just provision`. `just test` and `just lint` run pytest and ruff.
 
 ## Config
 
-A run is one yaml in `configs/runs/` naming a model (`configs/models/`), a
-workload, a mode and optionally a `matrix:` (a sweep: one run per point,
-`just sweep` is `just run`). Grids and step points live in
-`configs/grids.yaml`, link-profile facts in `configs/hardware/<profile>.yaml`.
+A run is one yaml in `configs/runs/` naming a model (`configs/models/`), a workload, a mode and optionally a `matrix:` (a sweep: one run per point, `just sweep` is `just run`). Grids and step points live in `configs/grids.yaml`, link-profile facts in `configs/hardware/<profile>.yaml`.
 
-Precedence, highest first: `--set` > env (through `config/env_map.py`, the
-only reader of `os.environ`) > run yaml > model yaml > hardware yaml >
-schema defaults. Unknown keys are refused. `just dry` prints every value
-with its origin.
+Precedence, highest first: `--set` > env (through `config/env_map.py`, the only reader of `os.environ`) > run yaml > model yaml > hardware yaml > schema defaults. Unknown keys are refused. `just dry` prints every value with its origin.
 
-A grid run (`mode.grid` set) times decode ms per step per (ctx, bs) cell:
-vLLM over HTTP against a launched server (bs concurrent completions per
-batch, prefix cache reset per cell), QuettaServe through its cargo bench
-(`--set engine.name=quettaserve`). A vLLM grid run with `mode.returns`
-text or logits builds vLLM in-process instead, the only path that returns
-token ids, text or logits; only such a run takes `prompt_mode=corpus`,
-which a timing grid refuses. `engine.pp` and `engine.cudagraph=false`
-reach the server as `--pipeline-parallel-size` and `--enforce-eager`. `tests/parity/slope_gate.json` holds the HTTP-vs-in-process gate
-both paths passed (8x H200, vLLM 0.30.1: 15 cells, worst |delta| 0.228 ms). A serve run (`mode.grid` unset)
-launches the server and replays the workload against it. `mode: probe`
-runs a kernel probe (`mode.probe`, `mode.probe_args`) with `--out
-results/<run>/`. It refuses the torchrun probes (`collective`,
-`reparallel`, `vllm_allreduce`) and the probes that name output files
-(`serving_decode_grid`, `serving_stage_split`); run those with `just probe`.
+A grid run (`mode.grid` set) times decode ms per step per (ctx, bs) cell: vLLM over HTTP against a launched server (bs concurrent completions per batch, prefix cache reset per cell), QuettaServe through its cargo bench (`--set engine.name=quettaserve`). A vLLM grid run with `mode.returns` text or logits builds vLLM in-process instead, the only path that returns token ids, text or logits; only such a run takes `prompt_mode=corpus`, which a timing grid refuses. `engine.pp` and `engine.cudagraph=false` reach the server as `--pipeline-parallel-size` and `--enforce-eager`. `tests/parity/slope_gate.json` holds the HTTP-vs-in-process gate both paths passed (8x H200, vLLM 0.30.1: 15 cells, worst |delta| 0.228 ms). A serve run (`mode.grid` unset) launches the server and replays the workload against it. `mode: probe` runs a kernel probe (`mode.probe`, `mode.probe_args`) with `--out results/<run>/`. It refuses the torchrun probes (`collective`, `reparallel`, `vllm_allreduce`) and the probes that name output files (`serving_decode_grid`, `serving_stage_split`); run those with `just probe`.
 
 ## Provisioning
 
-`quettabench/provision.py <run.yaml>...` checks, and sets up when missing:
-cache dirs under `hardware.provision.cache_root`, a python with vLLM
-(`provision.py`, else pip install `provision.vllm_spec`), `provision.nccl_lib`
-(Blackwell needs NCCL >= 2.28), a QuettaServe checkout (`qs_dir`, else cloned
-from `qs_repo` at `qs_commit`), and per run the bench binary (`bench_bin`, else
-built), the engine checkpoint (`qs_ckpt`), the moe config (`qs_cfg`) and the
-vLLM weights (`weights`, else `hf_id` downloaded). Per-run values take a
-`<run>:` prefix: `--set qwen3:hardware.provision.weights=/w/qwen3`.
+`quettabench/provision.py <run.yaml>...` checks, and sets up when missing: cache dirs under `hardware.provision.cache_root`, a python with vLLM (`provision.py`, else pip install `provision.vllm_spec`), `provision.nccl_lib` (Blackwell needs NCCL >= 2.28), a QuettaServe checkout (`qs_dir`, else cloned from `qs_repo` at `qs_commit`), and per run the bench binary (`bench_bin`, else built), the engine checkpoint (`qs_ckpt`), the moe config (`qs_cfg`) and the vLLM weights (`weights`, else `hf_id` downloaded). Per-run values take a `<run>:` prefix: `--set qwen3:hardware.provision.weights=/w/qwen3`.
 
-It is idempotent. Anything it cannot resolve prints `MISSING: <what>` and it
-exits 1 after listing them all; nothing is guessed. `--dry-run` prints the
-plan and writes nothing. A complete pass writes `.env` (caches, PYTHON_BIN,
-LD_LIBRARY_PATH; `just` loads it) and prints the `qbench run` lines for both
-engines, or the vLLM line alone for a model yaml without a `quettaserve:` block.
+It is idempotent. Anything it cannot resolve prints `MISSING: <what>`, and it exits 1 after listing them all; nothing is guessed. `--dry-run` prints the plan and writes nothing. A complete pass writes `.env` (caches, PYTHON_BIN, LD_LIBRARY_PATH; `just` loads it) and prints the `qbench run` lines for both engines, or the vLLM line alone for a model yaml without a `quettaserve:` block.
 
 ## One image on a fresh box
 
@@ -104,13 +69,7 @@ docker run --rm --gpus '"device=0"' --network host --ipc host \
 
 ## Running inside docker
 
-`hardware.launcher: docker` runs the server in `engine.image` (`docker run
--d`, the GPUs, the port, and the repo, `hardware.hf_home` and an absolute
-`engine.model` dir mounted read-only at their host paths, and `results/<run>/`
-read-write so nsys output lands there); `configs/runs/llama-tp1-docker.yaml` is the
-example. Provision never pulls; pull the image yourself. The docker backend
-is tested against mocks only, by owner decision; validate it on a docker
-host before relying on it.
+`hardware.launcher: docker` runs the server in `engine.image` (`docker run -d`, the GPUs, the port, and the repo, `hardware.hf_home` and an absolute `engine.model` dir mounted read-only at their host paths, and `results/<run>/` read-write so nsys output lands there); `configs/runs/llama-tp1-docker.yaml` is the example. Provision never pulls; pull the image yourself. The docker backend is tested against mocks only; validate it on a docker host before relying on it.
 
 ```bash
 docker pull vllm/vllm-openai:v0.26.0
@@ -129,53 +88,19 @@ just run configs/runs/llama-tp1-docker.yaml --set engine.model=/w/llama
 | `profile.json` | `qbench profile` | metrics, energy, cost, accuracy; never changes run.json |
 | `nsys.*`, `nsys-<ctx>x<bs>.*` | `engine.instrumentation=nsys` | the capture armed at launch (QuettaServe: one per bench cell) |
 
-`qbench run` refuses a `results/<run>/` that already holds files;
-`--overwrite` empties it first: every file and subdirectory there belongs to
-the old run, so `profile.json` and the nsys export go with it. A run whose
-`run.json` says failed is replaced without `--overwrite`. Only a real dir
-directly under the results dir that holds `run.json`, `requests.jsonl` or
-`engine.json` is ever emptied; a symlink or a dir qbench did not make is
-refused. `run_name` (the yaml stem or `--set run_name=`) matches
-`[A-Za-z0-9][A-Za-z0-9._-]*` and is none of `probes`, `xval`, `baselines`;
-matrix suffixes are cut to that charset.
+`qbench run` refuses a `results/<run>/` that already holds files; `--overwrite` empties it first: every file and subdirectory there belongs to the old run, so `profile.json` and the nsys export go with it. A run whose `run.json` says failed is replaced without `--overwrite`. Only a real dir directly under the results dir that holds `run.json`, `requests.jsonl` or `engine.json` is ever emptied; a symlink or a dir qbench did not make is refused. `run_name` (the yaml stem or `--set run_name=`) matches `[A-Za-z0-9][A-Za-z0-9._-]*` and is none of `probes`, `xval`, `baselines`; matrix suffixes are cut to that charset.
 
-Grid runs no longer write `results/baselines/*.json`; `qbench xval`
-reads the run dir, and still reads old baselines files. Each probe run writes
-its own `results/probes/<gpu>/<probe>/<run-id>/` (the run id is its UTC start,
-e.g. `20261011T120000.000000Z`): `run.json` (argv, provenance, run_status) and
-`rows.jsonl`, one `ProbeRow` (probe, table, key, value, timing) per measured row.
-`just export` builds every kernel table from those rows, unioning every ok run's rows per table on the key
-the probe's old upsert used, the run that finished last winning a key, and
-takes a table with no row key from the run that finished last
-(`docs/runbooks/probes.md`). It merges into the tables QuettaSim already
-holds, keeping their rows unless a run supersedes them, and stops where it
-would drop one unless given `--replace-tables`, which replaces just the tables
-that would stop. It is the only route to QuettaSim.
+Grid runs write no `results/baselines/*.json`; `qbench xval` reads the run dir, and still reads old baselines files. Each probe run writes its own `results/probes/<gpu>/<probe>/<run-id>/` (the run id is its UTC start, e.g. `20261011T120000.000000Z`): `run.json` (argv, provenance, run_status) and `rows.jsonl`, one `ProbeRow` (probe, table, key, value, timing) per measured row. `just export` builds every kernel table from those rows, unioning every ok run's rows per table on the key the probe's old upsert used, the run that finished last winning a key, and takes a table with no row key from the run that finished last (`docs/runbooks/probes.md`). It merges into the tables QuettaSim already holds, keeping their rows unless a run supersedes them, and stops where it would drop one unless given `--replace-tables`, which replaces just the tables that would stop. It is the only route to QuettaSim.
 
 ## Cross-validation
 
 ### Measurement contract
 
-Both columns time the same quantity: steady-state decode ms per token at a
-resident batch, pipelined, synchronized only at the ends, at matched
-(context, batch, tp). The vLLM side is the slope of batch wall time over the
-step points (`configs/grids.yaml`), refit up to `mode.vmin_attempts` times
-until r2 >= 0.999; the engine side is the bench's pipelined loop (K steps,
-one sync). `max_seq = ctx + timing_steps + max_seq_headroom` changes only the
-engine number; the vLLM side uses the model's `max_model_len`. A cell needing
-more than 80% of the KV tokens left after weights and a 5 GiB per-GPU reserve
-is skipped, as is one with ctx + max(step_points) + 2 > max_model_len.
+Both columns time the same quantity: steady-state decode ms per token at a resident batch, pipelined, synchronized only at the ends, at matched (context, batch, tp). The vLLM side is the slope of batch wall time over the step points (`configs/grids.yaml`), refit up to `mode.vmin_attempts` times until r2 >= 0.999; the engine side is the bench's pipelined loop (K steps, one sync). `max_seq = ctx + timing_steps + max_seq_headroom` changes only the engine number; the vLLM side uses the model's `max_model_len`. A cell needing more than 80% of the KV tokens left after weights and a 5 GiB per-GPU reserve is skipped, as is one with ctx + max(step_points) + 2 > max_model_len.
 
 ### Withhold rules
 
-The table prints a ratio only for like with like. It is withheld when the
-method differs (criterion groups synchronize every iteration; force with
-`--allow-method-mismatch`), when quantization differs (`QUANT
-MISMATCH`), and when serving topology differs (`SERVING MISMATCH`). KV dtype
-mismatches are flagged `KV`, rows at `bs >= comm_bound_bs` `COMM` (the TP
-allreduce dominates and is node-specific), fits with r2 < 0.999 `LOW R2`,
-eager engine loops `EAGER`. Baselines older than 14 days warn, and NCCL
-settings that differ between the sides print `NCCL MISMATCH`.
+The table prints a ratio only for like with like. It is withheld when the method differs (criterion groups synchronize every iteration; force with `--allow-method-mismatch`), when quantization differs (`QUANT MISMATCH`), and when serving topology differs (`SERVING MISMATCH`). KV dtype mismatches are flagged `KV`, rows at `bs >= comm_bound_bs` `COMM` (the TP allreduce dominates and is node-specific), fits with r2 < 0.999 `LOW R2`, eager engine loops `EAGER`. Baselines older than 14 days warn, and NCCL settings that differ between the sides print `NCCL MISMATCH`.
 
 ### Prompt modes (grid runs)
 
@@ -190,37 +115,21 @@ The baseline records the mode and the table prints it.
 
 ### QuettaServe families
 
-The model yaml's `quettaserve:` block names the cargo `crate` and `test`, the
-env prefix (`DS_`, `QW_`) and the family:
+The model yaml's `quettaserve:` block names the cargo `crate` and `test`, the env prefix (`DS_`, `QW_`) and the family:
 
-- `moe` (deepseek): needs `engine.extra.qs_cfg`; an inherited `<P>_LAYERS` is
-  removed, since layer truncation would invalidate the run. `engine.layers=N`
-  sets it on purpose for a slice run; crossval ignores the `layers=N` lines.
-- `gdn` (qwen3 and other linear-attention hybrids): exact kernels only when
-  `engine.extra.gdn_dir` holds the vLLM GDN cubins (the loader panics
-  without them), else the tiled rust suite; custom all-reduce at tp >= 2;
-  the exact suite has no CUDA-graph wiring, so it runs eager, rust runs graph.
+- `moe` (deepseek): needs `engine.extra.qs_cfg`; an inherited `<P>_LAYERS` is removed, since layer truncation would invalidate the run. `engine.layers=N` sets it on purpose for a slice run; crossval ignores the `layers=N` lines.
+- `gdn` (qwen3 and other linear-attention hybrids): exact kernels only when `engine.extra.gdn_dir` holds the vLLM GDN cubins (the loader panics without them), else the tiled rust suite; custom all-reduce at tp >= 2; the exact suite has no CUDA-graph wiring, so it runs eager, rust runs graph.
 - `dense`: nothing extra.
 
 A host without cargo sets `engine.extra.bench_bin` to a prebuilt test binary.
 
 ### NCCL link profiles
 
-`hardware.link_profile` is detected once (an NV* link in `nvidia-smi topo -m`
-is nvlink, else pcie; non-cuda backends take nvlink) and feeds both engines.
-pcie pins `NCCL_ALGO=allreduce:tree;allgather:ring`, `NCCL_PROTO=Simple`,
-`NCCL_P2P_LEVEL=SYS` (without it cross-socket links fall back to TCP),
-`LLMSRV_NO_NVLS=1`, `LLMSRV_TWOSHOT_MIN_BYTES=0`, `NCCL_IB_DISABLE=1`. nvlink
-exports only `NCCL_IB_DISABLE=1`: NCCL picks NVLS/LL128 and the engine keeps
-its peer all-reduce. Empty values are never exported. The caller's
-`NCCL_ALGO`/`NCCL_PROTO` win.
+`hardware.link_profile` is detected once (an NV* link in `nvidia-smi topo -m` is nvlink, else pcie; non-cuda backends take nvlink) and feeds both engines. pcie pins `NCCL_ALGO=allreduce:tree;allgather:ring`, `NCCL_PROTO=Simple`, `NCCL_P2P_LEVEL=SYS` (without it cross-socket links fall back to TCP), `LLMSRV_NO_NVLS=1`, `LLMSRV_TWOSHOT_MIN_BYTES=0`, `NCCL_IB_DISABLE=1`. nvlink exports only `NCCL_IB_DISABLE=1`: NCCL picks NVLS/LL128 and the engine keeps its peer all-reduce. Empty values are never exported. The caller's `NCCL_ALGO`/`NCCL_PROTO` win.
 
 ### Correctness
 
-Agreement is two runs compared by `qbench xval`. Runs with
-`mode.returns=text` give greedy-agreement rows (engine vs vLLM text); runs
-with `mode.returns=logits` give the FIDELITY gate, vLLM against the
-transformers reference on the same grid prompts:
+Agreement is two runs compared by `qbench xval`. Runs with `mode.returns=text` give greedy-agreement rows (engine vs vLLM text); runs with `mode.returns=logits` give the FIDELITY gate, vLLM against the transformers reference on the same grid prompts:
 
 ```bash
 qbench run configs/runs/llama.yaml --set mode.grid=smoke --set mode.returns=logits \
@@ -230,20 +139,11 @@ qbench run configs/runs/llama.yaml --set mode.grid=smoke --set engine.name=refer
 qbench xval results/llama-logits results/llama-reference
 ```
 
-FIDELITY passes only with zero hard disagreements (an argmax flip where the
-reference's top-2 gap is not a near tie). deepseek has no transformers
-reference; its correctness comes from the engine's own batch gates.
+FIDELITY passes only with zero hard disagreements (an argmax flip where the reference's top-2 gap is not a near tie). deepseek has no transformers reference; its correctness comes from the engine's own batch gates.
 
 ### Slice verification
 
-A model cut to its first N layers cannot be checked on a free-running greedy
-chain: bf16 rounding flips its router within a few steps. The check is
-teacher-forced logits against a float32 reference anchor, passing when the
-engine's argmax flips are no more than the reference's own at the engine's
-dtype (the noise floor). `engine.layers=N` cuts the reference (and sets the
-QuettaServe batch_bench's `<P>_LAYERS`); vLLM loads a checkpoint dir cut the
-same way as `engine.model`. `qbench xval <ours> <anchor> --floor <run>`
-prints the BAND line:
+A model cut to its first N layers cannot be checked on a free-running greedy chain: bf16 rounding flips its router within a few steps. The check is teacher-forced logits against a float32 reference anchor, passing when the engine's argmax flips are no more than the reference's own at the engine's dtype (the noise floor). `engine.layers=N` cuts the reference (and sets the QuettaServe batch_bench's `<P>_LAYERS`); vLLM loads a checkpoint dir cut the same way as `engine.model`. `qbench xval <ours> <anchor> --floor <run>` prints the BAND line:
 
 ```
 qbench run <run>.yaml --set mode.returns=logits --set engine.model=<cut dir> --set run_name=slice-vllm
@@ -252,25 +152,13 @@ qbench run <run>.yaml --set engine.name=reference --set engine.layers=N --set en
 qbench xval results/slice-vllm results/slice-f32 --floor results/slice-bf16
 ```
 
-A floor run is trusted once it is deterministic: the same run twice crossvals
-to argmax_agree equal to positions and delta max 0. `qbench profile --source kernels` gives per-kernel
-GPU time per decode step from an nsys-armed run, and `just moe-routing
+A floor run is trusted once it is deterministic: the same run twice crossvals to argmax_agree equal to positions and delta max 0. `qbench profile --source kernels` gives per-kernel GPU time per decode step from an nsys-armed run, and `just moe-routing
 <model>` (`probes/moe.py --routing`) dumps one MoE block for an engine-side diff. The verdict log of the
 original harness is `docs/runbooks/slice_verification.md`.
 
 ### Model notes
 
-llama is verified. deepseek, qwen, qwen3, glm53 and glm53flash are bring-up
-(`verified: false`, run with `--allow-unverified`) until a clean golden run.
-MLA and hybrid stacks must set `kv_bytes`; the dense per-head formula
-overestimates their KV (the loader refuses them without it). So
-`configs/runs/qwen.yaml` does not load until `kv_bytes` is set in
-`configs/models/qwen35_9b.yaml`: qwen is hybrid attention, and the loader
-refuses rather than fall back to the dense formula. deepseek needs
-the DeepSeek vLLM fork, the tp-sliced fp4 checkpoint (ds-0731-tp8-fp4), and
-its KV differs by design (engine bf16 latent vs `fp8_ds_mla`), so its ratios
-are withheld. glm53 and glm53flash have no engine bench yet: vLLM side only.
-`comm_bound_bs` is set only after a measured grid, never copied across models.
+llama is verified. deepseek, qwen, qwen3, glm53 and glm53flash are bring-up (`verified: false`, run with `--allow-unverified`) until a clean golden run. MLA and hybrid stacks must set `kv_bytes`; the dense per-head formula overestimates their KV (the loader refuses them without it). So `configs/runs/qwen.yaml` does not load until `kv_bytes` is set in `configs/models/qwen35_9b.yaml`: qwen is hybrid attention, and the loader refuses rather than fall back to the dense formula. deepseek needs the DeepSeek vLLM fork, the tp-sliced fp4 checkpoint (ds-0731-tp8-fp4), and its KV differs by design (engine bf16 latent vs `fp8_ds_mla`), so its ratios are withheld. glm53 and glm53flash have no engine bench yet: vLLM side only. `comm_bound_bs` is set only after a measured grid, never copied across models.
 
 ## Old command -> new command
 
@@ -301,15 +189,7 @@ are withheld. glm53 and glm53flash have no engine bench yet: vLLM side only.
 
 ## QuettaSim recipes that call the old probe paths
 
-QuettaSim's `justfile` still runs five probe recipes from paths this
-refactor deleted (`QuettaBench/profiling/kernel_composed/...`, with
-`--out-dir data/kernel_data`, so each run upserted QuettaSim's tables in
-place). Until QuettaSim changes them, run the replacement from this repo's
-root and route the tables with one export; a probe run now writes its own
-`results/probes/<gpu>/<probe>/<run-id>/`, and `kernel_tables` unions the
-runs into QuettaSim's `data/kernel_data/`. Do not pass `--out data/kernel_data`
-(it is the parent of `<probe>/<run-id>/`, not QuettaSim's table dir).
-`PYTHON_BIN` is the vLLM env's python (QuettaSim's `vllm_py`).
+QuettaSim's `justfile` still runs five probe recipes from paths this refactor deleted (`QuettaBench/profiling/kernel_composed/...`, with `--out-dir data/kernel_data`, so each run upserted QuettaSim's tables in place). Until QuettaSim changes them, run the replacement from this repo's root and route the tables with one export; a probe run now writes its own `results/probes/<gpu>/<probe>/<run-id>/`, and `kernel_tables` unions the runs into QuettaSim's `data/kernel_data/`. Do not pass `--out data/kernel_data` (it is the parent of `<probe>/<run-id>/`, not QuettaSim's table dir). `PYTHON_BIN` is the vLLM env's python (QuettaSim's `vllm_py`).
 
 | QuettaSim recipe | old path it calls | replacement here |
 |---|---|---|
@@ -372,4 +252,4 @@ Canonical data lives on the `agent-bench` R2 bucket:
 
 ## Known open items
 
-- `InProcessDriver` stays though the parity gate passed: it is the only path that returns token ids, text or logits (FIDELITY, greedy agreement, routing parity, corpus prompts).
+- `InProcessDriver` stays after the parity gate passed because it is the only path that returns token ids, text or logits (FIDELITY, greedy agreement, routing parity, corpus prompts).

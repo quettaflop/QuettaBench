@@ -1,11 +1,6 @@
 # crossval verification stages
 
-One row per stage, in run order. A stage passes only on its stated criterion,
-with the evidence file kept. Static stages re-run anywhere; GPU stages name
-their hardware. Update the status column in the same change that adds the
-evidence. The runs below used the pre-refactor scripts; a command cell marked
-historical names the retired command the evidence came from, then the
-current one (README.md "Old command -> new command").
+One row per stage, in run order. A stage passes only on its stated criterion, with the evidence file kept. Static stages re-run anywhere; GPU stages name their hardware. Update the status column in the same change that adds the evidence. The runs below used the pre-refactor scripts; a command cell marked historical names the retired command the evidence came from, then the current one (README.md "Old command -> new command").
 
 | stage | what | command | pass criterion | status |
 |---|---|---|---|---|
@@ -23,69 +18,14 @@ current one (README.md "Old command -> new command").
 | V12 | routing dump | historical `moe_routing_probe.py <out.safetensors>`; now `just moe-routing <model> <gpu> 1 "--layers 13 --kda-mode fused_recurrent"` (`python3 -m quettabench.probes.moe --routing`) | dump holds topk_idx, topk_weight and the stage tensors | blocked |
 | V13 | llama logit agreement | historical `python3 scripts/crossval/logit_agreement.py --model <weights>`; now the logits and reference runs in README.md "Slice verification", then `just xval` | argmax agreement >= 99 percent with disagreements only at near-ties; mean true-token logprob delta <= 0.05 | pass |
 
-Notes. V3 and V4 run from a QuettaServe checkout of `supp_tp` next to this
-repo; the table consumes their criterion logs unchanged. V9 to V12 need the
-Kimi slice artifacts (see `slice_tf/README.md`); they verify the method the
-deepseek and qwen lanes inherit, not the deepseek model itself. The deepseek
-engine lane has no criterion bench yet, so V8 is baseline-only by design. The
-engine-side diff against the V12 dump is a QuettaServe work item.
+Notes. V3 and V4 run from a QuettaServe checkout of `supp_tp` next to this repo; the table consumes their criterion logs unchanged. V9 to V12 need the Kimi slice artifacts (see `slice_tf/README.md`); they verify the method the deepseek and qwen lanes inherit, not the deepseek model itself. The deepseek engine lane has no criterion bench yet, so V8 is baseline-only by design. The engine-side diff against the V12 dump is a QuettaServe work item.
 
-Run 2026-09-12 (runpod node-1, 8x H200 shared). Idle GPUs at start: 1, 5, 6, 7
-(0, 3, 4 held by other sessions). V3 blocked: tp_equivalence needs all 8 GPUs
-and only 4 were idle. V9 to V12 blocked: the pod has no `fla` library and no
-Kimi slice artifacts (only the qserve kimi crate source), so the slice
-reference cannot be built or run here. The supp_tp engine build needed
-`RUSTFLAGS=-C linker-features=-lld` on this pod (stock rust-lld segfaults
-linking proc-macro shared objects; the system `ld.bfd` links cleanly). V4 and
-therefore V6 blocked: after the linker fix the build reached candle-flash-attn
-and nvcc failed compiling `flash_fwd_hdim128_bf16_causal_sm80.cu` under CUDA
-12.8 (sibling kernels compiled; error empty). That is a QuettaServe engine
-build issue, not a harness one; the TP harness is still verified through V5
-(vLLM tp baselines) and the tp-aware table and cache contract tests.
-Evidence: qs-supptp/build_clean.log on the pod.
+Run 2026-09-12 (runpod node-1, 8x H200 shared). Idle GPUs at start: 1, 5, 6, 7 (0, 3, 4 held by other sessions). V3 blocked: tp_equivalence needs all 8 GPUs and only 4 were idle. V9 to V12 blocked: the pod has no `fla` library and no Kimi slice artifacts (only the qserve kimi crate source), so the slice reference cannot be built or run here. The supp_tp engine build needed `RUSTFLAGS=-C linker-features=-lld` on this pod (stock rust-lld segfaults linking proc-macro shared objects; the system `ld.bfd` links cleanly). V4 and therefore V6 blocked: after the linker fix the build reached candle-flash-attn and nvcc failed compiling `flash_fwd_hdim128_bf16_causal_sm80.cu` under CUDA 12.8 (sibling kernels compiled; error empty). That is a QuettaServe engine build issue, not a harness one; the TP harness is still verified through V5 (vLLM tp baselines) and the tp-aware table and cache contract tests. Evidence: qs-supptp/build_clean.log on the pod.
 
-V7 pass: 15 RESULT cells produced including the new 4096x32 and 4096x64;
-14 of 15 at r2 >= 0.999. The 100x64 corner came in at r2 = 0.982 (tiny
-context, largest batch, the noisiest corner of the grid); flagged, not
-re-run. Evidence: evidence/v7_llama15.log. V8 deepseek blocked: by the time
-it ran, other sessions held the GPUs and only 2 were free (needs 4 for tp4);
-weights are present (156 GB), so it is runnable when 4 GPUs are idle.
-Evidence: evidence/v8_deepseek.log ("NEED 4 FREE GPUS, have: 1 7").
+V7 pass: 15 RESULT cells produced including the new 4096x32 and 4096x64; 14 of 15 at r2 >= 0.999. The 100x64 corner came in at r2 = 0.982 (tiny context, largest batch, the noisiest corner of the grid); flagged, not re-run. Evidence: evidence/v7_llama15.log. V8 deepseek blocked: by the time it ran, other sessions held the GPUs and only 2 were free (needs 4 for tp4); weights are present (156 GB), so it is runnable when 4 GPUs are idle. Evidence: evidence/v8_deepseek.log ("NEED 4 FREE GPUS, have: 1 7").
 
-V5 blocked on vLLM tensor-parallel init, two attempts. First (default
-multiproc): "Engine core initialization failed" with an NCCL
-ProcessGroup/leaked-shared-memory warning. Second
-(VLLM_WORKER_MULTIPROC_METHOD=spawn, GPUs 1,7): the run stops right after the
-META header with no RESULT, error, or exit line, i.e. the TP workers hang or
-die silently during init. This is a vLLM-0.26 tensor-parallel startup issue
-in the detached environment on this pod, not a harness defect: the tp
-workloads, tp-aware table/cache, and single-GPU baseline path are all
-verified (V2, V7). Unblock needs an interactive vLLM tp debug or a different
-vLLM build. Evidence: evidence/v5_tp2.log, evidence/v5_tp2_retry.log.
+V5 blocked on vLLM tensor-parallel init, two attempts. First (default multiproc): "Engine core initialization failed" with an NCCL ProcessGroup/leaked-shared-memory warning. Second (VLLM_WORKER_MULTIPROC_METHOD=spawn, GPUs 1,7): the run stops right after the META header with no RESULT, error, or exit line, i.e. the TP workers hang or die silently during init. This is a vLLM-0.26 tensor-parallel startup issue in the detached environment on this pod, not a harness defect: the tp workloads, tp-aware table/cache, and single-GPU baseline path are all verified (V2, V7). Unblock needs an interactive vLLM tp debug or a different vLLM build. Evidence: evidence/v5_tp2.log, evidence/v5_tp2_retry.log.
 
-Run 2026-09-13 (GCP hwn-z1-gpu11, 8x RTX PRO 6000 Blackwell sm_120, all idle;
-evidence rsynced to <evidence-dir>/blackwell/). Bare node: stood up
-a userspace stack (uv + vLLM 0.29.0 / torch cu130, micromamba cuda-toolkit
-13.4, rustup). Key fix: vLLM's wheel ships no prebuilt sm_120 kernels so it
-JIT-compiles at runtime and needs nvcc; installing the CUDA toolkit is what
-unblocked TP init. V5 PASS on Blackwell: llama-tp2 4 cells r2=1.0 ms 6.98-7.28,
-llama-tp4 4 cells r2=1.0 ms 5.74-5.85 (tp4 faster than tp2, correct decode TP
-scaling); single-GPU warmup also valid (100x1, 11.35 ms/step, r2=1.0). V3/V4/V6
-still blocked: the engine build fails on Blackwell at `cudarc v0.19.8` custom
-build (that pinned crate version predates CUDA 13.x), before flash-attn; V3 also
-needs the built engine. V8 deepseek blocked: DeepseekV4ForCausalLM resolves and
-fp8_ds_mla KV is set, but TP=4 worker init dies with NCCL "unhandled system
-error" three times (standalone and with NCCL_P2P_DISABLE=1) -- the MoE
-all-to-all over PCIe (these cards have no NVLink) where llama's all-reduce
-succeeded; needs dedicated NCCL debug (NCCL_DEBUG=INFO) or NVLink hardware.
-Evidence: evidence/deepseek*.raw.
+Run 2026-09-13 (GCP hwn-z1-gpu11, 8x RTX PRO 6000 Blackwell sm_120, all idle; evidence rsynced to <evidence-dir>/blackwell/). Bare node: stood up a userspace stack (uv + vLLM 0.29.0 / torch cu130, micromamba cuda-toolkit 13.4, rustup). The key fix: vLLM's wheel ships no prebuilt sm_120 kernels so it JIT-compiles at runtime and needs nvcc; installing the CUDA toolkit is what unblocked TP init. V5 pass on Blackwell: llama-tp2 4 cells r2=1.0 ms 6.98-7.28, llama-tp4 4 cells r2=1.0 ms 5.74-5.85 (tp4 faster than tp2, correct decode TP scaling); single-GPU warmup also valid (100x1, 11.35 ms/step, r2=1.0). V3/V4/V6 still blocked: the engine build fails on Blackwell at `cudarc v0.19.8` custom build (that pinned crate version predates CUDA 13.x), before flash-attn; V3 also needs the built engine. V8 deepseek blocked: DeepseekV4ForCausalLM resolves and fp8_ds_mla KV is set, but TP=4 worker init dies with NCCL "unhandled system error" three times (standalone and with NCCL_P2P_DISABLE=1): the MoE all-to-all over PCIe (these cards have no NVLink) where llama's all-reduce succeeded; needs dedicated NCCL debug (NCCL_DEBUG=INFO) or NVLink hardware. Evidence: evidence/deepseek*.raw.
 
-Logit validation 2026-09-13 (same Blackwell node, one GPU, bfloat16 on both
-sides): teacher-forced vLLM 0.29 against the HF transformers reference on 209
-positions across three fixed texts. Argmax agreement 207 of 209 (99.04
-percent); the two disagreements sit at an HF top-2 gap of exactly 0.125,
-which is one bf16 quantization step at that logit magnitude, so they are
-numerical ties, not defects. True-token logprob delta: mean 0.0256, p95
-0.110, max 0.223. This logit-validates the baseline lane; the engine lane
-stays token-level until QuettaServe adds a logit dump. Evidence:
-evidence/logit_agreement.log.
+Logit validation 2026-09-13 (same Blackwell node, one GPU, bfloat16 on both sides): teacher-forced vLLM 0.29 against the HF transformers reference on 209 positions across three fixed texts. Argmax agreement 207 of 209 (99.04 percent); the two disagreements sit at an HF top-2 gap of exactly 0.125, which is one bf16 quantization step at that logit magnitude, so they are numerical ties, not defects. True-token logprob delta: mean 0.0256, p95 0.110, max 0.223. This logit-validates the baseline lane; the engine lane stays token-level until QuettaServe adds a logit dump. Evidence: evidence/logit_agreement.log.
