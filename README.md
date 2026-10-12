@@ -10,7 +10,7 @@ just fetch                             # trajectories from R2 (gitignored)
 
 just provision configs/runs/llama.yaml --dry-run \
     --set hardware.provision.py=/venv/bin/python --set llama:hardware.provision.weights=/w/llama
-just dry configs/runs/llama.yaml --set engine.model=/w/llama   # Config + LaunchSpec, starts nothing
+just dry-run configs/runs/llama.yaml --set engine.model=/w/llama   # Config + LaunchSpec, starts nothing
 just run configs/runs/llama.yaml --set engine.model=/w/llama   # -> results/llama/
 just profile --run results/llama --source metrics --source energy
 just compare results/<ours> results/<theirs>       # compares two results dirs
@@ -24,7 +24,7 @@ Without `just`, every recipe is one line: `python3 -m quettabench.cli run ...`, 
 
 A run is one yaml in `configs/runs/` naming a model (`configs/models/`), a workload, a mode and optionally a `matrix:` (a sweep: one run per point, `just sweep` is `just run`). Grids and step points live in `configs/grids.yaml`, link-profile facts in `configs/hardware/<profile>.yaml`.
 
-Precedence, highest first: `--set` > env (through `config/env_map.py`, the only reader of `os.environ`) > run yaml > model yaml > hardware yaml > schema defaults. Unknown keys are refused. `just dry` prints every value with its origin.
+Precedence, highest first: `--set` > env (through `config/env_map.py`, the only reader of `os.environ`) > run yaml > model yaml > hardware yaml > schema defaults. Unknown keys are refused. `just dry-run` prints every value with its origin.
 
 A grid run (`mode.grid` set) times decode ms per step per (ctx, bs) cell: vLLM over HTTP against a launched server (bs concurrent completions per batch, prefix cache reset per cell), QuettaServe through its cargo bench (`--set engine.name=quettaserve`). A vLLM grid run with `mode.returns` text or logits builds vLLM in-process instead, the only path that returns token ids, text or logits; only such a run takes `prompt_mode=corpus`, which a timing grid refuses. `engine.pp` and `engine.cudagraph=false` reach the server as `--pipeline-parallel-size` and `--enforce-eager`. `tests/parity/slope_gate.json` holds the HTTP-vs-in-process gate both paths passed (8x H200, vLLM 0.30.1: 15 cells, worst |delta| 0.228 ms). A serve run (`mode.grid` unset) launches the server and replays the workload against it. `mode: probe` runs a kernel probe (`mode.probe`, `mode.probe_args`) with `--out results/<run>/`. It refuses the torchrun probes (`collective`, `reparallel`, `vllm_allreduce`) and the probes that name output files (`serving_decode_grid`, `serving_stage_split`); run those with `just probe`.
 
@@ -73,7 +73,7 @@ docker run --rm --gpus '"device=0"' --network host --ipc host \
 
 ```bash
 docker pull vllm/vllm-openai:v0.26.0
-just dry configs/runs/llama-tp1-docker.yaml --set engine.model=/w/llama   # prints the docker command
+just dry-run configs/runs/llama-tp1-docker.yaml --set engine.model=/w/llama   # prints the docker command
 just run configs/runs/llama-tp1-docker.yaml --set engine.model=/w/llama
 ```
 

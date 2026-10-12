@@ -302,7 +302,7 @@ class LiveProbes(unittest.TestCase):
         top = {n.module for n in tree.body if isinstance(n, ast.ImportFrom)}
         self.assertLessEqual({"engine.sim.closed_loop", "kernel_composed.types"}, top)
         justfile = (here.parents[1] / "justfile").read_text()
-        self.assertIn("--device-yaml {{sim_root}}/device_spec/{{lowercase(gpu)}}.yaml", justfile)
+        self.assertIn("--device-yaml {{quettasim_root}}/device_spec/{{lowercase(gpu)}}.yaml", justfile)
 
 
 FAKE_SMI = str(Path(__file__).with_name("fake_nvidia_smi.py"))

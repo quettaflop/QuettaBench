@@ -899,7 +899,7 @@ def runbook_drift(path: Path) -> list[str]:
             missing = flags - argparse_flags(PROBES_DIR / f"{probe}.py")
             if missing:
                 found.append(f"{where} {probe} lacks {sorted(missing)}")
-        for recipe in re.findall(r"`just (?:gpu=\S+ )?([a-z][a-z0-9-]*)", line):
+        for recipe in re.findall(r"`just (?:[a-z_]+=\S+ )*([a-z][a-z0-9-]*)", line):
             if recipe not in recipes:
                 found.append(f"{where} no recipe {recipe}")
         for script in re.findall(r"((?:quettabench/)?(?:profiling|scripts|slice_tf)/[\w./-]+\.py)", line):
