@@ -154,7 +154,8 @@ class RunRecorded(unittest.TestCase):
             self.assertTrue(Path(td, "run.json").is_file())
 
     def test_each_invocation_gets_its_own_run_dir(self):
-        """Two runs of one probe never share a dir, so the second's run.json cannot stand for the first's tables."""
+        """Two runs of one probe never share a dir, so the second's run.json
+        cannot stand for the first's tables."""
         with tempfile.TemporaryDirectory() as td:
             argv = ["probe", "--gpu-label", "H100", "--out", td]
             for i, fails in enumerate((False, True)):
@@ -170,7 +171,8 @@ class RunRecorded(unittest.TestCase):
         self.assertEqual(docs, {RUN: "ok", run_id(NOW + timedelta(seconds=1)): "failed"})
 
     def test_a_run_dir_that_already_exists_is_refused(self):
-        """Two runs started in one microsecond, or a hand-made dir, would share a run dir; the second run is refused before main, files untouched."""
+        """Two runs started in one microsecond, or a hand-made dir, would share
+        a run dir; the second run is refused before main, files untouched."""
         for argv, kw, made in (
             (["--gpu-label", "H100", "--out", "<TD>"], {}, f"gemm/{RUN}"),
             (
@@ -207,7 +209,8 @@ class RunRecorded(unittest.TestCase):
 
 @pytest.mark.parametrize("name", ["cross_attn", "flash_attn", "gemm", "moe", "reparallel"])
 def test_a_probe_run_writes_only_the_rows_it_measured(name):
-    """Earlier runs' rows reach the export through kernel_tables' union, never through a probe run seeding its table from another run dir."""
+    """Earlier runs' rows reach the export through kernel_tables' union, never
+    through a probe run seeding its table from another run dir."""
     source = (PROBES / f"{name}.py").read_text()
     assert "prior_table" not in source, name
     assert "prior" not in ast.dump(ast.parse(source)).lower(), name
@@ -293,7 +296,8 @@ class LaunchVllm(unittest.TestCase):
         self.assertEqual(after, str(Path(sys.executable).with_name("vllm")))
 
     def test_each_live_probe_launch_is_pinned(self):
-        """argv and env of the two live-server probes' launches."""
+        """argv and env of the two live-server probes' launches; what changed
+        against their own launches before d7287c5 is in tests/golden/REPORT.md."""
         from quettabench.probes import serving_decode_grid, serving_stage_split
 
         def launched(fn):
@@ -419,7 +423,8 @@ class StageSplitKey(unittest.TestCase):
         self.assertIn("VLLM_API_KEY", out.getvalue())
 
     def test_out_is_required_so_the_run_is_recorded(self):
-        """With no --out the probe would write a table record_dir cannot place; argparse refuses before anything is written."""
+        """With no --out the probe would write a table record_dir cannot place;
+        argparse refuses before anything is written."""
         from quettabench.probes import serving_stage_split as sss
 
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as stop:
@@ -440,7 +445,8 @@ def import_without_torch(name):
 
 
 def test_gemm_ncu_reads_kernels_through_the_shared_parser():
-    """gemm --ncu takes its kernel times from _timing.ncu_kernel_durations, the one NCU CSV parser, and keeps the GEMM family's fastest launch."""
+    """gemm --ncu takes its kernel times from _timing.ncu_kernel_durations, the one
+    NCU CSV parser, and keeps the GEMM family's fastest launch."""
     gemm = import_without_torch("gemm")
     launches = [
         ("distribution_elementwise_kernel", 1.0),
@@ -458,7 +464,8 @@ def test_gemm_ncu_reads_kernels_through_the_shared_parser():
 
 @pytest.mark.parametrize("name", ["gemm", "moe"])
 def test_append_cannot_be_abbreviated(name, capsys):
-    """export reads --append from probe_args as written; --app would append unseen, so the parser takes no abbreviation."""
+    """export reads --append from probe_args as written; --app would append
+    unseen, so the parser takes no abbreviation."""
     with pytest.raises(SystemExit) as stop:
         import_without_torch(name).main(["--gpu-label", "H100", "--app"])
     assert stop.value.code == 2 and "unrecognized" in capsys.readouterr().err
@@ -472,7 +479,8 @@ def test_moe_routing_flag_takes_the_routing_parser(capsys):
 
 
 def test_probe_flags_cannot_be_abbreviated():
-    """add_output_args makes every probe parser take flags only as written, so --gpu-l or --ru never stand for --gpu-label or --run-id."""
+    """add_output_args makes every probe parser take flags only as written,
+    so --gpu-l or --ru never stand for --gpu-label or --run-id."""
     ap = argparse.ArgumentParser()
     probes_base.add_output_args(ap)
     for argv in (["--gpu-l", "H100"], ["--gpu", "H100", "--ru", "x"]):
@@ -493,7 +501,8 @@ def test_probes_without_output_args_take_no_abbreviation_either(name, out, capsy
 
 
 def test_record_dir_takes_no_abbreviation(tmp_path):
-    """--out-d is no --out-dir for record_dir either, so run.json goes where the probe's own parser puts its tables."""
+    """--out-d is no --out-dir for record_dir either, so run.json goes where
+    the probe's own parser puts its tables."""
     argv = [
         "--run-id",
         "20260101T000000.000000Z",
@@ -587,7 +596,8 @@ LIVE_SERVER_PROBES = {"serving_decode_grid.py", "serving_stage_split.py"}
 
 
 def test_every_probe_labels_its_gpu():
-    """Tables are keyed by GPU name, so every kernel probe must take --gpu-label, recipe-invoked or not."""
+    """Tables are keyed by GPU name, so every kernel probe must take --gpu-label,
+    recipe-invoked or not."""
     for probe in sorted(PROBES_DIR.glob("[!_]*.py")):
         if probe.name in LIVE_SERVER_PROBES:
             continue
@@ -621,7 +631,8 @@ def test_remote_recipe_is_one_line_into_base():
 
 
 def test_remote_probe_ships_what_base_imports():
-    """Exactly the files remote_probe ships, in a clean dir, import quettabench.probes.base under an isolated interpreter."""
+    """Exactly the files remote_probe ships, in a clean dir, import
+    quettabench.probes.base under an isolated interpreter."""
     from quettabench.probes.base import SHIPPED
 
     assert "quettabench/probes/" in SHIPPED and "quettabench/__init__.py" in SHIPPED
@@ -642,7 +653,8 @@ def test_remote_probe_ships_what_base_imports():
 
 
 class FakeHost:
-    """subprocess.run for remote_probe: records each command, answers mktemp with rdir, and fails the remote probe run and the pull as told."""
+    """subprocess.run for remote_probe: records each command, answers mktemp
+    with rdir, and fails the remote probe run and the pull as told."""
 
     def __init__(self, rdir="/tmp/qbench-probes.Ab12Cd", probe_rc=0, pull_rc=0):
         self.rdir, self.probe_rc, self.pull_rc, self.calls = rdir, probe_rc, pull_rc, []
@@ -676,7 +688,8 @@ def remote(argv, host, tmp_path, monkeypatch):
 
 
 def test_remote_probe_runs_in_its_own_dir_and_always_pulls(tmp_path, monkeypatch):
-    """A failed remote run is still pulled back, then only its own mktemp dir is removed, and the remote run's exit code is returned."""
+    """A failed remote run is still pulled back, then only its own mktemp dir
+    is removed, and the remote run's exit code is returned."""
     host = FakeHost(probe_rc=3)
     rc = remote(["gemm", "A100", "--probe-args=--ncu --wide"], host, tmp_path, monkeypatch)
     rdir = host.rdir
@@ -746,7 +759,8 @@ class Pulls(FakeHost):
 
 
 def test_the_pulled_run_is_stamped_on_the_local_clock(tmp_path, monkeypatch):
-    """The remote clock may be skewed: the pulled run.json keeps the remote finished and gets pulled from this machine's clock."""
+    """The remote clock may be skewed: the pulled run.json keeps the remote
+    finished and gets pulled from this machine's clock."""
     remote(["gemm", "A100"], Pulls(json.dumps({"provenance": {"finished": "2099-01-01"}})), tmp_path, monkeypatch)
     doc = json.loads((tmp_path / "results/probes/A100/gemm/20261011T120000.123456Z/run.json").read_text())
     assert doc["provenance"]["finished"] == "2099-01-01" and "remote_finished" not in doc["provenance"]
@@ -823,7 +837,8 @@ def test_remote_probe_refuses_odd_names(argv, tmp_path, monkeypatch):
 
 
 def test_the_r2_mirror_has_its_own_prefix_and_never_deletes():
-    """mirror-up/down sync results/probes/ with profiling/qbench_probes/ only; a --delete onto a shared prefix would remove what other writers keep."""
+    """mirror-up/down sync results/probes/ with profiling/qbench_probes/ only;
+    a --delete onto a shared prefix would remove what other writers keep."""
     text = JUSTFILE.read_text()
     assert 'r2_prefix := "profiling/qbench_probes"' in text
     assert "--delete" not in text and "mirror-up-prune" not in text
@@ -831,7 +846,8 @@ def test_the_r2_mirror_has_its_own_prefix_and_never_deletes():
 
 
 def test_probes_import_their_siblings_at_the_top():
-    """_timing ships with every probe, so no probe imports them inside a function; an inline import names its reason in a docstring, not a noqa."""
+    """_timing ships with every probe, so no probe imports them inside a
+    function; an inline import names its reason in a docstring, not a noqa."""
     for probe in sorted(PROBES_DIR.glob("*.py")):
         text = probe.read_text()
         assert "noqa: PLC0415" not in text, probe.name
@@ -842,7 +858,9 @@ def test_probes_import_their_siblings_at_the_top():
 
 
 def inline_imports_without_a_reason(path: Path) -> list[str]:
-    """Function-level imports in path whose reason is stated nowhere: neither a comment line just above the import (or its run of imports) nor the enclosing function's docstring mentions the import."""
+    """Function-level imports in path whose reason is stated nowhere: neither a
+    comment line just above the import (or its run of imports) nor the
+    enclosing function's docstring mentions the import."""
     text = path.read_text()
     lines = text.splitlines()
     bare = []
@@ -866,7 +884,8 @@ def inline_imports_without_a_reason(path: Path) -> list[str]:
 
 
 def test_every_inline_import_states_why():
-    """An import inside a function says why it is not at the top, in a comment above it or in the function's docstring; never a noqa."""
+    """An import inside a function says why it is not at the top, in a
+    comment above it or in the function's docstring; never a noqa."""
     bare = []
     for path in sorted([*PROBES_DIR.glob("*.py"), *PROFILING_DIR.rglob("*.py")]):
         assert "noqa: PLC0415" not in path.read_text(), path.name
@@ -879,62 +898,28 @@ def test_moe_docstrings_name_only_real_backends():
     assert set(re.findall(r"--backend (\w+)", text)) <= {"triton", "flashinfer"}
 
 
-QUETTASIM_RECIPES = ("collectives", "cross-attn", "vllm-allreduce", "reparallel-probe", "reparallel-probe-val")
-
-
-def readme_section(title: str) -> str:
-    text = (ROOT / "README.md").read_text()
-    assert f"## {title}\n" in text, title
-    return text.split(f"## {title}\n", 1)[1].split("\n## ", 1)[0]
-
-
-def test_readme_maps_each_old_quettasim_probe_recipe_to_a_working_command():
-    """QuettaSim's justfile still calls QuettaBench/profiling/kernel_composed/...; each such recipe has a replacement whose recipe and flags exist here."""
-    section = readme_section("QuettaSim recipes that call the old probe paths")
-    recipes = {b.split()[0].rstrip(":") for b in recipe_blocks(JUSTFILE)}
-    for name in QUETTASIM_RECIPES:
-        assert f"`{name}`" in section, name
-    lines = [ln for ln in section.replace("\\\n", " ").splitlines() if "just " in ln or "-m quettabench." in ln]
-    assert lines
-    for line in lines:
-        for recipe in re.findall(r"\bjust (?:gpu=\S+ )?([a-z][a-z0-9-]*)", line):
-            assert recipe in recipes, (recipe, line)
-        for probe in re.findall(r"-m quettabench\.probes\.([a-z0-9_]+)", line):
-            flags = {t for t in line.split() if t.startswith("--") and "=" not in t}
-            missing = flags - argparse_flags(PROBES_DIR / f"{probe}.py") - {"--only", "--results", "--kernel-dest"}
-            assert not missing, (probe, missing)
-
-
 RUNBOOKS = sorted((ROOT / "docs" / "runbooks").glob("*.md"))
 
 
 def runbook_drift(path: Path) -> list[str]:
-    """Commands in a runbook that no longer run here: a probe flag it does not
-    define, a just recipe that is gone, a cited script that is not in the
-    repo (unless the line, or its section heading, marks it historical or
-    retired), or --api-key test."""
+    """Commands in a runbook that no longer run here: a probe flag it does not define, a just recipe that is gone, a cited script that is not in the repo, or --api-key test."""
     found = []
     recipes = {b.split()[0].rstrip(":") for b in recipe_blocks(JUSTFILE)}
     text = path.read_text().replace("\\\n", " ")
-    section, fenced = False, False
     for n, line in enumerate(text.splitlines(), 1):
         where = f"{path.name}:{n}"
-        fenced ^= line.startswith("```")
-        if line.startswith("#") and not fenced:
-            section = "historical" in line.lower()
         if "--api-key test" in line:
             found.append(f"{where} --api-key test")
-        dated = section or "historical" in line.lower() or "retired" in line.lower()
         for probe in re.findall(r"-m quettabench\.probes\.([a-z0-9_]+)", line):
             flags = {t.strip("`") for t in line.split() if t.startswith("--") and "=" not in t}
             missing = flags - argparse_flags(PROBES_DIR / f"{probe}.py")
-            if missing and not dated:
+            if missing:
                 found.append(f"{where} {probe} lacks {sorted(missing)}")
         for recipe in re.findall(r"`just (?:gpu=\S+ )?([a-z][a-z0-9-]*)", line):
-            if recipe not in recipes and not dated:
+            if recipe not in recipes:
                 found.append(f"{where} no recipe {recipe}")
         for script in re.findall(r"((?:quettabench/)?(?:profiling|scripts|slice_tf)/[\w./-]+\.py)", line):
-            if not (ROOT / script).exists() and not dated:
+            if not (ROOT / script).exists():
                 found.append(f"{where} no {script}")
     return found
 

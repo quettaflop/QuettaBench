@@ -22,7 +22,7 @@ QuettaBench is a measurement harness. It has one command, `qbench`, with four do
 - `quettabench/export/quettasim.py`: the only measurement code that writes outside the repo; its builders are `tp_comm`, `roofline_utils`, `serving_decode_grid` and `kernel_tables`; `provision.py` sets the box up outside it (below).
 - `configs/`: `models/` holds per-model facts, once. `runs/` reference a model and never restate its facts. `grids.yaml` holds the grids and step points, `hardware/` the link profiles, `workloads.yaml` every workload profile by name.
 - `data/`: fetch scripts. Never imported by `quettabench/`, enforced by `tests/contracts/test_imports.py`.
-- `docs/runbooks/`: the probe guide and runbooks; with README.md and AGENTS.md the only docs.
+- `docs/runbooks/`: the probe guide; with README.md and AGENTS.md the only docs.
 - `tests/golden/`: characterization fixtures captured from the pre-refactor code. Change a fixture only with a dated line in `tests/golden/REPORT.md` saying why.
 - `tests/contracts/`: one test module per package area, not per module: `test_workloads.py` covers `workloads/` (sessions included), `test_probes.py` `probes/`, `test_adapters.py` the adapters, `test_export.py` `export/`, `test_native.py` `profiling/`, `test_metrics_core.py` `metrics/core.py` and `metrics/step_fit.py`, and `config/schema.py` is tested through `test_loader.py`; `provision.py` is tested in `tests/golden/test_provision.py` only. Plus `test_crossval_contracts.py` (with `crossval.py`'s tests), `test_imports.py` and the GPU smoke module `test_probes_gpu.py`; `helpers.py` and the `fake_*.py` modules are their plumbing.
 - `tests/parity/`: `slope_gate.json`, the committed HTTP-vs-in-process slope gate, and the test that holds every cell to its rule.
@@ -48,11 +48,11 @@ One line each; everything else follows section 2 "Target layout".
 - `profiling/kv_transfer.py` stays its own module: it is a torchrun target (`-m quettabench.profiling.kv_transfer`) and the tool name in the kernel manifest.
 - `tests/` has `golden/`, `contracts/`, `parity/` and `_stubs/` (the vllm, torch and transformers stand-ins the golden CPU runs import): the probe contracts and GPU smoke tests live in `contracts/`.
 - `data/` keeps `download_agent_trajectories.py` and `download_coding_prompts.py` apart: section 2's `fetch.py` merge is not done.
-- `legacy/trace_serve.py` is gone; `modes/serve.py` replaced it.
 - `tools/pre_commit/` (the commit-message and em-dash hooks) and `docker/` (the qbench plus vLLM image `just image` builds) sit outside section 2's tree.
 - The root also holds plumbing outside section 2's tree: `.github/`, `.pre-commit-config.yaml`, `_typos.toml`, `.dockerignore`, `requirements-probe.txt` and `LICENSE`.
-- `docs/runbooks/` keeps `slice_verification.md` beside the probe guide.
 - `data/slice_checkpoint.py` builds the cut vLLM checkpoint for slice runs; it is not a fetch script.
+- rocm, tpu and neuron launch paths are tested against mocks only; no hardware run is recorded yet.
+- `probes/base.py` imports `quettabench.engines` inside `launch_vllm`, so a remote kernel-probe host without the engine stack can still run a probe.
 - No mypy config: the lint gate is ruff and the pre-commit hooks.
 - `probes/gemm.py`, `flash_attn.py`, `gdn.py`, `vllm_allreduce.py`, `reparallel.py` and `profiling/kv_transfer.py` read `os.environ` themselves: they run as `python -m` modules outside the Config path (under torchrun or on a remote host that gets only the probe package), so torchrun's `RANK`, `WORLD_SIZE`, `LOCAL_RANK`, `LOCAL_WORLD_SIZE` and the `--ncu-bin` default `NCU_BIN` reach them only through the environment.
 - `serving_decode_grid.py`, `serving_stage_split.py` and `profiling/frontend.py` write their own CSV/JSON at `--out`, not `ProbeRow`s through `metrics/results.py`: `export/quettasim.py` reads the serving probes' files by name and in their own schema, and frontend's `--out` is a standalone dump beside the result `native.py` puts in `profile.json`; `run_recorded` still writes the serving probes' `run.json`.
@@ -88,7 +88,7 @@ Every writer and every process starter, exactly:
 2. Every measured run's requests go through `serve.py`; the probe and profiler exception above is the only other code that sends requests.
 3. One hash: workloads compute it, serve gates on it, crossval joins on it.
 4. A number that is not comparable is withheld, not footnoted.
-5. A setting is added in exactly one place: a `schema.py` field, an adapter table row, and an `env_map` row only if an env var used to carry it.
+5. A setting is added in exactly one place: a `schema.py` field, an adapter table row, and an `env_map` row only if an env var carries it.
 6. No module outside `config/` reads the environment, except the allowlist in `tests/contracts/test_env_map.py`: the torchrun probes read `RANK`, `WORLD_SIZE`, `LOCAL_RANK` and `LOCAL_WORLD_SIZE` (the launcher's protocol; reparallel reads GPUs per node from the last), the `--ncu` probes read `NCU_BIN`, and `profiling/kv_transfer.py` reads its torchrun ranks and sets `UCX_RCACHE_MAX_UNRELEASED` as vLLM does.
 7. Rows are append-only jsonl, so a crash keeps partial data.
 
@@ -106,6 +106,6 @@ Every writer and every process starter, exactly:
 
 ## Where to look
 
-- `README.md`: usage, the results layout, and the old-command to new-command map.
-- `tests/golden/REPORT.md`: every known behaviour difference from the pre-refactor code.
+- `README.md`: usage and the results layout.
+- `tests/golden/REPORT.md`: every fixture change.
 - `QBENCH_STRUCTURE.md`: the design. The owner keeps it outside the repo. When QBENCH_STRUCTURE.md and the code disagree, QBENCH_STRUCTURE.md is the source of truth.
