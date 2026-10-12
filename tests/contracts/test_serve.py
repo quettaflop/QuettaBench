@@ -392,7 +392,7 @@ class Sections(unittest.TestCase):
                 self.subTest(name),
                 mock.patch("quettabench.engines.launcher.urlopen", side_effect=effect, return_value=body),
             ):
-                self.assertIsNone(driver.spec_counters())
+                self.assertIsNone(driver.spec_decode_counters())
 
     def test_sla_and_burst_follow_the_mode(self):
         summary, out = run_sections(

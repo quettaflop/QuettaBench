@@ -100,7 +100,7 @@ def ncu_kernel_durations(inner: str, ncu_bin: str) -> list[tuple[str, float]]:
     return res
 
 
-def ncu_op_us(inner: str, ncu_bin: str, reps: int, exclude: tuple[str, ...] = ("at::",)) -> float | None:
+def ncu_min_op_us(inner: str, ncu_bin: str, reps: int, exclude: tuple[str, ...] = ("at::",)) -> float | None:
     """Per-invocation sum of the op's kernels (minus `exclude`), min over reps."""
     durs = [us for kn, us in ncu_kernel_durations(inner, ncu_bin) if not any(t in kn for t in exclude)]
     if not durs or reps <= 0 or len(durs) % reps != 0:

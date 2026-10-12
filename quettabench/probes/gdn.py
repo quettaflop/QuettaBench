@@ -16,7 +16,7 @@ from vllm.model_executor.layers.fla.ops import (
     fused_recurrent_gated_delta_rule,
 )
 
-from quettabench.probes._timing import event_time_us, ncu_op_us
+from quettabench.probes._timing import event_time_us, ncu_min_op_us
 from quettabench.probes.base import Probe, ProbeRow, add_output_args, run_recorded
 
 # solve_tril needs a scratch allocator (vLLM sets one at model init), else prefill fails.
@@ -132,7 +132,7 @@ class GdnProbe(Probe):
         a = self.a
         H, K, V = a.value_heads, a.key_dim, a.value_dim
         if a.ncu:
-            us = ncu_op_us(_ncu_decode_inner(B, H, K, V), a.ncu_bin, NCU_REPS)
+            us = ncu_min_op_us(_ncu_decode_inner(B, H, K, V), a.ncu_bin, NCU_REPS)
             if us is None:
                 print(f"  ncu MISS decode B={B}", flush=True)
             return us

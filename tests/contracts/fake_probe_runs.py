@@ -14,7 +14,12 @@ from unittest import mock
 CODE, WORK, SEED = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])
 sys.path.insert(0, str(CODE))
 # The base tree predates the plain names; it is driven under its own.
-OLD_NAMES = {"chunked_prefill_attn": "cross_attn", "--head-config": "--tag"}
+OLD_NAMES = {
+    "chunked_prefill_attn": "cross_attn",
+    "--head-config": "--tag",
+    "ncu_min_op_us": "ncu_op_us",
+    "ncu_gemm_min_us": "ncu_gemm_us",
+}
 IS_OLD = (CODE / "quettabench" / "probes" / "cross_attn.py").exists()
 
 
@@ -123,12 +128,12 @@ def gdn_time(*a, **k) -> float:
 
 FP8 = types.SimpleNamespace(quant_fit=lambda: (1.2345678, 812.25), quant_pts=[1, 2, 3])
 TIMING = {
-    "gemm": {"time_matmul": SEQ, "time_matmul_fp8": SEQ, "ncu_gemm_us": SEQ, "fp8_linear_op": lambda: FP8},
+    "gemm": {"time_matmul": SEQ, "time_matmul_fp8": SEQ, "ncu_gemm_min_us": SEQ, "fp8_linear_op": lambda: FP8},
     "moe": {"_time": SEQ, "_fused_experts": lambda: (mock.MagicMock(), lambda *a: (1, 2, 3))},
     "elementwise": {"time_op": SEQ, "graph_median_us": SEQ, "op_for": mock.Mock(), "op_for_vllm": mock.Mock()},
     "flash_attn": {"time_call": SEQ, "graph_median_us": SEQ, "_ncu_us": SEQ},
     "chunked_prefill_attn": {"time_call": SEQ},
-    "gdn": {"time_call": gdn_time, "ncu_op_us": SEQ, "mk": lambda *a: (mock.MagicMock(),) * 5},
+    "gdn": {"time_call": gdn_time, "ncu_min_op_us": SEQ, "mk": lambda *a: (mock.MagicMock(),) * 5},
     "collective": {"_time_op": mock.Mock(side_effect=lambda *a: tick() * 1e-6)},
     "vllm_allreduce": {"_time": SEQ},
     "reparallel": {"_time_ms": SEQ},
@@ -238,7 +243,7 @@ def run(results_dir: Path, probe: str, flags: list[str], at: int) -> None:
     argv = ["probe", "--gpu-label", "H200", "--out", str(results_dir / "probes" / "H200"), *map(named, flags)]
     with contextlib.ExitStack() as stack:
         for name, fake in TIMING[probe].items():
-            stack.enter_context(mock.patch.object(module, name, fake))
+            stack.enter_context(mock.patch.object(module, named(name), fake))
         stack.enter_context(mock.patch.dict(os.environ, env if probe in TORCHRUN else {}))
         if probe not in TORCHRUN:
             os.environ.pop("RANK", None)

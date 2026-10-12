@@ -11,7 +11,7 @@ import statistics as st
 import torch
 from vllm.vllm_flash_attn.flash_attn_interface import flash_attn_varlen_func
 
-from quettabench.probes._timing import event_time_us, graph_median_us, ncu_op_us
+from quettabench.probes._timing import event_time_us, graph_median_us, ncu_min_op_us
 from quettabench.probes.base import Probe, ProbeRow, add_output_args, run_recorded
 
 KV_AXIS = [128, 256, 512, 1024, 2048, 4096, 8192, 16384]
@@ -26,7 +26,7 @@ NCU_REPS = 5  # Invocations per point; the min is warm steady state.
 
 def _ncu_us(inner: str, ncu_bin: str) -> float | None:
     """Sums the flash kernels and drops torch setup."""
-    return ncu_op_us(inner, ncu_bin, NCU_REPS)
+    return ncu_min_op_us(inner, ncu_bin, NCU_REPS)
 
 
 def _decode_inner(b, nh, nkv, hd, kv, fav) -> str:

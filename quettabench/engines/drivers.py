@@ -23,7 +23,7 @@ from quettabench.config import env_map
 from quettabench.config.schema import OTHER_ACCELERATORS, ConfigError
 from quettabench.engines import launcher
 from quettabench.engines.base import EngineAdapter, LaunchSpec, register
-from quettabench.metrics.summary import RequestResult, parse_prometheus, spec_counts
+from quettabench.metrics.summary import RequestResult, parse_prometheus, spec_decode_counts
 from quettabench.workloads.base import Request
 from quettabench.workloads.grid import distinct_ids
 
@@ -447,12 +447,12 @@ class HttpDriver(Driver):
 
         return asyncio.run(go())
 
-    def spec_counters(self):
+    def spec_decode_counters(self):
         if not self.url:
             return None
         try:
             with launcher.urlopen(f"{server_base_url(self.url)}/metrics", timeout=10) as resp:
-                return spec_counts(parse_prometheus(resp.read().decode()))
+                return spec_decode_counts(parse_prometheus(resp.read().decode()))
         except (OSError, http.client.HTTPException, ValueError):
             return None
 

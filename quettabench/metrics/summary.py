@@ -919,7 +919,7 @@ def counter_total(metrics, name):
     return sum(vals) if vals else None
 
 
-def spec_counts(metrics):
+def spec_decode_counts(metrics):
     counts = {key: counter_total(metrics, name) for key, name in SPEC_COUNTERS.items()}
     return None if None in counts.values() else counts
 

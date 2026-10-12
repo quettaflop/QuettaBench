@@ -194,7 +194,7 @@ async def replay(trace, driver, mode, emit, offsets, request_id):
 
 
 def server_counters(driver):
-    counters = getattr(driver, "spec_counters", None)
+    counters = getattr(driver, "spec_decode_counters", None)
     return counters() if counters else None
 
 
@@ -220,7 +220,7 @@ async def measure(trace, driver, mode, emit, workload, request_id):
             pairs, start = await replay(trace, driver, mode, emit, offsets, request_id)
             results, by_turn = [r for _, r in pairs], None
         duration = time.perf_counter() - start
-        spec = server_spec_section(before, server_counters(driver) if before else None)
+        spec = server_spec_decode_section(before, server_counters(driver) if before else None)
     return results, by_turn, pairs, duration, spec
 
 
@@ -243,7 +243,7 @@ def serve_records(pairs, open_loop):
     return out
 
 
-def spec_section(pairs):
+def spec_decode_section(pairs):
     scored = [(r.accepted_tokens, len(q.output_token_ids)) for q, r in pairs if r.accepted_tokens is not None]
     if not scored:
         return {"spec": "off"}
@@ -255,7 +255,7 @@ def spec_section(pairs):
     }
 
 
-def server_spec_section(before, after):
+def server_spec_decode_section(before, after):
     """As vllm bench serve defines them; None without both scrapes or a draft in the window."""
     if before is None or after is None:
         return None
@@ -272,9 +272,9 @@ def server_spec_section(before, after):
     }
 
 
-def summary_sections(pairs, duration, mode, server_spec=None):
+def summary_sections(pairs, duration, mode, server_spec_decode=None):
     """spec prefers the server's counters over the rows'."""
-    out = {"spec_decode": server_spec or spec_section(pairs)}
+    out = {"spec_decode": server_spec_decode or spec_decode_section(pairs)}
     records = serve_records(pairs, mode.load == "open")
     if not records:
         return out
@@ -421,7 +421,7 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
     except RunAborted as e:
         print(e)
         stop(writer, None, "aborted", str(e), 1)
-    results, by_turn, pairs, duration, server_spec = measured
+    results, by_turn, pairs, duration, server_spec_decode = measured
 
     core = aggregate(
         results=[r for r in results if r is not None],
@@ -444,7 +444,9 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
     enforce(usage_gate(core, mode.allow_missing_usage), writer, summary)
 
     ident = summary.sections["workload"] = identity(trace, served(pairs))
-    summary.sections.update({"goodput": goodput} if goodput else summary_sections(pairs, duration, mode, server_spec))
+    summary.sections.update(
+        {"goodput": goodput} if goodput else summary_sections(pairs, duration, mode, server_spec_decode)
+    )
     print_summary_tag_lines(summary.sections)
     if not ident["match"]:
         stop(writer, summary.to_dict(), "failed", "workload identity", IDENTITY_EXIT)

@@ -439,10 +439,10 @@ def test_gemm_ncu_reads_kernels_through_the_shared_parser():
         ("at::fill", 0.5),
     ]
     with mock.patch.object(gemm._timing, "ncu_kernel_durations", return_value=launches) as durs:
-        assert gemm.ncu_gemm_us(1, 4096, 4096, "/opt/ncu") == 4.0
+        assert gemm.ncu_gemm_min_us(1, 4096, 4096, "/opt/ncu") == 4.0
     assert durs.call_args.args[1] == "/opt/ncu"
     with mock.patch.object(gemm._timing, "ncu_kernel_durations", return_value=[("at::fill", 1.0)]):
-        assert gemm.ncu_gemm_us(1, 4096, 4096, "/opt/ncu") is None
+        assert gemm.ncu_gemm_min_us(1, 4096, 4096, "/opt/ncu") is None
     assert "Metric Value" not in (PROBES / "gemm.py").read_text()
 
 

@@ -62,7 +62,7 @@ NCU_REPS = 3  # Warm launches per NCU capture; the min is kept.
 GEMM_KERNELS = ("gemm", "nvjet", "cutlass", "xmma", "wgmma")
 
 
-def ncu_gemm_us(m, n, k, ncu_bin, reps=NCU_REPS) -> float | None:
+def ncu_gemm_min_us(m, n, k, ncu_bin, reps=NCU_REPS) -> float | None:
     """min over `reps` warm launches."""
     inner = (
         f"import torch;a=torch.randn({m},{k},device='cuda',dtype=torch.bfloat16);"
@@ -231,7 +231,7 @@ class GemmProbe(Probe):
         n, k, m = point
         a = self.a
         if a.ncu:
-            us = ncu_gemm_us(m, n, k, a.ncu_bin)
+            us = ncu_gemm_min_us(m, n, k, a.ncu_bin)
             if us is None:
                 print(f"  ncu MISS M={m} N={n} K={k} (no gemm kernel parsed)", flush=True)
                 return None

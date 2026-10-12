@@ -126,7 +126,7 @@ def build_trace(cfg, tokenizer=None):
     return trace.draw(w.num_requests, cfg.mode.warmup, profile)
 
 
-def spec_lines(spec):
+def launch_spec_lines(spec):
     """Secrets are redacted."""
     lines = [f"spec.{k} = {v!r}" for k, v in redact(dataclasses.asdict(spec)).items() if k != "cells"]
     return lines + [
@@ -153,7 +153,7 @@ def dry_run(cfg, out):
     if cfg.mode.mode != "probe":
         adapter = base.get(cfg.engine.name)
         spec = adapter.translate(cfg, out)
-        print("\n".join(spec_lines(spec)))
+        print("\n".join(launch_spec_lines(spec)))
         print(f"launch = {'server' if adapter.needs_server(cfg) else 'none, the driver runs it'}")
         if in_docker(cfg, adapter) and spec.server_argv:
             # Dry run shows 0..n-1 unless visible_devices is set; a real run takes idle GPUs.

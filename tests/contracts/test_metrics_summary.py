@@ -26,7 +26,7 @@ from quettabench.metrics.summary import (
     percentile,
     print_summary,
     sla_verdict,
-    spec_counts,
+    spec_decode_counts,
     steady_ttfts,
     success_rate_gate,
     summarize_serve,
@@ -143,11 +143,11 @@ class SpecCountsTest(unittest.TestCase):
             'vllm:spec_decode_num_accepted_tokens_total{engine="0"} 20\n'
         )
         self.assertEqual(
-            spec_counts(parse_prometheus(text)), {"accepted_tokens": 20.0, "draft_tokens": 45.0, "drafts": 15.0}
+            spec_decode_counts(parse_prometheus(text)), {"accepted_tokens": 20.0, "draft_tokens": 45.0, "drafts": 15.0}
         )
 
     def test_none_without_spec_decoding(self):
-        self.assertIsNone(spec_counts(parse_prometheus("process_open_fds 42\n")))
+        self.assertIsNone(spec_decode_counts(parse_prometheus("process_open_fds 42\n")))
 
 
 class SlaVerdictTest(unittest.TestCase):
