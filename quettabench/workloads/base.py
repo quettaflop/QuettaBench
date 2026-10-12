@@ -191,4 +191,3 @@ class RandomTokenTrace(DrawnTrace):
         self._idx += 1
         return Request([], 0, output_length=self.output_len,
                        messages=[{"role": "user", "content": self.content(prompt)}], metadata={})
-
