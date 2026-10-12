@@ -242,7 +242,7 @@ The SERVESUM percentiles are `_pcts` (nearest rank, item 4). Exit codes:
 from now:
 
 - WORKLOADSUM, WORKLOADVOID, SERVESUM, SLASUM, BURSTSUM, SPECSUM, GOODPUTSUM:
-  `quettabench/metrics/results.py` `legacy_lines` / `print_legacy_lines`,
+  `quettabench/metrics/results.py` `summary_tag_lines` / `print_summary_tag_lines`,
   called by `modes/serve.py` at the end of a serve run.
 - GOODPROBE: `metrics/results.py` `goodprobe_line`, printed per probe by
   `modes/serve.py`'s goodput sweep.

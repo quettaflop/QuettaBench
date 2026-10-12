@@ -131,7 +131,7 @@ def profile(results_dir, sources, **source_args):
     return out
 
 
-def legacy_profile_lines(profile):
+def profile_tag_lines(profile):
     """ENERGYSUM, ACCSUM and COSTSUM lines for the sections present (ENERGYSUM only for a run window)."""
     lines = []
     e = profile.get("energy")
@@ -153,8 +153,8 @@ def legacy_profile_lines(profile):
     return lines
 
 
-def print_legacy_profile_lines(profile):
-    for line in legacy_profile_lines(profile):
+def print_profile_tag_lines(profile):
+    for line in profile_tag_lines(profile):
         print(line, flush=True)
 
 
@@ -219,7 +219,7 @@ def main(argv=None):
         out = profile(a.run, a.source, **args)
     except ValueError as e:
         ap.error(str(e))
-    print_legacy_profile_lines(out)
+    print_profile_tag_lines(out)
     for source, message in out["errors"].items():
         print(f"PROFILE_ERROR source={source} {message}", file=sys.stderr)
     return 1 if out["errors"] else 0

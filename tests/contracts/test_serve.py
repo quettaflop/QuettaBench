@@ -18,7 +18,7 @@ from quettabench.config.schema import Config, ConfigError, EngineCfg, HardwareCf
 from quettabench.engines import launcher
 from quettabench.engines.drivers import HttpDriver
 from quettabench.metrics.core import RequestResult
-from quettabench.metrics.results import RunWriter, legacy_lines
+from quettabench.metrics.results import RunWriter, summary_tag_lines
 from quettabench.modes import serve
 from quettabench.workloads.base import Request
 from quettabench.workloads.live import RealTrace
@@ -257,7 +257,7 @@ class LineFormats(unittest.TestCase):
             "spec": {"spec": "measured", "accept_len": 2.0, "accept_rate": 0.5, "n": 4},
         }
         self.assertEqual(
-            legacy_lines(summary),
+            summary_tag_lines(summary),
             [
                 "WORKLOADSUM expected=aa replayed=aa match=1 n=4/4",
                 (
@@ -282,7 +282,7 @@ class LineFormats(unittest.TestCase):
             "sla_tpot_ms": 10.0,
         }
         self.assertEqual(
-            legacy_lines({"sla": sla}),
+            summary_tag_lines({"sla": sla}),
             ["SLASUM verdict=PASS bound=none ttft_p99=5.0/30.0 tpot_p99=-/10.0 rate_req_s=1.000"],
         )
         records = [{"ttft_ms": 5.0, "out_tokens": 1, "arrival_s": 0.0, "tpot_ms": None}]
@@ -292,7 +292,7 @@ class LineFormats(unittest.TestCase):
 
     def test_off_and_void_and_goodput(self):
         self.assertEqual(
-            legacy_lines(
+            summary_tag_lines(
                 {
                     "serve": {"n": 1, "ttft_ms": PCT, "tpot_ms": None, "req_s": 1.0, "tok_s": 1.0},
                     "spec": {"spec": "off"},
@@ -308,23 +308,23 @@ class LineFormats(unittest.TestCase):
         )
         bad = {"expected": "aa", "replayed": "bb", "match": False, "n": 3, "of": 4}
         self.assertEqual(
-            legacy_lines({"workload": bad})[1],
+            summary_tag_lines({"workload": bad})[1],
             "WORKLOADVOID replayed workload differs from the trace; comparison is void",
         )
         g = {"max_req_s": None, "speed": None, "fail_bound": [], "iterations": 1}
         self.assertEqual(
-            legacy_lines({"workload": bad, "goodput": g}),
+            summary_tag_lines({"workload": bad, "goodput": g}),
             [
                 "WORKLOADSUM expected=aa replayed=bb match=0 n=3/4",
                 "WORKLOADVOID replayed workload differs from the trace; sweep is void",
             ],
         )
         self.assertEqual(
-            legacy_lines({"goodput": {**g, "fail_bound": ["ttft_p99"]}}),
+            summary_tag_lines({"goodput": {**g, "fail_bound": ["ttft_p99"]}}),
             [("GOODPUTSUM max_req_s=none bound=ttft_p99 iterations=1 note=no-passing-speed-within-budget")],
         )
         self.assertEqual(
-            legacy_lines({"goodput": {"max_req_s": 3.21, "speed": 2.0, "fail_bound": [], "iterations": 6}}),
+            summary_tag_lines({"goodput": {"max_req_s": 3.21, "speed": 2.0, "fail_bound": [], "iterations": 6}}),
             ["GOODPUTSUM max_req_s=3.210 speed=2 bound=none-within-range iterations=6"],
         )
 

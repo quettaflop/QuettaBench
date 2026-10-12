@@ -393,7 +393,7 @@ def goodprobe_line(p):
     )
 
 
-def legacy_lines(summary):
+def summary_tag_lines(summary):
     """SERVESUM, SLASUM, BURSTSUM, SPECSUM and GOODPUTSUM for the sections summary has, then WORKLOADSUM/WORKLOADVOID."""
     lines = []
     w = summary.get("workload")
@@ -453,9 +453,9 @@ def legacy_lines(summary):
     return lines
 
 
-def print_legacy_lines(summary):
-    """Print legacy_lines(summary), flushed."""
-    for line in legacy_lines(summary):
+def print_summary_tag_lines(summary):
+    """Print summary_tag_lines(summary), flushed."""
+    for line in summary_tag_lines(summary):
         print(line, flush=True)
 
 
@@ -479,7 +479,7 @@ def grid_event_line(run, event):
     )
 
 
-def legacy_grid_lines(run):
+def grid_tag_lines(run):
     """Every line a grid run record has reached so far, META through DONE."""
     lines = []
     t = run.get("trace")
@@ -501,9 +501,9 @@ def legacy_grid_lines(run):
     return lines
 
 
-def print_legacy_grid_lines(run, shown=0):
-    """Print the lines of legacy_grid_lines(run) past the first `shown`; returns the new count."""
-    lines = legacy_grid_lines(run)
+def print_grid_tag_lines(run, shown=0):
+    """Print the lines of grid_tag_lines(run) past the first `shown`; returns the new count."""
+    lines = grid_tag_lines(run)
     for line in lines[shown:]:
         print(line, flush=True)
     return len(lines)

@@ -125,7 +125,7 @@ class Profile(unittest.TestCase):
         out = profiler.profile(self.dir, ["energy"], nvidia_smi=FAKE_SMI, interval_s=0.05, energy_s=0.3)
         self.assertEqual(out["energy"]["window"], "fixed")
         self.assertIsNone(out["energy"]["joules_per_token"])
-        self.assertEqual(profiler.legacy_profile_lines(out), [])
+        self.assertEqual(profiler.profile_tag_lines(out), [])
 
     def test_a_dead_endpoint_is_recorded_and_others_still_run(self):
         write_run(self.dir, "http://127.0.0.1:9")
@@ -182,7 +182,7 @@ class LegacyLines(unittest.TestCase):
             "cost": {"usd": 3.0, "usd_per_m_out_tokens": 2.0, "gpu_cost_hr": 2.5, "devices": 2, "wall_s": 1800.04},
         }
         self.assertEqual(
-            profiler.legacy_profile_lines(profile),
+            profiler.profile_tag_lines(profile),
             [
                 "ENERGYSUM joules=901 joules_per_token=0.012 scope=gpu_board devices=2 samples=3",
                 "ACCSUM dataset=gsm8k exact_match=0.667 n=3",
@@ -190,8 +190,8 @@ class LegacyLines(unittest.TestCase):
             ],
         )
         profile["energy"]["devices"] = "all"
-        self.assertTrue(profiler.legacy_profile_lines(profile)[0].endswith("devices=all samples=3"))
-        self.assertEqual(profiler.legacy_profile_lines({}), [])
+        self.assertTrue(profiler.profile_tag_lines(profile)[0].endswith("devices=all samples=3"))
+        self.assertEqual(profiler.profile_tag_lines({}), [])
 
 
 class Main(unittest.TestCase):

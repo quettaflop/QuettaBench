@@ -35,7 +35,7 @@ from ..metrics.core import (
     transient_gate,
     usage_gate,
 )
-from ..metrics.results import goodprobe_line, grid_event_line, print_legacy_grid_lines, print_legacy_lines
+from ..metrics.results import goodprobe_line, grid_event_line, print_grid_tag_lines, print_summary_tag_lines
 from ..metrics.step_fit import GIB, fit, fit_run
 from ..workloads.arrival import offered_rate, parse_arrival, rebase_arrivals
 from ..workloads.base import Request, workload_hash
@@ -457,7 +457,7 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
 
     ident = summary.sections["workload"] = identity(trace, served(pairs))
     summary.sections.update({"goodput": goodput} if goodput else crossval_sections(pairs, duration, mode, server_spec))
-    print_legacy_lines(summary.sections)
+    print_summary_tag_lines(summary.sections)
     if not ident["match"]:
         stop(writer, summary.to_dict(), "failed", "workload identity", IDENTITY_EXIT)
     if goodput and goodput["max_req_s"] is None:
@@ -634,7 +634,7 @@ def run_grid(trace, driver, cfg, writer):
             "reqs": len(reqs.requests()),
             "workload_hash": reqs.workload_hash(),
         }
-    shown = print_legacy_grid_lines(run)
+    shown = print_grid_tag_lines(run)
 
     kv_b = kv_bytes_per_token(engine)
     # amd-smi, neuron-ls and tpu report no memory size, so those grids skip the KV SKIP.
@@ -647,10 +647,10 @@ def run_grid(trace, driver, cfg, writer):
         "free_gib": free_gib,
         "kv_tokens": cap,
     }
-    shown = print_legacy_grid_lines(run, shown)
+    shown = print_grid_tag_lines(run, shown)
     driver.warmup()
     run["warm_ok"] = True
-    shown = print_legacy_grid_lines(run, shown)
+    shown = print_grid_tag_lines(run, shown)
 
     over, top, rows = set(trace.cells_over_maxlen), max(steps), []
     for ctx, bs in trace.cells:
@@ -668,14 +668,14 @@ def run_grid(trace, driver, cfg, writer):
             prompts, cycled = trace.cell_prompts(ctx, bs)
             if cycled:
                 run["events"].append({"event": "cycled", "ctx": ctx, "bs": bs})
-                shown = print_legacy_grid_lines(run, shown)
+                shown = print_grid_tag_lines(run, shown)
             cell_rows = measure_cell(driver, writer, mode, steps, prompts, {"ctx": ctx, "bs": bs, "tp": engine.tp})
             rows += cell_rows
             (step,) = fit_run(cell_rows, eval_pos, kv_b, engine.weights_gib)
             run["events"].append({"event": "result", "ctx": ctx, "bs": bs, "step": step})
-        shown = print_legacy_grid_lines(run, shown)
+        shown = print_grid_tag_lines(run, shown)
     run["done"] = True
-    print_legacy_grid_lines(run, shown)
+    print_grid_tag_lines(run, shown)
     return run, fit_run(rows, eval_pos, kv_b, engine.weights_gib), rows
 
 

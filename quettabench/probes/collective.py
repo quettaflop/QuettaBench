@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """NCCL collective microbenchmark under torchrun: every op LLM inference emits (all_reduce, all_gather, reduce_scatter, all_to_all) across message sizes, amortized over back-to-back calls.
 
-Rank 0 emits the curve as collectives/{gpu}_tp{world}.csv ProbeRows and prints the legacy tp_comm: YAML block; run it once per world size.
+Rank 0 emits the curve as collectives/{gpu}_tp{world}.csv ProbeRows and prints the tp_comm: YAML block; run it once per world size.
 """
 
 from __future__ import annotations
@@ -59,7 +59,7 @@ def main(argv=None):
     ap.add_argument(
         "--ops",
         default="all_reduce,all_gather,reduce_scatter,all_to_all",
-        help="collectives to sweep (comma-separated). all_reduce is required for the legacy tp_comm: scalars.",
+        help="collectives to sweep (comma-separated). all_reduce is required for the tp_comm scalars.",
     )
     a = ap.parse_args(argv)
 
@@ -88,7 +88,7 @@ def main(argv=None):
                 bytes_moved = 2.0 * (world - 1) / world * n * 2  # bf16
                 bw.append(bytes_moved / t)
     if not lat_us:
-        raise SystemExit("all_reduce must be in --ops to derive the legacy scalars")
+        raise SystemExit("all_reduce must be in --ops to derive the tp_comm scalars")
 
     # Per-token prefill rate: all-reduce a [T x hidden] activation once per layer.
     t_pref = _time_op("all_reduce", a.prefill_tokens * a.hidden, world, _ITERS, _WARMUP)
@@ -114,7 +114,7 @@ def main(argv=None):
             got = sorted({op for op, _, _, _ in rows})
             print(f"{len(rows)} rows of {table}  (world={world}, ops={got})\n")
 
-        # The legacy tp_comm scalars are tp-invariant; the grid is not.
+        # The tp_comm scalars are tp-invariant; the grid is not.
         print(f"[{a.gpu_label}] all-reduce over {world} ranks, hidden={a.hidden} layers={a.layers}\n")
         print(f"# paste into device_spec/{a.gpu_label.lower()}.yaml (collective_probe.py):")
         print("tp_comm:")
