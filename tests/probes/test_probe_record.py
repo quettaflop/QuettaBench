@@ -203,12 +203,12 @@ class LaunchVllm(unittest.TestCase):
     def test_server_goes_through_the_adapter_and_launcher(self):
         # by name: other tests re-import quettabench.engines.launcher
         with mock.patch("quettabench.engines.launcher.start") as start:
-            launch_vllm(Path("/r/pool_capacity"), "/w/llama", port=8794, max_model_len=32768,
+            launch_vllm(Path("/r/serving_stage_split"), "/w/llama", port=8794, max_model_len=32768,
                         prefix_caching=True, timeout_s=420,
                         vllm_flags={"served_model_name": "llama", "api_key": "test",
                                     "no_enable_log_requests": True})
         spec, run_dir = start.call_args.args
-        self.assertEqual((run_dir, start.call_args.kwargs), (Path("/r/pool_capacity"),
+        self.assertEqual((run_dir, start.call_args.kwargs), (Path("/r/serving_stage_split"),
                                                              {"timeout_s": 420}))
         argv = list(spec.server_argv)
         self.assertEqual((Path(argv[0]).name, argv[1:3]), ("vllm", ["serve", "/w/llama"]))
@@ -219,7 +219,7 @@ class LaunchVllm(unittest.TestCase):
         self.assertEqual(argv[argv.index("--port") + 1], "8794")
 
     def test_a_run_probe_launches_with_the_runs_hardware(self):
-        cfg = dataclasses.replace(probe_cfg("pool_capacity"),
+        cfg = dataclasses.replace(probe_cfg("serving_stage_split"),
                                   hardware=HardwareCfg(provision={"py": "/venv/bin/python"}))
         with mock.patch("quettabench.engines.launcher.start") as start:
             with probes_base.run_config(cfg):
@@ -230,9 +230,9 @@ class LaunchVllm(unittest.TestCase):
         self.assertEqual(after, str(Path(sys.executable).with_name("vllm")))
 
     def test_each_live_probe_launch_is_pinned(self):
-        """argv and env of the three live-server probes' launches; what changed
+        """argv and env of the two live-server probes' launches; what changed
         against their own launches before d7287c5 is in tests/golden/REPORT.md."""
-        from quettabench.probes import pool_capacity, serving_decode_grid, serving_stage_split
+        from quettabench.probes import serving_decode_grid, serving_stage_split
 
         def launched(fn):
             with mock.patch("quettabench.engines.launcher.start") as start:
@@ -248,18 +248,10 @@ class LaunchVllm(unittest.TestCase):
         env = {"VLLM_SERVER_DEV_MODE": "1", "VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS": "1"}
         with tempfile.TemporaryDirectory() as td:
             Path(td, "server.log").write_text("")
-            with mock.patch.object(pool_capacity, "run", mock.Mock()), \
-                    mock.patch.object(pool_capacity.asyncio, "run"):
-                pool = launched(lambda: pool_capacity.main(
-                    ["--model", "/w", "--gpu-label", "H100", "--out", td]))
             split = launched(lambda: serving_stage_split.launch_server(
                 "/w", 8794, 0.9, 32768, "k", "sha256", Path(td)))
             grid = launched(lambda: serving_decode_grid.launch_server(
                 "/w", 8795, 0.9, 32768, "k", Path(td), 1, 256, 8192))
-        self.assertEqual(pool, (["vllm", "serve", "/w", "--port", "8794", *common,
-                                 "--enable-prefix-caching", *tail,
-                                 "--prefix-caching-hash-algo", "sha256",
-                                 "--no-enable-log-requests"], {**env, "VLLM_API_KEY": "test"}))
         self.assertEqual(split, (["vllm", "serve", "/w", "--port", "8794", *common,
                                   "--enable-prefix-caching", *tail,
                                   "--no-enable-log-requests", "--prefix-caching-hash-algo",

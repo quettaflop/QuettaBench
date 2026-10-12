@@ -1,69 +1,260 @@
-#!/usr/bin/env python3
-"""Per-request HOST cost of a PD-disaggregated vLLM pair, by prompt length.
+"""The live-server profiler sources that price against QuettaSim: the device-YAML frontend/serving blocks, and a PD pair's host cost.
 
-The kernel-composed sim prices GPU work from measured kernels and the KV hand-off from
-kv_transfer.py; what is left in a PD request's TTFT is host work that scales with
-the WHOLE prompt -- JSON parsing, chat-template rendering, tokenizing, block hashing,
-connector bookkeeping -- paid once on P and once more on D (the proxy re-sends the full
-prompt to D after P answers). The device YAML's ``frontend:`` block carries that model;
-its H200 values were measured on <= 2048-token prompts, and agentic contexts are
-10k-120k tokens. This probe measures the same residual on long prompts, against a live
-P/D pair + proxy launched exactly like the GT servers, with CONTROLLED SYNTHETIC prompts
-(random vocabulary words, never a GT trace), so nothing here is fitted on evaluation data.
-
-Per prompt length L:
-  cold   a unique L-token prompt              -> P prefills everything (new = L)
-  warm   the same prompt + one short sentence -> P: prefix hit on L (new ~ 16); D: holds
-                                                 the cold turn's KV, pulls only the delta
-  turn   a GROWING agentic session: turn t appends ~`--turn-new` genuinely new tokens to
-         the running context (like a real tool-call turn), so each turn's prefix is UNIQUE
-         and longer than the last. This is the faithful multi-turn host cost -- the `warm`
-         phase re-sends the IDENTICAL prompt (APC's best case) and so under-measures the
-         per-cached-token host of a real session, where every turn re-tokenizes + re-hashes
-         + rebuilds the block table for a growing unique prefix. The pd_sweep GT prefill
-         decomposes to ~9.5 us/cached-token at these shapes, ~3x the identical-resend warm
-         slope, and this phase is what measures that honestly (on synthetic content).
-Both are read from the proxy's per-request log (prefill_s; decode_start -> first_token_at)
-and compared with the sim's engine-side prediction for that exact request (chunked
-prefill + cross-attention on P; one decode step + the measured pull on D):
-
-  P_host(L, new) = prefill_s      - sim_prefill_ms
-  D_host(L)      = d_first_ms     - sim_first_step_ms - sim_pull_ms
-
-A herd round (``--herd`` warm requests at ``--herd-tokens`` fired together) gives the
-contention multiplier at that concurrency.
-
-  # servers + proxy up (see scratchpad/pd_probe/launch.sh for the E6-shaped pair)
-  /opt/vllm-local/bin/python -m quettabench.profiling.pd_host --gpu-label H200 \\
-      --device-yaml ../QuettaSim/device_spec/h200.yaml \\
-      --proxy-log <dir>/proxy_requests.jsonl --out results/pd_host/H200_pd_host.csv
-
-Prints per-row residuals and the least-squares floor + per-token slopes for P (cold /
-warm) and D; does NOT edit the YAML.
-
-A profiler source: `qbench profile --source pd_host` calls probe() and keeps its
-rows in profile.json. main() stays runnable for the transition and still writes
-the --out CSV, inside this repo; it is profile only, and `qbench export` does
-not carry it to QuettaSim's kernel_data/eager/frontend/. Imports QuettaSim's `engine` package, so QuettaSim must be on
-PYTHONPATH (the profiler imports this module only when the source is asked for).
+Both import QuettaSim's engine package at the top, so native.py imports this module only when one of these sources is asked for.
+Run one by hand: python -m quettabench.profiling.frontend {frontend|pd_host} --device-yaml <QuettaSim device_spec yaml> ...
 """
 from __future__ import annotations
 
 import argparse
 import csv
+import dataclasses
 import json
 import random
 import statistics as st
+import sys
 import threading
 import time
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from engine.backends.kernel_composed_cost import KernelComposedCost
 from engine.core.cost import step_host_ms
 from engine.factory import build_kernel_composed_cost
+from engine.loaders.config_loader import load_kernel_gpu, load_kernel_model
+from engine.loaders.workload import Turn
+from engine.sim.closed_loop import predict_cell
 from engine.sim.disagg import Link
+from kernel_composed.types import FrontendParams
 
 from quettabench.engines import launcher
+
+_SWEEP_PROMPTS = [128, 256, 512, 1024, 2048]   # single-stream prompt lengths (tokens)
+_CONC_SWEEP = [1, 2, 5, 10, 20, 40]
+_SAMPLES = 3                                    # medians over this many repeats
+_DECODE_TOKENS = 64                             # output tokens for a stable TPOT
+
+
+def _stream_once(base_url: str, model: str, prompt: str,
+                 out_tokens: int = 8) -> tuple[float, float, int]:
+    """(ttft_ms, tpot_ms, prompt_tokens) for one streamed completion."""
+    body = json.dumps({
+        "model": model, "prompt": prompt, "max_tokens": out_tokens,
+        "stream": True, "temperature": 0.0,
+        "stream_options": {"include_usage": True},
+    }).encode()
+    req = urllib.request.Request(f"{base_url}/completions", data=body,
+                                 headers={"Content-Type": "application/json"})
+    t0 = time.perf_counter()
+    first_at = None
+    n = 0
+    prompt_tokens = 0
+    with launcher.urlopen(req) as r:
+        for line in r:
+            if not line.startswith(b"data:") or b"[DONE]" in line:
+                continue
+            payload = json.loads(line[5:])
+            usage = payload.get("usage")
+            if usage:                       # final usage-only chunk: no token
+                prompt_tokens = int(usage.get("prompt_tokens", 0))
+                continue
+            if not payload.get("choices"):
+                continue
+            now = time.perf_counter()
+            if first_at is None:
+                first_at = now
+            n += 1
+    last = time.perf_counter()
+    ttft_ms = (first_at - t0) * 1000.0
+    tpot_ms = ((last - first_at) / max(1, n - 1)) * 1000.0 if n > 1 else 0.0
+    return ttft_ms, tpot_ms, prompt_tokens
+
+
+def _linfit(xs: list[float], ys: list[float]) -> tuple[float, float]:
+    """Least-squares y = intercept + slope*x (closed form, no numpy)."""
+    n = len(xs)
+    sx, sy = sum(xs), sum(ys)
+    sxx = sum(x * x for x in xs)
+    sxy = sum(x * y for x, y in zip(xs, ys))
+    denom = n * sxx - sx * sx
+    slope = (n * sxy - sx * sy) / denom if denom else 0.0
+    return (sy - slope * sx) / n, slope
+
+
+def _conc_sweep(a, cost, model):
+    """TRUE concurrent herds (unique ~512-token prompts). mult reference =
+    (measured median - sim frontend-off median) / the c=1 residual; the sim
+    prediction absorbs engine queueing (chunked-prefill serialization), so the
+    ratio isolates the FRONTEND's load scaling.
+
+    Each concurrency point runs an UNMEASURED warmup herd first, then the
+    measured herd: the first concurrent burst at a new batch shape triggers
+    one-time work (triton/moe autotune, graph shapes) that contaminated the
+    first version of this sweep by up to 50x at c=2-10."""
+    def herd(c: int) -> list[tuple[float, float, int]]:
+        prompts = [_prompt(512) for _ in range(c)]
+        with ThreadPoolExecutor(max_workers=c) as ex:
+            return list(ex.map(lambda pr: _stream_once(a.base_url, a.model, pr), prompts))
+
+    print("# concurrent herd sweep (512-token prompts; warmup herd per point)", flush=True)
+    herd(max(_CONC_SWEEP))                          # global warmup at the largest shape
+    conc_rows = []
+    for c in _CONC_SWEEP:
+        herd(c)                                     # unmeasured per-point warmup
+        res = herd(c)
+        meas = st.median([r[0] for r in res])
+        ptok = int(st.median([r[2] for r in res]))
+        turn = Turn(cache_hit_tokens=0.0, new_prefill_tokens=float(ptok), osl_tokens=8)
+        pred_ttfts, _ = predict_cell(cost, [turn], c)
+        pred = pred_ttfts[0] if pred_ttfts else 0.0
+        conc_rows.append((c, meas, pred, meas - pred))
+        print(f"  c={c:3d}  measured={meas:8.1f}ms  sim(frontend-off)={pred:8.1f}ms  "
+              f"resid={meas - pred:7.1f}ms", flush=True)
+    base_resid = max(1e-6, conc_rows[0][3])
+    mult_pts = [(c, max(1.0, round(resid / base_resid, 2)))
+                for c, _m, _p, resid in conc_rows]
+    if a.only_conc:
+        print(f"\n  mult_curve: {[[c, m] for c, m in mult_pts]}  # measured resid ratio; lanes flat")
+        print(f"  # measured (c, median ttft ms, sim frontend-off ms): "
+              f"{[(c, round(m, 1), round(p, 1)) for c, m, p, _ in conc_rows]}")
+    return mult_pts, conc_rows
+
+
+_SEED = [0]
+
+
+def _prompt(tokens: int, *, reuse: str | None = None) -> str:
+    """~`tokens` tokens with a UNIQUE leading seed (no shared APC prefix across
+    sweep prompts). ``reuse`` returns exactly the given prompt (APC-hit pairs)."""
+    if reuse is not None:
+        return reuse
+    _SEED[0] += 1
+    return f"seed{_SEED[0]:06d} " + "hi " * max(1, tokens - 4)
+
+
+def frontend_parser():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--gpu-label", required=True)
+    ap.add_argument("--model", required=True, help="served model name (OpenAI 'model' field)")
+    ap.add_argument("--model-yaml", required=True, help="engine model YAML for the compute prediction")
+    ap.add_argument("--device-yaml", required=True,
+                    help="QuettaSim's device_spec/<gpu>.yaml, e.g. ../QuettaSim/device_spec/h200.yaml")
+    ap.add_argument("--base-url", default="http://localhost:8000/v1")
+    ap.add_argument("--tp", type=int, default=1)
+    ap.add_argument("--out-dir", default=None, help="unused (kept for run_probe.sh parity)")
+    ap.add_argument("--skip-conc", action="store_true",
+                    help="skip the concurrent herd sweep (parts 1-2 only)")
+    ap.add_argument("--only-conc", action="store_true",
+                    help="run only the concurrent herd sweep (parts 1-2 already collected)")
+    ap.add_argument("--out", default=None, help="write frontend_probe()'s dict here as JSON")
+    return ap
+
+
+def frontend_probe(a):
+    """Run the sweeps against a.base_url; prints the device-YAML blocks and returns them as
+    {frontend, serving, conc} (conc: [c, median ttft ms, sim frontend-off ms]).
+    Each block is measured latency minus the kernel-composed compute prediction: a single-stream
+    prompt sweep (TTFT and TPOT residuals), APC pairs (cached TTFT) and a concurrent herd sweep."""
+    gpu = load_kernel_gpu(Path(a.device_yaml))
+    # The residual decomposition needs the COMPUTE-ONLY prediction: strip any
+    # frontend block / host floors the YAML already carries (ported or measured),
+    # or the sim side would double-count exactly the thing being measured.
+    gpu = dataclasses.replace(gpu, frontend=FrontendParams(),
+                              kernel_ttft_overhead_ms=0.0, kernel_step_overhead_ms=0.0,
+                              kernel_step_overlap_per_ms=0.0,
+                              decode_overhead_ms=0.0, decode_overhead_ms_per_layer=0.0)
+    model = load_kernel_model(Path(a.model_yaml))
+    cost = KernelComposedCost(model, gpu, tp=a.tp)   # compute-only prediction
+
+    # warmup (loads tokenizer caches, CUDA graphs already captured at server start)
+    _stream_once(a.base_url, a.model, _prompt(64))
+
+    if a.only_conc:
+        mult_pts, conc_rows = _conc_sweep(a, cost, model)
+        return {"frontend": {"mult_curve": [[c, m] for c, m in mult_pts]},
+                "conc": [[c, m, p] for c, m, p, _ in conc_rows]}
+
+    # 1. single-stream: TTFT residual vs prompt length -> floor + new rate;
+    #    TPOT residual -> per-step host floor (whole-step and per-layer forms).
+    X, y_ttft, step_resid = [], [], []
+    print("# single-stream sweep (miss)", flush=True)
+    for p in _SWEEP_PROMPTS:
+        tt, tp_, ptoks = zip(*[
+            _stream_once(a.base_url, a.model, _prompt(p), out_tokens=_DECODE_TOKENS)
+            for _ in range(_SAMPLES)])
+        ttft, tpot, ptok = st.median(tt), st.median(tp_), int(st.median(ptoks))
+        compute_prefill = cost.prefill_step_ms([ptok])
+        compute_decode = cost.decode_step_ms([ptok])
+        y_ttft.append(ttft - compute_prefill)
+        X.append(float(ptok))
+        step_resid.append(tpot - compute_decode)
+        print(f"  p={ptok:5d}  ttft={ttft:8.1f}ms (compute {compute_prefill:7.1f})  "
+              f"tpot={tpot:6.2f}ms (compute {compute_decode:5.2f})", flush=True)
+    intercept, slope = _linfit(X, y_ttft)
+    floor, rate_n = max(0.0, intercept), max(0.0, slope)
+    step_over = max(0.0, st.median(step_resid))
+    dov = step_over / max(1, int(model.n_layers))
+
+    # 2. APC pairs: same prompt twice -> hit-TTFT residual vs cached tokens.
+    print("# APC-hit sweep (cached)", flush=True)
+    Xc, y_hit = [], []
+    for p in _SWEEP_PROMPTS:
+        prompt = _prompt(p)
+        _stream_once(a.base_url, a.model, prompt)          # prime the cache
+        tt, _tp, ptoks = zip(*[
+            _stream_once(a.base_url, a.model, _prompt(0, reuse=prompt))
+            for _ in range(_SAMPLES)])
+        ttft, ptok = st.median(tt), int(st.median(ptoks))
+        # vLLM re-prefills the last block of a full-hit prompt; compute is ~one block.
+        compute_hit = cost.prefill_step_ms([max(1, int(model.cache_block_size))])
+        Xc.append(float(ptok))
+        y_hit.append(ttft - compute_hit)
+        print(f"  p={ptok:5d}  hit ttft={ttft:8.1f}ms", flush=True)
+    _c0, slope_c = _linfit(Xc, y_hit)
+    rate_c = max(0.0, slope_c)
+
+    # 3. concurrency sweep (see _conc_sweep).
+    if a.skip_conc:
+        mult_pts, conc_rows = [(1, 1.0)], []
+    else:
+        mult_pts, conc_rows = _conc_sweep(a, cost, model)
+
+    print(f"\n[{a.gpu_label} / {a.model} / tp{a.tp}] live-server frontend probe\n")
+    print(f"# paste into device_spec/{a.gpu_label.lower()}.yaml (quettabench.profiling.frontend):")
+    print("frontend:")
+    print(f"  floor_ms: {round(floor, 2)}")
+    print(f"  new_ms_per_token: {round(rate_n, 6)}")
+    print(f"  cached_ms_per_token: {round(rate_c, 6)}")
+    print(f"  mult_curve: {[[c, m] for c, m in mult_pts]}  # measured resid ratio; lanes flat")
+    print("  lanes_curve: []   # not separable from mult in this probe; leave flat")
+    print(f"  # measured (c, median ttft ms, sim frontend-off ms): "
+          f"{[(c, round(m, 1), round(p, 1)) for c, m, p, _ in conc_rows]}")
+    print("serving:")
+    print(f"  decode_overhead_ms_per_layer: {round(dov, 5)}   # = step residual {round(step_over, 3)}ms / {model.n_layers} layers")
+    print(f"  ttft_overhead_ms: {round(floor, 2)}")
+    print("  max_concurrent_prefills: 2")
+    print(f"  kernel_ttft_overhead_ms: {round(floor, 2)}   # per-request first-token host floor")
+    print(f"  kernel_step_overhead_ms: {round(step_over, 3)}   # per-step host floor (whole step)")
+    print("  kernel_step_overlap_per_ms: 0.0   # measure with a high-conc TPOT sweep before setting")
+    return {
+        "frontend": {"floor_ms": round(floor, 2), "new_ms_per_token": round(rate_n, 6),
+                     "cached_ms_per_token": round(rate_c, 6),
+                     "mult_curve": [[c, m] for c, m in mult_pts], "lanes_curve": []},
+        "serving": {"decode_overhead_ms_per_layer": round(dov, 5),
+                    "ttft_overhead_ms": round(floor, 2), "max_concurrent_prefills": 2,
+                    "kernel_ttft_overhead_ms": round(floor, 2),
+                    "kernel_step_overhead_ms": round(step_over, 3),
+                    "kernel_step_overlap_per_ms": 0.0},
+        "conc": [[c, m, p] for c, m, p, _ in conc_rows],
+    }
+
+
+def frontend_main(argv=None):
+    a = frontend_parser().parse_args(argv)
+    out = frontend_probe(a)
+    if a.out:
+        Path(a.out).write_text(json.dumps(out, indent=2) + "\n")
+
 
 COLS = ("gpu", "phase", "conc", "tokens_total", "tokens_new_p", "tokens_cached_d",
         "prefill_ms", "sim_prefill_ms", "p_resid_ms",
@@ -178,8 +369,8 @@ def lstsq(xs, ys):
     return my - b * mx, b
 
 
-def parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+def pd_host_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(description="Per-request host cost of a PD-disaggregated vLLM pair, by prompt length.")
     ap.add_argument("--gpu-label", required=True)
     ap.add_argument("--proxy-url", default="http://127.0.0.1:8000")
     ap.add_argument("--proxy-log", required=True, help="the proxy's --log JSONL")
@@ -195,19 +386,20 @@ def parser() -> argparse.ArgumentParser:
     ap.add_argument("--turns", type=int, default=0,
                     help="growing-context multi-turn session length (0 = skip). Each turn "
                          "appends --turn-new new tokens, so the prefix grows and is unique -- "
-                         "the faithful per-cached-token host cost (see module docstring).")
+                         "the faithful per-cached-token host cost.")
     ap.add_argument("--turn-new", type=int, default=1800,
                     help="new tokens appended per turn in --turns mode (E6's median new)")
     ap.add_argument("--herd", type=int, default=16)
     ap.add_argument("--herd-tokens", type=int, default=32768)
     ap.add_argument("--link", default="2.2e11,0,25", help="bw_bytes_per_s,latency_us,per_desc_us of the pull")
-    ap.add_argument("--out", help="CSV path; main() requires it, probe() ignores it")
+    ap.add_argument("--out", help="CSV path; pd_host_main() requires it, pd_host_probe() ignores it")
     return ap
 
 
-def probe(a) -> list[dict]:
+def pd_host_probe(a) -> list[dict]:
     """Run the cold / warm / turn / herd phases through a.proxy_url; one row per
-    scored request (COLS)."""
+    scored request (COLS). Each row is the proxy log's latency minus the sim's engine-side
+    prediction: P_host = prefill_s - sim prefill, D_host = d_first - sim first step - sim pull."""
     bw, lat, pdu = (float(x) for x in a.link.split(","))
     sim = SimSide(a.device_yaml, a.model_yaml, a.tp, Link(bw, lat, pdu))
     pr = Prompter(a.tokenizer)
@@ -308,12 +500,12 @@ def probe(a) -> list[dict]:
     return rows
 
 
-def main(argv=None) -> None:
-    ap = parser()
+def pd_host_main(argv=None) -> None:
+    ap = pd_host_parser()
     a = ap.parse_args(argv)
     if not a.out:
         ap.error("--out is required")
-    rows = probe(a)
+    rows = pd_host_probe(a)
     out = Path(a.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     with out.open("w", newline="") as fh:
@@ -342,6 +534,15 @@ def main(argv=None) -> None:
               f"{st.median(r['p_resid_ms'] for r in herd):.0f} ms vs c1 {st.median(r['p_resid_ms'] for r in warm):.0f} ms; "
               f"D resid median {st.median(r['d_resid_ms'] for r in herd):.0f} ms vs c1 "
               f"{st.median(r['d_resid_ms'] for r in warm):.0f} ms")
+
+MAINS = {"frontend": frontend_main, "pd_host": pd_host_main}
+
+
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else list(argv)
+    if not argv or argv[0] not in MAINS:
+        sys.exit(f"usage: python -m quettabench.profiling.frontend {{{'|'.join(MAINS)}}} [flags]")
+    MAINS[argv[0]](argv[1:])
 
 
 if __name__ == "__main__":

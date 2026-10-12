@@ -40,7 +40,9 @@ in one results layer, `results/<run>/`, and leaves the repo by
   the nsys export in the run dir) and crossval (`results/xval/`) write
   under `results/`.
 - `quettabench/profiling/` and `profiler.py`: attach only. They never launch
-  an engine.
+  an engine. `native.py` and `wrapped.py` are the sources; `frontend.py` holds
+  the two that import QuettaSim, loaded only when asked for; `kv_transfer.py`
+  is a torchrun target whose CSV the `kv_transfer` source reads.
 - `quettabench/probes/`: kernel microbenchmarks and live-server probes. Each
   run records itself in `run.json` through `metrics/results.py`
   (`probes/base.py` `run_recorded`). `probes/_timing.py` holds the shared
@@ -50,11 +52,11 @@ in one results layer, `results/<run>/`, and leaves the repo by
   they never start an engine or a server and never write outside results/
   (`serving_decode_grid`'s request shards are `multiprocessing` children of
   the probe, listed under "Who writes" below). Today that
-  is the probes `serving_decode_grid`, `serving_stage_split`, `live_split`
-  and `pool_capacity`, and the profiling sources `serving_frontend`,
-  `pd_host` and gsm8k (`wrapped.py`). Their `--out` paths are the caller's;
-  nothing checks that they stay under results/. Those that take an endpoint
-  instead (`serving_stage_split --no-launch`, `live_split --url`) may drive
+  is the probes `serving_decode_grid` and `serving_stage_split`, and the
+  profiling sources `frontend` and `pd_host` (`profiling/frontend.py`) and
+  gsm8k (`wrapped.py`). Their `--out` paths are the caller's; nothing checks
+  that they stay under results/. Those that take an endpoint instead
+  (`serving_stage_split --no-launch`) may drive
   an operator-provided server that launcher.py did not start; the operator
   owns that server.
 - Docker launch backend ships tested against mocks only, by owner decision; validate on a docker host before relying on it.
@@ -77,6 +79,10 @@ in one results layer, `results/<run>/`, and leaves the repo by
 One line each; everything else follows section 2 "Target layout".
 
 - `modes/serve.py` is about 820 lines, not under 400: the replay, the session dispatch and the grid cells all live in serve, as section 2 assigns them.
+- `probes/_timing.py` holds the CUDA-graph and NCU timing, not `probes/base.py`: it imports torch, and the runner imports `base.py` on CPU.
+- `probes/moe_routing.py` (`just moe-routing`, slice verification), `serving_decode_grid.py` and `serving_stage_split.py` (read by the export builders) are probes beyond section 2's list.
+- `profiling/frontend.py` holds the `frontend` and `pd_host` sources, not `native.py`: both import QuettaSim at the top, and the profiler imports `native.py` for every source.
+- `profiling/kv_transfer.py` stays its own module: it is a torchrun target (`-m quettabench.profiling.kv_transfer`) and the tool name in the kernel manifest.
 
 ## Who writes, who starts a process
 
@@ -103,8 +109,8 @@ Every writer and every process starter, exactly:
 - `profiling/kv_transfer.py`: its table and `run.json` in its probe run dir
   (`results/probes/<gpu>/kv_transfer/<run-id>/`), run under its own torchrun
   ranks.
-- `profiling/serving_frontend.py`: its JSON at `--out`, when given.
-- `profiling/pd_host.py`: its CSV at `--out`.
+- `profiling/frontend.py`: the frontend source's JSON at `--out`, when given,
+  and the pd_host source's CSV at `--out`.
 - `workloads/tokenize.py`: the tokenized request jsonl at `--out`.
 - `crossval.py`: its report json (default `results/xval/`).
 - `export/quettasim.py`: the QuettaSim tables at `--dest`, and the kernel tables under

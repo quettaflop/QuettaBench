@@ -27,11 +27,9 @@ from quettabench.metrics.core import counter_total, parse_prometheus, spec_count
 HITS = "vllm:gpu_prefix_cache_hits"
 QUERIES = "vllm:gpu_prefix_cache_queries"
 
-# The live probes import QuettaSim's `engine` package at the top, so they are
-# loaded by name only when their source is asked for; the GPU-free profiler
-# must import without QuettaSim.
-PROBES = {"frontend": "quettabench.profiling.serving_frontend",
-          "pd_host": "quettabench.profiling.pd_host"}
+# The live sources import QuettaSim's `engine` package at the top, so they are
+# loaded by name only when asked for; the GPU-free profiler must import without QuettaSim.
+FRONTEND = "quettabench.profiling.frontend"
 
 # File names the instrumentation leaves in results/<run>/, by kind. nsys
 # writes <out>.nsys-rep (<out>.qdrep before 2021.4); the adapters pass out=nsys.
@@ -242,20 +240,20 @@ def with_defaults(argv, defaults):
 
 
 def serving_frontend(endpoint, model, argv=()):
-    """profile.json `frontend`: serving_frontend.probe() against endpoint/v1;
+    """profile.json `frontend`: frontend.frontend_probe() against endpoint/v1;
     argv carries the probe's own flags (--gpu-label, --model-yaml, ...)."""
-    probe = importlib.import_module(PROBES["frontend"])
-    a = probe.parser().parse_args(with_defaults(argv, {"--base-url": f"{endpoint}/v1",
-                                                       "--model": model}))
-    return probe.probe(a)
+    probe = importlib.import_module(FRONTEND)
+    a = probe.frontend_parser().parse_args(with_defaults(argv, {"--base-url": f"{endpoint}/v1",
+                                                                "--model": model}))
+    return probe.frontend_probe(a)
 
 
 def pd_host(endpoint, model, argv=()):
-    """profile.json `pd_host`: pd_host.probe()'s rows, endpoint as the proxy."""
-    probe = importlib.import_module(PROBES["pd_host"])
-    a = probe.parser().parse_args(with_defaults(argv, {"--proxy-url": endpoint,
-                                                       "--model": model}))
-    return {"rows": probe.probe(a)}
+    """profile.json `pd_host`: frontend.pd_host_probe()'s rows, endpoint as the proxy."""
+    probe = importlib.import_module(FRONTEND)
+    a = probe.pd_host_parser().parse_args(with_defaults(argv, {"--proxy-url": endpoint,
+                                                               "--model": model}))
+    return {"rows": probe.pd_host_probe(a)}
 
 
 def kv_transfer(csv_path):

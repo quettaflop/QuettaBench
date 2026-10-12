@@ -162,18 +162,17 @@ PYTHON_BIN=/home/<user>/miniconda3/envs/vllm/bin/python \
 | `moe_routing` | `moe_routing/{model}_layer{L}.safetensors` | one MoE block's input, output, routing (topk_idx/topk_weight or router_logits) and stage tensors from one prefill, for an engine-side diff of routing, dispatch and combine; `--layers N` cuts the model like `engine.layers` (slice verification, see README.md "Slice verification") |
 | `reparallel` | `cuda_event/reparallel/{gpu}_reshard[_dp\|_ep].csv` | torchrun; NVLink cost of switching parallelism in place (tp reshard, dp replica broadcast, ep expert restage; `--mode xnode/plan` for cross-node, see the probe header) |
 | `kv_transfer` (now `quettabench/profiling/kv_transfer.py`, run under torchrun and recorded like a probe; the export unions its runs on the old upsert key; profiler source reads one run's CSV) | `cuda_event/kv_transfer/{gpu}_nixl.csv` | PD KV hand-off through NIXL/UCX, laid out as vLLM's NixlConnector issues it (descriptor list per (layer, block)) |
-| `pd_host` (now `quettabench/profiling/pd_host.py`, a profiler source; profile only, not exported) | the CSV at `--out` (e.g. `results/pd_host/{gpu}_pd_host.csv`), and profile.json `pd_host` | per-request HOST cost of a PD pair by prompt length (parse/template/tokenize/hash, paid on P and again on D) |
-| `fused_block` | `validation/fused_block_profile_{model}_tp{N}_{gpu}.csv` | ONE real transformer-block forward, to check the additivity assumption in `fused_step_ms` without a checkpoint; model shapes from QuettaSim's `engine/device_spec/models/` (`--spec-dir`) |
+| `pd_host` (`quettabench/profiling/frontend.py` `pd_host_probe`, a profiler source; profile only, not exported) | the CSV at `--out` (e.g. `results/pd_host/{gpu}_pd_host.csv`), and profile.json `pd_host` | per-request HOST cost of a PD pair by prompt length (parse/template/tokenize/hash, paid on P and again on D) |
 
 The decode-step-vs-batch curve the old `decode_batch_probe.py` measured is a grid run now:
 `qbench run configs/runs/decode_batch_llama.yaml` (grid `decode_batch`: ctx 20000, bs 1 2 4 8 11
 16 24) writes the per-cell ms/step to `results/decode_batch_llama/`.
 
-`quettabench/profiling/serving_frontend.py` (a profiler source) is the live-server probe that fits
+`quettabench/profiling/frontend.py` `frontend_probe` (a profiler source) is the live-server probe that fits
 the device-YAML `frontend:` + `serving:` blocks against a running `vllm serve`
 (recipe: `serving-profile results/<run>`, which goes through `qbench profile --source frontend`),
 for GPUs with no GT yet. With GT, prefer the cheaper
-`just -f $QUETTASIM/justfile serving-fit`. It and `pd_host.py` are
+`just -f $QUETTASIM/justfile serving-fit`. It and `pd_host_probe` are
 consumer-coupled like the two emitters: they import the sim's `engine` package,
 so run them from a QuettaSim checkout (or with QuettaSim on `PYTHONPATH`), and both take
 the GPU's QuettaSim `device_spec/<gpu>.yaml` as the required `--device-yaml`.
@@ -243,18 +242,8 @@ times raw `torch.matmul` cuBLAS, not vLLM's GEMM -- prefer `--ncu`.
 
 ## Live-server probes
 
-These drive a running (or, for `pool_capacity`, self-launched) vLLM OpenAI server instead of
-a kernel:
-
-- `serving_decode_grid`, `serving_stage_split` -- read by the exporters.
-- `live_split` -- cached-host shared vs per-request split (the 50/50 in
-  `runbooks/serving_stage_split_plan.md`; `stage_split_rates` keeps that fraction).
-- `pool_capacity` -- usable KV-pool capacity under prefix caching (the
-  `available_kv_blocks` the saturated-ceiling emitter reads).
-
-`live_split` and `pool_capacity` have no consumer in the exporters, but their results feed
-numbers the simulator carries as constants. Both take `--gpu-label` and `--out` like the
-kernel probes.
+`serving_decode_grid` and `serving_stage_split` drive a vLLM OpenAI server instead of a
+kernel; the exporters read their results.
 
 ## Install
 

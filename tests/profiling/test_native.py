@@ -175,13 +175,14 @@ class Kernels(unittest.TestCase):
 
 
 def fake_probe(result):
-    """A module with the parser()/probe() surface the moved probes have."""
+    """A frontend module whose two sources share one parser and one result."""
     def parser():
         ap = argparse.ArgumentParser()
         for flag in ("--base-url", "--proxy-url", "--model", "--gpu-label"):
             ap.add_argument(flag)
         return ap
-    return types.SimpleNamespace(parser=parser, probe=lambda a: result(a))
+    return types.SimpleNamespace(frontend_parser=parser, frontend_probe=lambda a: result(a),
+                                 pd_host_parser=parser, pd_host_probe=lambda a: result(a))
 
 
 class LiveProbes(unittest.TestCase):
@@ -192,13 +193,13 @@ class LiveProbes(unittest.TestCase):
 
     def test_frontend_points_at_the_endpoint(self):
         fake = fake_probe(lambda a: {"base_url": a.base_url, "model": a.model, "gpu": a.gpu_label})
-        with mock.patch.dict(sys.modules, {native.PROBES["frontend"]: fake}):
+        with mock.patch.dict(sys.modules, {native.FRONTEND: fake}):
             got = native.serving_frontend("http://h:1", "m", ["--gpu-label", "H200"])
         self.assertEqual(got, {"base_url": "http://h:1/v1", "model": "m", "gpu": "H200"})
 
     def test_pd_host_rows_and_argv_wins(self):
         fake = fake_probe(lambda a: [{"proxy": a.proxy_url, "model": a.model}])
-        with mock.patch.dict(sys.modules, {native.PROBES["pd_host"]: fake}):
+        with mock.patch.dict(sys.modules, {native.FRONTEND: fake}):
             got = native.pd_host("http://h:1", "m", ["--model", "served"])
         self.assertEqual(got, {"rows": [{"proxy": "http://h:1", "model": "served"}]})
 
@@ -211,17 +212,16 @@ class LiveProbes(unittest.TestCase):
                                                           "total_ms": "1.5"}]})
 
     def test_moved_probes_keep_a_runnable_main_with_out(self):
-        here = Path(native.__file__).parent
-        for name, flag in (("serving_frontend", "--out"), ("pd_host", "--out")):
+        tree = ast.parse((Path(native.__file__).parent / "frontend.py").read_text())
+        funcs = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+        self.assertIn("main", funcs)
+        for name in ("frontend", "pd_host"):
             with self.subTest(name):
-                tree = ast.parse((here / f"{name}.py").read_text())
-                funcs = {n.name for n in tree.body if isinstance(n, ast.FunctionDef)}
-                self.assertIn("main", funcs)
-                flags = {a.value for n in ast.walk(tree) if isinstance(n, ast.Call)
+                flags = {a.value for n in ast.walk(funcs[f"{name}_parser"]) if isinstance(n, ast.Call)
                          and getattr(n.func, "attr", "") == "add_argument"
                          for a in n.args if isinstance(a, ast.Constant)}
-                self.assertIn(flag, flags)
-                self.assertTrue({"parser", "probe"} <= funcs)
+                self.assertIn("--out", flags)
+                self.assertTrue({f"{name}_probe", f"{name}_main"} <= set(funcs))
 
     def test_kv_transfer_records_a_probe_run(self):
         """kv_transfer takes the probes' output args and records its run
@@ -256,28 +256,28 @@ class LiveProbes(unittest.TestCase):
         self.assertEqual(results.exit_status(stop.exception)[0], "failed")
 
     def test_frontend_sources_take_quettasims_device_yaml(self):
-        """serving_frontend and pd_host load the GPU from --device-yaml, a
+        """The frontend and pd_host sources load the GPU from --device-yaml, a
         required path into QuettaSim's device_spec/; a default under this
         repo named a file that does not exist. QuettaSim main has
         engine.sim.closed_loop and kernel_composed.types, so they import at
         the top."""
         here = Path(native.__file__).parent
-        for name in ("serving_frontend", "pd_host"):
+        text = (here / "frontend.py").read_text()
+        tree = ast.parse(text)
+        funcs = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+        for name in ("frontend", "pd_host"):
             with self.subTest(name):
-                text = (here / f"{name}.py").read_text()
-                tree = ast.parse(text)
-                (call,) = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
+                (call,) = [n for n in ast.walk(funcs[f"{name}_parser"]) if isinstance(n, ast.Call)
                            and getattr(n.func, "attr", "") == "add_argument"
                            and any(getattr(x, "value", None) == "--device-yaml" for x in n.args)]
                 kw = {k.arg: getattr(k.value, "value", None) for k in call.keywords}
                 self.assertIs(kw.get("required"), True)
                 self.assertNotIn("default", kw)
                 self.assertIn("device_spec/", kw["help"])
-                self.assertIn("a.device_yaml", text)
-                self.assertIn("--device-yaml", ast.get_docstring(tree))
-                self.assertNotIn("HERE", text)
-        top = {n.module for n in ast.parse((here / "serving_frontend.py").read_text()).body
-               if isinstance(n, ast.ImportFrom)}
+                self.assertIn("a.device_yaml", ast.unparse(funcs[f"{name}_probe"]))
+        self.assertIn("--device-yaml", ast.get_docstring(tree))
+        self.assertNotIn("HERE", text)
+        top = {n.module for n in tree.body if isinstance(n, ast.ImportFrom)}
         self.assertLessEqual({"engine.sim.closed_loop", "kernel_composed.types"}, top)
         justfile = (here.parents[1] / "justfile").read_text()
         self.assertIn("--device-yaml {{sim_root}}/device_spec/{{lowercase(gpu)}}.yaml", justfile)
