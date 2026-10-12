@@ -89,8 +89,8 @@ def format_group(key: tuple, res: dict) -> str:
     mu, knee = res["mu_req_per_s"], res["knee_concurrency"]
     if res["mu_is_lower_bound"]:
         out.append(f" mu  >= {mu:.2f} req/s   (LOWER BOUND -- throughput was still")
-        out.append(f"                          climbing at the top of the ladder;")
-        out.append(f"                          extend it to find the real plateau)")
+        out.append("                          climbing at the top of the ladder;")
+        out.append("                          extend it to find the real plateau)")
     else:
         out.append(f" mu   = {mu:.2f} req/s   (plateau over concurrency "
                    f"{res['plateau_points']})")

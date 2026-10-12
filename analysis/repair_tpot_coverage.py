@@ -12,8 +12,6 @@ import os
 import statistics
 from datetime import datetime, timezone
 
-from quettabench.metrics.core import percentile
-
 COVERAGE_THRESHOLD = 0.8
 RULE = "len(itl)<0.8*(out-1) -> tpot=(e2el-ttft)/(out-1)"
 REASON = "QuettaSim tools/GT_QUALITY_FLAGS.md Finding 1 (inter-chunk tpot)"
@@ -33,6 +31,16 @@ def repaired_tpot(row):
     return round((e2el - ttft) / (out - 1), 2)
 
 
+def percentile(values, p):
+    """Linear-interpolated p-th percentile, as metrics.core.percentile(..., "linear") on non-empty values."""
+    s = sorted(values)
+    idx = p / 100 * (len(s) - 1)
+    lo = int(idx)
+    if lo + 1 >= len(s):
+        return s[-1]
+    return s[lo] * (1 - (idx - lo)) + s[lo + 1] * (idx - lo)
+
+
 def summary_tpot_stats(rows):
     tpots = [r["tpot_ms"] for r in rows
              if r.get("success") and isinstance(r.get("tpot_ms"), (int, float))]
@@ -41,8 +49,8 @@ def summary_tpot_stats(rows):
     return {
         "mean_tpot_ms": statistics.mean(tpots),
         "median_tpot_ms": statistics.median(tpots),
-        "p90_tpot_ms": percentile(tpots, 90, "linear"),
-        "p99_tpot_ms": percentile(tpots, 99, "linear"),
+        "p90_tpot_ms": percentile(tpots, 90),
+        "p99_tpot_ms": percentile(tpots, 99),
     }
 
 

@@ -203,7 +203,7 @@ def main():
             turn_counts = [s["num_turns"] for s in unique_sessions]
             print(f"Total sessions: {len(unique_sessions)}")
             print(f"Turn counts: min={min(turn_counts)}, median={sorted(turn_counts)[len(turn_counts)//2]}, max={max(turn_counts)}")
-            print(f"Turn buckets:")
+            print("Turn buckets:")
             for lo, hi, label in [(2, 5, "short (2-5)"), (5, 10, "medium (5-10)"), (10, 20, "long (10-20)"), (20, 100, "xl (20+)")]:
                 count = sum(1 for t in turn_counts if lo <= t < hi)
                 print(f"  {label}: {count} sessions")

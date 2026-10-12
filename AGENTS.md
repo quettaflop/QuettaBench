@@ -86,7 +86,7 @@ in one results layer, `results/<run>/`, and leaves the repo by
 
 One line each; everything else follows section 2 "Target layout".
 
-- The justfile also carries the kernel probe recipes, `probe`, `remote-probe`, `serving-profile`, `profile-gpu`, `gpu-info`, `hooks`, `image` and the `mirror-*` R2 recipes, beyond section 2's nine.
+- The justfile also carries the kernel probe recipes, `probe`, `remote-probe`, `serving-profile`, `profile-gpu`, `gpu-info`, `hooks`, `image`, `fetch` and the `mirror-*` R2 recipes, beyond section 2's nine.
 - The probe recipes (`just probe`, the kernel recipes, `remote-probe`) run `python -m quettabench.probes.<name>`, a second door beside `qbench run` `mode: probe`: torchrun needs a module path per rank, a remote host gets only the probe package, and a live-server probe names its output file; both doors record through `run_recorded` or `run_probe` into the same `run.json` and `rows.jsonl`.
 - `runner.py` is about 370 lines, not under 100: it also holds `build_trace(cfg)`, which picks the Trace a Config names, and runs probe-mode runs, matrix sweeps, the in-process env pins and the run dir rules.
 - `configs/hardware/` holds the NCCL link profiles and `configs/workloads.yaml` the named workload profiles, beside section 2's models, grids and runs.

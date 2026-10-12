@@ -35,7 +35,7 @@ nproc := env_var_or_default("NPROC", "1")
 ncu_bin := env_var_or_default("NCU_BIN", "")
 kdata := "results/probes"
 
-r2_endpoint := env_var_or_default("R2_ENDPOINT", "")
+r2_endpoint := env_var_or_default("R2_ENDPOINT", "https://b33fe7347f25479b27ec9680eff19b78.r2.cloudflarestorage.com")
 r2_bucket := env_var_or_default("R2_BUCKET", "")
 # The probes' own prefix: a backup of results/probes/, never QuettaSim's profiling/kernel_data/.
 r2_prefix := "profiling/qbench_probes"
@@ -184,6 +184,10 @@ profile-gpu gpu=gpu:
     @echo "  just gpu={{gpu}} flash tag=tp1 nh=<Hq> nkv=<Hkv> hd=<head_dim>"
     @echo "  just gpu={{gpu}} gdn  geom=9b     # Qwen3.5 hybrids only"
     @echo "Then route the tables to QuettaSim: just export --only kernel_tables --results results/probes --kernel-dest <QuettaSim data root, e.g. ../QuettaSim/data>"
+
+# The trajectory datasets from R2 into data/ (gitignored)
+fetch:
+    R2_ENDPOINT={{r2_endpoint}} AWS_PROFILE={{r2_profile}} {{py}} data/fetch.py
 
 mirror-preview:
     aws --profile {{r2_profile}} --endpoint-url {{r2_endpoint}} s3 sync {{kdata}}/ s3://{{r2_bucket}}/{{r2_prefix}}/ --dryrun --exclude '*/__pycache__/*' --exclude '*.pyc'

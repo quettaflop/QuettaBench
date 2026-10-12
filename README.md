@@ -9,7 +9,7 @@ and `just provision` for box setup.
 
 ```bash
 pip install -r requirements.txt        # or: pip install -e .  (gives the qbench command)
-python3 data/fetch.py                  # trajectories from R2 (gitignored)
+just fetch                             # trajectories from R2 (gitignored)
 
 just provision configs/runs/llama.yaml --dry-run \
     --set hardware.provision.py=/venv/bin/python --set llama:hardware.provision.weights=/w/llama
@@ -343,8 +343,7 @@ tests/contracts/          one test module per package module, plus the crossval 
 analysis/, data/          one-off studies and data fetch; not imported by the package
 ```
 
-analysis/ scripts import `quettabench` plainly: run them from the repo root as
-`python3 -m analysis.<path>` (or anywhere once `pip install -e .`).
+analysis/ scripts do not import `quettabench`; run each as `python3 analysis/<script>.py`.
 
 ## Data
 
@@ -352,7 +351,7 @@ Canonical data lives on the `agent-bench` R2 bucket:
 
 | prefix | contents |
 |---|---|
-| `data/` | raw trajectory datasets (fetched by `data/fetch.py`) |
+| `data/` | raw trajectory datasets (fetched by `just fetch`) |
 | `results/` | benchmark ground truth (synthetic_distributional, trace_replay, archived) |
 | `archive/` | pre-2026-05 result snapshots |
 

@@ -8,7 +8,12 @@ import argparse
 import json
 import sys
 
-from quettabench.workloads.live import parse_mooncake_trace
+
+def trace_lengths(path):
+    """(input_length, output_length) per non-blank Mooncake line, in file order."""
+    with open(path) as f:
+        rows = [json.loads(line) for line in f if line.strip()]
+    return [(int(r["input_length"]), int(r["output_length"])) for r in rows]
 
 
 def main() -> int:
@@ -19,7 +24,7 @@ def main() -> int:
 
     with open(args.result) as f:
         rows = json.load(f)["per_request"]
-    records = parse_mooncake_trace(args.trace)
+    records = trace_lengths(args.trace)
 
     ok = fail = usage_missing = 0
     mismatches = []
@@ -33,12 +38,10 @@ def main() -> int:
         elif not r.get("usage_reported"):
             usage_missing += 1
         else:
-            if r["input_tokens"] != rec.input_length:
-                mismatches.append(
-                    f"req {idx}: input {r['input_tokens']} != trace {rec.input_length}")
-            if r["output_tokens"] != rec.output_length:
-                mismatches.append(
-                    f"req {idx}: output {r['output_tokens']} != trace {rec.output_length}")
+            if r["input_tokens"] != rec[0]:
+                mismatches.append(f"req {idx}: input {r['input_tokens']} != trace {rec[0]}")
+            if r["output_tokens"] != rec[1]:
+                mismatches.append(f"req {idx}: output {r['output_tokens']} != trace {rec[1]}")
             ok += 1
 
     print(f"requests: {len(rows)}  audited: {ok}  failed: {fail}  "
@@ -46,9 +49,8 @@ def main() -> int:
     ttft = sorted(r["ttft_ms"] for r in rows if r.get("ttft_ms"))
     tpot = sorted(r["tpot_ms"] for r in rows if r.get("tpot_ms"))
     if ttft and tpot:
-        mid = lambda v: v[len(v) // 2]
-        print(f"ttft ms p50 {mid(ttft):.1f} max {ttft[-1]:.1f}  "
-              f"tpot ms p50 {mid(tpot):.2f}")
+        print(f"ttft ms p50 {ttft[len(ttft) // 2]:.1f} max {ttft[-1]:.1f}  "
+              f"tpot ms p50 {tpot[len(tpot) // 2]:.2f}")
     if mismatches:
         print(f"EXACTNESS FAILED ({len(mismatches)} mismatches):")
         for m in mismatches[:10]:
