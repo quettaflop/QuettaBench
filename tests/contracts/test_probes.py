@@ -578,6 +578,13 @@ def test_each_probe_declares_its_backends_once(name):
     assert (name, *SUPPORTED[name]) in declared_backends(PROBES / f"{name}.py")
 
 
+def test_only_the_timing_layer_calls_torch_cuda():
+    pkg = PROBES.parent
+    files = [*(pkg / "probes").glob("*.py"), *(pkg / "profiling").glob("*.py")]
+    assert len(files) > 10
+    assert [f.name for f in files if f.name != "_timing.py" and "torch.cuda" in f.read_text()] == []
+
+
 def test_kv_transfer_declares_cuda_only():
     assert ("kv_transfer", "cuda") in declared_backends(PROBES.parent / "profiling" / "kv_transfer.py")
 
