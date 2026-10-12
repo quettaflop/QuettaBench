@@ -367,7 +367,7 @@ def workload_line(w):
     )
 
 
-def goodprobe_line(p):
+def goodput_probe_line(p):
     return (
         f"GOODPUT_PROBE speed={p['speed']:g} verdict={p['verdict']} "
         f"bound={','.join(p['bound']) or 'none'} req_s={p['req_s']:.3f}"

@@ -19,7 +19,7 @@ from pathlib import Path
 
 import aiohttp
 
-from quettabench.metrics.core import SUMMARY_FIELDS, summarize_cell
+from quettabench.metrics.summary import SUMMARY_FIELDS, summarize_cell
 from quettabench.probes.base import launch_vllm, run_recorded
 
 # aiohttp exists only on the GPU host; the lattice must import without it.

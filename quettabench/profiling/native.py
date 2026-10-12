@@ -9,7 +9,7 @@ from contextlib import closing
 from pathlib import Path
 
 from quettabench.engines import launcher
-from quettabench.metrics.core import counter_total, parse_prometheus
+from quettabench.metrics.summary import counter_total, parse_prometheus
 
 HITS = "vllm:gpu_prefix_cache_hits"
 QUERIES = "vllm:gpu_prefix_cache_queries"

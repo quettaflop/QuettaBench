@@ -13,7 +13,7 @@ from quettabench.config import loader
 from quettabench.config.schema import Config, EngineCfg, HardwareCfg, ModeCfg, WorkloadCfg
 from quettabench.engines import vllm
 from quettabench.metrics import results
-from quettabench.metrics.core import RequestResult
+from quettabench.metrics.summary import RequestResult
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -553,7 +553,7 @@ class Redaction(unittest.TestCase):
 CRASH = """
 import os, sys
 from quettabench.metrics.results import RunWriter
-from quettabench.metrics.core import RequestResult
+from quettabench.metrics.summary import RequestResult
 from tests.contracts.test_results import config
 w = RunWriter(sys.argv[1], config())
 for i in range(int(sys.argv[2])):

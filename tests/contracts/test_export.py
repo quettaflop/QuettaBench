@@ -27,7 +27,7 @@ from quettabench.export.quettasim import (
     main,
     run_serving_decode_grid,
 )
-from quettabench.metrics.core import summarize_cell
+from quettabench.metrics.summary import summarize_cell
 from quettabench.probes import serving_decode_grid as _client
 from quettabench.probes.base import ProbeRow, add_output_args, emit, out_root, run_id, run_recorded
 

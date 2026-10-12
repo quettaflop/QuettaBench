@@ -23,7 +23,7 @@ from quettabench.config import env_map
 from quettabench.config.schema import OTHER_ACCELERATORS, ConfigError
 from quettabench.engines import launcher
 from quettabench.engines.base import EngineAdapter, LaunchSpec, register
-from quettabench.metrics.core import RequestResult, parse_prometheus, spec_counts
+from quettabench.metrics.summary import RequestResult, parse_prometheus, spec_counts
 from quettabench.workloads.base import Request
 from quettabench.workloads.grid import distinct_ids
 

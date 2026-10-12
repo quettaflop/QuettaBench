@@ -2,7 +2,7 @@
 
 import unittest
 
-from quettabench.metrics.core import RequestResult, aggregate, pcts, percentile
+from quettabench.metrics.summary import RequestResult, aggregate, pcts, percentile
 from tests.golden._harness import check_json
 
 

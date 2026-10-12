@@ -105,7 +105,7 @@ class CompareScripts(unittest.TestCase):
         self.assertEqual(_config("llama").hardware.provision["cache_root"], "/workspace/.qbench-cache")
 
     def test_goodput_search_and_verdict(self):
-        from quettabench.metrics.core import sla_verdict
+        from quettabench.metrics.summary import sla_verdict
         from quettabench.modes.serve import goodput_search
 
         gen = goodput_search(start=1.0)
@@ -660,7 +660,7 @@ class TableParity(unittest.TestCase):
         self.assertIn("FIDELITY", (QB / "compare.py").read_text())
 
     def test_burst_recovery_and_acceptance(self):
-        from quettabench.metrics.core import acceptance, burst_recovery
+        from quettabench.metrics.summary import acceptance, burst_recovery
 
         self.assertEqual(acceptance([1, 2, 3, 4], [1, 2, 9, 4]), (2, 0.5))
         self.assertEqual(acceptance([], [])[0], 0)
@@ -806,7 +806,7 @@ class TraceWorkloads(unittest.TestCase):
 
     def test_serve_helpers_are_gpu_free(self):
         # The serving procedure must import without vLLM (CI has no GPU stack).
-        from quettabench.metrics.core import summarize_serve
+        from quettabench.metrics.summary import summarize_serve
         from quettabench.modes import serve  # noqa: F401
         from quettabench.workloads.arrival import rebase_arrivals
 

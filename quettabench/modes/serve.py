@@ -15,7 +15,9 @@ from huggingface_hub.errors import HFValidationError, LocalEntryNotFoundError
 
 from ..config.schema import ConfigError, WorkloadCfg
 from ..engines.drivers import PrefixCacheResetError
-from ..metrics.core import (
+from ..metrics.results import goodput_probe_line, grid_event_line, print_grid_tag_lines, print_summary_tag_lines
+from ..metrics.step_fit import GIB, fit, fit_run
+from ..metrics.summary import (
     BenchmarkSummary,
     acceptance,
     aggregate,
@@ -32,8 +34,6 @@ from ..metrics.core import (
     transient_gate,
     usage_gate,
 )
-from ..metrics.results import goodprobe_line, grid_event_line, print_grid_tag_lines, print_summary_tag_lines
-from ..metrics.step_fit import GIB, fit, fit_run
 from ..workloads.arrival import offered_rate, parse_arrival, rebase_arrivals
 from ..workloads.base import Request, workload_hash
 from ..workloads.sessions import SessionTrace, inter_turn_wait_s, sleep_until_elapsed
@@ -345,7 +345,7 @@ def sweep(trace, driver, mode, writer, workload, request_id):
         s = summarize_serve(serve_records(out[2], True), out[3], "nearest")
         bound = sla_verdict(s, mode.sla_ttft_ms, mode.sla_tpot_ms)
         probe = {"speed": speed, "verdict": "FAIL" if bound else "PASS", "bound": bound, "req_s": s["req_s"]}
-        print(goodprobe_line(probe), flush=True)
+        print(goodput_probe_line(probe), flush=True)
         probes.append(probe)
         if not bound and (best is None or s["req_s"] > best["req_s"]):
             best = probe

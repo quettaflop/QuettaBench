@@ -29,9 +29,9 @@ from quettabench.engines.drivers import (
     PrefixCacheResetError,
     ReferenceDriver,
 )
-from quettabench.metrics.core import RequestResult
 from quettabench.metrics.results import RunWriter
 from quettabench.metrics.step_fit import fit_run
+from quettabench.metrics.summary import RequestResult
 from quettabench.modes import serve
 from quettabench.workloads.base import Request
 from tests.contracts import helpers

@@ -17,8 +17,8 @@ from quettabench.config import loader
 from quettabench.config.schema import Config, ConfigError, EngineCfg, HardwareCfg, ModeCfg, WorkloadCfg
 from quettabench.engines import launcher
 from quettabench.engines.drivers import HttpDriver
-from quettabench.metrics.core import RequestResult
 from quettabench.metrics.results import RunWriter, summary_tag_lines
+from quettabench.metrics.summary import RequestResult
 from quettabench.modes import serve
 from quettabench.workloads.base import Request
 from quettabench.workloads.live import RealTrace
@@ -264,7 +264,7 @@ class LineFormats(unittest.TestCase):
             ],
         )
 
-    def test_slasum_without_tpot_samples_prints_a_dash(self):
+    def test_sla_summary_without_tpot_samples_prints_a_dash(self):
         sla = {
             "verdict": "PASS",
             "bound": [],
@@ -323,7 +323,7 @@ class LineFormats(unittest.TestCase):
 
 
 class Sections(unittest.TestCase):
-    def test_specsum_scores_the_reference_reply(self):
+    def test_spec_decode_summary_scores_the_reference_reply(self):
         trace = RealTrace(
             [Request([1], 1, order=i, output_length=4, output_token_ids=[5, 6, 7, 8]) for i in range(3)], "t", "jsonl"
         )

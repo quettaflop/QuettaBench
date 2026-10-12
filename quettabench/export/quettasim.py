@@ -20,8 +20,8 @@ from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 
-from quettabench.metrics.core import SUMMARY_FIELDS, summarize_cell
 from quettabench.metrics.results import RUN_MARKERS, bench_sha, write_atomic
+from quettabench.metrics.summary import SUMMARY_FIELDS, summarize_cell
 
 TP_DEGREES = (2, 4)
 # Older than any finish time.

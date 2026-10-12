@@ -1,4 +1,4 @@
-"""metrics/core.py and step_fit.py on hand-computed cases."""
+"""metrics/summary.py and step_fit.py on hand-computed cases."""
 
 import contextlib
 import io
@@ -9,7 +9,9 @@ import unittest
 from pathlib import Path
 
 from quettabench.config.schema import Config, EngineCfg, HardwareCfg, ModeCfg, WorkloadCfg
-from quettabench.metrics.core import (
+from quettabench.metrics.results import RunWriter
+from quettabench.metrics.step_fit import fit, fit_run, ms_at_eval
+from quettabench.metrics.summary import (
     ITL_COALESCED_MS,
     RequestResult,
     _busy_time_and_load,
@@ -31,8 +33,6 @@ from quettabench.metrics.core import (
     transient_gate,
     usage_gate,
 )
-from quettabench.metrics.results import RunWriter
-from quettabench.metrics.step_fit import fit, fit_run, ms_at_eval
 from quettabench.workloads.base import Request
 from quettabench.workloads.live import get_profile
 from quettabench.workloads.sessions import resolve_multi_turn_num_sessions
@@ -234,12 +234,12 @@ class GateTest(unittest.TestCase):
 
 class CacheEstimateTests(unittest.TestCase):
     def _result(self, input_tokens=1000):
-        from quettabench.metrics.core import RequestResult
+        from quettabench.metrics.summary import RequestResult
 
         return RequestResult(success=True, input_tokens=input_tokens, output_tokens=200)
 
     def test_synthetic_reply_is_not_reusable(self):
-        from quettabench.metrics.core import annotate_multi_turn_cache_estimate
+        from quettabench.metrics.summary import annotate_multi_turn_cache_estimate
 
         r = annotate_multi_turn_cache_estimate(
             self._result(1000),
@@ -254,7 +254,7 @@ class CacheEstimateTests(unittest.TestCase):
         self.assertEqual(r.cache_estimate_source, "previous_prompt_tokens")
 
     def test_the_engines_own_reply_is_reusable(self):
-        from quettabench.metrics.core import annotate_multi_turn_cache_estimate
+        from quettabench.metrics.summary import annotate_multi_turn_cache_estimate
 
         r = annotate_multi_turn_cache_estimate(
             self._result(1000),
@@ -269,7 +269,7 @@ class CacheEstimateTests(unittest.TestCase):
         self.assertEqual(r.cache_estimate_source, "previous_prompt_and_reply_tokens")
 
     def test_reusable_prefix_cannot_exceed_the_prompt(self):
-        from quettabench.metrics.core import annotate_multi_turn_cache_estimate
+        from quettabench.metrics.summary import annotate_multi_turn_cache_estimate
 
         r = annotate_multi_turn_cache_estimate(
             self._result(800),
