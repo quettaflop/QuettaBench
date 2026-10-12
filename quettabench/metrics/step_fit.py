@@ -18,7 +18,7 @@ def fit(xs, ys):
 
 
 def ms_at_eval(ms_slope, attn_share, eval_pos, mean_steps, ctx):
-    """Slope moved from the fit centroid (ctx + mean_steps) to ctx + eval_pos; only the KV-bound share (attn_share) of a step grows with KV length."""
+    """ms_slope evaluated at ctx + eval_pos instead of the fit centroid; only attn_share grows with KV."""
     return ms_slope * (1 + attn_share * (eval_pos - mean_steps) / (ctx + mean_steps))
 
 

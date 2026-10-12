@@ -699,20 +699,13 @@ def build_tp2(tp1_csv: Path, tp2_csv: Path, out_json: Path) -> None:
         "constants": {"PREFILL_TP_COMM_MS_PER_TOKEN": comm},
         "nccl_physics_band_ms_per_1k": list(NCCL_PHYSICS_BAND_MS_PER_1K),
         "within_physics_band_plus_1": in_band,
-        "retired_backed_out_remainder": 0.00585,
-        "_notes": (
-            "Replaces the instrumentation-inconsistent backed-out remainder 5.85 ms/1k "
-            "(audit-v2 G3): the like-for-like pair removes the multiprocess-vs-in-process "
-            "mismatch, and the residual lands at the top of the NCCL all-reduce physics "
-            "band. Regenerate: just export. Sources: "
-            "serving_stage_split.py --tensor-parallel-size {1,2} on h100."
-        ),
+        "_notes": "comm = tp2 prefill span minus half of tp1; regenerate with just export",
     }
     out_json.parent.mkdir(parents=True, exist_ok=True)
     out_json.write_text(json.dumps(payload, indent=2) + "\n")
     print(
         f"tp1 span.new {tp1['new_ms_per_tok'] * 1e3:.3f} ms/1k | tp2 {tp2['new_ms_per_tok'] * 1e3:.3f} "
-        f"-> comm {comm * 1e3:.4f} ms/1k (retired remainder 5.85; physics band "
+        f"-> comm {comm * 1e3:.4f} ms/1k (physics band "
         f"{NCCL_PHYSICS_BAND_MS_PER_1K})"
     )
     print(f"wrote {out_json}")
@@ -946,9 +939,8 @@ def build_roofline_utils(gpu: str, params_path: Path, trace_paths: dict[str, Pat
         },
         "diagnostics": {
             "util_bw_net_of_sched_prior": round(statistics.median(bw_pool_net), 4) if bw_pool_net else None,
-            "util_bw_net_note": "same steps, ratio vs (engine_wall - 5.7ms): the "
-            "ttft_queue_sim.py:762 convention (sched added separately). Headline uses the "
-            "full engine wall: closed_form_tpot adds no sched term to tpot.",
+            "util_bw_net_note": "same steps, ratio vs (engine_wall - 5.7ms), sched added separately. "
+            "Headline uses the full engine wall: closed_form_tpot adds no sched term to tpot.",
             "util_flops_vs_engine_wall": round(statistics.median(flops_pool_engine), 4) if flops_pool_engine else None,
             "util_flops_thinness": "pure-prefill steps are rare in decode-heavy serving "
             "traces; prefill_gemm_util_H100.json (R1 measured curve) remains the better "

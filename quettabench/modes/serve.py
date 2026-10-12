@@ -616,7 +616,7 @@ def run_bench(driver, cfg, writer):
 
 
 def run_grid(trace, driver, cfg, writer):
-    """One grid run; returns (record, steps, rows): record feeds the legacy lines and run.json's grid section, steps is fit_run over the fit rows."""
+    """One grid run; returns (record, steps, rows): record feeds the grid stdout lines and run.json's grid section, steps is fit_run over the fit rows."""
     if getattr(driver, "measures_steps", False):
         return run_bench(driver, cfg, writer)
     if getattr(driver, "scores_only", False):

@@ -86,10 +86,10 @@ class NoServer:
 def visible_env(backend, devices):
     """The env that limits a vLLM server to devices, and the inherited names to unset."""
     if backend == "rocm":
-        # vLLM reads CUDA_VISIBLE_DEVICES on ROCm and refuses a HIP value that differs (vllm/platforms/rocm.py:127-145,496)
+        # vLLM reads CUDA_VISIBLE_DEVICES on ROCm and refuses a HIP value that differs
         return {"HIP_VISIBLE_DEVICES": devices, "CUDA_VISIBLE_DEVICES": devices}, ()
     if backend == "tpu":
-        # tpu-inference examples/external_lb/run_dp_external_lb.sh:203-205 (v0.30.0)
+        # One process per chip group, the way tpu-inference's external-LB example pins its chips
         chips = len(devices.split(","))
         return {
             "TPU_VISIBLE_CHIPS": devices,
@@ -97,7 +97,7 @@ def visible_env(backend, devices):
             "TPU_PROCESS_BOUNDS": "1,1,1",
         }, ()
     if backend == "neuron":
-        # vllm-neuron picks cores from NEURON_VISIBLE_DEVICES and refuses NEURON_RT_VISIBLE_CORES (neuron_worker.py:527-532)
+        # vllm-neuron picks cores from NEURON_VISIBLE_DEVICES and refuses NEURON_RT_VISIBLE_CORES
         return {"NEURON_VISIBLE_DEVICES": devices}, ("NEURON_RT_VISIBLE_CORES",)
     return {"CUDA_VISIBLE_DEVICES": devices}, ()
 
