@@ -120,7 +120,7 @@ class StandInServer:
 
     def start(self, spec, results_dir, **kwargs):
         """launcher.start: the spec must name a server; the handle points here."""
-        if spec.server_unsupported or not spec.server_argv:
+        if not spec.server_argv:
             raise ValueError(f"{spec.adapter}: the spec has no server to launch")
         return self.launcher.NoServer(Path(results_dir), endpoint=self.URL)
 

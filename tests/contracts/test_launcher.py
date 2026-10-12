@@ -14,7 +14,7 @@ from quettabench import provision, runner
 from quettabench.config import loader
 from quettabench.config.schema import ConfigError
 from quettabench.engines import drivers, launcher, vllm
-from quettabench.engines.base import LaunchSpec, UnsupportedField
+from quettabench.engines.base import LaunchSpec
 from quettabench.profiling import native
 from tests.contracts import helpers
 
@@ -100,8 +100,6 @@ class LocalLauncher(unittest.TestCase):
             launcher.start(spec, self.dir / "dead", timeout_s=30, poll_s=0.1)
 
     def test_refusals(self):
-        with self.assertRaises(UnsupportedField):
-            launcher.start(LaunchSpec(adapter="vllm", server_unsupported=("pp=2",)), self.dir)
         with self.assertRaisesRegex(ValueError, "no server"):
             launcher.start(LaunchSpec(adapter="quettaserve"), self.dir)
 

@@ -29,7 +29,7 @@ class UnsupportedField(ValueError):
 class LaunchSpec:
     """Everything needed to start and drive one engine, as plain data.
 
-    server_argv is empty when the adapter has no server, or when a field has no flag (named in server_unsupported; the launcher refuses such a spec, the in-process path does not need argv). env is added to the child's inherited environment; env_drop names inherited variables to remove.
+    server_argv is empty when the adapter has no server. env is added to the child's inherited environment; env_drop names inherited variables to remove.
     """
     adapter: str
     server_argv: tuple = ()
@@ -42,7 +42,6 @@ class LaunchSpec:
     port: int = 8000
     instrumentation: str = "none"
     image: str | None = None
-    server_unsupported: tuple = ()
     ok_pattern: str | None = None     # bench stdout line that marks a finished cell
     log_header: str = ""              # the bench log's `>>> ctx= bs= ...` line for this cell
     cells: tuple = ()                 # ((ctx, bs, per-cell spec), ...): one bench run each

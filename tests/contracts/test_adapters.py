@@ -101,7 +101,6 @@ class ServerArgv(unittest.TestCase):
 
     def test_quant_is_read_from_the_checkpoint_on_the_server(self):
         spec = spec_for("glm53")
-        self.assertEqual(spec.server_unsupported, ())
         self.assertNotIn("--quantization", spec.server_argv)
         self.assertEqual(spec.engine_kwargs["quantization"], "fp8")
 
@@ -202,7 +201,6 @@ class GridDriver(unittest.TestCase):
                 cfg = self.cfg(setting)
                 spec = adapter.translate(cfg)
                 self.assertTrue(adapter.needs_server(cfg))
-                self.assertEqual(spec.server_unsupported, ())
                 self.assertIn(flag, spec.server_argv)
 
     def test_a_timing_grid_launches_the_server(self):

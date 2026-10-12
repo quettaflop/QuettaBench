@@ -1,6 +1,6 @@
 """vLLM adapter: one field table gives the `vllm serve` argv and the in-process vllm.LLM kwargs.
 
-A value with no server flag lands in server_unsupported and the launcher refuses it. quant adds no server flag, since the server reads it from the checkpoint; a slice run is engine.model naming a truncated checkpoint dir.
+quant adds no server flag, since the server reads it from the checkpoint; a slice run is engine.model naming a truncated checkpoint dir.
 """
 
 from pathlib import Path
@@ -39,11 +39,6 @@ def switch_off(name):
     return lambda v: [] if v else [name]
 
 
-def only(default):
-    """No flag exists: the default value adds nothing, any other is unsupported."""
-    return lambda v: [] if v == default else None
-
-
 def unless(default, name):
     """A flag only when the value differs from the engine's own default."""
     return lambda v: [] if v == default else [name, str(v)]
@@ -67,7 +62,7 @@ def aggregated_only(v):
     return {}
 
 
-# EngineCfg field -> (argv fragment, kwargs fragment). An argv builder that returns None means no flag carries that value.
+# EngineCfg field -> (argv fragment, kwargs fragment).
 FIELDS = {
     "model":          (lambda v: [],                       kw("model")),  # positional
     "port":           (flag("--port"),                     nothing),
@@ -83,7 +78,7 @@ FIELDS = {
                        kw("enable_prefix_caching")),
     "cudagraph":      (switch_off("--enforce-eager"),      lambda v: {} if v else
                        {"compilation_config": {"cudagraph_mode": "NONE"}}),
-    "serving_style":  (only("aggregated"),                 aggregated_only),
+    "serving_style":  (lambda v: [],                       aggregated_only),
 }
 SCALARS = (str, int, float, bool)
 
@@ -119,14 +114,10 @@ class VllmAdapter(EngineAdapter):
         if engine.layers is not None:
             raise UnsupportedField("vllm", f"layers={engine.layers}",
                                    "slice runs load a truncated checkpoint dir as engine.model")
-        argv, kwargs, unsupported = [], dict(KWARGS), []
+        argv, kwargs = [], dict(KWARGS)
         for name, (to_argv, to_kwargs) in FIELDS.items():
             value = getattr(engine, name)
-            part = to_argv(value)
-            if part is None:
-                unsupported.append(f"{name}={value}")
-            else:
-                argv += part
+            argv += to_argv(value)
             kwargs.update(to_kwargs(value))
         extra = engine.extra.get("vllm", {})
         extra_argv, extra_kwargs = extra_fragments(extra, kwargs)
@@ -141,8 +132,7 @@ class VllmAdapter(EngineAdapter):
             server = nsys_argv(cfg, run_dir) + server
         return LaunchSpec(
             adapter=self.name,
-            server_argv=() if unsupported else tuple(server),
-            server_unsupported=tuple(unsupported),
+            server_argv=tuple(server),
             engine_kwargs=kwargs,
             env=env,
             health_path="/health",

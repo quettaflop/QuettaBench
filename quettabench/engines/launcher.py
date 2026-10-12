@@ -18,7 +18,6 @@ from pathlib import Path
 
 from quettabench.config import env_map
 from quettabench.config.schema import ConfigError
-from quettabench.engines.base import UnsupportedField
 from quettabench.metrics.results import redact, secret
 
 REPO = Path(__file__).resolve().parents[2]
@@ -228,8 +227,6 @@ def docker_secrets(spec):
 def start(spec, results_dir, *, backend="local", cfg=None, gpus="", timeout_s=1800,
           poll_s=1.0):
     """Launch spec.server_argv, wait for health, write engine.json; return a Handle. backend docker runs it in a container built by docker_argv(spec, cfg, gpus, results_dir)."""
-    if spec.server_unsupported:
-        raise UnsupportedField(spec.adapter, ", ".join(spec.server_unsupported))
     if not spec.server_argv:
         raise ValueError(f"{spec.adapter}: the spec has no server to launch")
     results_dir = Path(results_dir)
