@@ -15,7 +15,7 @@ from quettabench import compare
 from tests.contracts.helpers import bench_run_dir, grid_run_dir
 from tests.golden._harness import FIXTURES, check_text, compare_path, fresh_import, grid_argv, run_grid_cli
 
-VMIN_FIT_LOG = "vmin_fit_llama.log"
+GRID_FIT_LOG = "grid_fit_llama.log"
 BASELINE = "baseline_llama.json"
 RESULT_LINE = (
     "RESULT mode=FULL tp=1 kv=float16 ctx=4096 bs=64 ms_per_step=19.874 "
@@ -24,12 +24,12 @@ RESULT_LINE = (
 VLLM_SH_FILTER = re.compile(r"^(META|RESULT|SKIP|CAPACITY)")
 
 
-class VminFitLogGolden(unittest.TestCase):
+class GridFitLogGolden(unittest.TestCase):
     def test_log_is_what_a_grid_run_prints(self):
         run = run_grid_cli(grid_argv("llama"), {})
         self.assertIsNone(run["exit"])
         log = "\n".join(line for line in run["stdout"] if VLLM_SH_FILTER.match(line)) + "\n"
-        check_text(self, VMIN_FIT_LOG, log + RESULT_LINE + "\n")
+        check_text(self, GRID_FIT_LOG, log + RESULT_LINE + "\n")
 
 
 class CompatReaderGolden(unittest.TestCase):

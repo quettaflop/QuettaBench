@@ -15,7 +15,7 @@ WORKLOADS = {
 ABSENT = "<absent>"
 
 
-def returns_grid_kwargs(name, env, extra_argv=()):
+def return_outputs_grid_kwargs(name, env, extra_argv=()):
     """The one path that still builds vllm.LLM."""
     run = run_grid_cli(grid_argv(name, "--allow-unverified", "--set", "mode.return_outputs=text", *extra_argv), env)
     (kwargs,) = run["llm_kwargs"]
@@ -43,14 +43,14 @@ class EngineArgsGolden(unittest.TestCase):
     def test_engine_kwargs_per_workload(self):
         record = {}
         for name in sorted(WORKLOADS):
-            vmin = returns_grid_kwargs(name, {})
+            grid_kwargs = return_outputs_grid_kwargs(name, {})
             serve = serve_kwargs(name)
             record[name] = {
-                "vmin_fit": vmin,
-                "vmin_fit_env_override": returns_grid_kwargs(name, ENV_OVERRIDE),
-                "vmin_fit_nograph": returns_grid_kwargs(name, {}, ["--set", "engine.cudagraph=false"]),
+                "grid_fit": grid_kwargs,
+                "grid_fit_env_override": return_outputs_grid_kwargs(name, ENV_OVERRIDE),
+                "grid_fit_nograph": return_outputs_grid_kwargs(name, {}, ["--set", "engine.cudagraph=false"]),
                 "trace_serve": serve,
-                "diff_vmin_fit_vs_trace_serve": None if "exit" in serve else kwargs_diff(vmin, serve),
+                "diff_grid_fit_vs_trace_serve": None if "exit" in serve else kwargs_diff(grid_kwargs, serve),
             }
         check_json(self, "engine_args", record)
 

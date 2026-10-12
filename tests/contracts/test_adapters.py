@@ -56,25 +56,25 @@ def engine_spec_for(name, env=None, sets=()):
     return vllm_adapter.ADAPTER.translate(cfg)
 
 
-class KwargsMatchVminFit(unittest.TestCase):
+class KwargsMatchGridFit(unittest.TestCase):
     def test_every_run_yaml(self):
         for name in sorted(GOLDEN):
             with self.subTest(name=name):
-                self.assertEqual(engine_spec_for(name).engine_kwargs, GOLDEN[name]["vmin_fit"])
+                self.assertEqual(engine_spec_for(name).engine_kwargs, GOLDEN[name]["grid_fit"])
 
     def test_env_override(self):
         for name in sorted(GOLDEN):
             with self.subTest(name=name):
                 self.assertEqual(
                     engine_spec_for(name, env=ENV_OVERRIDE, sets=["mode.return_outputs=text"]).engine_kwargs,
-                    GOLDEN[name]["vmin_fit_env_override"],
+                    GOLDEN[name]["grid_fit_env_override"],
                 )
 
     def test_nograph(self):
         for name in sorted(GOLDEN):
             with self.subTest(name=name):
                 spec = engine_spec_for(name, sets=["engine.cudagraph=false", "mode.return_outputs=text"])
-                self.assertEqual(spec.engine_kwargs, GOLDEN[name]["vmin_fit_nograph"])
+                self.assertEqual(spec.engine_kwargs, GOLDEN[name]["grid_fit_nograph"])
                 self.assertIn("--enforce-eager", spec.server_argv)
 
 

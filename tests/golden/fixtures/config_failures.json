@@ -52,9 +52,9 @@
    "type": "ValueError"
   }
  },
- "vmin_fit_unknown_grid": "unknown grid 'nope'; grids: llama, llama_single, table_big, table_16k_bs64, prof, deepseek, qwen, qwen3, smoke",
- "vmin_fit_unknown_prompt_mode": "unknown prompt_mode 'random'; use distinct, clone, corpus or trace",
- "vmin_fit_unverified": {
+ "grid_fit_unknown_grid": "unknown grid 'nope'; grids: llama, llama_single, table_big, table_16k_bs64, prof, deepseek, qwen, qwen3, smoke",
+ "grid_fit_unknown_prompt_mode": "unknown prompt_mode 'random'; use distinct, clone, corpus or trace",
+ "grid_fit_unverified": {
   "deepseek": "deepseek is not validated yet; pass --allow-unverified to bring it up",
   "glm53": "glm53 is not validated yet; pass --allow-unverified to bring it up",
   "glm53flash": "glm53flash is not validated yet; pass --allow-unverified to bring it up",

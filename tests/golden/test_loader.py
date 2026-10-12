@@ -15,7 +15,7 @@ from quettabench.config import loader
 from quettabench.config.schema import check_ep_legal, parse_serving_style
 from quettabench.engines import base
 from tests.golden._harness import (
-    AS_VMIN_FIT,
+    AS_GRID_FIT,
     ENV_OVERRIDE,
     FIXTURES,
     REPO,
@@ -75,9 +75,9 @@ def _error(fn, *args, **kwargs):
 
 
 def resolve(name, env, *sets):
-    """qwen as vmin_fit sized it (dense)."""
+    """qwen as grid_fit sized it (dense)."""
     with mock.patch.dict(os.environ, env, clear=True), mock.patch("shutil.which", return_value=None):
-        (cfg,) = loader.load(RUNS / f"{name}.yaml", ["allow_unverified=true", *AS_VMIN_FIT.get(name, []), *sets])
+        (cfg,) = loader.load(RUNS / f"{name}.yaml", ["allow_unverified=true", *AS_GRID_FIT.get(name, []), *sets])
     return cfg
 
 
@@ -113,7 +113,7 @@ def check_record(case, cfg, old, env):
     case.assertEqual(parse_serving_style(e.serving_style), old["serving_style"])
 
 
-def resolve_vmin_fit(name, env):
+def resolve_grid_fit(name, env):
     run = run_grid_cli(grid_argv(name, "--allow-unverified"), env)
     return {"stdout": run["stdout"], "generate_calls": run["generate_calls"], "exit": run["exit"]}
 
@@ -158,7 +158,7 @@ class ConfigResolutionGolden(unittest.TestCase):
                     check_record(self, resolve(name, env), old, env)
                 record[name][s] = {
                     "captured_config": {k: v for k, v in old.items() if k != "cli"},
-                    "vmin_fit": resolve_vmin_fit(name, env),
+                    "grid_fit": resolve_grid_fit(name, env),
                     "dry_run": resolve_dry_run(name, env),
                 }
         check_json(self, "config_workloads", record)
@@ -186,7 +186,7 @@ class ParseTimeFailuresGolden(unittest.TestCase):
         unverified = [
             n for n in WORKLOAD_NAMES if not WORKLOADS[n]["cleared"]["captured_config"]["workload"].get("verified")
         ]
-        failures["vmin_fit_unverified"] = {
+        failures["grid_fit_unverified"] = {
             n: loader_message(run_grid_cli(grid_argv(n), {})["exit"]) for n in unverified
         }
         failures["run_yaml_missing"] = run_grid_cli(grid_argv("nope"), {})["exit"].replace(str(REPO), "<REPO>")
@@ -194,8 +194,8 @@ class ParseTimeFailuresGolden(unittest.TestCase):
         unknown_grid = loader_message(run_grid_cli(grid_argv("llama", "--set", "mode.grid=nope"), {})["exit"])
         for added in ADDED_GRIDS:
             unknown_grid = unknown_grid.replace(f", {added}", "")
-        failures["vmin_fit_unknown_grid"] = unknown_grid
-        failures["vmin_fit_unknown_prompt_mode"] = loader_message(
+        failures["grid_fit_unknown_grid"] = unknown_grid
+        failures["grid_fit_unknown_prompt_mode"] = loader_message(
             run_grid_cli(grid_argv("llama"), {"PROMPT_MODE": "random"})["exit"]
         )
         with mla_run_yaml() as run_yaml:

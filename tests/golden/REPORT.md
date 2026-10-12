@@ -110,11 +110,11 @@ Run `python3 -m pytest tests/golden -q`. `QBENCH_GOLDEN_REGEN=1` rewrites the fi
 
 2026-10-12: no fixture changed for the docker tag. `configs/runs/llama-tp1-docker.yaml`, the README docker section and the launcher, runner and provision tests name `vllm/vllm-openai:v0.26.0`, the base `docker/Dockerfile` builds on and the tag the docker run was tested with.
 
-2026-10-12: `config_failures.json` holds `distinct, clone, corpus or trace` in `vmin_fit_unknown_prompt_mode`, because the grid's prompt modes are those four. Every other entry is unchanged.
+2026-10-12: `config_failures.json` holds `distinct, clone, corpus or trace` in `grid_fit_unknown_prompt_mode`, because the grid's prompt modes are those four. Every other entry is unchanged.
 
 2026-10-12: `config_failures.json` holds no `disagg_oversubscribed` or `kv_role` keys, because no adapter or run calls `schema.disagg_gpu_sets` or `schema.disagg_kv_config`. Every other key is unchanged.
 
-2026-10-12: grid timing runs over HTTP; the golden harness serves it with `StandInServer`, which runs each posted batch on the stub engine, so every grid fixture (`vmin_fit_llama.log`, `config_workloads.json`, `engine_args.json`, the compare tables) holds the same bytes as a direct run. The eleven `override` `vmin_fit` records in `config_workloads.json` are present because vLLM serves `engine.pp` as `--pipeline-parallel-size` and `engine.cudagraph=false` as `--enforce-eager`, so the `QBENCH_PP=2` timing grid launches the server. `engine_args.json`'s kwargs are taken from a `mode.return_outputs=text` run, the path that builds `vllm.LLM`.
+2026-10-12: grid timing runs over HTTP; the golden harness serves it with `StandInServer`, which runs each posted batch on the stub engine, so every grid fixture (`grid_fit_llama.log`, `config_workloads.json`, `engine_args.json`, the compare tables) holds the same bytes as a direct run. The eleven `override` `grid_fit` records in `config_workloads.json` are present because vLLM serves `engine.pp` as `--pipeline-parallel-size` and `engine.cudagraph=false` as `--enforce-eager`, so the `QBENCH_PP=2` timing grid launches the server. `engine_args.json`'s kwargs are taken from a `mode.return_outputs=text` run, the path that builds `vllm.LLM`.
 
 2026-10-12: `config_global.json`, `config_workloads.json`, `engine_args.json` and `config_failures.json` name the runs `llama-big` and `llama-big-fp8kv` and the grids `table_big` and `table_16k_bs64` (its one cell is ctx 16384 at batch 64); no value changed. `table_16k_bs64` sorts ahead of `table_big` in `config_global.json`'s keys.
 
@@ -141,3 +141,7 @@ Run `python3 -m pytest tests/golden -q`. `QBENCH_GOLDEN_REGEN=1` rewrites the fi
 2026-10-12: `config_failures.json` changed by rename only: the failure case `mla_without_kv_bytes` is `mla_without_kv_bytes_per_token` and its message says `kv_bytes_per_token`; no value changed.
 
 2026-10-12: `engine_args.json` changed by rename only: the key `kv_bytes` is `kv_bytes_per_token`; no value changed.
+
+2026-10-12: `grid_fit_llama.log` is `vmin_fit_llama.log` renamed, content unchanged.
+
+2026-10-12: `config_failures.json`, `config_workloads.json` and `engine_args.json` changed by rename only: the `vmin_fit` keys (`vmin_fit_unknown_grid`, `vmin_fit_env_override`, `diff_vmin_fit_vs_trace_serve` and the rest) start `grid_fit`; no value changed.

@@ -1,6 +1,6 @@
 {
  "deepseek": {
-  "diff_vmin_fit_vs_trace_serve": {},
+  "diff_grid_fit_vs_trace_serve": {},
   "trace_serve": {
    "disable_log_stats": true,
    "dtype": "bfloat16",
@@ -14,7 +14,7 @@
    "tensor_parallel_size": 8,
    "trust_remote_code": true
   },
-  "vmin_fit": {
+  "grid_fit": {
    "disable_log_stats": true,
    "dtype": "bfloat16",
    "enable_expert_parallel": true,
@@ -27,7 +27,7 @@
    "tensor_parallel_size": 8,
    "trust_remote_code": true
   },
-  "vmin_fit_env_override": {
+  "grid_fit_env_override": {
    "disable_log_stats": true,
    "dtype": "bfloat16",
    "enable_expert_parallel": true,
@@ -40,7 +40,7 @@
    "tensor_parallel_size": 8,
    "trust_remote_code": true
   },
-  "vmin_fit_nograph": {
+  "grid_fit_nograph": {
    "compilation_config": {
     "cudagraph_mode": "NONE"
    },
@@ -58,7 +58,7 @@
   }
  },
  "glm53": {
-  "diff_vmin_fit_vs_trace_serve": {},
+  "diff_grid_fit_vs_trace_serve": {},
   "trace_serve": {
    "disable_log_stats": true,
    "dtype": "bfloat16",
@@ -72,7 +72,7 @@
    "tensor_parallel_size": 8,
    "trust_remote_code": true
   },
-  "vmin_fit": {
+  "grid_fit": {
    "disable_log_stats": true,
    "dtype": "bfloat16",
    "enable_expert_parallel": true,
@@ -85,7 +85,7 @@
    "tensor_parallel_size": 8,
    "trust_remote_code": true
   },
-  "vmin_fit_env_override": {
+  "grid_fit_env_override": {
    "disable_log_stats": true,
    "dtype": "bfloat16",
    "enable_expert_parallel": true,
@@ -98,7 +98,7 @@
    "tensor_parallel_size": 8,
    "trust_remote_code": true
   },
-  "vmin_fit_nograph": {
+  "grid_fit_nograph": {
    "compilation_config": {
     "cudagraph_mode": "NONE"
    },
@@ -116,7 +116,7 @@
   }
  },
  "glm53flash": {
-  "diff_vmin_fit_vs_trace_serve": {},
+  "diff_grid_fit_vs_trace_serve": {},
   "trace_serve": {
    "disable_log_stats": true,
    "dtype": "bfloat16",
@@ -130,7 +130,7 @@
    "tensor_parallel_size": 4,
    "trust_remote_code": true
   },
-  "vmin_fit": {
+  "grid_fit": {
    "disable_log_stats": true,
    "dtype": "bfloat16",
    "enable_expert_parallel": true,
@@ -143,7 +143,7 @@
    "tensor_parallel_size": 4,
    "trust_remote_code": true
   },
-  "vmin_fit_env_override": {
+  "grid_fit_env_override": {
    "disable_log_stats": true,
    "dtype": "bfloat16",
    "enable_expert_parallel": true,
@@ -156,7 +156,7 @@
    "tensor_parallel_size": 4,
    "trust_remote_code": true
   },
-  "vmin_fit_nograph": {
+  "grid_fit_nograph": {
    "compilation_config": {
     "cudagraph_mode": "NONE"
    },
@@ -174,7 +174,7 @@
   }
  },
  "llama": {
-  "diff_vmin_fit_vs_trace_serve": {},
+  "diff_grid_fit_vs_trace_serve": {},
   "trace_serve": {
    "disable_log_stats": true,
    "dtype": "float16",
@@ -186,7 +186,7 @@
    "tensor_parallel_size": 1,
    "trust_remote_code": true
   },
-  "vmin_fit": {
+  "grid_fit": {
    "disable_log_stats": true,
    "dtype": "float16",
    "enable_prefix_caching": false,
@@ -197,7 +197,7 @@
    "tensor_parallel_size": 1,
    "trust_remote_code": true
   },
-  "vmin_fit_env_override": {
+  "grid_fit_env_override": {
    "disable_log_stats": true,
    "dtype": "float16",
    "enable_prefix_caching": false,
@@ -208,7 +208,7 @@
    "tensor_parallel_size": 1,
    "trust_remote_code": true
   },
-  "vmin_fit_nograph": {
+  "grid_fit_nograph": {
    "compilation_config": {
     "cudagraph_mode": "NONE"
    },
@@ -224,7 +224,7 @@
   }
  },
  "llama-big": {
-  "diff_vmin_fit_vs_trace_serve": {},
+  "diff_grid_fit_vs_trace_serve": {},
   "trace_serve": {
    "disable_log_stats": true,
    "dtype": "float16",
@@ -236,7 +236,7 @@
    "tensor_parallel_size": 1,
    "trust_remote_code": true
   },
-  "vmin_fit": {
+  "grid_fit": {
    "disable_log_stats": true,
    "dtype": "float16",
    "enable_prefix_caching": false,
@@ -247,7 +247,7 @@
    "tensor_parallel_size": 1,
    "trust_remote_code": true
   },
-  "vmin_fit_env_override": {
+  "grid_fit_env_override": {
    "disable_log_stats": true,
    "dtype": "float16",
    "enable_prefix_caching": false,
@@ -258,7 +258,7 @@
    "tensor_parallel_size": 1,
    "trust_remote_code": true
   },
-  "vmin_fit_nograph": {
+  "grid_fit_nograph": {
    "compilation_config": {
     "cudagraph_mode": "NONE"
    },
@@ -274,7 +274,7 @@
   }
  },
  "llama-big-fp8kv": {
-  "diff_vmin_fit_vs_trace_serve": {},
+  "diff_grid_fit_vs_trace_serve": {},
   "trace_serve": {
    "disable_log_stats": true,
    "dtype": "bfloat16",
@@ -287,7 +287,7 @@
    "tensor_parallel_size": 1,
    "trust_remote_code": true
   },
-  "vmin_fit": {
+  "grid_fit": {
    "disable_log_stats": true,
    "dtype": "bfloat16",
    "enable_prefix_caching": false,
@@ -299,7 +299,7 @@
    "tensor_parallel_size": 1,
    "trust_remote_code": true
   },
-  "vmin_fit_env_override": {
+  "grid_fit_env_override": {
    "disable_log_stats": true,
    "dtype": "bfloat16",
    "enable_prefix_caching": false,
@@ -311,7 +311,7 @@
    "tensor_parallel_size": 1,
    "trust_remote_code": true
   },
-  "vmin_fit_nograph": {
+  "grid_fit_nograph": {
    "compilation_config": {
     "cudagraph_mode": "NONE"
    },
@@ -328,7 +328,7 @@
   }
  },
  "llama-tp1": {
-  "diff_vmin_fit_vs_trace_serve": {},
+  "diff_grid_fit_vs_trace_serve": {},
   "trace_serve": {
    "disable_log_stats": true,
    "dtype": "float16",
@@ -340,7 +340,7 @@
    "tensor_parallel_size": 1,
    "trust_remote_code": true
   },
-  "vmin_fit": {
+  "grid_fit": {
    "disable_log_stats": true,
    "dtype": "float16",
    "enable_prefix_caching": false,
@@ -351,7 +351,7 @@
    "tensor_parallel_size": 1,
    "trust_remote_code": true
   },
-  "vmin_fit_env_override": {
+  "grid_fit_env_override": {
    "disable_log_stats": true,
    "dtype": "float16",
    "enable_prefix_caching": false,
@@ -362,7 +362,7 @@
    "tensor_parallel_size": 1,
    "trust_remote_code": true
   },
-  "vmin_fit_nograph": {
+  "grid_fit_nograph": {
    "compilation_config": {
     "cudagraph_mode": "NONE"
    },
@@ -378,7 +378,7 @@
   }
  },
  "llama-tp2": {
-  "diff_vmin_fit_vs_trace_serve": {},
+  "diff_grid_fit_vs_trace_serve": {},
   "trace_serve": {
    "disable_log_stats": true,
    "dtype": "float16",
@@ -390,7 +390,7 @@
    "tensor_parallel_size": 2,
    "trust_remote_code": true
   },
-  "vmin_fit": {
+  "grid_fit": {
    "disable_log_stats": true,
    "dtype": "float16",
    "enable_prefix_caching": false,
@@ -401,7 +401,7 @@
    "tensor_parallel_size": 2,
    "trust_remote_code": true
   },
-  "vmin_fit_env_override": {
+  "grid_fit_env_override": {
    "disable_log_stats": true,
    "dtype": "float16",
    "enable_prefix_caching": false,
@@ -412,7 +412,7 @@
    "tensor_parallel_size": 2,
    "trust_remote_code": true
   },
-  "vmin_fit_nograph": {
+  "grid_fit_nograph": {
    "compilation_config": {
     "cudagraph_mode": "NONE"
    },
@@ -428,7 +428,7 @@
   }
  },
  "llama-tp4": {
-  "diff_vmin_fit_vs_trace_serve": {},
+  "diff_grid_fit_vs_trace_serve": {},
   "trace_serve": {
    "disable_log_stats": true,
    "dtype": "float16",
@@ -440,7 +440,7 @@
    "tensor_parallel_size": 4,
    "trust_remote_code": true
   },
-  "vmin_fit": {
+  "grid_fit": {
    "disable_log_stats": true,
    "dtype": "float16",
    "enable_prefix_caching": false,
@@ -451,7 +451,7 @@
    "tensor_parallel_size": 4,
    "trust_remote_code": true
   },
-  "vmin_fit_env_override": {
+  "grid_fit_env_override": {
    "disable_log_stats": true,
    "dtype": "float16",
    "enable_prefix_caching": false,
@@ -462,7 +462,7 @@
    "tensor_parallel_size": 4,
    "trust_remote_code": true
   },
-  "vmin_fit_nograph": {
+  "grid_fit_nograph": {
    "compilation_config": {
     "cudagraph_mode": "NONE"
    },
@@ -478,11 +478,11 @@
   }
  },
  "qwen": {
-  "diff_vmin_fit_vs_trace_serve": null,
+  "diff_grid_fit_vs_trace_serve": null,
   "trace_serve": {
    "exit": "trace_serve: <REPO>/configs/runs/qwen.yaml [qwen]: attention=hybrid needs kv_bytes_per_token; the dense per-head formula overestimates its KV"
   },
-  "vmin_fit": {
+  "grid_fit": {
    "disable_log_stats": true,
    "dtype": "bfloat16",
    "enable_prefix_caching": false,
@@ -493,7 +493,7 @@
    "tensor_parallel_size": 1,
    "trust_remote_code": true
   },
-  "vmin_fit_env_override": {
+  "grid_fit_env_override": {
    "disable_log_stats": true,
    "dtype": "bfloat16",
    "enable_prefix_caching": false,
@@ -504,7 +504,7 @@
    "tensor_parallel_size": 1,
    "trust_remote_code": true
   },
-  "vmin_fit_nograph": {
+  "grid_fit_nograph": {
    "compilation_config": {
     "cudagraph_mode": "NONE"
    },
@@ -520,7 +520,7 @@
   }
  },
  "qwen3": {
-  "diff_vmin_fit_vs_trace_serve": {},
+  "diff_grid_fit_vs_trace_serve": {},
   "trace_serve": {
    "disable_log_stats": true,
    "dtype": "bfloat16",
@@ -532,7 +532,7 @@
    "tensor_parallel_size": 4,
    "trust_remote_code": true
   },
-  "vmin_fit": {
+  "grid_fit": {
    "disable_log_stats": true,
    "dtype": "bfloat16",
    "enable_prefix_caching": false,
@@ -543,7 +543,7 @@
    "tensor_parallel_size": 4,
    "trust_remote_code": true
   },
-  "vmin_fit_env_override": {
+  "grid_fit_env_override": {
    "disable_log_stats": true,
    "dtype": "bfloat16",
    "enable_prefix_caching": false,
@@ -554,7 +554,7 @@
    "tensor_parallel_size": 4,
    "trust_remote_code": true
   },
-  "vmin_fit_nograph": {
+  "grid_fit_nograph": {
    "compilation_config": {
     "cudagraph_mode": "NONE"
    },

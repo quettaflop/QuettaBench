@@ -7,7 +7,7 @@
     "engine.extra.quettaserve = {'crate': 'deepseek', 'test': 'batch_bench', 'env_prefix': 'DS', 'family': 'moe'}  (model)",
     "grid.cells = [(1024, 1), (1024, 4), (1024, 16), (1024, 64), (8192, 1), (8192, 4), (8192, 16), (8192, 64), (16384, 1), (16384, 4), (16384, 16), (16384, 64)]"
    ],
-   "vmin_fit": {
+   "grid_fit": {
     "exit": null,
     "generate_calls": 58,
     "stdout": [
@@ -129,7 +129,7 @@
     "engine.extra.quettaserve = {'crate': 'deepseek', 'test': 'batch_bench', 'env_prefix': 'DS', 'family': 'moe'}  (model)",
     "grid.cells = [(1024, 1), (1024, 4), (1024, 16), (1024, 64), (8192, 1), (8192, 4), (8192, 16), (8192, 64), (16384, 1), (16384, 4), (16384, 16), (16384, 64)]"
    ],
-   "vmin_fit": {
+   "grid_fit": {
     "exit": null,
     "generate_calls": 52,
     "stdout": [
@@ -252,7 +252,7 @@
     "engine.pp = 1  (default)",
     "grid.cells = [(1024, 1), (1024, 4), (1024, 16), (1024, 64), (8192, 1), (8192, 4), (8192, 16), (8192, 64), (16384, 1), (16384, 4), (16384, 16), (16384, 64)]"
    ],
-   "vmin_fit": {
+   "grid_fit": {
     "exit": null,
     "generate_calls": 58,
     "stdout": [
@@ -363,7 +363,7 @@
     "engine.pp = 2  (env)",
     "grid.cells = [(1024, 1), (1024, 4), (1024, 16), (1024, 64), (8192, 1), (8192, 4), (8192, 16), (8192, 64), (16384, 1), (16384, 4), (16384, 16), (16384, 64)]"
    ],
-   "vmin_fit": {
+   "grid_fit": {
     "exit": null,
     "generate_calls": 52,
     "stdout": [
@@ -476,7 +476,7 @@
     "engine.pp = 1  (default)",
     "grid.cells = [(1024, 1), (1024, 4), (1024, 16), (1024, 64), (8192, 1), (8192, 4), (8192, 16), (8192, 64), (16384, 1), (16384, 4), (16384, 16), (16384, 64)]"
    ],
-   "vmin_fit": {
+   "grid_fit": {
     "exit": null,
     "generate_calls": 58,
     "stdout": [
@@ -587,7 +587,7 @@
     "engine.pp = 2  (env)",
     "grid.cells = [(1024, 1), (1024, 4), (1024, 16), (1024, 64), (8192, 1), (8192, 4), (8192, 16), (8192, 64), (16384, 1), (16384, 4), (16384, 16), (16384, 64)]"
    ],
-   "vmin_fit": {
+   "grid_fit": {
     "exit": null,
     "generate_calls": 52,
     "stdout": [
@@ -700,7 +700,7 @@
     "engine.pp = 1  (default)",
     "grid.cells = [(4096, 1), (4096, 8), (4096, 16), (4096, 32), (4096, 64), (1024, 1), (1024, 8), (1024, 16), (1024, 32), (1024, 64), (100, 1), (100, 8), (100, 16), (100, 32), (100, 64)]"
    ],
-   "vmin_fit": {
+   "grid_fit": {
     "exit": null,
     "generate_calls": 66,
     "stdout": [
@@ -821,7 +821,7 @@
     "engine.pp = 2  (env)",
     "grid.cells = [(4096, 1), (4096, 8), (4096, 16), (4096, 32), (4096, 64), (1024, 1), (1024, 8), (1024, 16), (1024, 32), (1024, 64), (100, 1), (100, 8), (100, 16), (100, 32), (100, 64)]"
    ],
-   "vmin_fit": {
+   "grid_fit": {
     "exit": null,
     "generate_calls": 56,
     "stdout": [
@@ -944,7 +944,7 @@
     "engine.pp = 1  (default)",
     "grid.cells = [(1024, 1), (1024, 4), (1024, 16), (1024, 64), (8192, 1), (8192, 4), (8192, 16), (8192, 64), (16384, 1), (16384, 4), (16384, 16), (16384, 64)]"
    ],
-   "vmin_fit": {
+   "grid_fit": {
     "exit": null,
     "generate_calls": 46,
     "stdout": [
@@ -1051,7 +1051,7 @@
     "engine.pp = 2  (env)",
     "grid.cells = [(1024, 1), (1024, 4), (1024, 16), (1024, 64), (8192, 1), (8192, 4), (8192, 16), (8192, 64), (16384, 1), (16384, 4), (16384, 16), (16384, 64)]"
    ],
-   "vmin_fit": {
+   "grid_fit": {
     "exit": null,
     "generate_calls": 36,
     "stdout": [
@@ -1160,7 +1160,7 @@
     "engine.pp = 1  (default)",
     "grid.cells = [(16384, 64)]"
    ],
-   "vmin_fit": {
+   "grid_fit": {
     "exit": null,
     "generate_calls": 1,
     "stdout": [
@@ -1214,7 +1214,7 @@
     "engine.pp = 2  (env)",
     "grid.cells = [(16384, 64)]"
    ],
-   "vmin_fit": {
+   "grid_fit": {
     "exit": null,
     "generate_calls": 1,
     "stdout": [
@@ -1270,7 +1270,7 @@
     "engine.pp = 1  (default)",
     "grid.cells = [(100, 1), (1024, 1), (4096, 1), (8192, 1)]"
    ],
-   "vmin_fit": {
+   "grid_fit": {
     "exit": null,
     "generate_calls": 17,
     "stdout": [
@@ -1337,7 +1337,7 @@
     "engine.pp = 2  (env)",
     "grid.cells = [(100, 1), (1024, 1), (4096, 1), (8192, 1)]"
    ],
-   "vmin_fit": {
+   "grid_fit": {
     "exit": null,
     "generate_calls": 17,
     "stdout": [
@@ -1406,7 +1406,7 @@
     "engine.pp = 1  (default)",
     "grid.cells = [(100, 1), (1024, 1), (4096, 1), (8192, 1)]"
    ],
-   "vmin_fit": {
+   "grid_fit": {
     "exit": null,
     "generate_calls": 17,
     "stdout": [
@@ -1473,7 +1473,7 @@
     "engine.pp = 2  (env)",
     "grid.cells = [(100, 1), (1024, 1), (4096, 1), (8192, 1)]"
    ],
-   "vmin_fit": {
+   "grid_fit": {
     "exit": null,
     "generate_calls": 17,
     "stdout": [
@@ -1542,7 +1542,7 @@
     "engine.pp = 1  (default)",
     "grid.cells = [(100, 1), (1024, 1), (4096, 1), (8192, 1)]"
    ],
-   "vmin_fit": {
+   "grid_fit": {
     "exit": null,
     "generate_calls": 17,
     "stdout": [
@@ -1609,7 +1609,7 @@
     "engine.pp = 2  (env)",
     "grid.cells = [(100, 1), (1024, 1), (4096, 1), (8192, 1)]"
    ],
-   "vmin_fit": {
+   "grid_fit": {
     "exit": null,
     "generate_calls": 17,
     "stdout": [
@@ -1678,7 +1678,7 @@
     "engine.pp = 1  (default)",
     "grid.cells = [(100, 1), (1024, 1), (4096, 1), (8192, 1), (32768, 1), (100, 8), (100, 16), (100, 32), (100, 64), (1024, 8), (1024, 16), (1024, 32), (1024, 64), (4096, 8), (4096, 16), (4096, 32), (4096, 64)]"
    ],
-   "vmin_fit": {
+   "grid_fit": {
     "exit": null,
     "generate_calls": 70,
     "stdout": [
@@ -1809,7 +1809,7 @@
     "engine.pp = 2  (env)",
     "grid.cells = [(100, 1), (1024, 1), (4096, 1), (8192, 1), (32768, 1), (100, 8), (100, 16), (100, 32), (100, 64), (1024, 8), (1024, 16), (1024, 32), (1024, 64), (4096, 8), (4096, 16), (4096, 32), (4096, 64)]"
    ],
-   "vmin_fit": {
+   "grid_fit": {
     "exit": null,
     "generate_calls": 64,
     "stdout": [
@@ -1943,7 +1943,7 @@
     "engine.extra.quettaserve = {'crate': 'qwen', 'test': 'decode_loop', 'env_prefix': 'QW', 'family': 'gdn'}  (model)",
     "grid.cells = [(1024, 1), (1024, 4), (1024, 16), (1024, 64), (4096, 1), (4096, 4), (4096, 16), (4096, 64), (8192, 1), (8192, 4), (8192, 16), (8192, 64), (16384, 1), (16384, 4), (16384, 16), (16384, 64)]"
    ],
-   "vmin_fit": {
+   "grid_fit": {
     "exit": null,
     "generate_calls": 74,
     "stdout": [
@@ -2079,7 +2079,7 @@
     "engine.extra.quettaserve = {'crate': 'qwen', 'test': 'decode_loop', 'env_prefix': 'QW', 'family': 'gdn'}  (model)",
     "grid.cells = [(1024, 1), (1024, 4), (1024, 16), (1024, 64), (4096, 1), (4096, 4), (4096, 16), (4096, 64), (8192, 1), (8192, 4), (8192, 16), (8192, 64), (16384, 1), (16384, 4), (16384, 16), (16384, 64)]"
    ],
-   "vmin_fit": {
+   "grid_fit": {
     "exit": null,
     "generate_calls": 68,
     "stdout": [
