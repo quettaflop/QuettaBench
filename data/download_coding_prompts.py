@@ -1,21 +1,17 @@
 #!/usr/bin/env python3
 """Download coding-singleturn prompts from GCS and write data/coding_agent_prompts.jsonl (system prompt, task description, osl estimate, deduplicated by task name)."""
 
+import argparse
 import json
 import os
 import re
 import sys
 from pathlib import Path
 
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = os.path.expanduser("~/gcp-key.json")
-
 try:
     from google.cloud import storage
 except ImportError:
-    print("Installing google-cloud-storage...")
-    import subprocess
-    subprocess.run([sys.executable, "-m", "pip", "install", "google-cloud-storage", "-q"], check=True)
-    from google.cloud import storage
+    sys.exit("google-cloud-storage is not installed; pip install google-cloud-storage")
 
 BUCKET_NAME = "sequrity-experiments"
 PREFIXES = [
@@ -25,7 +21,6 @@ PREFIXES = [
 ]
 
 OUTPUT_PATH = Path(__file__).resolve().parent.parent / "data" / "coding_agent_prompts.jsonl"
-OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
 def extract_system_prompt(content: str) -> str:
@@ -77,8 +72,17 @@ def download_blob_text(blob) -> str:
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--credentials",
+        default=os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"),
+        help="service-account JSON key (default: $GOOGLE_APPLICATION_CREDENTIALS, else the ambient credentials)",
+    )
+    args = parser.parse_args()
+    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+
     print(f"Connecting to GCS bucket: {BUCKET_NAME}")
-    client = storage.Client()
+    client = storage.Client.from_service_account_json(args.credentials) if args.credentials else storage.Client()
 
     seen_tasks: dict[str, dict] = {}
     run_system_prompts: dict[str, str] = {}

@@ -13,15 +13,10 @@ from pathlib import Path
 
 warnings.filterwarnings("ignore")
 
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = os.path.expanduser("~/gcp-key.json")
-
 try:
     from google.cloud import storage
 except ImportError:
-    print("Installing google-cloud-storage...")
-    import subprocess
-    subprocess.run([sys.executable, "-m", "pip", "install", "google-cloud-storage", "-q"], check=True)
-    from google.cloud import storage
+    sys.exit("google-cloud-storage is not installed; pip install google-cloud-storage")
 
 BUCKET_NAME = "sequrity-experiments"
 
@@ -167,6 +162,11 @@ def main():
     parser = argparse.ArgumentParser(description="Download agent trajectories from GCS")
     parser.add_argument("--source", choices=["swebench", "terminalbench", "all"], default="all")
     parser.add_argument("--output-dir", type=Path, default=OUTPUT_DIR)
+    parser.add_argument(
+        "--credentials",
+        default=os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"),
+        help="service-account JSON key (default: $GOOGLE_APPLICATION_CREDENTIALS, else the ambient credentials)",
+    )
     args = parser.parse_args()
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -174,7 +174,7 @@ def main():
     sources = list(RUN_PREFIXES.keys()) if args.source == "all" else [args.source]
 
     print(f"Connecting to GCS bucket: {BUCKET_NAME}")
-    client = storage.Client()
+    client = storage.Client.from_service_account_json(args.credentials) if args.credentials else storage.Client()
 
     for source in sources:
         print(f"\n{'='*60}")
