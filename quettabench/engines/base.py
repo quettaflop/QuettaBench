@@ -1,5 +1,4 @@
-# The translation boundary: an adapter turns one Config into one LaunchSpec,
-# the only description of how an engine is started and driven.
+"""The translation boundary: an adapter turns one Config into one LaunchSpec, the only description of how an engine is started and driven."""
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
@@ -7,8 +6,7 @@ from pathlib import Path
 
 from quettabench.config.schema import NOT_ASKED, EngineCfg
 
-# From scripts/crossval/prof.sh:16 (retired in bd9815f); {out} is the report
-# path without extension.
+# {out} is the report path without extension
 NSYS = ("nsys", "profile", "-t", "cuda,nvtx", "-o", "{out}", "--force-overwrite=true")
 
 
@@ -50,7 +48,7 @@ class LaunchSpec:
     image: str | None = None
     server_unsupported: tuple = ()
     ok_pattern: str | None = None     # bench stdout line that marks a finished cell
-    log_header: str = ""              # bench.sh's `>>> ctx= bs= ...` line for this cell
+    log_header: str = ""              # the bench log's `>>> ctx= bs= ...` line for this cell
     cells: tuple = ()                 # ((ctx, bs, per-cell spec), ...): one bench run each
     timeout_s: int = 120              # client timeout per request, from mode.timeout
 

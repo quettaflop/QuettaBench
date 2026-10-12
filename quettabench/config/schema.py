@@ -14,6 +14,8 @@ class ConfigError(ValueError):
     """A config the loader refuses; the message names the file and key."""
 
 
+PROMPT_MODES = ("distinct", "clone", "corpus", "trace")
+
 # Allowed values per enumerated field, checked at load.
 CHOICES = {
     # One per registered adapter (engines/): an engine without one is refused at load.
@@ -21,7 +23,7 @@ CHOICES = {
     "engine.attention": ("dense", "mla", "hybrid"),
     "engine.instrumentation": ("none", "nsys", "torch"),
     "workload.kind": ("live", "grid", "sessions"),
-    "workload.prompt_mode": ("distinct", "clone", "corpus", "trace"),
+    "workload.prompt_mode": PROMPT_MODES,
     "workload.pacing": ("per-session", "interleaved"),
     "mode.mode": ("serve", "probe"),
     "mode.serve_profile": (None, "stress-test", "single-turn", "multi-turn"),
@@ -267,37 +269,12 @@ def device_count(engine):
     return engine.tp * engine.pp
 
 
-def disagg_gpu_sets(style, available):
-    """(prefill_ids, decode_ids): disjoint device-id slices for a disagg style.
-    The pools never share a GPU because a shared device would let prefill and
-    decode contend, voiding the separation the P/D split exists to measure."""
-    p, d = style["prefill"], style["decode"]
-    if p + d > len(available):
-        raise ValueError(f"disagg:{p}p{d}d needs {p + d} GPUs, have {len(available)}")
-    prefill, decode = available[:p], available[p:p + d]
-    assert not (set(prefill) & set(decode)), "prefill and decode GPU sets overlap"
-    return prefill, decode
-
-
 def check_ep_legal(ep, num_experts):
     """Expert parallelism must evenly divide the model's expert count, else a
     rank ends up with a ragged expert shard the engine cannot place. Raises on
     an illegal degree rather than letting the engine fail deep in load."""
     if num_experts % ep != 0:
         raise ValueError(f"ep={ep} does not divide {num_experts} experts")
-
-
-def disagg_kv_config(role, rank, connector, kv_port=14579, kv_parallel_size=2):
-    """One side of a prefill/decode split as a vLLM kv_transfer_config dict,
-    passed to the server as --kv-transfer-config <json>. role is 'kv_producer'
-    (prefill) or 'kv_consumer' (decode); the two share kv_port and
-    kv_parallel_size so the connector pairs them and take distinct kv_rank. A
-    wrong role raises here rather than starting a server that never pairs.
-    No adapter calls it yet; it stays because the golden config fixtures pin it."""
-    if role not in ("kv_producer", "kv_consumer"):
-        raise ValueError(f"kv_role must be kv_producer or kv_consumer, got {role!r}")
-    return {"kv_connector": connector, "kv_role": role, "kv_rank": rank,
-            "kv_parallel_size": kv_parallel_size, "kv_port": kv_port}
 
 
 def serving_style_compatible(a, b):

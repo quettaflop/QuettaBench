@@ -3,10 +3,9 @@
 Prompt modes are distinct, clone, corpus and trace; every step point of a cell reuses the same bs prompts.
 """
 
+from ..config.schema import PROMPT_MODES
 from .base import Request, Trace, synth_ids
 from .live import RealTrace
-
-PROMPT_MODES = ("distinct", "clone", "corpus", "trace")
 
 
 def stamp_synthetic(reqs, seed):

@@ -1,29 +1,7 @@
-"""QuettaServe adapter: the cargo bench argv and the per-cell env bench.sh exported.
+"""QuettaServe adapter: the cargo bench argv and per-cell env, one bench run per grid cell, since the engine cannot listen yet.
 
-QuettaServe cannot listen yet, so there is no server_argv; the spec runs the
-crate's bench test once per grid cell. Everything here is
-scripts/crossval/bench.sh (retired in bd9815f) restated as data, with its
-env reads moved to Config fields:
-
-  <P>_CKPT              engine.model
-  <P>_WORLD             engine.tp (bench.sh: <P>_WORLD, default the workload tp)
-  <P>_TIMING_STEPS      hardware.timing_steps
-  <P>_MAX_SEQ           ctx + hardware.timing_steps + hardware.max_seq_headroom
-  <P>_CFG (moe)         engine.extra.qs_cfg
-  <P>_BENCH_BIN         engine.extra.bench_bin (prebuilt test binary)
-  QS_DIR                engine.extra.qs_dir (cwd of the bench; bench.sh default ".")
-  QS_VLLM_GDN_DIR (gdn) engine.extra.gdn_dir
-  QS_KERNELS, QS_CUSTOM_AR, <P>_MODE (gdn overrides)
-                        engine.extra.qs_kernels, .qs_custom_ar, .qs_mode
-  <P>_LAYERS            engine.layers (batch_bench only; its line then reads
-                        layers=N, which crossval's reader ignores, so a slice
-                        run's timing never pairs against a full model)
-
-Per-cell values come from a `cell=(ctx, bs)` argument to translate rather
-than a for_cell(spec, ...) helper: they are a pure function of (cfg, ctx,
-bs) and translate already holds cfg, while a helper would need the prefix,
-steps and headroom carried again on the spec. translate(cfg) of a grid run
-lists every cell's spec in spec.cells, the loop bench.sh ran.
+Env to field: <P>_CKPT engine.model, <P>_WORLD engine.tp, <P>_TIMING_STEPS hardware.timing_steps, <P>_MAX_SEQ ctx + timing_steps + max_seq_headroom, <P>_CFG engine.extra.qs_cfg, <P>_BENCH_BIN engine.extra.bench_bin, QS_DIR engine.extra.qs_dir, QS_VLLM_GDN_DIR engine.extra.gdn_dir, QS_KERNELS, QS_CUSTOM_AR and <P>_MODE engine.extra.qs_kernels, qs_custom_ar and qs_mode, <P>_LAYERS engine.layers (crossval never pairs a layers=N line with a full model).
+translate(cfg, cell=(ctx, bs)) is one cell's spec; translate(cfg) of a grid lists every cell's in spec.cells.
 """
 
 from pathlib import Path
@@ -38,7 +16,7 @@ from quettabench.engines.base import (
 )
 from quettabench.engines.drivers import BenchDriver
 
-# The line that marks a finished cell, per bench test (bench.sh's pass pattern).
+# The line that marks a finished cell, per bench test.
 OK_BY_TEST = {
     "decode_loop": r"^LOOP ",
     "batch_bench": r"^\[batch_bench\] .*layers=all",
@@ -46,17 +24,14 @@ OK_BY_TEST = {
 
 
 def moe_rule(p, extra, world):
-    """bench.sh:18-22: the moe bench needs <P>_CFG and must not see an
-    inherited <P>_LAYERS; engine.layers sets it on purpose (translate)."""
+    """The moe bench needs <P>_CFG and must not see an inherited <P>_LAYERS; engine.layers sets it on purpose (translate)."""
     if not extra.get("qs_cfg"):
-        raise ConfigError(f"quettaserve moe: set engine.extra.qs_cfg (bench.sh {p}_CFG)")
+        raise ConfigError(f"quettaserve moe: set engine.extra.qs_cfg ({p}_CFG)")
     return {f"{p}_CFG": extra["qs_cfg"]}, (f"{p}_LAYERS",), ""
 
 
 def gdn_rule(p, extra, world):
-    """bench.sh:47-61: exact kernels only when a vLLM GDN cubin dir is given
-    (the loader panics without it), custom all-reduce at world >= 2, eager
-    mode under exact kernels, CUDA graphs under rust kernels."""
+    """Exact kernels only with a vLLM GDN cubin dir (the loader panics without it), custom all-reduce at world >= 2, eager mode under exact kernels, CUDA graphs under rust kernels."""
     gdn_dir = extra.get("gdn_dir")
     kernels = extra.get("qs_kernels") or ("exact" if gdn_dir else "rust")
     env = {"QS_KERNELS": kernels}
@@ -149,7 +124,7 @@ class QuettaServeAdapter(EngineAdapter):
         return False
 
     def driver(self, spec, handle, trace=None):
-        """Bench rows logged to <results_dir>/bench.log, as bench.sh's out-log."""
+        """Bench rows logged to <results_dir>/bench.log."""
         return BenchDriver(Path(handle.results_dir) / "bench.log", spec.cells)
 
 

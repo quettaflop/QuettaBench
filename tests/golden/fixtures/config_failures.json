@@ -1,8 +1,4 @@
 {
- "disagg_oversubscribed": {
-  "message": "disagg:4p5d needs 9 GPUs, have 8",
-  "type": "ValueError"
- },
  "engine_unknown": {
   "message": "unknown engine 'tgi'; known: quettaserve, vllm",
   "type": "ValueError"
@@ -18,10 +14,6 @@
    "type": "ValueError"
   },
   "ep8_experts256": null
- },
- "kv_role": {
-  "message": "kv_role must be kv_producer or kv_consumer, got 'producer'",
-  "type": "ValueError"
  },
  "link_profile": {
   "message": "unknown link profile 'infiniband'; use pcie or nvlink",

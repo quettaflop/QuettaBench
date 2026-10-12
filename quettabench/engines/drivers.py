@@ -1,28 +1,7 @@
-"""How work reaches an engine: one Driver per way of driving it.
+"""How work reaches an engine, one Driver per way: HttpDriver streams OpenAI requests at a launched server and times grid batches, InProcessDriver builds vLLM here for mode.returns runs, BenchDriver runs the QuettaServe bench per cell, ReferenceDriver scores with transformers.
 
-InProcessDriver builds vLLM inside this process from spec.engine_kwargs for
-a grid run with mode.returns: it times one grid batch per generate() call,
-returns its ids and text, or scores it (returns="logits").
-ReferenceDriver scores with transformers, the FIDELITY reference, and
-ReferenceAdapter (engine.name: reference) hands it its spec. BenchDriver runs a QuettaServe
-bench per grid cell, as bench.sh did, and reads its rows with
-crossval.py's bench log parser. HttpDriver streams
-OpenAI-compatible requests at a launched server, and times a grid batch as
-bs concurrent completions with the same row shape InProcessDriver gives. Its two
-endpoints keep their own first-token rules, recorded on every result as
-ttft_rule:
-
-  chat         first_payload_chunk  the first SSE chunk whose delta carries
-                                    content, reasoning(_content) or tool_calls
-  completions  first_nonempty_text  the first SSE chunk whose choices[0].text
-                                    is non-empty
-
-The stream bodies are the former openai_chat and openai_completions
-send_request, moved unchanged; only the header and payload
-building they shared byte for byte is factored out.
-
-vllm, torch and transformers are optional dependencies (GPU boxes only), so
-they are imported inside the methods that use them.
+HttpDriver's first-token rule is recorded on every result as ttft_rule: chat counts the first chunk carrying content, reasoning or tool_calls, completions the first non-empty text.
+vllm, torch and transformers exist only on GPU boxes, so they are imported inside the methods that use them.
 """
 
 import asyncio
@@ -591,11 +570,8 @@ class BenchFailed(RuntimeError):
 
 
 class BenchDriver(Driver):
-    """bench.sh's cell loop: truncate the log, then per cell write the `>>>`
-    header, run bench_argv under the cell's env in its cwd, tee stdout and
-    stderr into the log, and check the exit code and the pass pattern.
-    Rows come from crossval.bench_log_points on the finished log, so they are
-    what crossval reads."""
+    """The bench cell loop: truncate the log, then per cell write the `>>>` header, run bench_argv under the cell's env in its cwd, tee its output into the log, and check the exit code and the pass pattern.
+    Rows come from crossval.bench_log_points on the finished log, so they are what crossval reads."""
 
     measures_steps = True   # rows are ms per step already; the grid loop fits nothing
 
@@ -717,8 +693,7 @@ class InProcessDriver(Driver):
         self.generate([{"prompt_token_ids": distinct_ids(256)}], 20)
 
     def score(self, prompts):
-        """logit_agreement.py's vllm_scores call: one token generated per
-        prompt, with the top-2 logprobs at every prompt position."""
+        """One token generated per prompt, with the top-2 logprobs at every prompt position."""
         from vllm import SamplingParams
         params = SamplingParams(temperature=0, max_tokens=1, prompt_logprobs=2)
         return self.llm().generate([{"prompt_token_ids": ids} for ids in prompts], params,
@@ -747,10 +722,7 @@ class InProcessDriver(Driver):
 
 
 def truncated_config(model, layers):
-    """The checkpoint's config cut to its first `layers` decoder layers, the
-    edit slice_truncate.py made to config.json: num_hidden_layers, and the
-    per-layer list (layer_types) cut to match. Weights of deeper layers are
-    left unloaded."""
+    """The checkpoint's config cut to its first `layers` decoder layers: num_hidden_layers, and layer_types cut to match; deeper weights stay unloaded."""
     from transformers import AutoConfig
     config = AutoConfig.from_pretrained(model, trust_remote_code=True)
     if layers > config.num_hidden_layers:
@@ -763,10 +735,8 @@ def truncated_config(model, layers):
 
 
 def prompt_logprob_summary(ids, prompt_logprobs):
-    """{argmax, top2_gap, logprob} from vLLM's prompt_logprobs, entry i scoring
-    ids[i + 1] as the reference's does. argmax is the rank-1 token, as
-    logit_agreement.py took it; top2_gap is rank 1's logprob minus rank 2's,
-    which equals the logit gap; logprob is the true token's."""
+    """{argmax, top2_gap, logprob} from vLLM's prompt_logprobs, entry i scoring ids[i + 1] as the reference's does.
+    argmax is the rank-1 token, top2_gap rank 1's logprob minus rank 2's (the logit gap), logprob the true token's."""
     out = {"argmax": [], "top2_gap": [], "logprob": []}
     for pos in range(1, len(ids)):
         entry = prompt_logprobs[pos]
@@ -778,10 +748,8 @@ def prompt_logprob_summary(ids, prompt_logprobs):
 
 
 class ReferenceDriver(Driver):
-    """The FIDELITY reference: logit_agreement.py's transformers_reference,
-    one teacher-forced forward pass per prompt on cuda:0 in
-    spec.engine_kwargs["dtype"]. It scores and times nothing, so the grid
-    loop gives it one scoring pass per cell (scores_only)."""
+    """The FIDELITY reference: one teacher-forced forward pass per prompt on cuda:0 in spec.engine_kwargs["dtype"].
+    It scores and times nothing, so the grid loop gives it one scoring pass per cell (scores_only)."""
 
     scores_only = True
 
@@ -837,9 +805,8 @@ class ReferenceDriver(Driver):
 
 
 class ReferenceAdapter(EngineAdapter):
-    """The transformers side of the FIDELITY gate: no server and no argv, the
-    driver loads the weights from engine_kwargs {model, dtype, layers}. Grid runs
-    only; engine.layers keeps the first N decoder layers, as slice_truncate.py did."""
+    """The transformers side of the FIDELITY gate: no server and no argv; the driver loads engine_kwargs {model, dtype, layers}.
+    Grid runs only; engine.layers keeps the first N decoder layers."""
 
     name = "reference"
     supports = frozenset({"model", "dtype", "layers"})

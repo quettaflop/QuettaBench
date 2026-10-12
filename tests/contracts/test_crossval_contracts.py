@@ -250,13 +250,6 @@ class CrossvalScripts(unittest.TestCase):
                         "ep0dp2", "ep8dp0", "afd:0a1f", "afd:2a", "afd:2f6a"):
                 with self.assertRaises(ValueError):
                     schema.parse_serving_style(bad)
-            pre, dec = schema.disagg_gpu_sets(
-                schema.parse_serving_style("disagg:2p2d"), [0, 1, 2, 3])
-            self.assertEqual((pre, dec), ([0, 1], [2, 3]))
-            self.assertFalse(set(pre) & set(dec))
-            with self.assertRaises(ValueError):
-                schema.disagg_gpu_sets(
-                    schema.parse_serving_style("disagg:2p2d"), [0, 1, 2])
             schema.check_ep_legal(8, 256)  # DeepSeek-V4-Flash: 256 experts
             with self.assertRaises(ValueError):
                 schema.check_ep_legal(7, 256)
@@ -271,15 +264,6 @@ class CrossvalScripts(unittest.TestCase):
             engine = SimpleNamespace(serving_style="aggregated", tp=4, pp=2)
             self.assertEqual(schema.device_count(engine), 8)
             self.assertTrue(schema.serving_style_compatible("aggregated", "aggregated"))
-            # the prefill producer and decode consumer share port and pool size with distinct ranks; a wrong role raises.
-            pre = schema.disagg_kv_config("kv_producer", 0, "P2pConnector")
-            dec = schema.disagg_kv_config("kv_consumer", 1, "P2pConnector")
-            self.assertEqual(pre["kv_role"], "kv_producer")
-            self.assertEqual(dec["kv_rank"], 1)
-            self.assertEqual(pre["kv_port"], dec["kv_port"])
-            self.assertEqual(pre["kv_parallel_size"], dec["kv_parallel_size"])
-            with self.assertRaises(ValueError):
-                schema.disagg_kv_config("decode", 1, "P2pConnector")
         finally:
             sys.path.pop(0)
 

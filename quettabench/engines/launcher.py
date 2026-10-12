@@ -1,14 +1,6 @@
-"""Launcher: start an engine server from a LaunchSpec, wait for its health
-check, record results/<run>/engine.json, and stop it without leaving orphans.
+"""Launcher: start an engine server from a LaunchSpec, locally in its own process group or detached in docker, wait for its health check, write results/<run>/engine.json, and stop it with every child.
 
-local: the server runs in its own process group and Handle.stop() signals the
-whole group, so tensor-parallel workers die with it; this replaces
-scripts/clean_orphan_gpus.py. docker: the server runs detached in engine.image
-(docker_argv), `docker logs -f` streams into server.log, and Handle.stop()
-runs `docker stop`, waits for the stream to drain, then `docker rm -f`; the
-container is not --rm, so a crashed engine's log is still there to read. A
-container that fails to start has `docker logs` written to server.log and
-is removed. The docker path has not been run against a real daemon.
+A container is not --rm, so a crashed engine's log stays readable; the docker path has not run against a real daemon.
 """
 
 import glob

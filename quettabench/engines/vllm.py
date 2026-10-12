@@ -1,42 +1,7 @@
-"""vLLM adapter: server argv and in-process kwargs from one field table.
+"""vLLM adapter: one field table gives the `vllm serve` argv and the in-process vllm.LLM kwargs.
 
-No vLLM version is pinned (tests/golden/REPORT.md), so every flag and kwarg
-here is one a launch on real GPUs already used:
-
-  argv   the H200 campaign harness v4sweep.py (v4bench_backup_20260928):
-         `vllm serve <model> --port P --tensor-parallel-size 8
-         --kv-cache-dtype fp8 --enable-expert-parallel --max-num-seqs 32
-         --max-num-batched-tokens 4096 --gpu-memory-utilization 0.95
-         --max-model-len ...`; scripts/launch_server.sh:86-96 and
-         scripts/sweep_all_profiles.sh:109-119 for --dtype,
-         --enable-chunked-prefill, --enable-prefix-caching and
-         --trust-remote-code; sweep_all_profiles.sh:19,26 (env). Both
-         scripts retired in e50717f.
-         max_num_seqs and max_num_batched_tokens come in through extra.vllm.
-  kwargs quettabench/modes/vmin_fit.py LLM(...) and legacy/trace_serve.py
-         AsyncEngineArgs(...) as they stood at 90952ea (retired in
-         0b71b64 and b2eaa97)
-  nsys   scripts/crossval/prof.sh:16 (retired in bd9815f)
-
-The server binary is `vllm` on PATH, or the `vllm` script beside
-hardware.provision.py when a venv is provisioned (v4sweep ran {VENV}/vllm).
-
-A field whose value has no flag in those launches lands in
-server_unsupported: the launcher refuses the spec, a timing grid refuses it
-at translate, and the in-process path of a mode.returns run still builds.
-Today that is pp > 1 and cudagraph=False (the sweeps'
---enforce-eager is a different switch, not proven equal to cudagraph_mode
-NONE). quant adds no server flag: v4sweep.py launched the GLM fp8 checkpoints
-with no --quantization and the server read the method from the checkpoint
-config; in-process the kwarg is what vmin_fit passed. serving_style other
-than aggregated and instrumentation=torch have no flag or kwarg anywhere and
-raise. So does engine.layers: the slice runs (vllm_tf.py, vllm_baseline.py)
-pointed vLLM at a checkpoint dir slice_truncate.py had cut, never a layer
-flag, so a slice is engine.model naming such a dir.
-
-The two sides differ by design in their constants: the server gets
---enable-chunked-prefill and --trust-remote-code as both scripts passed them;
-the kwargs get disable_log_stats and trust_remote_code as vmin_fit passed them.
+A value with no server flag (pp > 1, cudagraph=False) lands in server_unsupported: a launch or a timing grid refuses it, a mode.returns run builds in-process.
+quant adds no server flag, since the server reads it from the checkpoint; a slice run is engine.model naming a truncated checkpoint dir.
 """
 
 from pathlib import Path
@@ -59,8 +24,7 @@ SERVER_ENV = {
     "VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS": "1",  # sizes KV after graph capture
 }
 KWARGS = {"disable_log_stats": True, "trust_remote_code": True}
-# extra.vllm.api_key goes to the server as this env var, redacted by name,
-# not as --api-key, which vLLM's startup args log would print.
+# extra.vllm.api_key goes in this env var: vLLM's startup log would print --api-key
 API_KEY_ENV = "VLLM_API_KEY"
 
 

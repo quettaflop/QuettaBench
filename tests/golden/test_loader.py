@@ -12,7 +12,7 @@ from unittest import mock
 import yaml
 
 from quettabench.config import loader
-from quettabench.config.schema import check_ep_legal, disagg_gpu_sets, disagg_kv_config, parse_serving_style
+from quettabench.config.schema import check_ep_legal, parse_serving_style
 from quettabench.engines import base
 from tests.golden._harness import (
     AS_VMIN_FIT,
@@ -168,12 +168,9 @@ class ParseTimeFailuresGolden(unittest.TestCase):
             "serving_style": {spec: _error(parse_serving_style, spec) for spec in
                               ("disagg:0p1d", "disagg:2p", "ep4", "aggregate",
                                "disagg:1p1d:x", "EP8DP2")},
-            "disagg_oversubscribed": _error(
-                disagg_gpu_sets, parse_serving_style("disagg:4p5d"), list(range(8))),
             "ep_degree": {f"ep{ep}_experts{n}": _error(check_ep_legal, ep, n)
                           for ep, n in ((3, 256), (7, 288), (8, 256), (16, 288))},
             "link_profile": {**link, "message": loader_message(link["message"])},
-            "kv_role": _error(disagg_kv_config, "producer", 0, "NixlConnector"),
             "engine_unknown": _error(base.get, "tgi"),
         }
         unverified = [n for n in WORKLOAD_NAMES

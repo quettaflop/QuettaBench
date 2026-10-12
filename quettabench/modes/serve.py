@@ -43,9 +43,8 @@ from ..workloads.arrival import offered_rate, parse_arrival, rebase_arrivals
 from ..workloads.base import Request, workload_hash
 from ..workloads.sessions import SessionTrace, _sleep_until_elapsed, inter_turn_wait_s
 
-WORKLOAD_SCHEMA_VERSION = "distributional-synthetic-v1"
 TRACE_REQUEST_ID_PREFIX = "agenticbench"
-IDENTITY_EXIT = 3  # legacy/trace_serve.py's exit code for a workload mismatch
+IDENTITY_EXIT = 3  # exit code for a workload mismatch
 DEFAULT_WORKLOAD = WorkloadCfg()
 RESERVE_GIB = 5.0   # per GPU, held back from the KV budget for activations and graphs
 TEXT_TOKENS = 64    # mode.returns=text: greedy tokens decoded per cell
@@ -244,7 +243,7 @@ async def measure(trace, driver, mode, emit, workload, request_id):
 
 
 def serve_records(pairs, open_loop):
-    """trace_serve's records from the successful, counted rows: TTFT (whole
+    """The serving records from the successful, counted rows: TTFT (whole
     latency when no token came), wall-clock TPOT, output tokens, and the
     arrival burst windows bucket by (the slot grant under a closed loop)."""
     out = []
@@ -311,7 +310,7 @@ def goodput_search(start=1.0, max_iters=6, tol=0.1):
     """Generator bisection over speed: yields the next speed, receives whether
     that probe met the SLA. Doubles from start to the first FAIL, halves to
     the first PASS, then bisects until the bracket is within tol; at most
-    max_iters probes (legacy/trace_serve.py goodput_search)."""
+    max_iters probes."""
     lo = hi = None
     speed = start
     for _ in range(max_iters):
@@ -485,7 +484,7 @@ def graph_mode(engine):
 
 
 def meta(cfg, gpu, version, eval_pos, steps):
-    """META key -> value, in vmin_fit's order; expert_parallel only when on."""
+    """META key -> value, in the grid log's order; expert_parallel only when on."""
     e, h = cfg.engine, cfg.hardware
     out = {"gpu": gpu, "vllm": version, "model": e.model_name, "dtype": e.dtype,
            "grid": cfg.mode.grid, "mode": graph_mode(e), "eval_pos": eval_pos,
@@ -507,7 +506,7 @@ def capacity(engine, gpu_bytes, kv_b):
 
 
 def measure_cell(driver, writer, mode, steps, prompts, cell):
-    """The cell's batches in vmin_fit's order: the text run when asked, the
+    """The cell's batches in order: the text run when asked, the
     warm run at max(steps), then the fit passes. Returns the fit rows."""
     def batch(step, phase, attempt=None, **extra):
         requests = [Request(ids, len(ids), output_length=step) for ids in prompts]
