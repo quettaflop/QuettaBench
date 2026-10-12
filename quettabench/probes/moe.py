@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""Grouped-MoE expert-kernel grid (vLLM fused_experts) -> moe/{gpu}.csv rows and routing-kernel fits -> moe/{gpu}_routing.json.
---graph times graphed decode; --routing dumps one MoE block's input, output and routing for an engine-side diff.
-"""
+"""Grouped-MoE expert-kernel grid (vLLM fused_experts) -> moe/{gpu}.csv rows and routing-kernel fits -> moe/{gpu}_routing.json."""
 
 from __future__ import annotations
 
@@ -78,7 +76,7 @@ def _time(fn) -> float:
 
 
 def _fp8_quant_config(e, inter, hidden, dev):
-    """vLLM's FusedMoEQuantConfig for block-scaled FP8 experts; scales are positive O(1e-2) since a zero or NaN scale can take another code path; vllm is imported here, only for fp8."""
+    """vLLM's FusedMoEQuantConfig for block-scaled FP8 experts; vllm is imported here, only for fp8."""
     from vllm.model_executor.layers.fused_moe.config import (
         fp8_w8a8_moe_quant_config,
     )

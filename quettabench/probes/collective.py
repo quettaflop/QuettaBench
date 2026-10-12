@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""NCCL collective microbenchmark under torchrun: every op LLM inference emits across message sizes.
-Rank 0 emits the rows of collectives/{gpu}_tp{world}.csv and prints the tp_comm: YAML block; run it once per world size.
-"""
+"""NCCL collective microbenchmark under torchrun: every op LLM inference emits across message sizes; run once per world size."""
 
 from __future__ import annotations
 
@@ -17,10 +15,7 @@ _ITERS, _WARMUP = 50, 10
 
 
 def _time_op(op: str, n_elems: int, world: int, iters: int, warmup: int) -> float:
-    """Amortized wall seconds per op call over an n_elems bf16 buffer.
-
-    Timing the back-to-back loop lets launch overhead pipeline away, matching graphed decode; per-op event timing would over-price tp_comm.
-    """
+    """Amortized wall seconds per op call over an n_elems bf16 buffer, timed as a back-to-back loop like graphed decode."""
     # n_elems is the full logical buffer, so ops compare at equal bytes.
     full = torch.ones(n_elems, dtype=_DTYPE, device="cuda")
     shard = torch.ones(max(1, n_elems // world), dtype=_DTYPE, device="cuda")

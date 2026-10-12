@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""Chunked-prefill attention (q_len new tokens over resident cached tokens) -> fa3_cross/{gpu}.csv rows, per layer, eager.
---paged times vLLM's paged call (block_table, seqused_k).
-"""
+"""Chunked-prefill attention (q_len new tokens over cached tokens) -> fa3_cross/{gpu}.csv rows, per layer, eager."""
 
 from __future__ import annotations
 

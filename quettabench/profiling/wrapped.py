@@ -1,6 +1,4 @@
-"""Wrapped profiler sources: board energy, dollar cost and gsm8k accuracy.
-
-Devices come from engine.json or the Config; gsm8k answers come from any `generate(prompt_ids, max_tokens) -> text` callable."""
+"""Wrapped profiler sources: board energy, dollar cost and gsm8k accuracy."""
 
 import json
 import re

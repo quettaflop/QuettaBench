@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""Concurrency-1 live-server prefill TTFT split by (new, cached) tokens: client SSE wall, the server's Prometheus queue/prefill/frontend deltas, and an nsys device split (--emit-nsys-cmd).
-
-The `new` tail is randomized per trial so warmup cannot turn a miss into a hit.
-"""
+"""Concurrency-1 live-server prefill TTFT split by (new, cached) tokens: client SSE wall, server Prometheus deltas and an nsys device split."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""What every kernel probe shares: ProbeRow, the Probe ABC, the output arguments, the run record, launch_vllm for live-server probes, and remote_probe's ssh and rsync."""
+"""What every kernel probe shares: ProbeRow, the Probe ABC, the output arguments, the run record, launch_vllm and remote_probe."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ _WRITER: RunWriter | None = None
 
 @dataclasses.dataclass(frozen=True)
 class ProbeRow:
-    """One measured row of a QuettaSim table: table is <kind>/<file> (gemm/<gpu>.csv), columns are key then value, timing picks the dir. A JSON table's row is key {"entry": name}, value {"value": ...}."""
+    """One measured row of a QuettaSim table: table is <kind>/<file>, columns are key then value, timing picks the dir."""
 
     probe: str
     table: str
@@ -86,7 +86,7 @@ def run_config(cfg: Config, writer: RunWriter | None = None):
 
 
 def add_output_args(ap: argparse.ArgumentParser) -> None:
-    """Add --gpu-label, --out (default results/probes/<gpu-label>) and --run-id; each run records under <out>/<probe>/<run-id>/. Flags are taken only as written, so export reads probe_args as the probe did."""
+    """Add --gpu-label, --out (default results/probes/<gpu-label>) and --run-id; each run records under <out>/<probe>/<run-id>/."""
     ap.allow_abbrev = False
     ap.add_argument(
         "--gpu-label",
@@ -189,10 +189,7 @@ def launch_vllm(
     vllm_flags: dict | None = None,
     timeout_s: int = 1800,
 ):
-    """Start vLLM as `qbench run` does: a Config through the vllm adapter's translate, then launcher.start into run_dir. vllm_flags go in as engine.extra.vllm.
-
-    The hardware is run_config's when `qbench run` started the probe, else the defaults. Returns the Handle; the caller stops it.
-    """
+    """Start vLLM as `qbench run` does, via the vllm adapter and launcher.start into run_dir; returns the Handle, which the caller stops."""
     # Imported here: remote kernel-probe hosts have no engine stack.
     from quettabench.engines import launcher, vllm
 
@@ -273,10 +270,7 @@ def _finish_here(run_dir: Path) -> None:
 
 
 def remote_probe(argv=None, run=subprocess.run, now=None) -> int:
-    """Run a probe in a remote `mktemp -d` dir with --run-id from this machine's clock, always pull its out/ into results/probes/<gpu>/ without overwriting, stamp it, then remove that dir.
-
-    Returns the remote exit code; a failed or interrupted pull keeps the remote dir and says where it is.
-    """
+    """Run a probe in a remote temp dir, pull its out/ into results/probes/<gpu>/ without overwriting, then remove that dir; returns the remote exit code."""
     a = _remote_args(argv)
     ssh = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=30", a.host]
     rsh = "ssh -o BatchMode=yes -o ConnectTimeout=30"

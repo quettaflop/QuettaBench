@@ -1,6 +1,4 @@
-"""Attach-only profiler: reads results/<run>/ (engine.json, run.json), runs the asked-for sources and merges their sections into profile.json.
-
-Never launches an engine or drives load. A source that fails is recorded under `errors` and the others still run."""
+"""Attach-only profiler: reads results/<run>/, runs the asked-for sources and merges their sections into profile.json."""
 
 import argparse
 import json

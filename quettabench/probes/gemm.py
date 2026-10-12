@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""GEMM latency grid (M, N, K) -> gemm/{gpu}.csv rows (gemm_wide/ with --wide) for kernel_composed's GemmTable.
---ncu and --graph are dispatch-free and export to graph/, eager to eager/; --dtype fp8 writes {gpu}_fp8.csv.
-"""
+"""GEMM latency grid (M, N, K) -> gemm/{gpu}.csv rows for kernel_composed's GemmTable."""
 
 from __future__ import annotations
 

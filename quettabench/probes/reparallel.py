@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""Cost of switching parallelism in place over NVLink, under torchrun: tp reshard, dp broadcast, ep restage, pp, kv, whole PD-plan and cross-node modes.
-Rank 0 emits the rows of reparallel/<gpu>_reshard[_<mode>].csv and prints the floor + per-byte fit per (tp_from, tp_to).
-"""
+"""Cost of switching parallelism in place over NVLink, under torchrun: tp reshard, dp broadcast, ep restage, pp, kv and cross-node modes."""
 
 from __future__ import annotations
 
@@ -392,10 +390,7 @@ def _measure_pp(a, rank: int, world: int, _get_groups) -> list[dict]:
 
 
 def _measure_kv(a, rank: int, world: int, _get_groups) -> list[dict]:
-    """In-flight paged-KV reshard on tp down, as an all-gather of a contiguous per-rank KV buffer; a pool that cannot repack pays the slower kv_transfer path instead.
-
-    Buffer per rank = 2 (K+V) * tokens * heads_per_rank * head_dim * 2 (bf16) * layers.
-    """
+    """In-flight paged-KV reshard on tp down, as an all-gather of a contiguous per-rank KV buffer."""
     out_rows: list[dict] = []
     k = 2  # tp4 -> tp2
     my_group = _get_groups(k)[rank // k]
@@ -438,9 +433,7 @@ def _measure_kv(a, rank: int, world: int, _get_groups) -> list[dict]:
 
 
 def _measure_xnode(a, rank: int, world: int) -> list[dict]:
-    """Cross-node link rates for the reshard model; launch with torchrun --nnodes=2.
-    xpair{n} times n concurrent P2P pairs across the nodes; xallgather times gpn concurrent 2-way all-gathers spanning them.
-    """
+    """Cross-node link rates for the reshard model; launch with torchrun --nnodes=2."""
     gpn = int(os.environ.get("LOCAL_WORLD_SIZE", world))
     n_nodes = world // gpn
     out_rows: list[dict] = []
@@ -537,20 +530,14 @@ _UNITS = 24  # per axis: LCM of 1, 2, 3, 4, 6, 8
 
 
 def _pool_cells(tp: int, pp: int, stage: int, t: int) -> set[int]:
-    """Cells of the row-major (layers x width) weight grid held by rank (stage, t); a stage holds a row band and a tp rank a column band.
-
-    Two axes are needed: tp8 and tp4xpp2 each hold 1/8 of W but sliced differently, so most of the new shard must be fetched.
-    """
+    """Cells of the row-major (layers x width) weight grid held by rank (stage, t): a stage holds a row band, a tp rank a column band."""
     rows = range(stage * _UNITS // pp, (stage + 1) * _UNITS // pp)
     cols = range(t * _UNITS // tp, (t + 1) * _UNITS // tp)
     return {r * _UNITS + c for r in rows for c in cols}
 
 
 def _plan_owner_units(spec: str, world: int) -> dict[int, set[int]]:
-    """Map each rank to the weight-grid cells it holds under one plan side.
-
-    spec is comma-separated pools, each 'tp:dp' or 'tp:pp:dp'. Ranks fill pools in order, each replica stage-major with tp inside a stage (vLLM's rank order).
-    """
+    """Map each rank to the weight-grid cells it holds under one plan side; spec is comma-separated pools, each 'tp:dp' or 'tp:pp:dp'."""
     owner: dict[int, set[int]] = {}
     r = 0
     for pool in spec.split(","):
@@ -572,10 +559,7 @@ def _plan_owner_units(spec: str, world: int) -> dict[int, set[int]]:
 def _plan_relabel(
     old_own: dict[int, set[int]], new_own: dict[int, set[int]], world: int, gpus_per_node: int | None = None
 ) -> dict[int, int]:
-    """Greedy max-overlap map of physical GPU to new-plan slot, deterministic so every rank agrees without communication.
-
-    The cost model assumes this relabel; rank-to-rank would cost the pd_4x4 swap W/2 instead of 0. gpus_per_node keeps each GPU on its own node.
-    """
+    """Greedy max-overlap map of physical GPU to new-plan slot, deterministic so every rank agrees without communication."""
     gpn = gpus_per_node or world
     edges = sorted(
         ((len(old_own[p] & new_own[s]), p, s) for p in range(world) for s in range(world) if p // gpn == s // gpn),

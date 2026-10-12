@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""TP all-reduce through vLLM's GroupCoordinator next to plain NCCL, under torchrun.
-Rank 0 emits the vLLM path as all_reduce rows of collectives/{gpu}_tp{N}.csv and both paths as rows of ..._nccl_vs_vllm.csv.
-"""
+"""TP all-reduce through vLLM's GroupCoordinator next to plain NCCL, under torchrun."""
 
 from __future__ import annotations
 

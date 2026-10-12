@@ -1,6 +1,4 @@
-"""Kernel timing shared by the probes: CUDA-graph replay, and NCU per-kernel durations.
-Graph replay works where NCU counters are locked (RmProfilingAdminOnly=1).
-"""
+"""Kernel timing shared by the probes: CUDA-graph replay, and NCU per-kernel durations."""
 
 from __future__ import annotations
 
@@ -104,7 +102,7 @@ def ncu_kernel_durations(inner: str, ncu_bin: str) -> list[tuple[str, float]]:
 
 
 def ncu_op_us(inner: str, ncu_bin: str, reps: int, exclude: tuple[str, ...] = ("at::",)) -> float | None:
-    """Kernel us of one op call: the snippet calls the op `reps` times; the op's kernels (minus `exclude`) are summed per invocation and the min taken. None when NCU gave no table or the kernel count is not a multiple of reps (an autotune leak)."""
+    """Kernel us of one op call: per-invocation sum of the op's kernels (minus `exclude`), min over reps; None if NCU gave no usable table."""
     durs = [us for kn, us in ncu_kernel_durations(inner, ncu_bin) if not any(t in kn for t in exclude)]
     if not durs or reps <= 0 or len(durs) % reps != 0:
         return None

@@ -1,6 +1,4 @@
-"""Live-server profiler sources that price against QuettaSim: the device-YAML frontend and serving blocks, and a PD pair's host cost.
-Standalone: python -m quettabench.profiling.frontend {frontend|pd_host} --device-yaml <yaml> ...
-"""
+"""Live-server frontend and PD host profiler sources; standalone with --device-yaml <yaml>."""
 
 from __future__ import annotations
 
@@ -84,9 +82,7 @@ def _linfit(xs: list[float], ys: list[float]) -> tuple[float, float]:
 
 
 def _conc_sweep(a, cost, model):
-    """Concurrent herds of unique ~512-token prompts; returns (mult_curve points, rows).
-
-    mult is (measured median - sim frontend-off median) over the c=1 residual. Each point runs an unmeasured herd first because a new batch shape triggers one-time autotune work."""
+    """Concurrent herds of unique ~512-token prompts; returns (mult_curve points, rows)."""
 
     def herd(c: int) -> list[tuple[float, float, int]]:
         prompts = [_prompt(512) for _ in range(c)]
@@ -152,9 +148,7 @@ def frontend_parser():
 
 
 def frontend_probe(a):
-    """Sweep a.base_url and return {frontend, serving, conc}; conc rows are [c, median ttft ms, sim frontend-off ms].
-
-    Each value is measured latency minus the compute-only prediction."""
+    """Sweep a.base_url and return {frontend, serving, conc}; each value is measured latency minus the compute-only prediction."""
     gpu = load_kernel_gpu(Path(a.device_yaml))
     # Strip the host terms the yaml already carries, or the residual counts them twice.
     gpu = dataclasses.replace(
@@ -433,9 +427,7 @@ def pd_host_parser() -> argparse.ArgumentParser:
 
 
 def pd_host_probe(a) -> list[dict]:
-    """Run the cold, warm, turn and herd phases through a.proxy_url; one COLS row per scored request.
-
-    Residuals are the proxy log's latency minus the sim prediction: P is prefill_s - sim prefill, D is d_first - sim first step - sim pull."""
+    """Run the cold, warm, turn and herd phases through a.proxy_url; one COLS row per scored request."""
     bw, lat, pdu = (float(x) for x in a.link.split(","))
     sim = SimSide(a.device_yaml, a.model_yaml, a.tp, Link(bw, lat, pdu))
     pr = Prompter(a.tokenizer)

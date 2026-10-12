@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""FA attention grids for one head config on vLLM's flash_attn_varlen_func: decode (kv_len x batch) -> flash_attn/{gpu}.csv rows, prefill (seq) -> fa3_prefill/{gpu}.csv rows, latency x --layers.
-
-Decode is NCU (--ncu), graph replay (--graph) or eager; prefill is always eager, as serving runs it.
-"""
+"""FA attention grids on vLLM's flash_attn_varlen_func: decode -> flash_attn/{gpu}.csv rows, prefill -> fa3_prefill/{gpu}.csv rows."""
 
 from __future__ import annotations
 

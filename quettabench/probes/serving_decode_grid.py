@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""Live-server (batch, context) grid of steady-state mid-stream ITL: launches vLLM, fires B concurrent completion streams per cell and records SSE timestamps to --out-raw.
-
-`just export --only serving_decode_grid` builds the grid CSV from the raw runs with summarize_cell from quettabench.metrics.core.
-"""
+"""Live-server (batch, context) grid of steady-state mid-stream ITL: B concurrent completion streams per cell, SSE timestamps to --out-raw."""
 
 from __future__ import annotations
 
@@ -85,7 +82,7 @@ def lattice_cells(
 
 
 def build_lattice_for_pool(pool_tokens: int) -> dict[int, tuple[int, ...]]:
-    """Lattice for another pool (the tp2 leg): the same B rows and T menu, keeping per row the base Ts plus the largest menu Ts under the cap, as the tp4 rows were derived."""
+    """Lattice for another pool (the tp2 leg): the same B rows and T menu, keeping the base Ts plus the largest menu Ts under the cap."""
     cap = CAP_FRAC * pool_tokens
     out: dict[int, tuple[int, ...]] = {}
     for b in (1, 8, 32, 80, 160, 256, 320):

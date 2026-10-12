@@ -1,6 +1,4 @@
-"""Native profiler sources: the /metrics scrape, armed trace files, nsys kernel tables, and the frontend, pd_host and kv_transfer probes.
-
-Counters on /metrics are cumulative since the server started, so a scrape after a run includes warmup."""
+"""Native profiler sources: the /metrics scrape, armed trace files, nsys kernel tables, and the frontend, pd_host and kv_transfer probes."""
 
 import importlib
 import json
@@ -104,10 +102,7 @@ def _merged(intervals):
 
 
 def kernel_summary(results_dir, steps, window=None, subtract=None, top=25, gap_us=20.0, nsys="nsys"):
-    """profile.json `kernels` per decode step from the armed nsys trace, exported once to <results_dir>/nsys.sqlite.
-
-    window is an NVTX range (default the whole capture); subtract is a range whose totals come off first. Per device, both the summed duration and the union of intervals are reported.
-    """
+    """profile.json `kernels` per decode step from the armed nsys trace, exported once to <results_dir>/nsys.sqlite."""
     results_dir = Path(results_dir)
     db = results_dir / "nsys.sqlite"
     if not db.exists():

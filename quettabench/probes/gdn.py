@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""Gated-DeltaNet kernel grid on vLLM's FLA ops: prefill (eager) -> gdn/{gpu}_{geom}_prefill.csv, decode (NCU with --ncu, else eager) -> gdn/{gpu}_{geom}_decode.csv.
-Rows hold per-call median us and us x n_linear (all GDN layers).
-"""
+"""Gated-DeltaNet kernel grid on vLLM's FLA ops: prefill -> gdn/{gpu}_{geom}_prefill.csv, decode -> gdn/{gpu}_{geom}_decode.csv."""
 
 from __future__ import annotations
 

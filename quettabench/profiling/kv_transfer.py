@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""Times a prefill to decode KV hand-off between two GPUs through NIXL/UCX, laid out as vLLM's NixlConnector does; run under torchrun with two ranks.
-Rank 0 emits the rows of kv_transfer/<gpu>_nixl.csv and prints the floor + per-byte fit per (kv_heads_per_rank, layout).
-"""
+"""Times a prefill to decode KV hand-off between two GPUs through NIXL/UCX; run under torchrun with two ranks."""
 
 from __future__ import annotations
 

@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""Elementwise kernel affine fits -> elementwise/{gpu}.json: latency_us = floor_us + bytes / eff_bw.
---graph times graph replay; --vllm times vLLM's fused kernels instead of torch-chain proxies.
-"""
+"""Elementwise kernel affine fits -> elementwise/{gpu}.json: latency_us = floor_us + bytes / eff_bw."""
 
 from __future__ import annotations
 
@@ -60,7 +58,7 @@ def op_for(kernel, n, dev, dt):
 
 
 def op_for_vllm(kernel, n, dev, dt):
-    """vLLM's own kernel for each composition op; the torch-chain proxies launch several kernels where vLLM launches one, and overpriced fused ops by 2-3 ms/step at 48 layers when measured. n means what the composition's elements means for that kernel. vllm is imported here: only --vllm needs it."""
+    """vLLM's own kernel for each composition op; vllm is imported here, only --vllm needs it."""
     from vllm import _custom_ops as ops
 
     if kernel == "rmsnorm":
