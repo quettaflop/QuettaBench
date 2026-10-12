@@ -3,6 +3,7 @@
 import ast
 import os
 import pkgutil
+import re
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -17,6 +18,8 @@ STUBS = ROOT / "tests" / "_stubs"
 MODULES = sorted(
     m.name for m in pkgutil.walk_packages(quettabench.__path__, "quettabench.") if not m.name.endswith(".__main__")
 )
+# GPU-only or external packages the CPU suite lacks; any other missing module is a typo or a bug.
+OPTIONAL_PACKAGES = {"torch", "vllm", "triton", "fla", "safetensors", "engine"}
 
 
 def fresh_import(code):
@@ -37,8 +40,8 @@ def test_every_module_imports_alone():
         if proc.returncode == 0:
             continue
         last = proc.stderr.strip().splitlines()[-1] if proc.stderr.strip() else ""
-        third_party = str(STUBS) in proc.stderr or "site-packages" in proc.stderr
-        if "'quettabench" not in last and (last.startswith("ModuleNotFoundError") or third_party):
+        missing = re.match(r"ModuleNotFoundError: No module named '([^']+)'", last)
+        if missing and missing[1].split(".")[0] in OPTIONAL_PACKAGES:
             skipped.append(name)
         else:
             failures.append(f"{name}: {last}")
