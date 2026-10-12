@@ -118,7 +118,7 @@ def download_trajectory(client: storage.Client, task_prefix: str) -> dict | None
         return None
 
 
-def process_run(client: storage.Client, run_prefix: str, source: str) -> list[dict]:
+def fetch_run_trajectories(client: storage.Client, run_prefix: str, source: str) -> list[dict]:
     """Session dicts for the first copy of each task in a run, skipping tasks under 2 turns."""
     run_name = run_prefix.rstrip("/").split("/")[-1]
     print(f"\n--- Run: {run_name} ---")
@@ -183,7 +183,7 @@ def main():
 
         all_sessions = []
         for run_prefix in RUN_PREFIXES[source]:
-            sessions = process_run(client, run_prefix, source)
+            sessions = fetch_run_trajectories(client, run_prefix, source)
             all_sessions.extend(sessions)
 
         seen = set()

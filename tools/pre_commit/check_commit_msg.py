@@ -12,7 +12,7 @@ SUBJECT = re.compile(r"^[a-z][a-z0-9_./-]*: \S")
 GIT_SUBJECT = re.compile(r"^(Merge |Revert \"|fixup! |squash! )")
 # Any "<Word>-by:" trailer or "generated with/by" line: commits carry no authorship beyond the author field.
 ATTRIBUTION = re.compile(r"^\s*[A-Za-z]+(?:-[A-Za-z]+)*-by:|generated (?:with|by)\b", re.IGNORECASE)
-DASHES = ("—", "–")
+DASHES = ("\u2014", "\u2013")
 
 
 def problems(message: str) -> list[str]:

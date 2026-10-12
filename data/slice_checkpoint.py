@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""Build a standalone 13-layer HF model dir from the downloaded Kimi-K3 slice (16 of 96 shards, layers 0-12).
-
-Symlinks the shards, truncates config.json and the weight index to the kept layers, copies the auxiliary files, then runs three checks: AutoConfig parses, every indexed shard exists, and tensor names and shapes match the meta-built model.
+"""Build a 13-layer HF model dir from the downloaded Kimi-K3 slice (layers 0-12) and check that it loads.
 Usage: PYTHONPATH=<fla-dir> python3 data/slice_checkpoint.py <slice-dir>/model <slice-dir>/truncated
 """
 
@@ -12,7 +10,7 @@ import shutil
 import struct
 import sys
 
-N_LAYERS = 13
+N_LAYERS = 13  # layers 0-12 sit in the 16 downloaded shards
 # the checkpoint dir name is not a Python identifier, so its modeling code is copied into this package
 PKG = "kimi_k3_slice_mod"
 PKG_FILES = ("configuration_kimi_k3.py", "modeling_kimi_linear.py")
