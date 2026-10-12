@@ -1,4 +1,4 @@
-"""qbench: the one command line; `run` is parsed here, the other commands get the rest of argv."""
+"""qbench CLI: `run` is parsed here, other commands get the rest of argv."""
 
 import argparse
 import importlib
@@ -16,7 +16,6 @@ DOORS = {
 
 
 def parser():
-    """run's flags, and one help line per delegated door."""
     ap = argparse.ArgumentParser(
         prog="qbench", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -47,7 +46,6 @@ def parser():
 
 
 def delegate(door, argv):
-    """module.main(argv) for a door."""
     return importlib.import_module(DOORS[door]).main(argv)
 
 

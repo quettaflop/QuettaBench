@@ -1,4 +1,4 @@
-# The engine-agnostic run vocabulary: one frozen Config per run, built by loader.py. Field defaults here are the "default" precedence level.
+# Frozen run vocabulary; field defaults are the "default" precedence level.
 import dataclasses
 import re
 from collections.abc import Mapping
@@ -10,7 +10,7 @@ NOT_ASKED = ("default", "model", "hardware")
 
 
 class ConfigError(ValueError):
-    """A config the loader refuses; the message names the file and key."""
+    """The message names the file and key."""
 
 
 PROMPT_MODES = ("distinct", "clone", "corpus", "trace")
@@ -185,13 +185,11 @@ class Config:
     origins: Mapping[str, str] = field(default_factory=dict)
 
     def to_dict(self):
-        """Plain nested dict of every value, origins included."""
         out = dataclasses.asdict(self)
         out["origins"] = dict(self.origins)
         return out
 
     def dump(self, origins=True, scrub=None):
-        """One `path = value` line per leaf, with its origin, for --dry-run; scrub (metrics.results.redact) rewrites the dict first."""
         lines = []
         d = self.to_dict()
         for path, value in flatten(scrub(d) if scrub else d, skip=("origins", "grid")):
@@ -208,7 +206,6 @@ SECTIONS = {"engine": EngineCfg, "workload": WorkloadCfg, "mode": ModeCfg, "hard
 
 
 def flatten(d, prefix="", skip=()):
-    """(dotted path, value) for each leaf; dicts nest one level under their field."""
     for k, v in d.items():
         if k in skip:
             continue
@@ -220,7 +217,6 @@ def flatten(d, prefix="", skip=()):
 
 
 def default_values():
-    """Flat {path: default} for every scalar field and every dict field."""
     out = {}
     for section, cls in SECTIONS.items():
         for f in dataclasses.fields(cls):
@@ -233,7 +229,6 @@ def default_values():
 
 
 def dict_field(path):
-    """The dict-valued field a path lands in, or None for a scalar field."""
     for df in DICT_KEYS:
         if path == df or path.startswith(df + "."):
             return df
@@ -242,7 +237,7 @@ def dict_field(path):
 
 # Serving-topology and expert-parallel rules: the loader refuses a Config that breaks them.
 def parse_serving_style(spec):
-    """Parse 'aggregated', 'disagg:<P>p<D>d', 'ep<N>dp<M>' or 'afd:<A>a<F>f' into {mode, ...degrees}; ValueError if malformed."""
+    """ValueError if malformed."""
     if spec in (None, "", "aggregated"):
         return {"mode": "aggregated"}
     m = re.fullmatch(r"disagg:(\d+)p(\d+)d", spec)
@@ -267,7 +262,6 @@ def parse_serving_style(spec):
 
 
 def device_count(engine):
-    """GPUs one run needs: the two pools for a disaggregated style, else tp * pp."""
     style = parse_serving_style(engine.serving_style)
     if style["mode"] == "afd":
         return style["attn"] + style["ffn"]
@@ -277,11 +271,10 @@ def device_count(engine):
 
 
 def check_ep_legal(ep, num_experts):
-    """Raise unless the ep degree divides the model's expert count, rather than let the engine fail deep in load."""
+    """Fail here rather than deep in engine load."""
     if num_experts % ep != 0:
         raise ValueError(f"ep={ep} does not divide {num_experts} experts")
 
 
 def serving_style_compatible(a, b):
-    """Two rows compare only when their serving topology matches."""
     return parse_serving_style(a)["mode"] == parse_serving_style(b)["mode"]

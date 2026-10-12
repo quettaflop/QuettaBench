@@ -1,4 +1,4 @@
-"""Maps environment variables to Config fields; read_env() and export() are the only reads and writes of os.environ."""
+"""Environment variables to Config fields; the only os.environ reads and writes."""
 
 import os
 
@@ -6,28 +6,26 @@ from quettabench.config.schema import ConfigError
 
 
 def _truthy(raw):
-    """True for 1, true, on or yes, in any case."""
     return raw.strip().lower() in {"1", "true", "on", "yes"}
 
 
 def _nonempty(raw):
-    """True for any non-empty value."""
     return bool(raw)
 
 
 def _attn_ffn(raw):
-    """'attn=N,ffn=M' as the serving style afd:<N>a<M>f; a missing or extra key raises ValueError."""
+    """'attn=N,ffn=M' as afd:<N>a<M>f; a missing or extra key raises ValueError."""
     pools = dict(part.split("=", 1) for part in raw.split(","))
     if set(pools) != {"attn", "ffn"}:
         raise ValueError(raw)
     return f"afd:{int(pools['attn'])}a{int(pools['ffn'])}f"
 
 
-# Two vars for one field with different values are refused instead of the first winning.
+# Two vars for one field with different values are refused.
 CLASHES = {"XVAL_TRACE": "XVAL_CORPUS", "XVAL_AFD": "XVAL_SERVING_STYLE"}
 
 
-# env var -> (Config path, converter, what the variable does).
+# env var -> (Config path, converter, description).
 ENV_MAP = {
     "XVAL_LINK_PROFILE": ("hardware.link_profile", str, "interconnect profile name"),
     "XVAL_BACKEND": ("hardware.backend", str, "GPU backend override"),
@@ -63,15 +61,15 @@ ENV_MAP = {
     "DS_ENGINE_SHA": ("provenance.engine_sha", str, "engine commit, used when QS_SHA is unset"),
     "CUDA_VISIBLE_DEVICES": ("hardware.visible_devices", str, "GPU ids the run may use"),
     "HF_HOME": ("hardware.hf_home", str, "Hugging Face cache dir"),
-    # Not a field: an input to backend auto-detection.
+    # Not a field: input to backend auto-detection.
     "TPU_NAME": ("detect.tpu_name", str, "TPU name"),
-    # Not a field: run.json's bench_sha where there is no .git (the docker image sets it).
+    # Not a field: bench_sha where there is no .git (the docker image sets it).
     "QBENCH_SHA": ("detect.bench_sha", str, "bench commit baked into the docker image"),
 }
 
 
 def read_env(env=None, only=None):
-    """{Config path: value} for every mapped var that is set and non-empty; clashing vars with different values raise ConfigError."""
+    """Clashing vars with different values raise ConfigError."""
     if env is None:
         env = os.environ
     out = {}
@@ -94,18 +92,17 @@ def read_env(env=None, only=None):
 
 
 def torchrun_rank():
-    """This process's torchrun RANK, or None outside torchrun."""
     rank = os.environ.get("RANK")
     return int(rank) if rank not in (None, "") else None
 
 
 def with_env(values):
-    """A copy of os.environ with values added, for a child that takes a secret through its environment rather than argv."""
+    """For a child that takes a secret through env rather than argv."""
     return {**os.environ, **{k: str(v) for k, v in values.items()}}
 
 
 def export(values):
-    """Set each non-empty value in os.environ, replacing what is there, and return the names set."""
+    """Returns the names set."""
     names = []
     for var, value in values.items():
         if value:

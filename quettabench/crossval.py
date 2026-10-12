@@ -1,4 +1,4 @@
-"""crossval <ours> <theirs>: pair two measured runs cell by cell and decide, per row, a ratio or a withhold."""
+"""Pair two measured runs cell by cell: a ratio or a withhold per row."""
 
 import argparse
 import calendar
@@ -41,7 +41,6 @@ class Side:
 
 
 def header(**known):
-    """A header with every key present; unknown facts are None."""
     keys = (
         "gpu",
         "engine",
@@ -88,12 +87,11 @@ def row(ctx, bs, tp, ms_per_step, *, group, kv, measured, ms_at_eval=None, eval_
 
 
 def age_days(side, now):
-    """Days from the side's timestamp (UTC, Z form) to now (epoch seconds)."""
     return (now - calendar.timegm(time.strptime(side.header["timestamp"], UTC_FORMAT))) / 86400
 
 
 def _loop_points(text, notes):
-    """(ctx, bs, tp) -> (ms, group, kv) from the engine's LOOP lines; mode=eager rows get their own group."""
+    """From LOOP lines; eager rows get their own group."""
     pts = {}
     gdns = set()
     for line in text.splitlines():
@@ -111,7 +109,7 @@ def _loop_points(text, notes):
 
 
 def _batch_bench_points(text, notes):
-    """(ctx, bs, tp) -> (ms, "batch_bench", kv) from the deepseek engine's bench summary (median graph-replay decode step); kv is "?"."""
+    """kv is "?"; ms is the median graph-replay step."""
     pts = {}
     truncated = unparsed = 0
     for line in text.splitlines():
@@ -135,7 +133,7 @@ def _batch_bench_points(text, notes):
 
 
 def bench_log_points(path):
-    """((ctx, bs, tp) -> (ms, group, kv), method, notes) from a bench log; criterion groups sync every step, so their ratios are withheld."""
+    """Criterion groups sync every step, so their ratios are withheld."""
     text = Path(path).read_text()
     notes = []
     bench = _batch_bench_points(text, notes)
@@ -152,14 +150,13 @@ def bench_log_points(path):
         tp = int(tp_suffix) if tp_suffix else 1
         ms = float(m.group("mid")) * MS[m.group("unit")]
         prev = by_key.get((ctx, bs, tp))
-        # The later entry wins, so an appended log supersedes stale runs.
+        # Later entry wins: an appended log supersedes stale runs.
         if prev is None or pref[base] <= pref.get(prev[1].partition("_tp")[0], 99):
             by_key[(ctx, bs, tp)] = (ms, group, None)
     return by_key, "criterion", notes
 
 
 def measured_row(key, ms, group, kv):
-    """A row the engine timed itself."""
     ctx, bs, tp = key
     return row(
         ctx, bs, tp, ms, group=group, kv=kv, measured=True, mode="eager" if group == "decode_loop_eager" else "graph"
@@ -175,12 +172,11 @@ ENGINE_FACTS = {
 
 
 def engine_facts(values):
-    """Header facts from flat {Config path: value} (env_map.read_env's shape)."""
     return {key: values[path] for path, key in ENGINE_FACTS.items() if path in values}
 
 
 def read_bench_log(path, engine_facts=None):
-    """The engine side from a bench log; NCCL, quant and serving style come from engine_facts, else None."""
+    """NCCL, quant and style come from engine_facts, else None."""
     points, method, notes = bench_log_points(path)
     rows = [measured_row(key, *point) for key, point in points.items()]
     facts = engine_facts or {}
@@ -188,7 +184,7 @@ def read_bench_log(path, engine_facts=None):
 
 
 def comm_bound_bs(model):
-    """comm_bound_bs from the model yaml of the run whose name or model display name is model; None means never comm-bound."""
+    """None means never comm-bound."""
     for run in sorted((CONFIGS / "runs").glob("*.yaml")):
         raw = yaml.safe_load(run.read_text())
         spec = yaml.safe_load((CONFIGS / "models" / f"{raw['model']}.yaml").read_text())
@@ -199,7 +195,7 @@ def comm_bound_bs(model):
 
 
 def read_baseline(path):
-    """The vLLM side from a baseline json; a point without ms_at_eval keeps it None."""
+    """ms stays None without ms_at_eval."""
     b = json.loads(Path(path).read_text())
     rows = [
         row(
@@ -245,12 +241,11 @@ def read_baseline(path):
 
 
 def _utc(iso):
-    """run.json's isoformat time as the baseline's second-resolution Z form."""
     return datetime.fromisoformat(iso).strftime(UTC_FORMAT) if iso else None
 
 
 def _fitted_row(step, kv, mode):
-    """A step-section cell, rounded as the grid RESULT line prints it."""
+    """Rounded as the grid RESULT line prints it."""
     ms_eval = step.get("ms_at_eval")
     return row(
         step["ctx"],
@@ -268,7 +263,6 @@ def _fitted_row(step, kv, mode):
 
 
 def read_rows(results_dir):
-    """Every requests.jsonl row of a run dir, in file order."""
     path = Path(results_dir) / "requests.jsonl"
     if not path.exists():
         return []
@@ -276,7 +270,7 @@ def read_rows(results_dir):
 
 
 def read_run(results_dir):
-    """A Side from run.json and requests.jsonl; measured cells take group, kv and method from the BenchDriver rows, header facts from summary.grid.meta."""
+    """Cells take group, kv and method from the BenchDriver rows."""
     d = Path(results_dir)
     run = json.loads((d / "run.json").read_text())
     prov, cfg = run["provenance"], run["config"]
@@ -336,13 +330,12 @@ def read_run(results_dir):
     )
 
 
-# Reference top-2 gap at or below which an argmax flip is a near tie: one bf16 step for logits in [16, 32).
+# Near-tie gap: one bf16 step for logits in [16, 32).
 NEAR_TIE_GAP = 0.125
 AGREE_MIN = 4  # leading tokens that count as agreeing
 
 
 def returned(rows, name):
-    """{request key: value of name} for the rows that carry it."""
     out, seen = {}, {}
     for i, r in enumerate(rows):
         if r.get(name) is None:
@@ -359,7 +352,6 @@ def returned(rows, name):
 
 
 def common_prefix(a, b):
-    """Leading positions where a and b agree."""
     n = 0
     for x, y in zip(a, b):
         if x != y:
@@ -369,7 +361,6 @@ def common_prefix(a, b):
 
 
 def greedy(ours_rows, theirs_rows):
-    """One row per request both runs returned tokens for, then a summary."""
     a, b = returned(ours_rows, "token_ids"), returned(theirs_rows, "token_ids")
     rows = []
     for key in sorted(set(a) & set(b)):
@@ -398,7 +389,6 @@ def greedy(ours_rows, theirs_rows):
 
 
 def logit(ours_rows, theirs_rows):
-    """A row per hard disagreement, then the summary with the FIDELITY verdict."""
     a, b = returned(ours_rows, "logits"), returned(theirs_rows, "logits")
     keys = sorted(set(a) & set(b))
     if not keys:
@@ -444,7 +434,7 @@ def logit(ours_rows, theirs_rows):
 
 
 def flips(rows, anchor_rows):
-    """(positions, argmax flips) of rows scored against anchor_rows."""
+    """(positions, argmax flips) against anchor_rows."""
     summary = logit(rows, anchor_rows)
     if not summary:
         return 0, 0
@@ -452,7 +442,7 @@ def flips(rows, anchor_rows):
 
 
 def band(ours_rows, anchor_rows, floor_runs):
-    """Slice acceptance: ours' argmax flips against the anchor are at most the worst floor run's; withheld when position counts differ."""
+    """Ours' flips at most the worst floor run's; withheld if positions differ."""
     positions, ours = flips(ours_rows, anchor_rows)
     floors = [flips(rows, anchor_rows) for rows in floor_runs]
     comparable = positions > 0 and all(p == positions for p, _ in floors)
@@ -468,12 +458,10 @@ def band(ours_rows, anchor_rows, floor_runs):
 
 
 def compare_runs(ours_rows, theirs_rows):
-    """Greedy then logit rows; empty when neither run returned anything."""
     return greedy(ours_rows, theirs_rows) + logit(ours_rows, theirs_rows)
 
 
 def render_agreement(rows):
-    """The AGREE / DISAGREE / SUMMARY lines and the FIDELITY and BAND lines."""
     lines = []
     for r in rows:
         kind = r["kind"]
@@ -543,7 +531,6 @@ class Report:
 
     @property
     def comparable(self):
-        """False when every ratio is withheld for the whole run."""
         return self.method_matched and not (self.serving_mismatch or self.quant_mismatch)
 
 
@@ -552,7 +539,7 @@ def _short(kv):
 
 
 def _nccl_mismatch(ours, theirs):
-    """theirs pinned an NCCL algo (else proto) that ours pins differently."""
+    """theirs pins an algo (else proto) that ours pins differently."""
     o, t = ours.header, theirs.header
     if t["nccl_algo"] and o["nccl_algo"] and t["nccl_algo"] != o["nccl_algo"]:
         return True
@@ -560,10 +547,9 @@ def _nccl_mismatch(ours, theirs):
 
 
 def pair_row(a, b, report):
-    """One paired cell: ours row a against theirs row b."""
     bs = a["bs"]
     ms_a = a["ms_at_eval"] or a["ms_per_step"]
-    # The KV-position-normalized number puts both columns at the same resident KV.
+    # Normalized to KV position: both columns at the same resident KV.
     ms_b = b["ms_at_eval"] or b["ms_per_step"]
     r2 = b["r2"] if b["r2"] is not None else float("nan")
     flags, withheld = [], []
@@ -607,7 +593,6 @@ def pair_row(a, b, report):
 
 
 def pair(ours, theirs, allow_method_mismatch=False, now=0.0):
-    """The Report for ours against theirs; now is epoch seconds for the age."""
     o, t = ours.header, theirs.header
     serving = (o["serving_style"] or "aggregated", t["serving_style"] or "aggregated")
     quant = (o["quant"] or t["quant"], t["quant"])
@@ -641,7 +626,6 @@ def _cells(keys):
 
 
 def render_preamble(report):
-    """Parser notes, theirs' header line, the warnings, and the tp check."""
     t, o = report.theirs.header, report.ours.header
     lines = list(report.ours.notes) + list(report.theirs.notes)
     nccl = t["nccl_algo"] or t["nccl_proto"]
@@ -682,7 +666,6 @@ def render_preamble(report):
 
 
 def render_table(report):
-    """The paired rows, the COMM footnote, and the unpaired cells."""
     lines = [
         (
             f"{'group':<20} {'ctx':>6} {'bs':>4} {'tp':>4} {'ours ms':>10} {'vllm ms':>9} "
@@ -710,7 +693,7 @@ def render_table(report):
 
 
 def render(report):
-    """The comparison text for report, then the agreement rows; no table when no cell pairs."""
+    """No table when no cell pairs."""
     lines = render_preamble(report)
     if report.rows:
         lines += render_table(report)
@@ -720,7 +703,6 @@ def render(report):
 
 
 def read_side(path, values):
-    """The Side at path: run dir, baseline json, or bench log."""
     path = Path(path)
     if path.is_dir():
         return read_run(path)
@@ -730,7 +712,6 @@ def read_side(path, values):
 
 
 def report_json(report):
-    """The Report as plain json-able data."""
     return json.loads(json.dumps(dataclasses.asdict(report), default=str))
 
 

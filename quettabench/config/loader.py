@@ -1,4 +1,4 @@
-"""Builds Configs from yaml, env and --set; precedence high to low is --set, env, run yaml, model yaml, hardware yaml, schema defaults."""
+"""Builds Configs; precedence: --set, env, run yaml, model yaml, hardware yaml, defaults."""
 
 import itertools
 import re
@@ -25,7 +25,6 @@ from quettabench.config.schema import (
 )
 from quettabench.workloads import arrival, live
 
-# model yaml key -> Config path
 MODEL_KEYS = {
     "name": "engine.model_name",
     "dtype": "engine.dtype",
@@ -48,10 +47,10 @@ RUN_KEYS = ("model", "engine", "workload", "mode", "hardware", "matrix")
 HARDWARE_FILE_KEYS = ("world", "timing_steps", "max_seq_headroom", "collective", "provision")
 GRIDS_KEYS = ("grids", "step_points")
 RATE_ARRIVALS = ("poisson", "ramp", "burst")
-# run_name is one plain dir name of at most 200 chars (clear_run_dir's sibling name must fit in 255), no trailing '.'.
+# At most 200 chars (clear_run_dir's sibling name must fit in 255), no trailing '.'.
 RUN_NAME = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._-]{0,198}[A-Za-z0-9_-])?")
 RESERVED_RUN_NAMES = ("probes", "xval", "baselines")
-# path -> (lowest, highest) allowed; None is no bound
+# None is no bound.
 RANGES = {
     "mode.concurrency": (1, None),
     "workload.num_requests": (1, None),
@@ -64,7 +63,6 @@ RANGES = {
 
 
 def _read_yaml(path):
-    """Parsed mapping from a yaml file; a missing file or a non-mapping is an error."""
     if not path.exists():
         raise ConfigError(f"{path}: no such file")
     raw = yaml.safe_load(path.read_text()) or {}
@@ -80,7 +78,6 @@ def _check_keys(raw, allowed, where):
 
 
 def _check_path(path, where):
-    """Raise unless path names a schema field or a key of a dict field."""
     if path in default_values():
         return
     df = dict_field(path)
@@ -93,7 +90,6 @@ def _check_path(path, where):
 
 
 def _flatten(raw, prefix, where):
-    """{dotted path: value} for one yaml section, every path checked."""
     out = {}
     for key, value in raw.items():
         path = f"{prefix}{key}"
@@ -139,7 +135,7 @@ def _read_grids(configs):
 
 
 def parse_set(item):
-    """'a.b=c' -> ('a.b', c) with c parsed as a yaml scalar (int, float, bool, null)."""
+    """c is parsed as a yaml scalar."""
     path, sep, text = item.partition("=")
     if not sep or not path:
         raise ConfigError(f"--set {item!r}: expected key=value")
@@ -147,7 +143,6 @@ def parse_set(item):
 
 
 def arrival_kind(spec, num_requests=0):
-    """The arrival kind of spec; raises if parse_arrival rejects it for num_requests requests."""
     try:
         arrival.parse_arrival(str(spec), num_requests)
     except ValueError as e:
@@ -158,7 +153,7 @@ def arrival_kind(spec, num_requests=0):
 
 
 def detect_backend(tpu_name):
-    """The accelerator from the tooling on PATH: nvidia-smi cuda, rocm-smi or amd-smi rocm, neuron-ls neuron, libtpu (or TPU_NAME) tpu, else cpu."""
+    """nvidia-smi cuda, rocm-smi/amd-smi rocm, neuron-ls neuron, libtpu tpu, else cpu."""
     for tool, backend in (("nvidia-smi", "cuda"), ("rocm-smi", "rocm"), ("amd-smi", "rocm"), ("neuron-ls", "neuron")):
         if shutil.which(tool):
             return backend
@@ -168,7 +163,7 @@ def detect_backend(tpu_name):
 
 
 def detect_link_profile(backend):
-    """nvlink when nvidia-smi topo shows an NV* link, else pcie; non-cuda backends take nvlink, the profile without NCCL pins."""
+    """Non-cuda backends take nvlink: the profile without NCCL pins."""
     if backend != "cuda":
         return "nvlink"
     try:
@@ -189,7 +184,7 @@ def _apply(values, origins, layer, origin):
 
 
 def _force(values, origins, path, value, by, where):
-    """Set a value a serve profile requires; an explicit contrary setting is refused."""
+    """An explicit contrary setting is refused."""
     if values[path] != value and origins.get(path, "default") != "default":
         raise ConfigError(
             f"{where}: {path}={values[path]!r} contradicts mode.serve_profile={values['mode.serve_profile']}"
@@ -199,7 +194,6 @@ def _force(values, origins, path, value, by, where):
 
 
 def _profile_prefix_caching(values, origins, where):
-    """Set engine.prefix_caching true (origin "profile") when the serve profile requires it; an explicit false is refused."""
     source = values["workload.source"]
     if values["mode.grid"] is not None or source not in live.PROFILES:
         return
@@ -214,13 +208,12 @@ def _profile_prefix_caching(values, origins, where):
 
 
 def _one_of(allowed):
-    """'a, b or c'."""
     words = [str(a) for a in allowed]
     return ", ".join(words[:-1]) + " or " + words[-1]
 
 
 def _validate(values, origins, allow_unverified, where):
-    # yaml reads `visible_devices: 0` or --set ...=1 as an int; 0 would read as unset.
+    # yaml reads `visible_devices: 0` as int 0, which would read as unset.
     if values["hardware.visible_devices"] is not None:
         values["hardware.visible_devices"] = str(values["hardware.visible_devices"])
     for path, allowed in CHOICES.items():
@@ -231,10 +224,10 @@ def _validate(values, origins, allow_unverified, where):
             raise ConfigError(f"{where}: {path} must be a number, got {values[path]!r}")
         if (low is not None and values[path] < low) or (high is not None and values[path] > high):
             raise ConfigError(f"{where}: {path} must be in [{low}, {high or 'inf'}], got {values[path]!r}")
-    # The schema rules raise ValueError; as ConfigError the CLI prints one line, message unchanged.
+    # Schema rules raise ValueError; ConfigError makes the CLI print one line.
     try:
         parse_serving_style(values["engine.serving_style"])
-        # num_experts None (no MoE fact recorded) skips the check.
+        # num_experts None skips the check.
         if values["engine.ep"] and values["engine.num_experts"] is not None:
             check_ep_legal(values["engine.tp"], values["engine.num_experts"])
     except ValueError as e:
@@ -263,7 +256,7 @@ def _validate(values, origins, allow_unverified, where):
     elif profile in ("single-turn", "multi-turn"):
         _force(values, origins, "engine.prefix_caching", True, by, where)
     _profile_prefix_caching(values, origins, where)
-    # A single-turn profile draws num_requests; other sources set their own count.
+    # A single-turn profile draws num_requests; other sources set their own.
     source = values["workload.source"]
     if (
         source.split("-")[0] in ("random", "synthetic")
@@ -326,7 +319,7 @@ def _build(values, origins, grid):
         if section in SECTIONS:
             parts[section][name] = value
     for path, value in values.items():
-        if not (isinstance(value, dict) and value):  # a filled dict has per-key origins
+        if not (isinstance(value, dict) and value):
             origins.setdefault(path, "default")
     return Config(
         **{s: cls(**parts[s]) for s, cls in SECTIONS.items()},
@@ -339,7 +332,6 @@ def _build(values, origins, grid):
 
 
 def _resolve(upper, configs, grids, step_points, detect, allow_unverified, where):
-    """One Config from the layers above the hardware yaml."""
     values, origins = default_values(), {}
 
     def pick(path):
@@ -362,7 +354,6 @@ def _resolve(upper, configs, grids, step_points, detect, allow_unverified, where
 
 
 def check_run_name(name, where):
-    """Refuse a run_name that is not one plain dir name, or is a reserved one."""
     if not RUN_NAME.fullmatch(name):
         raise ConfigError(
             f"{where}: run_name {name!r} must match {RUN_NAME.pattern}; it names the dir results/<run_name>/"
@@ -372,7 +363,7 @@ def check_run_name(name, where):
 
 
 def load(run_yaml, overrides=(), env=None):
-    """Configs for one run yaml: one, or one per point of its `matrix:`. env=None reads os.environ; the configs/ root is the run yaml's grandparent."""
+    """env=None reads os.environ; the configs/ root is the run yaml's grandparent."""
     run_path = Path(run_yaml)
     configs = run_path.resolve().parents[1]
     raw = _read_yaml(run_path)
