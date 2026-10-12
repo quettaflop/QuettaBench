@@ -7,19 +7,20 @@ name = "quettabench"
 version = "0.1.0"
 description = "LLM serving benchmark and QuettaServe-vs-vLLM cross-validator"
 requires-python = ">=3.10"
-# requirements.txt, kept in step by hand; probes add requirements-probe.txt.
 dependencies = [
     "aiohttp>=3.9",
     "numpy>=1.24",
     "datasets>=2.18",
-    "transformers>=4.40",
+    "transformers>=4.40",  # tokenizer for random token profiles
     "pyyaml>=6",
-    "huggingface_hub>=0.25",
+    "huggingface_hub>=0.25",  # first release with HFValidationError and LocalEntryNotFoundError in huggingface_hub.errors
 ]
 
 [project.optional-dependencies]
 # shellcheck: actionlint lints workflow run steps with it when it is on PATH, as on CI runners.
 dev = ["pre-commit", "shellcheck-py"]
+# Pin torch and vllm to the versions the serving stack runs: the probes call vLLM's own kernels, so the numbers match production only then.
+probe = ["torch>=2.1", "vllm>=0.6"]
 
 [project.scripts]
 qbench = "quettabench.cli:main"

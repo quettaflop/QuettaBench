@@ -8,7 +8,7 @@ ARG NIXL=1.3.1
 RUN if [ -n "$NIXL" ]; then pip install --no-cache-dir nixl==$NIXL; fi
 
 WORKDIR /opt/qbench
-COPY pyproject.toml requirements.txt README.md ./
+COPY pyproject.toml README.md ./
 COPY quettabench quettabench
 COPY configs configs
 COPY data data

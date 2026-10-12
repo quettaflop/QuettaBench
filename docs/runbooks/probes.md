@@ -105,7 +105,7 @@ The dispatch overhead is real and host-specific: GDN prefill's 8 tiny Triton sub
 
 ## Install
 
-The runner needs no GPU (`pip install -r requirements.txt`). On a GPU host add the probe deps: `pip install -r requirements.txt -r requirements-probe.txt` (torch and vllm). Nsight Systems and the CUDA toolkit are system prerequisites. Pin torch and vllm to the versions your serving stack runs, or the kernel numbers will not match production.
+The runner needs no GPU (`pip install -e .`). On a GPU host add the probe deps: `pip install -e ".[probe]"` (torch and vllm). Nsight Systems and the CUDA toolkit are system prerequisites. Pin torch and vllm to the versions your serving stack runs, or the kernel numbers will not match production.
 
 ## Data flow
 

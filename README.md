@@ -5,7 +5,7 @@ Measures LLM serving engines on production-shaped workloads, and cross-validates
 ## Quickstart
 
 ```bash
-pip install -r requirements.txt        # or: pip install -e .  (gives the qbench command)
+pip install -e .                       # gives the qbench command; add .[probe] on a GPU host
 just fetch                             # trajectories from R2 (gitignored)
 
 just provision configs/runs/llama.yaml --dry-run \

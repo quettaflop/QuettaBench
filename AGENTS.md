@@ -49,7 +49,7 @@ One line each; everything else follows section 2 "Target layout".
 - `tests/` has `golden/`, `contracts/`, `parity/` and `_stubs/` (the vllm, torch and transformers stand-ins the golden CPU runs import): the probe contracts and GPU smoke tests live in `contracts/`.
 - `data/` keeps `download_agent_trajectories.py` and `download_coding_prompts.py` apart: section 2's `fetch.py` merge is not done.
 - `tools/pre_commit/` (the commit-message and em-dash hooks) and `docker/` (the qbench plus vLLM image `just image` builds) sit outside section 2's tree.
-- The root also holds plumbing outside section 2's tree: `.github/`, `.pre-commit-config.yaml`, `_typos.toml`, `.dockerignore`, `requirements-probe.txt` and `LICENSE`.
+- The root also holds plumbing outside section 2's tree: `.github/`, `.pre-commit-config.yaml`, `_typos.toml`, `.dockerignore` and `LICENSE`.
 - `data/slice_checkpoint.py` builds the cut vLLM checkpoint for slice runs; it is not a fetch script.
 - rocm, tpu and neuron launch paths are tested against mocks only; no hardware run is recorded yet.
 - `probes/base.py` imports `quettabench.engines` inside `launch_vllm`, so a remote kernel-probe host without the engine stack can still run a probe.

@@ -1,6 +1,0 @@
-aiohttp>=3.9
-numpy>=1.24
-datasets>=2.18       # ShareGPT loading
-transformers>=4.40   # tokenizer for random token profiles (stress-test mode)
-pyyaml>=6            # configs/ (config/loader.py)
-huggingface_hub>=0.25  # first release with HFValidationError and LocalEntryNotFoundError in huggingface_hub.errors

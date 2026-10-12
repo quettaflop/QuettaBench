@@ -18,5 +18,5 @@ jobs:
           # No version matrix: on 3.10 (numpy 2.2) a golden drifts in the last float bit.
           python-version: "3.12"
           cache: pip
-      - run: pip install -r requirements.txt pytest
+      - run: pip install -e . pytest
       - run: python -m pytest tests -q
