@@ -16,7 +16,8 @@
   "stderr": [
    "[provision] would: mkdir -p <TMP>/cache/vllm <TMP>/cache/torch <TMP>/cache/hf <TMP>/cache/tmp <TMP>/cache/models",
    "[provision] vllm python ok: <TMP>/vllm-python",
-   "[provision] MISSING: llama has no quettaserve: block in its model yaml",
+   "[provision] llama: no quettaserve: block in its model yaml; vLLM side only",
+   "[provision] MISSING: llama weights: set llama:hardware.provision.weights=<dir> or llama:hardware.provision.hf_id=<hf-repo-id>",
    "[provision] would: build qwen/decode_loop in <TMP>/cache/QuettaServe",
    "[provision] MISSING: qwen3 engine checkpoint: set qwen3:hardware.provision.qs_ckpt",
    "[provision] would: build deepseek/batch_bench in <TMP>/cache/QuettaServe",

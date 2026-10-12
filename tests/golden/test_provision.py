@@ -49,6 +49,23 @@ class ProvisionPlanGolden(unittest.TestCase):
         self.assertEqual(record["complete"]["rc"], 0)
         check_json(self, "bootstrap_plan", record)
 
+    def test_a_model_without_quettaserve_provisions_the_vllm_side_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_py = Path(tmp, "vllm-python")
+            fake_py.write_text("#!/bin/sh\nexit 0\n")
+            fake_py.chmod(0o755)
+            out, err = io.StringIO(), io.StringIO()
+            with mock.patch.object(provision, "compute_capability", return_value=None), \
+                    contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                rc = provision.main([str(RUNS / "llama.yaml"), "--env-file", f"{tmp}/qbench.env",
+                                     "--set", f"hardware.provision.cache_root={tmp}/cache",
+                                     "--set", f"hardware.provision.py={fake_py}",
+                                     "--set", "llama:hardware.provision.weights=/weights/llama"])
+        self.assertEqual(rc, 0, err.getvalue())
+        self.assertNotIn("MISSING", err.getvalue())
+        self.assertEqual(out.getvalue().splitlines(),
+                         ["qbench run configs/runs/llama.yaml --set engine.model=/weights/llama"])
+
     def test_a_refused_run_yaml_is_missing(self):
         record = run_dry_provision(["qwen"], [])
         self.assertEqual(record["rc"], 1)

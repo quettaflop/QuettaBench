@@ -63,7 +63,7 @@ It is idempotent. Anything it cannot resolve prints `MISSING: <what>` and it
 exits 1 after listing them all; nothing is guessed. `--dry-run` prints the
 plan and writes nothing. A complete pass writes `.env` (caches, PYTHON_BIN,
 LD_LIBRARY_PATH; `just` loads it) and prints the `qbench run` lines for both
-engines.
+engines, or the vLLM line alone for a model yaml without a `quettaserve:` block.
 
 ## One image on a fresh box
 

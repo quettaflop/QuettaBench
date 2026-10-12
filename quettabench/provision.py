@@ -148,15 +148,17 @@ def bench_binary(plan, name, bench, prov, qs):
 
 
 def run(plan, name, cfg, py, qs):
-    """Step 5 for one run; returns its `qbench run` lines, or none on a gap."""
+    """Step 5 for one run; returns its `qbench run` lines, the vLLM one only when the model yaml has no quettaserve: block."""
     prov, bench = cfg.hardware.provision, cfg.engine.extra.get("quettaserve")
-    if not bench:
-        return plan.need(f"{name} has no quettaserve: block in its model yaml")
-    binary = bench_binary(plan, name, bench, prov, qs)
-    if not prov.get("qs_ckpt"):
-        plan.need(f"{name} engine checkpoint: set {name}:hardware.provision.qs_ckpt")
-    if bench["family"] == "moe" and not prov.get("qs_cfg"):
-        plan.need(f"{name} moe config: set {name}:hardware.provision.qs_cfg")
+    binary = None
+    if bench:
+        binary = bench_binary(plan, name, bench, prov, qs)
+        if not prov.get("qs_ckpt"):
+            plan.need(f"{name} engine checkpoint: set {name}:hardware.provision.qs_ckpt")
+        if bench["family"] == "moe" and not prov.get("qs_cfg"):
+            plan.need(f"{name} moe config: set {name}:hardware.provision.qs_cfg")
+    else:
+        plan.log(f"{name}: no quettaserve: block in its model yaml; vLLM side only")
     weights = prov.get("weights")
     if not weights and prov.get("hf_id"):
         weights = Path(prov["cache_root"]) / "models" / name
@@ -169,12 +171,14 @@ def run(plan, name, cfg, py, qs):
     elif not weights:
         plan.need(f"{name} weights: set {name}:hardware.provision.weights=<dir> or "
                   f"{name}:hardware.provision.hf_id=<hf-repo-id>")
-    qs_sets = [("engine.name", "quettaserve"), ("engine.model", prov.get("qs_ckpt")),
-               ("engine.extra.bench_bin", binary), ("engine.extra.qs_cfg", prov.get("qs_cfg"))]
     yaml_path = f"configs/runs/{name}.yaml"
-    return [shlex.join(["qbench", "run", yaml_path, "--set", f"engine.model={weights}"]),
-            shlex.join(["qbench", "run", yaml_path, *[a for k, v in qs_sets if v
-                                                      for a in ("--set", f"{k}={v}")]])]
+    lines = [shlex.join(["qbench", "run", yaml_path, "--set", f"engine.model={weights}"])]
+    if bench:
+        qs_sets = [("engine.name", "quettaserve"), ("engine.model", prov.get("qs_ckpt")),
+                   ("engine.extra.bench_bin", binary), ("engine.extra.qs_cfg", prov.get("qs_cfg"))]
+        lines.append(shlex.join(["qbench", "run", yaml_path, *[a for k, v in qs_sets if v
+                                                               for a in ("--set", f"{k}={v}")]]))
+    return lines
 
 
 def split_sets(items):
