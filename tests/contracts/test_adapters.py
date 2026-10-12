@@ -17,6 +17,7 @@ from quettabench.engines import base, launcher, quettaserve, vllm as vllm_adapte
 from quettabench.engines.drivers import HttpDriver, InProcessDriver
 from quettabench.profiling import native
 from quettabench.workloads.base import Request
+from quettabench.workloads.grid import GridTrace
 from tests.golden._harness import ENV_OVERRIDE, FIXTURES, REPO
 
 
@@ -246,6 +247,24 @@ class GridDriver(unittest.TestCase):
         driver = adapter.driver(spec, handle)
         self.assertIsInstance(driver, HttpDriver)
         self.assertEqual(driver.url, "http://127.0.0.1:8000/v1/completions")
+
+    def test_a_grid_trace_goes_to_completions_without_building_its_prompts(self):
+        spec = vllm_adapter.ADAPTER.translate(self.cfg())
+        handle = launcher.NoServer(Path("r"), endpoint="http://127.0.0.1:8000")
+        with mock.patch.object(GridTrace, "requests", side_effect=AssertionError("built every cell")):
+            driver = vllm_adapter.ADAPTER.driver(spec, handle, GridTrace([(100, 1)], [60, 230], "distinct", 4096))
+        self.assertEqual(driver.url, "http://127.0.0.1:8000/v1/completions")
+
+    def test_the_driver_asks_for_the_served_model_name(self):
+        spec = vllm_adapter.ADAPTER.translate(self.cfg("engine.extra.vllm={served_model_name: llama}"))
+        self.assertEqual(spec.server_argv[-2:], ("--served-model-name", "llama"))
+        driver = vllm_adapter.ADAPTER.driver(spec, launcher.NoServer(Path("r"), endpoint="http://127.0.0.1:8000"))
+        self.assertEqual(driver.model, "llama")
+
+    def test_no_max_model_len_flag_when_unset(self):
+        spec = vllm_adapter.ADAPTER.translate(self.cfg("engine.max_model_len=null"))
+        self.assertNotIn("--max-model-len", spec.server_argv)
+        self.assertNotIn("max_model_len", spec.engine_kwargs)
 
     def test_the_driver_sends_the_servers_api_key(self):
         cfg = self.cfg()

@@ -14,6 +14,7 @@ from quettabench.engines.base import (
     register,
 )
 from quettabench.engines.drivers import HttpDriver, InProcessDriver
+from quettabench.workloads.grid import GridTrace
 from quettabench.workloads.sessions import SessionTrace
 
 SERVER_CMD = "serve"
@@ -72,7 +73,7 @@ FIELDS = {
     "dtype": (flag("--dtype"), kw("dtype")),
     "kv_dtype": (unless("auto", "--kv-cache-dtype"), kw_when("kv_cache_dtype", lambda v: v != "auto")),
     "quant": (lambda v: [], kw_when("quantization", bool)),  # server reads it from the checkpoint
-    "max_model_len": (flag("--max-model-len"), kw("max_model_len")),
+    "max_model_len": (unless(None, "--max-model-len"), kw_when("max_model_len", lambda v: v is not None)),
     "gpu_util": (flag("--gpu-memory-utilization"), kw("gpu_memory_utilization")),
     "prefix_caching": (
         lambda v: ["--enable-prefix-caching" if v else "--no-enable-prefix-caching"],
@@ -161,7 +162,7 @@ class VllmAdapter(EngineAdapter):
         return HttpDriver(
             endpoint,
             url=handle.endpoint + path,
-            model=spec.engine_kwargs["model"],
+            model=spec.engine_kwargs.get("served_model_name") or spec.engine_kwargs["model"],
             api_key=spec.env.get(API_KEY_ENV, "test"),
             timeout=spec.timeout_s,
             accelerator=getattr(handle, "backend", "cuda"),
@@ -170,7 +171,7 @@ class VllmAdapter(EngineAdapter):
 
 def chat_requests(trace):
     """Whether trace is chat: multi-turn sessions, whose turns carry the whole conversation and take the engine's reply text, or requests that carry messages and no token ids. The completions body would send only the last user message of such a request."""
-    if trace is None:
+    if trace is None or isinstance(trace, GridTrace):
         return False
     if isinstance(trace, SessionTrace):
         return True
