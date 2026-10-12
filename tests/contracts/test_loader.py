@@ -184,6 +184,9 @@ class LoaderRules(unittest.TestCase):
             self.load(env={"PROMPT_MODE": "random"})
 
     def test_synthetic_workload_source_is_refused(self):
+        self.assertEqual(
+            self.one({"workload": {"source": "random-traces/run.jsonl"}}).workload.source, "random-traces/run.jsonl"
+        )
         for source in ("random-1k", "synthetic"):
             with self.subTest(source), self.assertRaisesRegex(ConfigError, "names a synthetic workload"):
                 self.load(run={"workload": {"source": source}})
