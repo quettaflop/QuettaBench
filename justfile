@@ -113,7 +113,7 @@ flash gpu=gpu *args:
 moe gpu=gpu geometries="qwen3-30b-a3b,mixtral-8x7b,gpt-oss-20b,gpt-oss-120b" tp="1,2,4":
     {{visible_devices_env}}={{gpu_id}} {{python_bin}} -m quettabench.probes.moe --gpu-label {{gpu}} --geometries {{geometries}} --tp {{tp}}
 
-# One MoE block's input, output and routing decision, for slice verification
+# One MoE block's input, output and routing decision, for truncated-model verification
 moe-routing model gpu=gpu layer="1" *args:
     {{visible_devices_env}}={{gpu_id}} {{python_bin}} -m quettabench.probes.moe --routing --gpu-label {{gpu}} --model {{model}} --layer {{layer}} {{args}}
 

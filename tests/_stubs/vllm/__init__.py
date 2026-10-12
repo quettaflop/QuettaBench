@@ -1,4 +1,4 @@
-"""CPU stand-in for the vLLM slice a grid run touches; generate() runs on a fake clock."""
+"""CPU stand-in for the part of vLLM a grid run touches; generate() runs on a fake clock."""
 
 __version__ = "0.0.0+stub"
 

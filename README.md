@@ -118,7 +118,7 @@ The baseline records the mode and the table prints it.
 
 The model yaml's `quettaserve:` block names the cargo `crate` and `test`, the env prefix (`DS_`, `QW_`) and the family:
 
-- `moe` (deepseek): needs `engine.extra.quettaserve_config`; an inherited `<P>_LAYERS` is removed, since layer truncation would invalidate the run. `engine.layers=N` sets it on purpose for a slice run; compare ignores the `layers=N` lines.
+- `moe` (deepseek): needs `engine.extra.quettaserve_config`; an inherited `<P>_LAYERS` is removed, since layer truncation would invalidate the run. `engine.layers=N` sets it on purpose for a layer-truncated run; compare ignores the `layers=N` lines.
 - `gdn` (qwen3 and other linear-attention hybrids): exact kernels only when `engine.extra.gdn_dir` holds the vLLM GDN cubins (the loader panics without them), else the tiled rust suite; custom all-reduce at tp >= 2; the exact suite has no CUDA-graph wiring, so it runs eager, rust runs graph.
 - `dense`: nothing extra.
 
@@ -142,15 +142,15 @@ qbench compare results/llama-logits results/llama-reference
 
 FIDELITY passes only with zero hard disagreements (an argmax flip where the reference's top-2 gap is not a near tie). deepseek has no transformers reference; its correctness comes from the engine's own batch gates.
 
-### Slice verification
+### Truncated-model verification
 
 A model cut to its first N layers cannot be checked on a free-running greedy chain: bf16 rounding flips its router within a few steps. The check is teacher-forced logits against a float32 reference anchor, passing when the engine's argmax flips are no more than the reference's own at the engine's dtype (the noise floor). `engine.layers=N` cuts the reference (and sets the QuettaServe batch_bench's `<P>_LAYERS`); vLLM loads a checkpoint dir cut the same way as `engine.model`. `qbench compare <ours> <anchor> --floor <run>` prints the BAND line:
 
 ```
-qbench run <run>.yaml --set mode.return_outputs=logits --set engine.model=<cut dir> --set run_name=slice-vllm
-qbench run <run>.yaml --set engine.name=reference --set engine.layers=N --set engine.dtype=float32 --set run_name=slice-f32
-qbench run <run>.yaml --set engine.name=reference --set engine.layers=N --set engine.dtype=bfloat16 --set run_name=slice-bf16
-qbench compare results/slice-vllm results/slice-f32 --floor results/slice-bf16
+qbench run <run>.yaml --set mode.return_outputs=logits --set engine.model=<cut dir> --set run_name=truncated-vllm
+qbench run <run>.yaml --set engine.name=reference --set engine.layers=N --set engine.dtype=float32 --set run_name=truncated-f32
+qbench run <run>.yaml --set engine.name=reference --set engine.layers=N --set engine.dtype=bfloat16 --set run_name=truncated-bf16
+qbench compare results/truncated-vllm results/truncated-f32 --floor results/truncated-bf16
 ```
 
 A floor run is trusted once it is deterministic: the same run compared twice gives argmax_agree equal to positions and delta max 0. `qbench profile --source kernels` gives per-kernel GPU time per decode step from an nsys-armed run, and `just moe-routing <model>` (`probes/moe.py --routing`) dumps one MoE block for an engine-side diff.

@@ -116,7 +116,9 @@ class VllmAdapter(EngineAdapter):
             raise UnsupportedField("vllm", "instrumentation=torch", "no profiler env var in the repo")
         if engine.layers is not None:
             raise UnsupportedField(
-                "vllm", f"layers={engine.layers}", "slice runs load a truncated checkpoint dir as engine.model"
+                "vllm",
+                f"layers={engine.layers}",
+                "layer-truncated runs load a truncated checkpoint dir as engine.model",
             )
         argv, kwargs = [], dict(KWARGS)
         for name, (to_argv, to_kwargs) in FIELDS.items():

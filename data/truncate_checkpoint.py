@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a 13-layer HF model dir from the downloaded Kimi-K3 slice; check it loads."""
+"""Build a 13-layer HF model dir from the downloaded Kimi-K3 layers; check it loads."""
 
 import importlib
 import json
@@ -10,7 +10,7 @@ import sys
 
 N_LAYERS = 13  # Layers 0-12 sit in the 16 downloaded shards.
 # The checkpoint dir name is not a Python identifier, so its modeling code is copied into this package.
-PKG = "kimi_k3_slice_mod"
+PKG = "kimi_k3_truncated_mod"
 PKG_FILES = ("configuration_kimi_k3.py", "modeling_kimi_linear.py")
 
 
@@ -62,7 +62,7 @@ def build(src: str, dst: str) -> None:
         li = layer_of(name)
         if shard not in have:
             assert li is None or li >= N_LAYERS, \
-                f"{name} belongs to the slice but its shard {shard} was not downloaded"
+                f"{name} belongs to the truncated model but its shard {shard} was not downloaded"
             dropped_missing_shard += 1
             continue
         if li is not None and li >= N_LAYERS:

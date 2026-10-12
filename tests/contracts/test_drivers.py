@@ -850,7 +850,7 @@ class Recipe(unittest.TestCase):
             for name, extra in (
                 ("ours", ["--set", "mode.return_outputs=logits"]),
                 ("ref", ["--set", "engine.name=reference"]),
-                ("slice", ["--set", "engine.name=reference", "--set", "engine.layers=2"]),
+                ("truncated", ["--set", "engine.name=reference", "--set", "engine.layers=2"]),
             ):
                 run = run_grid_cli(
                     grid_argv("llama", *sets, *extra, "--set", f"run_name={name}", "--results-dir", td), {}
@@ -865,7 +865,7 @@ class Recipe(unittest.TestCase):
                         str(Path(td, "ours")),
                         str(Path(td, "ref")),
                         "--floor",
-                        str(Path(td, "slice")),
+                        str(Path(td, "truncated")),
                         "--json",
                         str(Path(td, "x.json")),
                     ]

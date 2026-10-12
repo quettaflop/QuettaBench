@@ -80,7 +80,7 @@ class EngineCfg:
     kv_cache_dtype: str = "auto"
     quant: str | None = None
     max_model_len: int | None = None
-    layers: int | None = None  # first N decoder layers only: a slice run (slice_truncate.py)
+    layers: int | None = None  # first N decoder layers only: a layer-truncated run (data/truncate_checkpoint.py)
     gpu_util: float = 0.9
     prefix_caching: bool = False
     serving_style: str = "aggregated"

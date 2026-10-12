@@ -51,7 +51,7 @@ One line each; everything else follows section 2 "Target layout".
 - `data/` keeps `download_agent_trajectories.py` and `download_coding_prompts.py` apart: section 2's `fetch.py` merge is not done.
 - `tools/pre_commit/` (the commit-message and em-dash hooks) and `docker/` (the qbench plus vLLM image `just image` builds) sit outside section 2's tree.
 - The root also holds plumbing outside section 2's tree: `.github/`, `.pre-commit-config.yaml`, `_typos.toml`, `.dockerignore` and `LICENSE`.
-- `data/slice_checkpoint.py` builds the cut vLLM checkpoint for slice runs; it is not a fetch script.
+- `data/truncate_checkpoint.py` builds the layer-truncated vLLM checkpoint for truncated-model runs; it is not a fetch script.
 - rocm, tpu and neuron launch paths are tested against mocks only; no hardware run is recorded yet. On them the loader refuses `engine.name=quettaserve` and `qbench profile` refuses the `energy` source, which reads nvidia-smi.
 - qbench runs real traces only: a workload source named `random*` or `synthetic*` that is not a file is refused.
 - `probes/base.py` imports `quettabench.engines` inside `launch_vllm`, so a remote kernel-probe host without the engine stack can still run a probe.
@@ -59,7 +59,7 @@ One line each; everything else follows section 2 "Target layout".
 - `probes/gemm.py`, `flash_attn.py`, `gdn.py`, `vllm_allreduce.py`, `reparallel.py` and `profiling/kv_transfer.py` read `os.environ` themselves: they run as `python -m` modules outside the Config path (under torchrun or on a remote host that gets only the probe package), so torchrun's `RANK`, `WORLD_SIZE`, `LOCAL_RANK`, `LOCAL_WORLD_SIZE` and the `--ncu-bin` default `NCU_BIN` reach them only through the environment.
 - `serving_decode_grid.py`, `serving_stage_split.py` and `profiling/client_side.py` write their own CSV/JSON at `--out`, not `ProbeRow`s through `metrics/results.py`: `export/quettasim.py` reads the serving probes' files by name and in their own schema, and frontend's `--out` is a standalone dump beside the result `engine_side.py` puts in `profile.json`; `run_recorded` still writes the serving probes' `run.json`.
 - `probes/gemm.py` and `probes/moe.py` hold the GEMM shapes and MoE geometries they time: probe grids, not model configs, so they are not read from `configs/models/`.
-- `data/` scripts are not under the env rule: `fetch.py` reads `AWS_PROFILE`, `R2_ENDPOINT` and `R2_BUCKET`, the two download scripts take `--credentials` (default `$GOOGLE_APPLICATION_CREDENTIALS`) and need `google-cloud-storage`, and `slice_checkpoint.py` reads `TMPDIR`. They are one-off data tools outside the package.
+- `data/` scripts are not under the env rule: `fetch.py` reads `AWS_PROFILE`, `R2_ENDPOINT` and `R2_BUCKET`, the two download scripts take `--credentials` (default `$GOOGLE_APPLICATION_CREDENTIALS`) and need `google-cloud-storage`, and `truncate_checkpoint.py` reads `TMPDIR`. They are one-off data tools outside the package.
 - `probes/moe.py --routing` writes a safetensors dump of one MoE block, not `ProbeRow`s: it is an engine-side diff input, not a table.
 - `config/loader.py` runs `nvidia-smi topo -m` on cuda to pick the NCCL link profile when `hardware.link_profile` is `auto`; it only reads the topology.
 - `just mirror-up` is a second route out of the repo beside `export/quettasim.py`: it uploads `results/probes/` to R2 as a backup of the probe runs.
