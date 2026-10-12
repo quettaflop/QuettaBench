@@ -10,7 +10,7 @@ doors: `run | profile | crossval | export`, plus `provision` for box setup.
 It has one measurement procedure, `quettabench/modes/serve.py`. Three structs flow one way, `Config ->
 LaunchSpec -> RequestResult`, and nothing flows back. Every measurement lands
 in one results layer, `results/<run>/`, and leaves the repo by
-`quettabench/export/`; the probes' tables also leave by `just mirror-up`
+`quettabench/export/quettasim.py`; the probes' tables also leave by `just mirror-up`
 (below).
 
 ## Layout
@@ -60,8 +60,9 @@ in one results layer, `results/<run>/`, and leaves the repo by
 - Docker launch backend ships tested against mocks only, by owner decision; validate on a docker host before relying on it.
 - `quettabench/crossval.py`: reads run files; its only write is the report json
   (default `results/xval/`).
-- `quettabench/export/`: the only measurement code that writes outside the
-  repo; `provision.py` sets the box up outside it (below).
+- `quettabench/export/quettasim.py`: the only measurement code that writes
+  outside the repo; its builders are `tp_comm`, `stage_split_rates`,
+  `roofline_utils`, `serving_decode_grid` and `kernel_tables`; `provision.py` sets the box up outside it (below).
 - `configs/`: `models/` holds per-model facts, once. `runs/` reference a model
   and never restate its facts. `grids.yaml` holds the grids and step points,
   `hardware/` the link profiles, `workloads.yaml` every workload profile by name.
@@ -70,6 +71,12 @@ in one results layer, `results/<run>/`, and leaves the repo by
 - `tests/golden/`: characterization fixtures captured from the pre-refactor
   code. Change a fixture only with a dated line in `tests/golden/REPORT.md`
   saying why.
+
+## Deviations from QBENCH_STRUCTURE.md
+
+One line each; everything else follows section 2 "Target layout".
+
+- `modes/serve.py` is about 820 lines, not under 400: the replay, the session dispatch and the grid cells all live in serve, as section 2 assigns them.
 
 ## Who writes, who starts a process
 
@@ -100,7 +107,7 @@ Every writer and every process starter, exactly:
 - `profiling/pd_host.py`: its CSV at `--out`.
 - `workloads/tokenize.py`: the tokenized request jsonl at `--out`.
 - `crossval.py`: its report json (default `results/xval/`).
-- `export/`: the QuettaSim tables at `--dest`, and the kernel tables under
+- `export/quettasim.py`: the QuettaSim tables at `--dest`, and the kernel tables under
   `--kernel-dest` (QuettaSim's data root), outside the repo.
 - `provision.py`: outside the repo, the `cache_root` dirs, the QuettaServe
   `git clone`, `pip install`, the weights download and `cargo` builds; in the

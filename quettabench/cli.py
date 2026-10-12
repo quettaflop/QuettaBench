@@ -32,7 +32,7 @@ from quettabench.engines.base import UnsupportedField
 DOORS = {
     "profile": "quettabench.profiler",
     "crossval": "quettabench.crossval",
-    "export": "quettabench.export.quettasim.__main__",
+    "export": "quettabench.export.quettasim",
     "provision": "quettabench.provision",
 }
 

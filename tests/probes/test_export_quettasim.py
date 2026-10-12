@@ -12,7 +12,7 @@ from unittest import mock
 import pytest
 
 from quettabench.export import quettasim
-from quettabench.export.quettasim import _inputs, export
+from quettabench.export.quettasim import export
 from quettabench.probes.base import run_recorded
 
 
@@ -124,8 +124,8 @@ def test_a_killed_probe_run_leaves_its_tables_out(tmp_path: Path) -> None:
         run_recorded(main, "serving_stage_split", file_flag="--out")
     assert seen == [["requests.jsonl"]]
     (leg.parent / "run.json").unlink()  # what a kill, which skips the finally, leaves
-    _inputs.run_dirs.cache_clear()
-    assert _inputs.skipped_runs(tmp_path / "results") == {leg.parent: "no run.json"}
+    quettasim.run_dirs.cache_clear()
+    assert quettasim.skipped_runs(tmp_path / "results") == {leg.parent: "no run.json"}
     assert export([tmp_path / "results"], tmp_path / "out", only=["tp_comm"]) == []
 
 
@@ -153,24 +153,10 @@ def test_a_file_belongs_to_its_nearest_run_dir(tmp_path: Path) -> None:
     for table in ("H100/gemm/ncu/gemm/H100.csv", "H100/flash_attn/ncu/flash_attn/H100.csv"):
         (tmp_path / table).parent.mkdir(parents=True)
         (tmp_path / table).write_text("")
-    _inputs.run_dirs.cache_clear()
-    kept = [p.relative_to(tmp_path).as_posix() for p in _inputs.files(tmp_path, "*.csv")]
+    quettasim.run_dirs.cache_clear()
+    kept = [p.relative_to(tmp_path).as_posix() for p in quettasim.files(tmp_path, "*.csv")]
     assert kept == ["H100/gemm/ncu/gemm/H100.csv"]
 
-
-def test_find_dir_skips_a_dir_that_is_itself_a_failed_run(tmp_path: Path) -> None:
-    """A bench dir that is a run dir is judged by its own run.json, not only
-    by its ancestors'."""
-    for root, status in (("a", "failed"), ("b", "ok")):
-        run = tmp_path / root / "bench"
-        run.mkdir(parents=True)
-        (run / "run.json").write_text(json.dumps({"run_status": {"status": status}}))
-    (tmp_path / "c" / "bench").mkdir(parents=True)
-    (tmp_path / "c" / "bench" / "requests.jsonl").write_text("")
-    _inputs.run_dirs.cache_clear()
-    roots = [tmp_path / "a", tmp_path / "c", tmp_path / "b"]
-    assert _inputs.find_dir(roots, "bench") == tmp_path / "b" / "bench"
-    assert _inputs.find_dir(roots[:2], "bench") is None
 
 
 def test_a_launched_servers_dir_belongs_to_its_run(tmp_path: Path, capsys) -> None:
@@ -184,9 +170,9 @@ def test_a_launched_servers_dir_belongs_to_its_run(tmp_path: Path, capsys) -> No
         "provenance": {"started": "2026-10-11T12:00:00+00:00"}}))
     export([tmp_path / "results"], tmp_path / "out", only=["tp_comm"])
     assert "skip" not in capsys.readouterr().out
-    assert _inputs.skipped_runs(tmp_path / "results") == {}
-    assert _inputs.owner(run / "server" / "engine.json", tmp_path / "results",
-                         _inputs.run_dirs(tmp_path / "results")) == run
+    assert quettasim.skipped_runs(tmp_path / "results") == {}
+    assert quettasim.owner(run / "server" / "engine.json", tmp_path / "results",
+                         quettasim.run_dirs(tmp_path / "results")) == run
 
 
 def test_each_builder_reads_run_status_fresh(tmp_path: Path, capsys) -> None:
@@ -200,16 +186,15 @@ def test_each_builder_reads_run_status_fresh(tmp_path: Path, capsys) -> None:
     seen = []
 
     def first(dirs, dest):
-        seen.append(_inputs.skipped_runs(results))
+        seen.append(quettasim.skipped_runs(results))
         (run / "run.json").write_text(json.dumps({"run_status": {"status": "failed"}}))
         return []
 
     def second(dirs, dest):
-        seen.append(_inputs.skipped_runs(results))
+        seen.append(quettasim.skipped_runs(results))
         return []
 
-    with mock.patch.dict(quettasim.BUILDERS, {"first": mock.Mock(run=first),
-                                              "second": mock.Mock(run=second)}):
+    with mock.patch.dict(quettasim.BUILDERS, {"first": first, "second": second}):
         export([results], tmp_path / "out", only=["first", "second"])
     assert seen == [{}, {run: "run_status failed"}]
     assert json.loads((tmp_path / "out" / "manifest.json").read_text())["runs"] == []
@@ -235,16 +220,16 @@ def test_stage_split_legs_come_from_the_latest_finished_ok_run(tmp_path: Path) -
     old = stage_split_run(results, "20261001", "2026-10-01T02:00:00+00:00", "ok", 1.0)
     new = stage_split_run(results, "20261002", "2026-10-02T02:00:00+00:00", "ok", 2.0)
     stage_split_run(results, "20261003", "2026-10-03T02:00:00+00:00", "failed", 3.0)
-    _inputs.run_dirs.cache_clear()
-    assert _inputs.find([results], "serving_stage_split_H100.csv") == new / "serving_stage_split_H100.csv"
-    assert _inputs.stage_split_legs([results], "H100") == [
+    quettasim.run_dirs.cache_clear()
+    assert quettasim.find([results], "serving_stage_split_H100.csv") == new / "serving_stage_split_H100.csv"
+    assert quettasim.stage_split_legs([results], "H100") == [
         (2, new / "serving_stage_split_H100.csv", new / "serving_stage_split_H100_tp2.csv")]
     # A run that started first but finished last wins over one that started later.
     (old / "run.json").write_text(json.dumps({
         "config": {}, "run_status": {"status": "ok", "reason": None},
         "provenance": {"started": "20261001", "finished": "2026-10-09T00:00:00+00:00"}}))
-    _inputs.run_dirs.cache_clear()
-    assert _inputs.find([results], "serving_stage_split_H100_tp2.csv") == old / "serving_stage_split_H100_tp2.csv"
+    quettasim.run_dirs.cache_clear()
+    assert quettasim.find([results], "serving_stage_split_H100_tp2.csv") == old / "serving_stage_split_H100_tp2.csv"
 
 
 def test_files_and_find_skip_a_clearing_dir(tmp_path: Path) -> None:
@@ -253,9 +238,9 @@ def test_files_and_find_skip_a_clearing_dir(tmp_path: Path) -> None:
     results = tmp_path / "results"
     run = stage_split_run(results, "20261001", "2026-10-01T02:00:00+00:00", "ok", 1.0)
     run.rename(run.with_name(".clearing-abc123"))
-    _inputs.run_dirs.cache_clear()
-    assert _inputs.files(results, "*.csv") == []
-    assert _inputs.find([results], "serving_stage_split_H100.csv") is None
+    quettasim.run_dirs.cache_clear()
+    assert quettasim.files(results, "*.csv") == []
+    assert quettasim.find([results], "serving_stage_split_H100.csv") is None
 
 
 def test_a_pulled_run_is_ordered_by_its_pulled_time(tmp_path: Path) -> None:
@@ -267,6 +252,6 @@ def test_a_pulled_run_is_ordered_by_its_pulled_time(tmp_path: Path) -> None:
     doc = json.loads((pulled / "run.json").read_text())
     doc["provenance"]["pulled"] = "2026-10-04T00:00:00+00:00"
     (pulled / "run.json").write_text(json.dumps(doc))
-    _inputs.run_dirs.cache_clear()
-    assert _inputs.finished(pulled) == datetime(2026, 10, 4, tzinfo=timezone.utc)
-    assert _inputs.find([results], "serving_stage_split_H100.csv") == local / "serving_stage_split_H100.csv"
+    quettasim.run_dirs.cache_clear()
+    assert quettasim.finished(pulled) == datetime(2026, 10, 4, tzinfo=timezone.utc)
+    assert quettasim.find([results], "serving_stage_split_H100.csv") == local / "serving_stage_split_H100.csv"

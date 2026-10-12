@@ -16,7 +16,8 @@ from unittest import mock
 
 import pytest
 
-from quettabench.export.quettasim import export, kernel_tables
+from quettabench.export import quettasim
+from quettabench.export.quettasim import export, main
 from quettabench.probes.base import add_output_args, out_root, run_id, run_recorded
 
 T0 = datetime(2026, 10, 11, 12, 0, 0, tzinfo=timezone.utc)
@@ -162,7 +163,7 @@ def test_two_probes_writing_one_file_stop_the_export(tmp_path: Path) -> None:
     probe_run(results, "gemm", {"ncu/moe/H100.csv": "a\n"}, 0)
     probe_run(results, "moe", {"ncu/moe/H100.csv": "b\n"}, 1)
     with pytest.raises(SystemExit, match="graph/moe/H100.csv.*gemm.*moe"):
-        kernel_tables.run([results], tmp_path / "out")
+        quettasim.run_kernel_tables([results], tmp_path / "out")
 
 
 def rows(path: Path) -> list[list[str]]:
@@ -267,7 +268,7 @@ def test_the_manifest_names_only_runs_whose_rows_were_copied(tmp_path: Path) -> 
                         ("all_reduce", 2, 4096, 20.3, 2)])
     probe_run(results, "collective", {"ncu/collectives/H100_tp2.csv": only_ar}, 2)
     probe_run(results, "vllm_allreduce", {"ncu/collectives/H100_tp2.csv": VLLM}, 3)
-    written, used = kernel_tables.run([results], dest)
+    written, used = quettasim.run_kernel_tables([results], dest)
     assert sorted(used) == ["graph/collectives/H100_tp2.csv", "graph/flash_attn/H100.csv"]
     assert [Path(r).parent.name for r in used["graph/collectives/H100_tp2.csv"]] == ["vllm_allreduce"]
     assert [Path(r).name for r in used["graph/flash_attn/H100.csv"]] == ["20261011T120001.000000Z"]
@@ -279,12 +280,10 @@ def test_the_manifest_names_only_runs_whose_rows_were_copied(tmp_path: Path) -> 
 def test_kernel_tables_go_to_their_own_dest_and_only_when_given(tmp_path: Path, capsys) -> None:
     """--dest takes the other builders' files; the kernel tables go to the
     QuettaSim data root given as --kernel-dest, and without it they are not built."""
-    from quettabench.export.quettasim.__main__ import main
     results, dest, data = tmp_path / "results", tmp_path / "out", tmp_path / "QuettaSim" / "data"
     probe_run(results, "gdn", {"cuda_event/gdn/H100_9b_decode.csv": "g\n"}, 0)
-    from quettabench.export import quettasim
-    with mock.patch.dict(quettasim.BUILDERS, {"tp_comm": quettasim.tp_comm,
-                                              "kernel_tables": kernel_tables}, clear=True):
+    with mock.patch.dict(quettasim.BUILDERS, {"tp_comm": quettasim.run_tp_comm,
+                                              "kernel_tables": quettasim.run_kernel_tables}, clear=True):
         main(["--results", str(results), "--dest", str(dest)])
     assert not (dest / "kernel_data").exists() and not data.exists()
     assert "kernel_tables" not in json.loads((dest / "manifest.json").read_text())
@@ -452,10 +451,10 @@ def test_kv_transfer_run_exports_to_eager_with_a_host_wallclock_sidecar(tmp_path
 def test_kv_transfer_rows_union_on_the_old_upsert_key(tmp_path: Path) -> None:
     """The row key is kv_transfer.py's KEY, the columns its upsert replaced on;
     layout stays a string, and the union is sorted on the key."""
-    source = (Path(kernel_tables.__file__).parents[2] / "profiling" / "kv_transfer.py").read_text()
+    source = (Path(quettasim.__file__).parents[1] / "profiling" / "kv_transfer.py").read_text()
     (key,) = [ast.literal_eval(n.value) for n in ast.parse(source).body
               if isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") == "KEY"]
-    assert kernel_tables.ROW_KEYS[("kv_transfer", "kv_transfer")] == key
+    assert quettasim.ROW_KEYS[("kv_transfer", "kv_transfer")] == key
     results, dest = tmp_path / "results", tmp_path / "out"
     row = ("H200", 1, 128, 16, 94)
     probe_run(results, "kv_transfer", {KV_TABLE: csv_text([KV_HEAD, (*row, "runs8", 16, 0, 0, 0, 0, 2.0, 0),
@@ -500,7 +499,7 @@ def test_an_empty_csv_stops_the_export_naming_its_run(tmp_path: Path) -> None:
     results = tmp_path / "results"
     probe_run(results, "gemm", {GEMM: ""}, 0)
     with pytest.raises(SystemExit, match=r"graph/gemm/H100.csv: .*20261011T120000.000000Z .*no header"):
-        kernel_tables.run([results], tmp_path / "out")
+        quettasim.run_kernel_tables([results], tmp_path / "out")
 
 
 def test_unparsable_probe_args_stop_the_export_naming_the_run(tmp_path: Path) -> None:
@@ -511,7 +510,7 @@ def test_unparsable_probe_args_stop_the_export_naming_the_run(tmp_path: Path) ->
     doc["config"]["mode"]["probe_args"] = 'a "b'
     record.write_text(json.dumps(doc))
     with pytest.raises(SystemExit, match=r"20261011T120000.000000Z.*probe_args"):
-        kernel_tables.run([results], tmp_path / "out")
+        quettasim.run_kernel_tables([results], tmp_path / "out")
 
 
 def seed(dest: Path, rel: str, text: str, meta: dict | None = None) -> Path:

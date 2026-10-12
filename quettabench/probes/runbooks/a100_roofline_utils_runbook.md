@@ -4,7 +4,7 @@ Goal: replace the H100 PLACEHOLDERS in `configs/gpus/A100.json`
 (`util_flops=0.65 / util_bw=0.93 / scheduler_overhead_ms_per_step=5.7`) with values
 measured ON the A100, using the SAME pre-registered recipe that re-derived the H100
 values (`profiling/docs/defit_log_entries/L6-utils.md`,
-`quettabench/export/quettasim/roofline_utils.py`). The recipe is pinned -- do NOT tune it on
+the `roofline_utils` builder in `quettabench/export/quettasim.py`). The recipe is pinned -- do NOT tune it on
 the A100 numbers; if the A100 data violates a recipe assumption, record the deviation in
 the de-fit log and stop.
 

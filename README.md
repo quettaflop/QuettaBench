@@ -310,7 +310,9 @@ quettabench/crossval.py   pairs two runs' cells; withhold rules; agreement rows
 quettabench/modes/serve.py  the one measurement procedure: replay, sessions, grid cells
 quettabench/metrics/      percentiles, step fit, the results writer
 quettabench/profiling/    sources the profiler attaches with
-quettabench/probes/       kernel probes; quettabench/export/ routes to QuettaSim
+quettabench/probes/       kernel probes
+quettabench/export/quettasim.py  the one route to QuettaSim: tp_comm, stage_split_rates, roofline_utils,
+                          serving_decode_grid, kernel_tables
 configs/                  models, runs, grids, hardware
 analysis/, data/          one-off studies and data fetch; not imported by the package
 ```

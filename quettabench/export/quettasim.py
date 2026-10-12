@@ -1,0 +1,1478 @@
+"""qbench export: results dirs in, QuettaSim's files out; the one route out of QuettaBench.
+
+kernel_tables merges the probes' kernel tables into QuettaSim's data root (--kernel-dest), the tree its kernel_composed backend reads.
+The other builders write their fitted constants and grids under --dest; every export writes a manifest of the runs it read.
+"""
+from __future__ import annotations
+
+import argparse
+import csv
+import functools
+import gzip
+import inspect
+import json
+import os
+import re
+import shlex
+import shutil
+import statistics
+import subprocess
+import tempfile
+from collections import Counter
+from collections.abc import Iterable
+from datetime import datetime, timezone
+from pathlib import Path
+
+from quettabench.metrics.results import RUN_MARKERS, write_atomic
+from quettabench.probes import serving_decode_grid as _client  # aiohttp is imported lazily there
+
+TP_DEGREES = (2, 4)
+# The finish time of a run with none, or none that parses: older than any.
+NEVER = datetime.min.replace(tzinfo=timezone.utc)
+
+
+def clearing(path: Path, root: Path) -> bool:
+    """path sits in a .clearing-* dir under root (runner.clear_run_dir cut short)."""
+    return any(part.startswith(".clearing-") for part in Path(path).relative_to(root).parts)
+
+
+@functools.cache
+def run_dirs(root: Path) -> dict[Path, str | None]:
+    """{run dir: why export leaves it out, None when kept} for every run dir
+    under root (root included): run.json missing (a run that never finished),
+    unparsable, or a run_status other than ok. A server/ dir under a run dir
+    (a probe's launched server, engine.json there) is part of that run; a
+    .clearing-* dir (runner.clear_run_dir cut short) is none.
+    Cached per root; export() clears it before each builder."""
+    runs = {}
+    dirs = sorted({p.parent for marker in RUN_MARKERS for p in Path(root).rglob(marker)
+                   if not clearing(p, root)})
+    for run_dir in dirs:
+        if run_dir.name == "server" and run_dir.parent in dirs:
+            continue
+        path = run_dir / "run.json"
+        if not path.exists():
+            runs[run_dir] = "no run.json"
+            continue
+        try:
+            status = json.loads(path.read_text())["run_status"]["status"]
+        except (OSError, ValueError, KeyError, TypeError) as e:
+            runs[run_dir] = f"run.json unreadable ({type(e).__name__})"
+            continue
+        runs[run_dir] = None if status == "ok" else f"run_status {status}"
+    return runs
+
+
+def skipped_runs(root: Path) -> dict[Path, str]:
+    """{run dir: why} for every run dir under root that export leaves out."""
+    return {d: why for d, why in run_dirs(Path(root)).items() if why}
+
+
+def owner(path: Path, root: Path, runs: dict[Path, str | None]) -> Path | None:
+    """The run dir path belongs to: path itself when it is a run dir, else its
+    nearest ancestor (up to root) that is one, None when it sits in none (a
+    table without a run.json)."""
+    for d in (path, *path.parents):
+        if d in runs:
+            return d
+        if d == root:
+            return None
+    return None
+
+
+def files(root: Path, pattern: str, recursive: bool = True) -> list[Path]:
+    """Paths under root matching pattern, sorted, without those in a
+    .clearing-* dir or whose run dir (owner) export leaves out."""
+    root = Path(root)
+    runs = run_dirs(root)
+    hits = root.rglob(pattern) if recursive else root.glob(pattern)
+    return [p for p in sorted(hits) if not clearing(p, root) and runs.get(owner(p, root, runs)) is None]
+
+
+def quettasim_symbol_gone(symbol: str) -> None:
+    """Stop a builder whose QuettaSim anchor did not import, with one line instead
+    of a traceback. QuettaSim main removed simulator/ttft_queue_sim.py and has no
+    constant with the same meaning."""
+    raise SystemExit(f"QuettaSim main has no {symbol} (simulator.ttft_queue_sim was removed); "
+                     "this builder needs a new anchor before it can run")
+
+
+def finished(run_dir: Path | None) -> datetime:
+    """run_dir/run.json's provenance.pulled (a remote run, on this machine's
+    clock) or else provenance.finished as a UTC instant, NEVER for no run dir
+    or no time that parses."""
+    try:
+        provenance = json.loads((Path(run_dir) / "run.json").read_text())["provenance"]
+        when = provenance["pulled"] if "pulled" in provenance else provenance["finished"]
+        return datetime.fromisoformat(when).astimezone(timezone.utc)
+    except (OSError, ValueError, KeyError, TypeError):
+        return NEVER
+
+
+def find(results_dirs: Iterable[Path], name: str) -> Path | None:
+    """The file called `name` whose ok run finished last (provenance.finished),
+    over every results dir; a file in no run dir counts as finished never.
+    A tie goes to the earlier results dir, then the first path."""
+    best = None
+    for rank, root in enumerate(map(Path, results_dirs)):
+        runs = run_dirs(root)
+        for path in files(root, name):
+            key = (finished(owner(path, root, runs)), -rank)
+            if best is None or key > best[0]:
+                best = (key, path)
+    return best[1] if best else None
+
+
+def stage_split_legs(results_dirs: Iterable[Path], gpu: str) -> list[tuple[int, Path, Path]]:
+    """(tp, tp1 csv, tpN csv) for every tp degree whose two stage-split legs
+    are present, each leg the one find picks (its run finished last)."""
+    tp1 = find(results_dirs, f"serving_stage_split_{gpu}.csv")
+    legs = []
+    for tp in TP_DEGREES:
+        tpn = find(results_dirs, f"serving_stage_split_{gpu}_tp{tp}.csv")
+        if tp1 and tpn:
+            legs.append((tp, tp1, tpn))
+    return legs
+
+
+# A probe run's method dir -> QuettaSim's kernel_data dir (kernel_composed/provenance.py DIRS).
+DIRS = {"ncu": "graph", "cuda_event": "eager"}
+# eager/ kinds timed by host clocks around a whole operation (mode host_wallclock).
+HOST_KINDS = ("reparallel", "kv_transfer")
+# The reduce each probe takes over its timings, for graph_replay and eager tables.
+REDUCE = {"gemm": "min", "moe": "min", "elementwise": "median", "flash_attn": "median",
+          "cross_attn": "median", "gdn": "median"}
+# The key a collectives row replaces a dest row on.
+COLLECTIVE_KEY = ("op", "world", "bytes")
+GEOMETRY = ("n_heads", "n_kv_heads", "head_dim")
+# (probe, kind) -> the columns a CSV row is keyed on: flash_attn and
+# cross_attn replace every row of a head config, the others one row.
+ROW_KEYS = {
+    ("flash_attn", "flash_attn"): GEOMETRY,
+    ("flash_attn", "fa3_prefill"): GEOMETRY,
+    ("cross_attn", "fa3_cross"): GEOMETRY,
+    ("gemm", "gemm"): ("M", "N", "K"),
+    ("gemm", "gemm_wide"): ("M", "N", "K"),
+    ("moe", "moe"): ("tokens", "n_experts", "top_k", "intermediate", "hidden"),
+    ("reparallel", "reparallel"): ("gpu", "world", "tp_from", "tp_to", "total_weight_gb"),
+    ("kv_transfer", "kv_transfer"): ("gpu", "kv_heads_per_rank", "head_dim", "block_size", "layers",
+                                     "layout", "tokens"),
+}
+# Keyed tables whose union is sorted, on these columns, as their old upserts wrote them.
+SORTED = {("reparallel", "reparallel"): ROW_KEYS[("reparallel", "reparallel")],
+          ("kv_transfer", "kv_transfer"): ("gpu", "kv_heads_per_rank", "layout", "tokens",
+                                           "head_dim", "block_size", "layers")}
+# Probes that live outside quettabench/probes/, by their sidecar tool.
+TOOLS = {"kv_transfer": "quettabench.profiling.kv_transfer"}
+# Probes whose run without --append replaced the whole table.
+RESET_WITHOUT_APPEND = ("gemm", "moe")
+# (probe, kind) whose JSON entries union across runs (gemm's fp8_act_quant).
+JSON_UNION = {("gemm", "elementwise")}
+# When a dest table finished, as a source: before every run.
+OLDEST = datetime.min.replace(tzinfo=timezone.utc)
+
+
+def _record(run_dir: Path) -> tuple[str | None, list[str], str | None]:
+    """(probe, its args, the day it finished) from run_dir/run.json; probe None
+    for a run that is no probe run."""
+    doc = json.loads((run_dir / "run.json").read_text())
+    mode = (doc.get("config") or {}).get("mode") or {}
+    probe = mode.get("probe") if mode.get("mode") == "probe" else None
+    try:
+        args = shlex.split(mode.get("probe_args") or "")
+    except ValueError as e:
+        raise SystemExit(f"{run_dir}: probe_args do not parse ({e})") from None
+    finished = (doc.get("provenance") or {}).get("finished")
+    return probe, args, finished[:10] if isinstance(finished, str) else None
+
+
+def _mode(rel: Path, args: list[str]) -> str:
+    """QuettaSim's mode for a table one run wrote with args."""
+    where, kind = rel.parts[0], rel.parts[1]
+    if where == "eager":
+        return "host_wallclock" if kind in HOST_KINDS else "eager"
+    if kind == "collectives":
+        return "reference" if rel.stem.endswith("_nccl_vs_vllm") else "amortized_wallclock"
+    return "ncu" if "--ncu" in args else "graph_replay"
+
+
+def _gpu(args: list[str]) -> str | None:
+    ap = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
+    ap.add_argument("--gpu-label", "--gpu")
+    return ap.parse_known_args(args)[0].gpu_label
+
+
+def _sidecar(rel: Path, by_probe: dict[str, list[Source]], runs: set[Path]) -> dict:
+    """rel's <file>.meta.json over the runs whose rows it holds; runs timed in
+    two modes make mode unknown."""
+    probes, modes, gpus, reduces, days = set(), set(), set(), set(), []
+    for probe, sources in by_probe.items():
+        for run in (s[2] for s in sources if s[2] in runs):
+            _, args, day = _record(run)
+            mode = _mode(rel, args)
+            probes.add(probe)
+            modes.add(mode)
+            gpus.add(_gpu(args))
+            reduces.add("min" if mode == "ncu" else REDUCE.get(probe)
+                        if mode in ("graph_replay", "eager") else None)
+            days.append(day or "")
+    return {"schema": 1, "table": rel.as_posix(), "dir": rel.parts[0],
+            "gpu": gpus.pop() if len(gpus) == 1 else None,
+            "mode": modes.pop() if len(modes) == 1 else "unknown",
+            "tool": " + ".join(TOOLS.get(p, f"quettabench.probes.{p}") for p in sorted(probes)),
+            "reduce": reduces.pop() if len(reduces) == 1 else None,
+            "measured": max(days, default="") or None,
+            "notes": "" if len(modes) <= 1 else f"rows timed as {', '.join(sorted(modes))}",
+            "provenance": "qbench export kernel_tables; source runs in kernel_data/qbench_manifest.json"}
+
+
+def _keep_sidecar(meta: dict, table: Path, kept: bool) -> dict:
+    """meta over the sidecar dest has beside table: its other fields stay, a
+    field meta leaves null keeps its value and meta's notes join its notes.
+    When its rows were kept, measured spans both, tool names both, and a mode
+    other than meta's makes mode unknown."""
+    path = table.with_name(table.name + ".meta.json")
+    try:
+        prior = json.loads(path.read_text()) if path.is_file() else {}
+    except ValueError:
+        prior = None
+    if not isinstance(prior, dict):
+        raise SystemExit(f"{path}: malformed JSON (not an object)")
+    notes = "; ".join(n for n in dict.fromkeys((prior.get("notes"), meta["notes"])) if n)
+    meta = {k: v for k, v in meta.items() if v is not None or prior.get(k) is None}
+    if not kept:
+        return {**prior, **meta, "notes": notes}
+    days = sorted(d for d in (*str(prior.get("measured") or "").split(" .. "), meta.get("measured")) if d)
+    tools = [t for t in (*str(prior.get("tool") or "").split(" + "), *meta["tool"].split(" + ")) if t]
+    mode = meta["mode"] if prior.get("mode") in (None, meta["mode"]) else "unknown"
+    return {**prior, **meta, "mode": mode, "notes": notes, "tool": " + ".join(dict.fromkeys(tools)),
+            "measured": " .. ".join(dict.fromkeys(days[:1] + days[-1:])) or None}
+
+
+Source = tuple[datetime, Path, Path, bool]  # (finished, table, its run dir, ran with --append)
+
+
+class Lost(SystemExit):
+    """The export would drop a dest row or column; replace (--replace-tables)
+    replaces just the tables that stop with it."""
+
+
+def found(results_dirs: Iterable[Path]) -> dict[Path, dict[str, list[Source]]]:
+    """{<dir>/<kind>/<file>: {probe: its ok runs' tables, in finished order}}."""
+    tables: dict[Path, dict[str, list[Source]]] = {}
+    for root in map(Path, results_dirs):
+        runs = run_dirs(root)
+        for method, where in DIRS.items():
+            for path in files(root, f"{method}/*/*"):
+                run = owner(path, root, runs)
+                if not path.is_file() or run is None or not (run / "run.json").is_file():
+                    continue
+                rel = path.relative_to(run).parts
+                probe, args, _ = _record(run)
+                if probe is None or rel[-3] != method or rel[:-3] not in ((), (probe,)):
+                    continue
+                source = (finished(run), path, run, "--append" in args)
+                tables.setdefault(Path(where, *rel[-2:]), {}).setdefault(probe, []).append(source)
+    for by_probe in tables.values():
+        for sources in by_probe.values():
+            sources.sort(key=lambda s: (s[0], str(s[2])))
+    return tables
+
+
+def _runs_used(probe: str, rel: Path, sources: list[Source]) -> list[Source]:
+    """The runs whose rows a probe's table is built from: all of them for a
+    keyed table (from the last run without --append on, for gemm and moe),
+    else the run that finished last."""
+    kind = rel.parts[-2]
+    if (probe, kind) in JSON_UNION and rel.suffix == ".json":
+        return sources
+    if (probe, kind) not in ROW_KEYS or rel.suffix != ".csv":
+        return sources[-1:]
+    if probe in RESET_WITHOUT_APPEND:
+        resets = [i for i, s in enumerate(sources) if not s[3]]
+        return sources[resets[-1]:] if resets else sources
+    return sources
+
+
+def _key(row: dict, key: tuple[str, ...]) -> tuple:
+    """row's key, numbers parsed as the old upserts' int() read them; an
+    empty op is all_reduce, as QuettaSim's collectives loader reads it."""
+    return tuple((row.get("op") or "all_reduce") if c == "op" else row[c] if c in ("gpu", "layout")
+                 else float(row[c]) if c == "total_weight_gb" else int(row[c]) for c in key)
+
+
+def _newline(table: Path) -> str:
+    """The line ending of table's first line."""
+    with table.open("rb") as f:
+        return "\r\n" if f.readline().endswith(b"\r\n") else "\n"
+
+
+def _write_csv(out: Path, fields: list[str], rows: Iterable[dict], like: Path) -> None:
+    """rows under fields, with like's line ending."""
+    with out.open("w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=fields, restval="", lineterminator=_newline(like))
+        w.writeheader()
+        w.writerows(rows)
+
+
+def _read_csv(rel: Path, table: Path, run: Path,
+              key: tuple[str, ...] = ()) -> tuple[list[str], list[dict]]:
+    """table's header and rows; stops the export on a row with a missing or
+    extra cell or a key that is empty or does not parse."""
+    with table.open(newline="") as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+        fields = list(reader.fieldnames or [])
+    if not fields:
+        raise SystemExit(f"{rel.as_posix()}: {run} has no header (empty CSV)")
+    for n, row in enumerate(rows, 1):
+        try:
+            if None in row or None in row.values() or not all(row.get(c) for c in key if c != "op"):
+                raise ValueError
+            _key(row, key)
+        except ValueError:
+            raise SystemExit(f"{rel.as_posix()}: {run} row {n} malformed") from None
+    return fields, rows
+
+
+def _read_json(rel: Path, table: Path, run: Path) -> object:
+    try:
+        return json.loads(table.read_text())
+    except ValueError:
+        raise SystemExit(f"{rel.as_posix()}: {run} malformed JSON") from None
+
+
+def _union_csv(rel: Path, sources: list[Source], key: tuple[str, ...], out: Path,
+               old: Source | None = None) -> list[Path]:
+    """Rows of the dest table old, then of every source, oldest first; a
+    source's rows replace the earlier rows on each key it holds. Within a
+    run's table the last row on a key wins; old keeps its repeated rows on a
+    key (QuettaSim's loaders reduce them) unless the table's old upsert held
+    its rows in a dict (SORTED). Returns the run dirs with a row kept."""
+    order = next((cols for k, cols in SORTED.items() if ROW_KEYS[k] == key), None)
+    fields: list[str] = []
+    kept: list[tuple[dict, Path]] = []
+    olds: list[dict] = []
+    newer: set[tuple] = set()
+    for source in [old, *sources] if old else sources:
+        _, table, run, _ = source
+        head, rows = _read_csv(rel, table, run, key)
+        if key != GEOMETRY and (source is not old or order):
+            rows = list({_key(r, key): r for r in rows}.values())
+        fields += [c for c in head if c not in fields]
+        mine = {_key(r, key) for r in rows}
+        if source is old:
+            olds = rows
+        else:
+            newer |= mine
+        kept = [(r, d) for r, d in kept if _key(r, key) not in mine]
+        kept += [(r, run) for r in rows]
+    if order:
+        kept.sort(key=lambda rd: _key(rd[0], order))
+    _write_csv(out, fields, (r for r, _ in kept), (old or sources[0])[1])
+    if old:
+        _lost(rel, old, out, key, newer, olds)
+    return list(dict.fromkeys(d for _, d in kept))
+
+
+def _union_json(rel: Path, sources: list[Source], out: Path) -> list[Path]:
+    """Entries of every source in finished order, the later run winning a key."""
+    merged: dict[str, tuple[object, Path]] = {}
+    sources = sorted(sources, key=lambda s: (s[0], str(s[2])))
+    for _, table, run, _ in sources:
+        entries = _read_json(rel, table, run)
+        if not isinstance(entries, dict):
+            raise SystemExit(f"{rel.as_posix()}: {run} malformed JSON (not an object)")
+        merged.update({k: (v, run) for k, v in entries.items()})
+    text = sources[0][1].read_text()
+    lines = text.splitlines()
+    indent = len(lines[1]) - len(lines[1].lstrip(" ")) if len(lines) > 1 else None
+    out.write_text(json.dumps({k: v for k, (v, _) in merged.items()}, indent=indent)
+                   + "\n" * text.endswith("\n"))
+    return list(dict.fromkeys(run for _, run in merged.values()))
+
+
+def _merge_collectives(rel: Path, collective: Source | None, vllm: Source | None, out: Path,
+                       old: Source | None = None) -> list[Path]:
+    """The dest table old's rows, then the collective run's, each replacing
+    the earlier rows on its COLLECTIVE_KEY, then vllm_allreduce's all_reduce
+    rows, which replace every earlier all_reduce row of their world, as its
+    upsert did. Beside a vllm_allreduce run the collective run's all_reduce
+    rows are left out. The header is old's and the runs' columns; the
+    collective run's rows fill an empty dtype_bytes (2) and path (nccl)."""
+    sources = [(s, _read_csv(rel, s[1], s[2], COLLECTIVE_KEY)) for s in (old, collective, vllm) if s]
+    fields: list[str] = []
+    for _, (head, _) in sources:
+        fields += [c for c in head if c not in fields]
+    fill = {c: v for c, v in (("dtype_bytes", "2"), ("path", "nccl")) if c in fields}
+    kept: list[tuple[dict, Path]] = []
+    newer: set[tuple] = set()
+    for source, (_, rows) in sources:
+        if source is collective:
+            rows = [{**r, **{c: r.get(c) or v for c, v in fill.items()}} for r in rows
+                    if not (vllm and _key(r, ("op",)) == ("all_reduce",))]
+        if source is vllm:
+            rows = [r for r in rows if _key(r, ("op",)) == ("all_reduce",)]
+            worlds = {_key(r, ("world",)) for r in rows}
+            mine = {_key(r, COLLECTIVE_KEY) for r, _ in kept
+                    if _key(r, ("op",)) == ("all_reduce",) and _key(r, ("world",)) in worlds}
+        else:
+            mine = set()
+        mine |= {_key(r, COLLECTIVE_KEY) for r in rows}
+        if source is not old:
+            newer |= mine
+        kept = [(r, d) for r, d in kept if _key(r, COLLECTIVE_KEY) not in mine]
+        kept += [(r, source[2]) for r in rows]
+    _write_csv(out, fields, (r for r, _ in kept), sources[0][0][1])
+    if old:
+        _lost(rel, old, out, COLLECTIVE_KEY, newer)
+    return list(dict.fromkeys(d for _, d in kept))
+
+
+def _check(rel: Path, by_probe: dict[str, list[Source]]) -> None:
+    """Stop on a file two probes write that kernel_tables does not merge."""
+    probes = sorted(by_probe)
+    if len(probes) > 1 and (probes, rel.suffix) not in ((["collective", "vllm_allreduce"], ".csv"),
+                                                        (["elementwise", "gemm"], ".json")):
+        raise SystemExit(f"{rel.as_posix()}: written by probes {probes}; kernel_tables "
+                         "merges only collective+vllm_allreduce and elementwise+gemm")
+
+
+def _lost(rel: Path, old: Source, out: Path, key: tuple[str, ...], newer: set[tuple],
+          rows: list[dict] | None = None) -> None:
+    """Stop (Lost) when out lacks a column of the dest table old, or drops one
+    of its rows (rows, else all of old's): each must be in out, cell for
+    cell, unless a run re-measured its key (newer)."""
+    head, olds = _read_csv(rel, old[1], old[1], key)
+    fields, kept = _read_csv(rel, out, out, key)
+    stop = "; give --replace-tables to replace each table that stops this way"
+    gone = [c for c in head if c not in fields]
+    if gone:
+        raise Lost(f"{rel.as_posix()}: the export would drop column {', '.join(gone)} of {old[1]}{stop}")
+    cols = sorted({*head, *fields})
+    have = Counter(tuple(r.get(c) or "" for c in cols) for r in kept)
+    rows = olds if rows is None else rows
+    left = 0
+    for row in rows:
+        cells = tuple(row.get(c) or "" for c in cols)
+        if key and _key(row, key) in newer:
+            left += 1
+        elif have[cells]:
+            have[cells] -= 1
+            left += 1
+    if left < len(rows):
+        raise Lost(f"{rel.as_posix()}: the export would keep {left} of its {len(rows)} rows in {old[1]}{stop}")
+
+
+def _write(rel: Path, by_probe: dict[str, list[Source]], out: Path,
+           old: Source | None = None) -> list[Path]:
+    """Build one dest file (_check passed) over the dest table old, when there
+    is one; returns the run dirs (and old's path) whose rows it holds."""
+    used = {probe: _runs_used(probe, rel, sources) for probe, sources in by_probe.items()}
+    probes = sorted(used)
+    olds = [old] if old else []
+    tp_table = rel.parts[-2] == "collectives" and not rel.stem.endswith("_nccl_vs_vllm") and rel.suffix == ".csv"
+    if tp_table and set(probes) <= {"collective", "vllm_allreduce"}:
+        return _merge_collectives(rel, *(used[p][-1] if p in used else None
+                                         for p in ("collective", "vllm_allreduce")), out, old)
+    if probes == ["elementwise", "gemm"]:
+        return _union_json(rel, olds + used["elementwise"] + used["gemm"], out)
+    (probe,) = probes
+    sources = used[probe]
+    key = ROW_KEYS.get((probe, rel.parts[-2]), ())
+    if old and rel.suffix == ".json":
+        return _union_json(rel, olds + sources, out)
+    if old and rel.suffix == ".csv":
+        reset = probe in RESET_WITHOUT_APPEND and not all(s[3] for s in sources)
+        if key and not reset:
+            return _union_csv(rel, sources, key, out, old)
+        runs = _write(rel, by_probe, out)
+        newer = {_key(r, key) for s in sources if key for r in _read_csv(rel, s[1], s[2], key)[1]}
+        _lost(rel, old, out, key, newer)
+        return runs
+    if len(sources) == 1:
+        _, table, run, _ = sources[0]
+        if rel.suffix == ".json":
+            _read_json(rel, table, run)
+        elif rel.suffix == ".csv":
+            _read_csv(rel, table, run, key)
+        shutil.copyfile(table, out)
+        return [run]
+    if rel.suffix == ".json":
+        return _union_json(rel, sources, out)
+    return _union_csv(rel, sources, key, out)
+
+
+def run_kernel_tables(results_dirs: Iterable[Path], dest: Path,
+        replace: bool = False) -> tuple[list[Path], dict[str, list[str]]]:
+    """Build every table and its sidecar in a temp dir under dest, over the
+    tables dest holds (or, given replace, without the ones that would stop
+    with Lost), then replace the dest files, so a stop
+    leaves the tables in dest as they were (and no dest when this run made
+    it). Returns the files written and, for
+    the manifest, {<dir>/<kind>/<file>: the run dirs with rows in it, in
+    finished order}."""
+    tables = sorted(found(results_dirs).items())
+    for rel, by_probe in tables:
+        _check(rel, by_probe)
+    if not tables:
+        return [], {}
+    used = {}
+    dest = Path(dest)
+    made = next((d for d in reversed((dest, *dest.parents)) if not d.exists()), None)
+    dest.mkdir(parents=True, exist_ok=True)
+    try:
+        with tempfile.TemporaryDirectory(dir=dest, prefix=".kernel_tables-") as tmp:
+            for rel, by_probe in tables:
+                out = Path(tmp) / rel
+                out.parent.mkdir(parents=True, exist_ok=True)
+                table = dest / "kernel_data" / rel
+                old = (OLDEST, table, table, True) if table.is_file() else None
+                try:
+                    runs = set(_write(rel, by_probe, out, old))
+                except Lost:
+                    if not replace:
+                        raise
+                    old = None
+                    runs = set(_write(rel, by_probe, out))
+                meta = _sidecar(rel, by_probe, runs)
+                if old:
+                    meta = _keep_sidecar(meta, table, table in runs)
+                meta = json.dumps(meta, indent=1, sort_keys=True)
+                out.with_name(out.name + ".meta.json").write_text(meta + "\n")
+                order = sorted((s[0], str(s[2])) for sources in by_probe.values() for s in sources
+                               if s[2] in runs)
+                used[rel.as_posix()] = (["adopted from dest"] if table in runs else []) + list(
+                    dict.fromkeys(run for _, run in order))
+            written = []
+            for rel, by_probe in tables:
+                out = dest / "kernel_data" / rel
+                out.parent.mkdir(parents=True, exist_ok=True)
+                for name in (rel.name, rel.name + ".meta.json"):
+                    os.replace(Path(tmp) / rel.parent / name, out.with_name(name))
+                    written.append(out.with_name(name))
+                print(f"{rel.as_posix()} <- {', '.join(sorted(by_probe))}")
+    except BaseException:
+        if made is not None:
+            shutil.rmtree(made, ignore_errors=True)
+        raise
+    return written, used
+
+
+NCCL_PHYSICS_BAND_MS_PER_1K = (1.0, 3.0)  # external-lit all-reduce band, hidden=4096 bf16
+
+
+def _span_new_rate(path: Path) -> dict:
+    """OLS prefill_span_ms ~ floor + a·new + b·cached over the stage-split rows."""
+    rows = list(csv.DictReader(path.open()))
+    X = [(1.0, float(r["new"]), float(r["cached"])) for r in rows]
+    y = [float(r["prefill_span_ms"]) for r in rows]
+    # normal equations (3x3), no numpy dependency
+    n = len(X)
+    xtx = [[sum(X[k][i] * X[k][j] for k in range(n)) for j in range(3)] for i in range(3)]
+    xty = [sum(X[k][i] * y[k] for k in range(n)) for i in range(3)]
+    # gaussian elimination
+    m = [xtx[i] + [xty[i]] for i in range(3)]
+    for col in range(3):
+        piv = max(range(col, 3), key=lambda r: abs(m[r][col]))
+        m[col], m[piv] = m[piv], m[col]
+        for r in range(3):
+            if r != col and m[col][col]:
+                f = m[r][col] / m[col][col]
+                m[r] = [a - f * b for a, b in zip(m[r], m[col])]
+    beta = [m[i][3] / m[i][i] for i in range(3)]
+    return {"floor_ms": beta[0], "new_ms_per_tok": beta[1], "cached_ms_per_tok": beta[2],
+            "n_rows": n}
+
+
+def build_tpn(n: int, tpn_csv: Path, out_json: Path, tp1_csv: Path, gpu: str = "H100",
+              host: str = "h100") -> None:
+    """L11 extension (2026-06-11): the SAME G3 like-for-like method at tp degree ``n`` --
+    comm_total = prefill_span.new(tpN) − span.new(tp1)/N (the TOTAL per-new-token cost the tpN
+    GPU prefill window carries above its 1/N GEMM share). Consumed per-config via the deployment
+    JSON key ``prefill_tp_comm_ms_per_token`` -> RooflineParams (None for every other config ->
+    the tp2-measured per-extra-rank fallback, byte-identical). The tp2 artifact is untouched.
+
+    L13 extension (2026-06-11): ``--gpu RTX3090`` runs the SAME estimator on the RTX3090's
+    OWN stage-split legs (cross-GPU transfer of the H100 tp1 leg is INVALID -- L11 proved the
+    per-extra-rank comm extrapolation fails even within one GPU family; the 3090 host is pure
+    PCIe, no NVLink). H100 default paths byte-untouched."""
+    for p in (tp1_csv, tpn_csv):
+        if not p.exists():
+            raise SystemExit(f"missing {p} -- pull both stage-split legs first")
+    tp1 = _span_new_rate(tp1_csv)
+    tpn = _span_new_rate(tpn_csv)
+    comm = tpn["new_ms_per_tok"] - tp1["new_ms_per_tok"] / float(n)
+    payload = {
+        "schema": "prefill_tp_comm.v1",
+        "gpu": f"{gpu}x{n}", "model": "Llama-3.1-8B", "tp": n,
+        "method": ("like-for-like multiprocess api_server stage-split pair (same script both "
+                   f"legs); comm_total = prefill_span.new(tp{n}) − prefill_span.new(tp1)/{n}"),
+        "tp1_fit": {k: round(v, 6) if isinstance(v, float) else v for k, v in tp1.items()},
+        f"tp{n}_fit": {k: round(v, 6) if isinstance(v, float) else v for k, v in tpn.items()},
+        "constants": {"prefill_tp_comm_ms_per_token_total": comm},
+        "fallback_it_replaces_ms_per_token": None,  # filled below for context
+        "_notes": (f"TOTAL tp{n} comm per new token (NOT per-extra-rank). Pinned in the "
+                   f"deployment JSON key prefill_tp_comm_ms_per_token of the {gpu}x{n} config; "
+                   "every config without the pin keeps PREFILL_TP_COMM_MS_PER_TOKEN*(tp-1). "
+                   "Regenerate: just export. Sources: "
+                   f"serving_stage_split.py --tensor-parallel-size {{1,{n}}} on {host}."),
+    }
+    try:  # informational only; QuettaSim main no longer carries the constant
+        import simulator.ttft_queue_sim as _sim
+        payload["fallback_it_replaces_ms_per_token"] = _sim.PREFILL_TP_COMM_MS_PER_TOKEN * (n - 1)
+    except ImportError:
+        pass
+    out_json.parent.mkdir(parents=True, exist_ok=True)
+    out_json.write_text(json.dumps(payload, indent=2) + "\n")
+    fallback = payload["fallback_it_replaces_ms_per_token"]
+    print(f"tp1 span.new {tp1['new_ms_per_tok']*1e3:.3f} ms/1k | tp{n} "
+          f"{tpn['new_ms_per_tok']*1e3:.3f} -> comm_total {comm*1e3:.4f} ms/1k "
+          f"(fallback it replaces: {'n/a' if fallback is None else f'{fallback*1e3:.4f}'} ms/1k)")
+    print(f"wrote {out_json}")
+
+
+def build_tp2(tp1_csv: Path, tp2_csv: Path, out_json: Path) -> None:
+    """The original G3 artifact: H100 tp1 vs tp2, comm = span.new(tp2) - span.new(tp1)/2."""
+    tp1 = _span_new_rate(tp1_csv)
+    tp2 = _span_new_rate(tp2_csv)
+    comm = tp2["new_ms_per_tok"] - tp1["new_ms_per_tok"] / 2.0
+    in_band = NCCL_PHYSICS_BAND_MS_PER_1K[0] <= comm * 1e3 <= NCCL_PHYSICS_BAND_MS_PER_1K[1] + 1.0
+    payload = {
+        "schema": "prefill_tp_comm.v1",
+        "gpu": "H100", "model": "Llama-3.1-8B",
+        "method": ("like-for-like multiprocess api_server stage-split pair (same script both "
+                   "legs); comm = prefill_span.new(tp2) − prefill_span.new(tp1)/2"),
+        "tp1_fit": {k: round(v, 6) if isinstance(v, float) else v for k, v in tp1.items()},
+        "tp2_fit": {k: round(v, 6) if isinstance(v, float) else v for k, v in tp2.items()},
+        "constants": {"PREFILL_TP_COMM_MS_PER_TOKEN": comm},
+        "nccl_physics_band_ms_per_1k": list(NCCL_PHYSICS_BAND_MS_PER_1K),
+        "within_physics_band_plus_1": in_band,
+        "retired_backed_out_remainder": 0.00585,
+        "_notes": ("Replaces the instrumentation-inconsistent backed-out remainder 5.85 ms/1k "
+                   "(audit-v2 G3): the like-for-like pair removes the multiprocess-vs-in-process "
+                   "mismatch, and the residual lands at the top of the NCCL all-reduce physics "
+                   "band. Regenerate: just export. Sources: "
+                   "serving_stage_split.py --tensor-parallel-size {1,2} on h100 (h100_setup.md)."),
+    }
+    out_json.parent.mkdir(parents=True, exist_ok=True)
+    out_json.write_text(json.dumps(payload, indent=2) + "\n")
+    print(f"tp1 span.new {tp1['new_ms_per_tok']*1e3:.3f} ms/1k | tp2 {tp2['new_ms_per_tok']*1e3:.3f} "
+          f"-> comm {comm*1e3:.4f} ms/1k (retired remainder 5.85; physics band "
+          f"{NCCL_PHYSICS_BAND_MS_PER_1K})")
+    print(f"wrote {out_json}")
+
+
+def run_tp_comm(results_dirs: Iterable[Path], dest: Path) -> list[Path]:
+    """Write dest/kernels/prefill_tp_comm_<gpu>[x<tp>].json for every gpu/tp whose legs exist."""
+    written = []
+    for gpu, host in (("H100", "h100"), ("RTX3090", "3090")):
+        for tp, tp1_csv, tpn_csv in stage_split_legs(results_dirs, gpu):
+            if gpu == "H100" and tp == 2:
+                out_json = Path(dest) / "kernels" / "prefill_tp_comm_H100.json"
+                build_tp2(tp1_csv, tpn_csv, out_json)
+            else:
+                out_json = Path(dest) / "kernels" / f"prefill_tp_comm_{gpu}x{tp}.json"
+                build_tpn(tp, tpn_csv, out_json, tp1_csv, gpu=gpu, host=host)
+            written.append(out_json)
+    return written
+
+
+# Production constants the per-config values replace / transport (asserted against the live
+# module below so a retune cannot silently desynchronize this builder).
+PROD_HOST_SUM = 0.0030824476411757708 + 0.002804790423340364   # 5.8872e-3 (prefill_host_split_H100.json)
+PROD_FA3 = 8.31e-7                                             # PREFILL_FA3_MS_PER_TOKEN2
+HOST_TP1_TOLERANCE = 0.05   # tp1-leg host coefficient must reproduce production within 5%
+FA3_TP1_TOLERANCE = 0.50    # tp1-leg FA3 coefficient must corroborate magnitude within 50%
+
+
+def _ols(rows: list[dict], ycol: str, terms: list[str]) -> dict[str, float]:
+    """Closed-form OLS over the stage-split rows; design terms by name (no numpy)."""
+    def feats(r: dict) -> list[float]:
+        new, cached = float(r["new"]), float(r["cached"])
+        avail = {"1": 1.0, "new": new, "cached": cached, "fa3": new * (cached + 0.5 * new)}
+        return [avail[t] for t in terms]
+
+    X = [feats(r) for r in rows]
+    y = [float(r[ycol]) for r in rows]
+    k, n = len(terms), len(X)
+    xtx = [[sum(X[r][i] * X[r][j] for r in range(n)) for j in range(k)] for i in range(k)]
+    xty = [sum(X[r][i] * y[r] for r in range(n)) for i in range(k)]
+    m = [xtx[i] + [xty[i]] for i in range(k)]
+    for col in range(k):
+        piv = max(range(col, k), key=lambda r: abs(m[r][col]))
+        m[col], m[piv] = m[piv], m[col]
+        for r in range(k):
+            if r != col and m[col][col]:
+                f = m[r][col] / m[col][col]
+                m[r] = [a - f * b for a, b in zip(m[r], m[col])]
+    beta = {t: m[i][k] / m[i][i] for i, t in enumerate(terms)}
+    pred = [sum(beta[t] * x for t, x in zip(terms, X[r])) for r in range(n)]
+    beta["_fit_mape_pct"] = 100.0 * sum(abs(p - yy) / yy for p, yy in zip(pred, y)) / n
+    beta["_n_rows"] = float(n)
+    return beta
+
+
+def build_stage_rates(tp: int, tp1_csv: Path, tpn_csv: Path, out_json: Path) -> None:
+    try:
+        import simulator.ttft_queue_sim as sim
+    except ImportError:
+        quettasim_symbol_gone("simulator.ttft_queue_sim.PREFILL_HOST_SHARED_MS_PER_TOKEN")
+    assert abs((sim.PREFILL_HOST_SHARED_MS_PER_TOKEN + sim.PREFILL_HOST_PERREQ_MS_PER_TOKEN)
+               - PROD_HOST_SUM) < 1e-15, "production host SUM moved -- update this builder's anchor"
+    assert sim.PREFILL_FA3_MS_PER_TOKEN2 == PROD_FA3, "production FA3 moved -- update this builder's anchor"
+    shared_frac = sim.PREFILL_HOST_SHARED_MS_PER_TOKEN / PROD_HOST_SUM
+
+    rows1 = list(csv.DictReader(tp1_csv.open()))
+    rowsn = list(csv.DictReader(tpn_csv.open()))
+
+    host1 = _ols(rows1, "ttft_ms", ["1", "new", "cached"])
+    hostn = _ols(rowsn, "ttft_ms", ["1", "new", "cached"])
+    drift = abs(host1["cached"] - PROD_HOST_SUM) / PROD_HOST_SUM
+    if drift > HOST_TP1_TOLERANCE:
+        raise SystemExit(f"tp1-leg host cached rate {host1['cached']:.6e} drifts "
+                         f"{drift*100:.1f}% from the production SUM {PROD_HOST_SUM:.6e} -- "
+                         "estimator/instrument no longer like-for-like; refusing to emit")
+
+    fa3_1 = _ols(rows1, "prefill_span_ms", ["1", "new", "cached", "fa3"])
+    fa3_n = _ols(rowsn, "prefill_span_ms", ["1", "new", "cached", "fa3"])
+    if abs(fa3_1["fa3"] - PROD_FA3) / PROD_FA3 > FA3_TP1_TOLERANCE:
+        raise SystemExit(f"tp1-leg FA3 coefficient {fa3_1['fa3']:.4e} does not corroborate the "
+                         f"production {PROD_FA3:.4e} within {FA3_TP1_TOLERANCE*100:.0f}% -- refusing")
+    ratio = fa3_n["fa3"] / fa3_1["fa3"]
+    if not (0.0 < ratio < 1.0):
+        raise SystemExit(f"FA3 tp{tp}/tp1 ratio {ratio:.4f} outside (0,1) -- not a sharding signal")
+    fa3_tpn = PROD_FA3 * ratio
+
+    payload = {
+        "schema": "prefill_stage_rates.v1",
+        "gpu": f"H100x{tp}", "model": "Llama-3.1-8B", "tp": tp,
+        "method": ("like-for-like multiprocess api_server stage-split pair (same script + "
+                   "lattice both legs; the round-1 L11 Phase-B tp4 leg). HOST: 3-param OLS "
+                   "ttft ~ floor + a*new + b*cached per leg (build_host_split.fit_c1_rate "
+                   "family); per-config value = b(tpN) direct, tp1 leg validates the "
+                   "estimator against the production SUM. FA3: 4-param OLS prefill_span ~ "
+                   "floor + a*new + b*cached + c*new*(cached+new/2) per leg; per-config "
+                   "value = production 8.31e-7 x c(tpN)/c(tp1) (ratio transport via the "
+                   "tp1 bridge leg, the G3 pattern)."),
+        "host_fit_tp1": {k: round(v, 9) for k, v in host1.items()},
+        f"host_fit_tp{tp}": {k: round(v, 9) for k, v in hostn.items()},
+        "host_tp1_vs_production_sum": {
+            "production_sum_ms_per_tok": PROD_HOST_SUM,
+            "tp1_leg_ms_per_tok": host1["cached"],
+            "rel_drift": drift, "tolerance": HOST_TP1_TOLERANCE},
+        "fa3_fit_tp1": {k: (round(v, 9) if k != "fa3" else v) for k, v in fa3_1.items()},
+        f"fa3_fit_tp{tp}": {k: (round(v, 9) if k != "fa3" else v) for k, v in fa3_n.items()},
+        "fa3_ratio_tpn_over_tp1": ratio,
+        "constants": {
+            "prefill_host_cached_ms_per_token": hostn["cached"],
+            "prefill_fa3_ms_per_token2": fa3_tpn,
+        },
+        "partition_caveat": (
+            f"shared/per-request partition stays the production measured fraction "
+            f"{shared_frac:.4f} (tp1 B-sweep band point, prefill_host_split_H100.json): no "
+            f"tp{tp} B-sweep exists; only the measured SUM is per-config. The consumer "
+            "(_price_step) applies the fraction to the pinned SUM."),
+        "fa3_direct_sensitivity": {
+            f"direct_c_tp{tp}": fa3_n["fa3"],
+            "note": ("the direct tpN serving-stack coefficient; outcome-equivalent to the "
+                     "transported value in the round-2 preview (e2el 16.21 vs 16.32) -- the "
+                     "transport choice is provenance-driven, not outcome-driven.")},
+        "fallbacks_it_replaces": {
+            "host_sum_ms_per_tok": PROD_HOST_SUM,
+            "PREFILL_FA3_MS_PER_TOKEN2": PROD_FA3},
+        "_notes": (f"Pinned in the H100x{tp} deployment JSON top-level keys "
+                   "prefill_host_cached_ms_per_token / prefill_fa3_ms_per_token2 -> "
+                   "RooflineParams (loader). Every config without the pins keeps the module "
+                   "constants byte-identically. Regenerate: just export. "
+                   "Sources: "
+                   f"serving_stage_split.py --tensor-parallel-size {{1,{tp}}} on h100 "
+                   "(h100_setup.md; tp4 leg measured 2026-06-11, GPUs 4-7)."),
+    }
+    out_json.parent.mkdir(parents=True, exist_ok=True)
+    out_json.write_text(json.dumps(payload, indent=2) + "\n")
+    print(f"HOST cached: tp1 {host1['cached']*1e3:.4f} ms/1k (prod {PROD_HOST_SUM*1e3:.4f}, "
+          f"drift {drift*100:.1f}%) | tp{tp} {hostn['cached']*1e3:.4f} ms/1k")
+    print(f"FA3: tp1 {fa3_1['fa3']:.4e} | tp{tp} {fa3_n['fa3']:.4e} | ratio {ratio:.5f} "
+          f"-> transported {fa3_tpn:.6e} (prod {PROD_FA3:.2e})")
+    print(f"wrote {out_json}")
+
+
+def build_consumer(gpu: str, tp: int, tp1_csv: Path, tpn_csv: Path, h100_tp1_csv: Path,
+                   out_json: Path) -> None:
+    """L13 extension (--gpu RTX3090, 2026-06-11): per-config host-cached + FA3 pins from the
+    consumer GPU's OWN stage-split legs (serving_stage_split_{gpu}.csv / _tp{tp}.csv).
+
+    AMENDED ESTIMATORS (documented in defit_log_entries/L13-3090multi.md BEFORE any gate;
+    decided on consumer-structure grounds, no gate output consulted):
+
+    * HOST = the 4-param ttft OLS cached coefficient ``b`` of ``ttft ~ floor + a*new +
+      b*cached + c*new*(cached+new/2)`` on the tp{tp} leg, DIRECT. The original 3-param
+      family is UNUSABLE on the RTX3090: its measured FA3 coefficient is ~9x the H100's
+      (7.46e-6 vs 8.31e-7), so the quadratic term's projection onto ``cached`` contaminates
+      the 3-param coefficient by ~60% (3090 tp1: 3p 1.460e-2 vs 4p 9.014e-3) where on the
+      H100 legs the two families agreed within ~6% (5.99e-3 vs 5.63e-3 around the production
+      5.887e-3). The consumer (``_price_step``) charges HOST and FA3 as SEPARATE terms, so
+      pinning the 3p coefficient alongside an FA3 pin would double-count the quadratic mass.
+      CROSS-INSTRUMENT VALIDATION (hard-fail): the SAME 4-param estimator on the H100 tp1
+      leg must reproduce the production host SUM within the builder's established 5%
+      tolerance (measured: 5.6302e-3 vs 5.8872e-3, -4.4%).
+    * FA3 = the 4-param span OLS coefficient ``c`` on the tp{tp} leg, DIRECT (pre-registered
+      in L13: the H100 ratio-transport pattern has no {gpu}-measured production anchor to
+      transport; L11 showed direct vs transported outcome-equivalent). Validations
+      (hard-fail): c(tp1) > 0, and 0 < c(tp{tp})/c(tp1) <= 1 (head-sharding can only help).
+
+    The 3-param sensitivity values are reported in the artifact. H100 default mode
+    (``build_stage_rates``) byte-untouched."""
+    try:
+        import simulator.ttft_queue_sim as sim
+    except ImportError:
+        quettasim_symbol_gone("simulator.ttft_queue_sim.PREFILL_HOST_SHARED_MS_PER_TOKEN")
+    prod_sum_live = sim.PREFILL_HOST_SHARED_MS_PER_TOKEN + sim.PREFILL_HOST_PERREQ_MS_PER_TOKEN
+    assert abs(prod_sum_live - PROD_HOST_SUM) < 1e-15, "production host SUM moved -- update anchor"
+
+    rows1 = list(csv.DictReader(tp1_csv.open()))
+    rowsn = list(csv.DictReader(tpn_csv.open()))
+    rows_h100 = list(csv.DictReader(h100_tp1_csv.open()))
+
+    # Cross-instrument estimator validation on the H100 bridge leg (hard-fail).
+    host_h100_4p = _ols(rows_h100, "ttft_ms", ["1", "new", "cached", "fa3"])
+    drift = abs(host_h100_4p["cached"] - PROD_HOST_SUM) / PROD_HOST_SUM
+    if drift > HOST_TP1_TOLERANCE:
+        raise SystemExit(f"4-param estimator on the H100 bridge leg gives "
+                         f"{host_h100_4p['cached']:.6e}, drifting {drift*100:.1f}% from the "
+                         f"production SUM {PROD_HOST_SUM:.6e} -- estimator family no longer "
+                         "validates cross-instrument; refusing to emit")
+
+    host1 = _ols(rows1, "ttft_ms", ["1", "new", "cached", "fa3"])
+    hostn = _ols(rowsn, "ttft_ms", ["1", "new", "cached", "fa3"])
+    fa3_1 = _ols(rows1, "prefill_span_ms", ["1", "new", "cached", "fa3"])
+    fa3_n = _ols(rowsn, "prefill_span_ms", ["1", "new", "cached", "fa3"])
+    host1_3p = _ols(rows1, "ttft_ms", ["1", "new", "cached"])
+    hostn_3p = _ols(rowsn, "ttft_ms", ["1", "new", "cached"])
+    if fa3_1["fa3"] <= 0:
+        raise SystemExit(f"tp1-leg FA3 coefficient {fa3_1['fa3']:.4e} not positive -- refusing")
+    ratio = fa3_n["fa3"] / fa3_1["fa3"]
+    if not (0.0 < ratio <= 1.0):
+        raise SystemExit(f"FA3 tp{tp}/tp1 ratio {ratio:.4f} outside (0,1] -- not a sharding "
+                         "signal; refusing")
+
+    payload = {
+        "schema": "prefill_stage_rates.v1",
+        "gpu": f"{gpu}x{tp}", "model": "Llama-3.1-8B", "tp": tp,
+        "method": ("like-for-like multiprocess api_server stage-split pair (same script + "
+                   f"lattice both legs, {gpu} host). HOST: 4-param OLS ttft ~ floor + a*new "
+                   "+ b*cached + c*new*(cached+new/2) per leg; per-config value = b(tpN) "
+                   "DIRECT (AMENDED from the H100 3-param family: the 3090's ~9x FA3 "
+                   "coefficient contaminates the 3-param cached coefficient ~60% via the "
+                   "quadratic projection, and the consumer charges HOST and FA3 separately; "
+                   "the 4-param estimator reproduces the production H100 SUM within 5% on "
+                   "the H100 bridge leg). FA3: same 4-param fit on prefill_span_ms; "
+                   "per-config value = c(tpN) DIRECT (no production anchor to "
+                   "ratio-transport on this GPU; L13 pre-registration)."),
+        "host_fit_tp1_4p": {k: round(v, 9) for k, v in host1.items()},
+        f"host_fit_tp{tp}_4p": {k: round(v, 9) for k, v in hostn.items()},
+        "host_estimator_validation_h100_bridge": {
+            "production_sum_ms_per_tok": PROD_HOST_SUM,
+            "h100_tp1_leg_4p_ms_per_tok": host_h100_4p["cached"],
+            "rel_drift": drift, "tolerance": HOST_TP1_TOLERANCE},
+        "fa3_fit_tp1": {k: (round(v, 9) if k != "fa3" else v) for k, v in fa3_1.items()},
+        f"fa3_fit_tp{tp}": {k: (round(v, 9) if k != "fa3" else v) for k, v in fa3_n.items()},
+        "fa3_ratio_tpn_over_tp1": ratio,
+        "constants": {
+            "prefill_host_cached_ms_per_token": hostn["cached"],
+            "prefill_fa3_ms_per_token2": fa3_n["fa3"],
+        },
+        "partition_caveat": (
+            "shared/per-request partition stays the production measured fraction "
+            f"{sim.PREFILL_HOST_SHARED_MS_PER_TOKEN / PROD_HOST_SUM:.4f} (tp1 B-sweep band "
+            f"point, prefill_host_split_H100.json): no {gpu} B-sweep exists; only the "
+            "measured SUM is per-config. The consumer (_price_step) applies the fraction "
+            "to the pinned SUM."),
+        "sensitivity_3param_family": {
+            "host_cached_tp1_3p": host1_3p["cached"],
+            f"host_cached_tp{tp}_3p": hostn_3p["cached"],
+            "note": ("the original H100 3-param coefficients, contaminated here by the "
+                     "FA3 quadratic projection (see method) -- reported, NOT pinned.")},
+        "fallbacks_it_replaces": {
+            "host_sum_ms_per_tok": PROD_HOST_SUM,
+            "PREFILL_FA3_MS_PER_TOKEN2": PROD_FA3},
+        "_notes": (f"Pinned in the {gpu}x{tp} deployment JSON top-level keys "
+                   "prefill_host_cached_ms_per_token / prefill_fa3_ms_per_token2 -> "
+                   "RooflineParams (loader). Every config without the pins keeps the module "
+                   "constants byte-identically. Regenerate: just export. "
+                   f"Sources: serving_stage_split.py --tensor-parallel-size {{1,{tp}}} on "
+                   "the 3090 host (L13, 2026-06-11; GPUs 0 / 0-1 / 0-3, PIX-only PCIe)."),
+    }
+    out_json.parent.mkdir(parents=True, exist_ok=True)
+    out_json.write_text(json.dumps(payload, indent=2) + "\n")
+    print(f"HOST cached 4p: tp1 {host1['cached']*1e3:.4f} ms/1k | tp{tp} "
+          f"{hostn['cached']*1e3:.4f} ms/1k (3p sensitivity: {host1_3p['cached']*1e3:.4f} / "
+          f"{hostn_3p['cached']*1e3:.4f}; h100-bridge drift {drift*100:.1f}%)")
+    print(f"FA3: tp1 {fa3_1['fa3']:.4e} | tp{tp} {fa3_n['fa3']:.4e} (ratio {ratio:.5f}) "
+          f"-> pinned DIRECT {fa3_n['fa3']:.6e} (module constant {PROD_FA3:.2e})")
+    print(f"wrote {out_json}")
+
+
+def run_stage_split_rates(results_dirs: Iterable[Path], dest: Path) -> list[Path]:
+    """Write dest/kernels/prefill_stage_rates_<gpu>x<tp>.json for every gpu/tp whose legs exist."""
+    written = []
+    h100_tp1 = find(results_dirs, "serving_stage_split_H100.csv")
+    for gpu in ("H100", "RTX3090"):
+        for tp, tp1_csv, tpn_csv in stage_split_legs(results_dirs, gpu):
+            out_json = Path(dest) / "kernels" / f"prefill_stage_rates_{gpu}x{tp}.json"
+            if gpu == "H100":
+                build_stage_rates(tp, tp1_csv, tpn_csv, out_json)
+            elif h100_tp1 is not None:
+                build_consumer(gpu, tp, tp1_csv, tpn_csv, h100_tp1, out_json)
+            else:
+                print(f"SKIP {gpu}x{tp}: no H100 tp1 leg to validate the estimator against")
+                continue
+            written.append(out_json)
+    return written
+
+
+TRACES = [
+    "vllm_engine_step_trace_swe_c40_t12_benchmark_serving_wall.jsonl",
+    "vllm_engine_step_trace_swe_c80_t12_benchmark_serving_wall.jsonl",
+    "vllm_engine_step_trace_swe_c320_t2_benchmark_serving_wall.jsonl",
+    "vllm_engine_step_trace_terminal_c80_t16_benchmark_serving_wall.jsonl",
+]
+
+# Pre-registered thresholds (L6-utils.md). SCHED_PRIOR is an eligibility gate only --
+# it never enters the output arithmetic.
+SCHED_PRIOR_MS = 5.7
+FULL_BATCH_FRAC = 0.9
+WARMUP_STEP_ID = 5
+BW_DOMINANCE = 2.0          # bw_roofline_ms >= BW_DOMINANCE * SCHED_PRIOR_MS
+WALL_TRIM = (0.5, 2.0)      # vs per-trace median of the candidate set
+PREFILL_MIN_TOKENS = 1024
+UTIL_FLOPS_MIN_N = 5
+
+
+def _f(v) -> float:
+    return float(v) if v not in ("", None) else 0.0
+
+
+def _i(v) -> int:
+    return int(float(v)) if v not in ("", None) else 0
+
+
+def load_trace(path: Path) -> list[dict]:
+    return [json.loads(line) for line in path.open() if line.strip()]
+
+
+def reconstruct_contexts(steps: list[dict]) -> list[dict | None]:
+    """Per decode-only step: total context tokens across the decode batch.
+
+    prompt_tokens[id] from engine_cache_truth.requests[*].prompt_tokens (first sighting
+    wins); generated[id] = # prior steps where id appeared in decode_request_ids.
+    Returns one entry per step: None for non-decode-only steps or steps with an
+    unknown-prompt request; else {"ctx_total": int, "batch": int}.
+    """
+    prompt_tokens: dict[str, int] = {}
+    generated: dict[str, int] = {}
+    out: list[dict | None] = []
+    for s in steps:
+        ect = s.get("engine_cache_truth")
+        if ect:
+            try:
+                truth = json.loads(ect)
+            except (TypeError, ValueError):
+                truth = {}
+            for req in truth.get("requests", []):
+                rid, pt = req.get("request_id"), req.get("prompt_tokens")
+                if rid and pt and rid not in prompt_tokens:
+                    prompt_tokens[rid] = int(pt)
+        decode_ids = [r for r in (s.get("decode_request_ids") or "").split() if r]
+        is_decode_only = (
+            _i(s.get("decode_batch")) > 0
+            and _i(s.get("prefill_tokens")) == 0
+            and str(s.get("model_executed")) == "true"
+        )
+        if is_decode_only:
+            if any(r not in prompt_tokens for r in decode_ids):
+                out.append(None)  # unknown-context request -> step excluded
+            else:
+                ctx = sum(prompt_tokens[r] + generated.get(r, 0) for r in decode_ids)
+                out.append({"ctx_total": ctx, "batch": len(decode_ids)})
+        else:
+            out.append(None)
+        for r in decode_ids:  # this step generates 1 token per decode request
+            generated[r] = generated.get(r, 0) + 1
+    return out
+
+
+def quartile_medians(pairs: list[tuple[float, float]]) -> list[dict]:
+    """pairs = (bw_roofline_ms, ratio); medians per byte-scale quartile."""
+    if not pairs:
+        return []
+    pairs = sorted(pairs)
+    out = []
+    n = len(pairs)
+    for q in range(4):
+        chunk = pairs[q * n // 4: (q + 1) * n // 4] or pairs[-1:]
+        out.append({
+            "bw_roofline_ms_range": [round(chunk[0][0], 2), round(chunk[-1][0], 2)],
+            "n": len(chunk),
+            "util_bw_median": round(statistics.median(r for _, r in chunk), 4),
+        })
+    return out
+
+
+def build_roofline_utils(gpu: str, params_path: Path, trace_paths: dict[str, Path], out_path: Path) -> None:
+    params = json.loads(params_path.read_text())
+    n_params = float(params["n_params"])
+    bpp = float(params["bytes_per_param"])
+    kv_bpt = float(params["kv_bytes_per_token"])
+    peak_flops = float(params["peak_flops_per_s"])
+    peak_bw = float(params["peak_bw_bytes_per_s"])
+
+    per_trace: dict[str, dict] = {}
+    bw_pool: list[tuple[float, float]] = []      # (bw_roofline_ms, ratio_wall)
+    bw_pool_net: list[float] = []                # ratio vs (wall - SCHED_PRIOR)
+    flops_pool: list[float] = []
+    flops_pool_engine: list[float] = []
+    sched_pool: list[float] = []
+
+    for name in TRACES:
+        path = trace_paths[name]
+        steps = load_trace(path)
+        ctxs = reconstruct_contexts(steps)
+        key = name.split("_benchmark")[0].replace("vllm_engine_step_trace_", "")
+        tr: dict = {"steps": len(steps)}
+
+        # ---------------- util_bw candidates (rules 1-3), then trim (rule 4)
+        max_batch = max((c["batch"] for c in ctxs if c), default=0)
+        candidates = []
+        excluded_unknown_ctx = 0
+        for s, c in zip(steps, ctxs):
+            if (_i(s.get("decode_batch")) > 0 and _i(s.get("prefill_tokens")) == 0
+                    and str(s.get("model_executed")) == "true" and c is None):
+                excluded_unknown_ctx += 1
+            if c is None:
+                continue
+            if c["batch"] < FULL_BATCH_FRAC * max_batch:
+                continue
+            if _i(s.get("step_id")) <= WARMUP_STEP_ID:
+                continue
+            bw_ms = (bpp * n_params + c["ctx_total"] * kv_bpt + c["batch"] * kv_bpt) \
+                / peak_bw * 1e3
+            if bw_ms < BW_DOMINANCE * SCHED_PRIOR_MS:
+                continue
+            wall = _f(s.get("engine_step_wall_ms"))
+            if wall <= 0:
+                continue
+            candidates.append((bw_ms, wall))
+        trimmed = []
+        if candidates:
+            med_wall = statistics.median(w for _, w in candidates)
+            lo, hi = WALL_TRIM[0] * med_wall, WALL_TRIM[1] * med_wall
+            for bw_ms, wall in candidates:
+                if lo <= wall <= hi:
+                    trimmed.append((bw_ms, wall))
+        ratios = [(bw, bw / w) for bw, w in trimmed]
+        bw_pool.extend(ratios)
+        bw_pool_net.extend(bw / max(w - SCHED_PRIOR_MS, 1e-9) for bw, w in trimmed)
+        tr["util_bw"] = {
+            "n_candidates": len(candidates),
+            "n_after_trim": len(trimmed),
+            "n_outliers_trimmed": len(candidates) - len(trimmed),
+            "n_decode_steps_unknown_ctx": excluded_unknown_ctx,
+            "max_decode_batch": max_batch,
+            "median": round(statistics.median(r for _, r in ratios), 4) if ratios else None,
+        }
+
+        # ---------------- util_flops candidates
+        fl_cand = []
+        for s in steps:
+            if not (_i(s.get("prefill_tokens")) >= PREFILL_MIN_TOKENS
+                    and _i(s.get("decode_batch")) == 0
+                    and str(s.get("model_executed")) == "true"):
+                continue
+            m = _i(s.get("prefill_tokens"))
+            submit = _f(s.get("model_submit_wall_ms"))
+            engine = _f(s.get("engine_step_wall_ms"))
+            if submit <= 0:
+                continue
+            fl_cand.append((m, submit, engine))
+        fl_trim = []
+        if fl_cand:
+            med_pt = statistics.median(sub / m for m, sub, _ in fl_cand)
+            lo, hi = WALL_TRIM[0] * med_pt, WALL_TRIM[1] * med_pt
+            fl_trim = [(m, sub, eng) for m, sub, eng in fl_cand if lo <= sub / m <= hi]
+        fl_ratios = [2.0 * n_params * m / peak_flops * 1e3 / sub for m, sub, _ in fl_trim]
+        flops_pool.extend(fl_ratios)
+        flops_pool_engine.extend(
+            2.0 * n_params * m / peak_flops * 1e3 / eng for m, _, eng in fl_trim if eng > 0)
+        tr["util_flops"] = {
+            "n_candidates": len(fl_cand),
+            "n_after_trim": len(fl_trim),
+            "median": round(statistics.median(fl_ratios), 4) if fl_ratios else None,
+        }
+
+        # ---------------- scheduler overhead
+        gaps = []
+        for s in steps:
+            if (_i(s.get("decode_batch")) == 1 and _i(s.get("prefill_tokens")) == 0
+                    and str(s.get("model_executed")) == "true"):
+                gaps.append(_f(s.get("engine_step_wall_ms")) - _f(s.get("model_submit_wall_ms")))
+        sched_pool.extend(gaps)
+        tr["sched"] = {
+            "n": len(gaps),
+            "median": round(statistics.median(gaps), 4) if gaps else None,
+        }
+        per_trace[key] = tr
+
+    util_bw = statistics.median(r for _, r in bw_pool) if bw_pool else None
+    util_flops = (statistics.median(flops_pool)
+                  if len(flops_pool) >= UTIL_FLOPS_MIN_N else None)
+    sched = statistics.median(sched_pool) if sched_pool else None
+
+    out = {
+        "gpu": gpu,
+        "recipe": "profiling/docs/defit_log_entries/L6-utils.md (pre-registered 2026-06-10; "
+                  "implemented by quettabench/export/quettasim/roofline_utils.py)",
+        "params_source": params_path.name,
+        "util_bw": round(util_bw, 4) if util_bw is not None else None,
+        "util_flops": round(util_flops, 4) if util_flops is not None else None,
+        "scheduler_overhead_ms_per_step": round(sched, 4) if sched is not None else None,
+        "n_steps": {
+            "util_bw": len(bw_pool),
+            "util_flops": len(flops_pool),
+            "sched": len(sched_pool),
+        },
+        "diagnostics": {
+            "util_bw_net_of_sched_prior": round(statistics.median(bw_pool_net), 4)
+            if bw_pool_net else None,
+            "util_bw_net_note": "same steps, ratio vs (engine_wall - 5.7ms): the "
+            "ttft_queue_sim.py:762 convention (sched added separately). Headline uses the "
+            "full engine wall: closed_form_tpot adds no sched term to tpot.",
+            "util_flops_vs_engine_wall": round(statistics.median(flops_pool_engine), 4)
+            if flops_pool_engine else None,
+            "util_flops_thinness": "pure-prefill steps are rare in decode-heavy serving "
+            "traces; prefill_gemm_util_H100.json (R1 measured curve) remains the better "
+            "prefill-util source.",
+            "util_bw_by_byte_quartile": quartile_medians(bw_pool),
+        },
+        "per_trace": per_trace,
+    }
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(out, indent=2) + "\n")
+    print(f"wrote {out_path}")
+    print(json.dumps({k: out[k] for k in
+                      ("util_bw", "util_flops", "scheduler_overhead_ms_per_step", "n_steps")},
+                     indent=2))
+
+
+def run_roofline_utils(results_dirs: Iterable[Path], dest: Path) -> list[Path]:
+    """Write dest/kernels/roofline_utils_<gpu>.json for every gpu with its params and all traces."""
+    written = []
+    for gpu in ("H100", "A100"):
+        params_path = find(results_dirs, f"roofline_params_{gpu}_llama31_8b.json")
+        trace_paths = {name: find(results_dirs, name) for name in TRACES}
+        if params_path is None or None in trace_paths.values():
+            print(f"SKIP roofline_utils {gpu}: params or pinned traces not in the results dirs")
+            continue
+        out_path = Path(dest) / "kernels" / f"roofline_utils_{gpu}.json"
+        build_roofline_utils(gpu, params_path, trace_paths, out_path)
+        written.append(out_path)
+    return written
+
+
+summarize_cell = _client.summarize_cell
+SUMMARY_FIELDS = _client.SUMMARY_FIELDS
+OUT_FIELDS = SUMMARY_FIELDS + ["effective_context_len", "source_file"]
+
+
+def read_run(path: Path) -> tuple[dict, dict[tuple[int, int], list[dict]]]:
+    """One raw JSONL.gz -> (meta, {(B, nominal_T): [request records]})."""
+    meta: dict = {}
+    cells: dict[tuple[int, int], list[dict]] = {}
+    opener = gzip.open if path.suffix == ".gz" else open
+    with opener(path, "rt") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            d = json.loads(line)
+            if d.get("_meta"):
+                meta = d
+                continue
+            key = (int(d["cell"][0]), int(d["cell"][1]))
+            cells.setdefault(key, []).append(d)
+    return meta, cells
+
+
+_LAG_UPGRADE_SPREAD = 0.005      # the L11 cross-pass reproducibility standard (<=0.5%)
+_LAG_UPGRADE_HEADROOM = 1.5      # latest-pass p99 loop lag must be <= 1.5x the flag limit
+LAG_UPGRADE_FIELD = "lag_reproducibility_upgrade"
+
+
+def build_decode_grid(inputs: list[Path], snap_tolerance: float = 0.02,
+          lag_upgrade: bool = False) -> list[dict]:
+    """Merge runs (latest wins per cell) and summarize.
+
+    ``snap_tolerance`` (L11 builder amendment, decided PRE-GATE on consumer-structure grounds,
+    no validation data consulted): the lattice's ``prompt = T - osl/2`` design targets an
+    effective context == nominal T at the steady-window middle, and the measured effectives land
+    within ~1.5% of nominal -- but as raw floats they are UNIQUE per (B, T) cell, which makes
+    every ``load_grid`` t-axis column single-B (ragged), so the consumer's bilinear corners mix
+    measured cells with analytic fills almost everywhere, diluting the measurement. The builder
+    therefore SNAPS ``context_len`` to the cell's nominal T when the measured effective is
+    within ``snap_tolerance`` of it (the by-construction case; rows align into a proper B x T
+    grid) and keeps the measured effective in the ``effective_context_len`` diagnostic column.
+    A deviation beyond the tolerance means the steady window was asymmetric/disturbed: the cell
+    keeps its measured effective AND is flagged ``check``.
+
+    ``lag_upgrade`` (L13 builder amendment, DEFAULT OFF -- every pre-L13 artifact regenerates
+    byte-identically; decided on consumer-structure grounds before the L13 grid wiring gate):
+    the p99-loop-lag ``check`` flag exists to catch CLIENT-side measurement distortion, and the
+    L11 pass-2 finding was that cross-topology reproducibility falsifies that distortion
+    ("values reproduce <=0.5% vs run 1 -> the flags are client-loop scheduling noise ... not
+    measurement distortion", L11-h100multi). ``load_grid`` drops non-``ok`` rows, so a
+    marginally-over-limit lag flag (e.g. 2.01 vs the 2.0 ms limit on a host whose CPUs also run
+    the tensor-parallel server) silently replaces a reproducible MEASURED cell with the analytic
+    fill the grid exists to correct. With ``lag_upgrade=True`` a flagged cell is upgraded to
+    ``ok`` iff ALL deterministic criteria hold:
+      * the cell was measured in >= 2 input passes (independent client topologies);
+      * EVERY pass is hygiene-clean (no empty-stream drops, in-window deltas >= min_samples,
+        positive steady window) -- i.e. the only flag reason anywhere is loop lag;
+      * the final (latest-wins) row's flag is lag-only, with the snap check passing;
+      * cross-pass decode_step_ms spread <= 0.5% of the adopted (latest) value;
+      * the adopted pass's p99 loop lag is <= 1.5x the flag limit (a genuinely lag-disturbed
+        run cannot be upgraded by an agreeing pair -- it must be re-measured clean).
+    Upgraded rows carry the evidence (pass count, spread, per-pass lags) in the
+    ``lag_reproducibility_upgrade`` diagnostic column."""
+    sig = inspect.signature(summarize_cell)
+    min_samples = sig.parameters["min_samples"].default
+    lag_limit_ms = sig.parameters["lag_limit_ms"].default
+
+    history: dict[tuple[int, int], list[tuple[list[dict], str]]] = {}
+    for path in inputs:
+        meta, cells = read_run(path)
+        for key, recs in cells.items():
+            if key in history:
+                print(f"cell {key}: superseded by {path.name}")
+            history.setdefault(key, []).append((recs, path.name))
+    rows = []
+    for key in sorted(history):
+        recs, src = history[key][-1]
+        ok = [r for r in recs if r.get("t_first_wall") is not None]
+        dropped = len(recs) - len(ok)
+        row = summarize_cell(ok)
+        if dropped:
+            row["validation_status"] = "check"
+            print(f"cell {key}: {dropped} empty-stream request(s) -> check")
+        eff = row["context_len"]
+        nominal = row["nominal_T"]
+        row["effective_context_len"] = eff
+        snap_ok = nominal > 0 and abs(eff - nominal) / nominal <= snap_tolerance
+        if snap_ok:
+            row["context_len"] = nominal
+        else:
+            row["validation_status"] = "check"
+            print(f"cell {key}: effective context {eff} deviates >{snap_tolerance:.0%} "
+                  f"from nominal {nominal} -> kept + check")
+        if (lag_upgrade and row["validation_status"] == "check" and not dropped and snap_ok
+                and row["n_samples"] >= min_samples and row["steady_window_s"] > 0
+                and len(history[key]) >= 2):
+            per_pass = []
+            for recs_i, name_i in history[key]:
+                ok_i = [r for r in recs_i if r.get("t_first_wall") is not None]
+                if len(ok_i) != len(recs_i):
+                    per_pass = None
+                    break
+                row_i = summarize_cell(ok_i)
+                if row_i["n_samples"] < min_samples or row_i["steady_window_s"] <= 0:
+                    per_pass = None
+                    break
+                per_pass.append((row_i["decode_step_ms"], row_i["p99_loop_lag_ms"], name_i))
+            if per_pass is not None:
+                vals = [v for v, _, _ in per_pass]
+                spread = (max(vals) - min(vals)) / vals[-1]
+                if (spread <= _LAG_UPGRADE_SPREAD
+                        and per_pass[-1][1] <= _LAG_UPGRADE_HEADROOM * lag_limit_ms):
+                    row["validation_status"] = "ok"
+                    row[LAG_UPGRADE_FIELD] = (
+                        f"passes={len(per_pass)} spread={spread * 100:.3f}% "
+                        f"lags={'/'.join(f'{lag:.3f}' for _, lag, _ in per_pass)}")
+                    print(f"cell {key}: lag-only flag upgraded to ok "
+                          f"({row[LAG_UPGRADE_FIELD]})")
+        row["source_file"] = src
+        rows.append(row)
+    return rows
+
+
+RUN_NAME = re.compile(r"serving_decode_grid_(?P<tag>.+)_(?P<date>[^_]+)\.jsonl(\.gz)?$")
+
+
+def write_grid(rows: list[dict], out: Path, lag_upgrade: bool = False) -> None:
+    out_fields = OUT_FIELDS + ([LAG_UPGRADE_FIELD] if lag_upgrade else [])
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with out.open("w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=out_fields)
+        w.writeheader()
+        for r in rows:
+            w.writerow({k: r.get(k, "") for k in out_fields})
+    n_ok = sum(1 for r in rows if r["validation_status"] == "ok")
+    print(f"wrote {out} ({len(rows)} cells, {n_ok} ok / {len(rows) - n_ok} check)")
+
+
+def run_serving_decode_grid(results_dirs: Iterable[Path], dest: Path, lag_upgrade: bool = False) -> list[Path]:
+    """Write dest/results/serving_decode_grid_<tag>_<date>.csv, one per tag found."""
+    runs: dict[str, list[tuple[str, Path]]] = {}
+    for root in results_dirs:
+        for path in files(root, "serving_decode_grid_*.jsonl*"):
+            m = RUN_NAME.match(path.name)
+            if m:
+                runs.setdefault(m["tag"], []).append((m["date"], path))
+    written = []
+    for tag, dated in runs.items():
+        dated.sort()
+        rows = build_decode_grid([p for _, p in dated], lag_upgrade=lag_upgrade)
+        out = Path(dest) / "results" / f"serving_decode_grid_{tag}_{dated[-1][0]}.csv"
+        write_grid(rows, out, lag_upgrade)
+        written.append(out)
+    return written
+
+
+BUILDERS = {
+    "tp_comm": run_tp_comm,
+    "stage_split_rates": run_stage_split_rates,
+    "roofline_utils": run_roofline_utils,
+    "serving_decode_grid": run_serving_decode_grid,
+    "kernel_tables": run_kernel_tables,
+}
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def bench_sha() -> str:
+    """HEAD of this repo, empty when git cannot say."""
+    try:
+        done = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO_ROOT, check=True,
+                              capture_output=True, text=True)
+    except (OSError, subprocess.CalledProcessError):
+        return ""
+    return done.stdout.strip()
+
+
+def source_runs(results_dirs: list[Path]) -> list[dict]:
+    """Every exported run.json under the results dirs: its run dir (the run
+    id), run name, status and start, so an exported table names the runs
+    behind it. A run dir skipped_runs leaves out is printed instead."""
+    runs = []
+    for root in results_dirs:
+        skipped = skipped_runs(root)
+        for run_dir, why in skipped.items():
+            print(f"skip {run_dir}: {why}")
+        for path in files(root, "run.json"):
+            doc = json.loads(path.read_text())
+            runs.append({"run": str(path.parent), "run_name": doc["config"].get("run_name"),
+                         "status": doc["run_status"]["status"],
+                         "started": doc["provenance"].get("started")})
+    return runs
+
+
+def manifest(results_dirs: list[Path]) -> dict:
+    return {
+        "source_dirs": [str(d) for d in results_dirs],
+        "runs": source_runs(results_dirs),
+        "bench_sha": bench_sha(),
+        "exported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+
+
+def export(results_dirs: Iterable[Path], dest: Path | None = None, only: Iterable[str] | None = None,
+           kernel_dest: Path | None = None, replace_tables: bool = False) -> list[Path]:
+    """Run the builders (all, or the named ones) over the results dirs; return the files written.
+
+    kernel_tables writes under kernel_dest (QuettaSim's data root) and runs
+    only when it is given; the other builders write under dest and run only
+    when it is given; kernel_tables merges into the tables kernel_dest holds
+    unless replace_tables. A builder named in only without its dest stops the
+    export. dest gets manifest.json, kernel_dest kernel_data/qbench_manifest.json
+    when kernel_tables found a table (not at QuettaSim's data root): where the inputs came from, the runs
+    recorded there (run.json), which bench commit, when, and for kernel_dest
+    per kernel table the run dirs whose rows it holds, the bench commit and
+    when, kept for the tables this export did not write; a table that kept
+    dest rows names the runs the old manifest recorded for it first, else
+    "adopted from dest". The old kernel manifest's other keys stay. dest's
+    manifest reads the runs after its builders; kernel_dest's reads them,
+    and the old kernel manifest, before kernel_tables builds, so one that
+    does not parse, or is no object with a kernel_tables object, stops the
+    export with kernel_dest as it was.
+    """
+    results_dirs = [Path(d) for d in results_dirs]
+    names = list(only) if only else list(BUILDERS)
+    unknown = [n for n in names if n not in BUILDERS]
+    if unknown:
+        raise SystemExit(f"unknown builder {unknown}; choose from {sorted(BUILDERS)}")
+    if only:
+        if "kernel_tables" in names and kernel_dest is None:
+            raise SystemExit("kernel_tables writes under --kernel-dest (QuettaSim's data root); give it")
+        if any(n != "kernel_tables" for n in names) and dest is None:
+            raise SystemExit("the builders other than kernel_tables write under --dest; give it")
+    names = [n for n in names if (kernel_dest if n == "kernel_tables" else dest) is not None]
+    if not names:
+        raise SystemExit("give --dest, --kernel-dest or both")
+    if "kernel_tables" in names:
+        path = Path(kernel_dest) / "kernel_data" / "qbench_manifest.json"
+        kernel = manifest(results_dirs)
+        try:
+            prior = json.loads(path.read_text()) if path.is_file() else {"kernel_tables": {}}
+        except ValueError:
+            prior = None
+        if not isinstance(prior, dict) or not isinstance(prior.get("kernel_tables"), dict):
+            raise SystemExit(f"{path}: malformed manifest")
+    written: list[Path] = []
+    tables = None
+    for name in names:
+        run_dirs.cache_clear()
+        if name == "kernel_tables":
+            paths, tables = run_kernel_tables(results_dirs, Path(kernel_dest), replace_tables)
+            written.extend(paths)
+        else:
+            written.extend(BUILDERS[name](results_dirs, Path(dest)))
+    run_dirs.cache_clear()
+    if any(n != "kernel_tables" for n in names):
+        Path(dest).mkdir(parents=True, exist_ok=True)
+        (Path(dest) / "manifest.json").write_text(json.dumps(manifest(results_dirs), indent=2) + "\n")
+    if tables:
+        old = prior["kernel_tables"]
+        new = {}
+        for rel, runs in tables.items():
+            entry = old.get(rel)
+            before = entry.get("runs") if isinstance(entry, dict) else None
+            if runs[:1] == ["adopted from dest"] and isinstance(before, list) and before:
+                runs = list(dict.fromkeys(before + runs[1:]))
+            new[rel] = {"runs": runs, "bench_sha": kernel["bench_sha"], "exported_at": kernel["exported_at"]}
+        write_atomic(path, json.dumps({**prior, **kernel, "kernel_tables": {**old, **new}}, indent=2) + "\n")
+    return written
+
+
+def main(argv=None) -> None:
+    ap = argparse.ArgumentParser(prog="qbench export", description=__doc__)
+    ap.add_argument("--results", type=Path, nargs="+", default=[Path("results")],
+                    help="results dirs the builders read; a named table comes from the ok run that "
+                         "finished last, a tie from the earlier dir")
+    ap.add_argument("--dest", type=Path,
+                    help="where every builder but kernel_tables writes (kernels/, results/, "
+                         "manifest.json); those builders run only when it is given")
+    ap.add_argument("--kernel-dest", type=Path,
+                    help="QuettaSim's data root ($QUETTASIM_DATA, e.g. ../QuettaSim/data): "
+                         "kernel_tables writes its kernel_data/ (with qbench_manifest.json) there, "
+                         "and runs only when given")
+    ap.add_argument("--replace-tables", action="store_true",
+                    help="replace the kernel tables (and sidecars) --kernel-dest holds where merging "
+                         "into them would stop, dropping their rows; the others still merge")
+    ap.add_argument("--only", nargs="+", choices=sorted(BUILDERS),
+                    help="run just these builders (default: all)")
+    a = ap.parse_args(argv)
+    for path in export(a.results, a.dest, a.only, kernel_dest=a.kernel_dest,
+                       replace_tables=a.replace_tables):
+        print(path)
+
+
+if __name__ == "__main__":
+    main()
