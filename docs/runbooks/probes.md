@@ -36,7 +36,7 @@ The one route to QuettaSim is the `kernel_tables` export builder: `just export -
    just gpu=X gdn geom=9b                         # only for Qwen3.5-style hybrids
    just gpu=X moe                                 # only if you serve MoE models
    ```
-   Rows land in `results/probes/X/<probe>/<run-id>/rows.jsonl`; the export builds QuettaSim's layout from them (`graph/` = graphed-decode-faithful, `eager/` = eager-prefill-faithful): `graph/gemm/X.csv`, `eager/elementwise/X.json`, `{graph,eager}/flash_attn/X[_tpN].csv` (decode; graph with `flash-ncu`), `eager/fa3_prefill/X[_tpN].csv` (prefill), `{graph,eager}/gdn/X_<geom>_{decode,prefill}.csv`, `eager/moe/X.csv` + `eager/moe/X_routing.json`.
+   Rows land in `results/probes/X/<probe>/<run-id>/rows.jsonl`; the export builds QuettaSim's layout from them (`graph/` = graphed-decode-faithful, `eager/` = eager-prefill-faithful): `graph/gemm/X.csv`, `eager/elementwise/X.json`, `{graph,eager}/flash_attn/X[_tpN].csv` (decode; graph with `--ncu`), `eager/fa3_prefill/X[_tpN].csv` (prefill), `{graph,eager}/gdn/X_<geom>_{decode,prefill}.csv`, `eager/moe/X.csv` + `eager/moe/X_routing.json`.
 
 3. Derive `util_flops` / `util_bw` for `X.yaml`: they anchor the analytic roofline fallback used for off-grid cells. Read them off the collected grids: `just -f $QUETTASIM/justfile derive-device gpu=X` prints both (does not edit the YAML).
 
@@ -89,7 +89,7 @@ MXFP4-expert models (gpt-oss) are swept for shape coverage but not priced off th
 
 Which timing method is *faithful* depends on how the kernel runs in serving, so `kernel_data` is split by timing (`graph/` vs `eager/`) and the loader reads each kernel from the right one:
 
-- Decode is CUDA-graphed: the graph replays all decode kernels with no per-launch CPU dispatch, so NCU (pure kernel time) equals the achieved time. Decode grids + gemm + elementwise come from `graph/`. Use `gemm-ncu`, `flash-ncu`, `gdn-ncu` (need a real `ncu`: `NCU_BIN=/opt/nvidia/nsight-compute/2024.3.2/ncu`, not stock `/usr/bin/ncu`).
+- Decode is CUDA-graphed: the graph replays all decode kernels with no per-launch CPU dispatch, so NCU (pure kernel time) equals the achieved time. Decode grids + gemm + elementwise come from `graph/`. Pass `--ncu` to the `gemm`, `flash` and `gdn` recipes (needs a real `ncu`: `NCU_BIN=/opt/nvidia/nsight-compute/2024.3.2/ncu`, not stock `/usr/bin/ncu`).
 - Prefill is eager (dynamic shapes, not graphed): every kernel pays its dispatch cost, which cuda_event captures and NCU misses. Prefill grids come from `eager/`. The `flash`/`gdn` probes always emit prefill via cuda_event (even under `--ncu`, which only switches the *decode* grid).
 
 The dispatch overhead is real and host-specific: GDN prefill's 8 tiny Triton sub-kernels floor at ~500µs on A100 (~62µs/launch) vs far less on H100, which is why NCU alone can't reconstruct prefill. Every table's method is recorded in QuettaSim's `data/kernel_data/PROVENANCE.md`; keep a GPU/kernel/phase on one method and re-collect rather than mix. `gemm` without `--ncu` times raw `torch.matmul` cuBLAS, not vLLM's GEMM; prefer `--ncu`.
