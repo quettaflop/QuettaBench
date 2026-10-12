@@ -339,7 +339,7 @@ configs/                  models, runs, grids, hardware
 docker/Dockerfile         qbench on the vLLM image (just image)
 docs/runbooks/            the probe guide (probes.md) and the GPU and verification runbooks
 tests/golden/             characterization fixtures from the pre-refactor code
-tests/contracts/          one test module per package module, plus the crossval contracts and GPU smoke
+tests/contracts/          one test module per package area, plus the crossval contracts and GPU smoke
 analysis/, data/          one-off studies and data fetch; not imported by the package
 ```
 

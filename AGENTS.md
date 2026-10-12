@@ -78,8 +78,12 @@ in one results layer, `results/<run>/`, and leaves the repo by
 - `tests/golden/`: characterization fixtures captured from the pre-refactor
   code. Change a fixture only with a dated line in `tests/golden/REPORT.md`
   saying why.
-- `tests/contracts/`: one test module per package module (`test_<module>.py`),
-  plus `test_crossval_contracts.py`, `test_imports.py` and the two GPU smoke
+- `tests/contracts/`: one test module per package area, not per module:
+  `test_workloads.py` covers `workloads/`, `test_probes.py` `probes/`,
+  `test_adapters.py` the adapters, `test_export.py` `export/`, and
+  `config/schema.py` is tested through `test_loader.py`; `provision.py` is
+  tested in `tests/golden/test_provision.py` only. Plus
+  `test_crossval_contracts.py`, `test_imports.py` and the two GPU smoke
   modules; `helpers.py` and the `fake_*.py` scripts are their plumbing.
 
 ## Deviations from QBENCH_STRUCTURE.md
@@ -98,11 +102,17 @@ One line each; everything else follows section 2 "Target layout".
 - `moe`, `collective`, `vllm_allreduce`, `reparallel` and `profiling/kv_transfer.py` emit `ProbeRow`s without the `Probe` ABC: moe allocates each geometry's weights once for all its token points, and the others run under torchrun, where rank 0 emits rows the ranks measured together.
 - A run that measured no rows for a table exports no table for it; the per-probe CSVs wrote a header-only table, which replaced (or, without `--append`, reset) the earlier runs' rows.
 - `profiling/kv_transfer.py` stays its own module: it is a torchrun target (`-m quettabench.profiling.kv_transfer`) and the tool name in the kernel manifest.
-- `tests/` has `golden/` and `contracts/` only: the probe contracts and GPU smoke tests live in `contracts/` (owner decision 2026-10-12), and `tests/parity/` waits for the GPU parity gate.
+- `tests/` has `golden/`, `contracts/` and `_stubs/` (the vllm, torch and transformers stand-ins the golden CPU runs import): the probe contracts and GPU smoke tests live in `contracts/` (owner decision 2026-10-12), and `tests/parity/` waits for the GPU parity gate.
 - `analysis/` has no synthetic-sampler studies or `build_trace_distributions`: `analysis/synthetic/` was deleted by owner decision (2026-10-12, "scrap synthetic").
 - `data/` keeps `download_agent_trajectories.py` and `download_coding_prompts.py` apart: section 2's `fetch.py` merge is not done.
 - `legacy/trace_serve.py` is gone; `modes/serve.py` replaced it.
 - `tools/pre_commit/` (the commit-message and em-dash hooks) and `docker/` (the qbench plus vLLM image `just image` builds) sit outside section 2's tree.
+- The root also holds plumbing outside section 2's tree: `.github/`, `.pre-commit-config.yaml`, `_typos.toml`, `.dockerignore`, `requirements-probe.txt` and `LICENSE`.
+- `docs/runbooks/` keeps `a100_roofline_utils_runbook.md`, `h100_setup.md`, `serving_stage_split_plan.md` and `slice_verification.md` beside the probe guide.
+- `data/slice_checkpoint.py` builds the cut vLLM checkpoint for slice runs; it is not a fetch script.
+- No mypy config: the lint gate is ruff and the pre-commit hooks.
+- `workload.prompt_mode: synth` stays though no run yaml uses it (owner, "scrap synthetic"): removing it needs `config/schema.py` and `workloads/grid.py` together.
+- `profiling/frontend.py` imports QuettaSim, the one package module that needs a QuettaSim checkout; `native.py` loads it by name only for the `frontend` and `pd_host` sources.
 
 ## Who writes, who starts a process
 
@@ -177,9 +187,10 @@ Every writer and every process starter, exactly:
 - No attribution trailers in code, commits or PRs: the author field is the only authorship.
 - No em-dash in prose; write `--`.
 - Imports at the top of the file. No inline python in shell or justfile
-  recipes; a recipe is one command line into the package. `gpu-info` is the
-  exception: host-shell glue (ssh, nvidia-smi) that runs where the package
-  may not be installed.
+  recipes. A recipe calls into the package where it can; `gpu-info`, `image`,
+  `hooks`, `test`, `lint`, `fetch` and the `mirror-*` recipes call host tools
+  (ssh, nvidia-smi, docker, pre-commit, pytest, ruff, aws) or `data/fetch.py`
+  instead, and `gpu-info` and `profile-gpu` run more than one line.
 - Measured before kept: an optimization lands with the measurement that
   justifies it, and a feature lands with its measurement.
 - Report every number, including the ones that weaken a claim.
