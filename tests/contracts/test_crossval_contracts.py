@@ -15,6 +15,7 @@ from unittest import mock
 
 from quettabench.config import loader
 from quettabench.config.schema import ConfigError, check_ep_legal
+from quettabench.workloads.base import synth_ids
 from quettabench.workloads.live import RealTrace
 
 REPO = Path(__file__).resolve().parents[2]
@@ -42,6 +43,12 @@ def _config(name, *sets, env=None):
     (cfg,) = loader.load(REPO / "configs" / "runs" / f"{name}.yaml",
                          ["allow_unverified=true", *sets], env=env or {})
     return cfg
+
+
+def synth_requests(count, ctx, seed=0):
+    """`count` distinct request dicts of `ctx` synthetic tokens, numbered by order."""
+    return [{"prompt_token_ids": synth_ids(ctx, seed * 1_000_003 + j), "prompt_len": ctx,
+             "seed": seed, "order": j, "source": "SYNTHETIC"} for j in range(count)]
 
 
 def load_trace(path):
@@ -192,7 +199,6 @@ class CrossvalScripts(unittest.TestCase):
         # injected schedules are deterministic, match their spec and change the workload hash.
         from quettabench.workloads import arrival
         from quettabench.workloads.base import workload_hash
-        from quettabench.workloads.grid import synth_requests
         importlib.reload(arrival)
         self.assertIsNone(arrival.parse_arrival("trace", 8))
         p = arrival.parse_arrival("poisson:2.0", 8)
@@ -701,7 +707,6 @@ class TableParity(unittest.TestCase):
         import random
 
         from quettabench.workloads.base import workload_hash
-        from quettabench.workloads.grid import synth_requests
         reqs = synth_requests(24, 64, seed=5)
         for i, r in enumerate(reqs):
             r["arrival_ts"] = round(0.25 * i, 6)
@@ -722,7 +727,6 @@ class TableParity(unittest.TestCase):
     def test_workload_identity_hash(self):
         # the same requests give the same hash in any order; a dropped or altered request changes it.
         from quettabench.workloads.base import workload_hash
-        from quettabench.workloads.grid import synth_requests
         reqs = synth_requests(12, 64, seed=2)
         for i, r in enumerate(reqs):
             r["output_length"] = 128 + i
@@ -787,16 +791,13 @@ class TableParity(unittest.TestCase):
         os.unlink(p)
         self.assertEqual(loaded[0]["output_token_ids"], [99, 100])
 
-    def test_synth_requests_distinct_and_trace(self):
-        # distinct per-request streams so MoE routing spreads, unlike clone; three trace shapes parse.
-        from quettabench.workloads.grid import synth_requests, take
-        reqs = synth_requests(4, 32, seed=3)
-        ids = [tuple(r["prompt_token_ids"]) for r in reqs]
-        self.assertEqual(len(set(ids)), 4, "synth requests must be distinct")
-        self.assertTrue(all(r["prompt_len"] == 32 for r in reqs))
+    def test_trace_shapes_parse(self):
+        # three trace shapes parse, and take() trims or pads them to the cell's ctx.
         import json as _j
         import os as _os
         import tempfile
+
+        from quettabench.workloads.grid import take
         tf = tempfile.mktemp()
         open(tf, "w").write(
             _j.dumps({"prompt_token_ids": [1, 2, 3, 4, 5]}) + "\n"

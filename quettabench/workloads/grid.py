@@ -8,29 +8,6 @@ from .base import Request, Trace, synth_ids
 from .live import RealTrace
 
 
-def stamp_synthetic(reqs, seed):
-    """Stamp seed, order and the SYNTHETIC label on generated requests, in place."""
-    for i, r in enumerate(reqs):
-        r["seed"] = seed
-        r["order"] = i
-        r["source"] = "SYNTHETIC"
-    return reqs
-
-
-def synth_requests(count, ctx, seed=0, length_jitter=0.0):
-    """`count` requests of about `ctx` tokens; length_jitter in [0,1) varies each length deterministically, 0.0 keeps them uniform."""
-    reqs = []
-    for j in range(count):
-        s = seed * 1_000_003 + j
-        if length_jitter > 0.0:
-            span = int(ctx * length_jitter)
-            length = max(1, ctx - span + (s * 2654435761) % (2 * span + 1))
-        else:
-            length = ctx
-        reqs.append({"prompt_token_ids": synth_ids(length, s), "prompt_len": length})
-    return stamp_synthetic(reqs, seed)
-
-
 def take(reqs, count, ctx):
     """Pick `count` requests for a cell, trimming or padding ids to ctx and cycling the trace if short; returns (ids, cycled)."""
     usable = [r for r in reqs if r["prompt_len"] >= ctx] or reqs
