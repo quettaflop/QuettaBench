@@ -7,13 +7,14 @@ Decode is NCU (--ncu), graph replay (--graph) or eager; prefill is always eager,
 from __future__ import annotations
 
 import argparse
+import functools
 import os
 import statistics as st
 
 import torch
 from vllm.vllm_flash_attn.flash_attn_interface import flash_attn_varlen_func
 
-from quettabench.probes._timing import graph_median_us, ncu_op_us
+from quettabench.probes._timing import event_time_us, graph_median_us, ncu_op_us
 from quettabench.probes.base import Probe, ProbeRow, add_output_args, run_recorded
 
 KV_AXIS = [128, 256, 512, 1024, 2048, 4096, 8192, 16384]
@@ -45,19 +46,7 @@ def _decode_inner(b, nh, nkv, hd, kv, fav) -> str:
     )
 
 
-def time_call(fn) -> float:
-    for _ in range(WARMUP):
-        fn()
-    torch.cuda.synchronize()
-    times = []
-    for _ in range(REPS):
-        s, e = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
-        s.record()
-        fn()
-        e.record()
-        torch.cuda.synchronize()
-        times.append(s.elapsed_time(e) * 1000.0)
-    return st.median(times)
+time_call = functools.partial(event_time_us, warmup=WARMUP, reps=REPS, reduce=st.median)
 
 
 class FlashAttnProbe(Probe):

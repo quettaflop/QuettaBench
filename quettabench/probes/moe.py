@@ -12,7 +12,7 @@ from pathlib import Path
 
 import torch
 
-from quettabench.probes._timing import graph_time_us
+from quettabench.probes._timing import event_time_us, graph_time_us
 from quettabench.probes.base import ProbeRow, add_output_args, emit, out_root, run_recorded
 
 # (n_experts, top_k, intermediate_per_expert, hidden), intermediate sharded by tp at sweep time; gpt-oss is shape coverage only, MXFP4 is not priced off a bf16 grid.
@@ -74,19 +74,7 @@ def _time(fn) -> float:
     """Min-of-REPS CUDA-event time in us; min matches GemmTable's reduce and warm back-to-back decode kernels."""
     if _GRAPH:
         return graph_time_us(fn)
-    for _ in range(WARMUP):
-        fn()
-    torch.cuda.synchronize()
-    ts = []
-    for _ in range(REPS):
-        s = torch.cuda.Event(enable_timing=True)
-        e = torch.cuda.Event(enable_timing=True)
-        s.record()
-        fn()
-        e.record()
-        torch.cuda.synchronize()
-        ts.append(s.elapsed_time(e) * 1000.0)
-    return min(ts)
+    return event_time_us(fn, WARMUP, REPS, min)
 
 
 def _fp8_quant_config(e, inter, hidden, dev):

@@ -6,6 +6,7 @@ Rows hold per-call median us and us x n_linear (all GDN layers).
 from __future__ import annotations
 
 import argparse
+import functools
 import os
 import statistics as st
 import traceback
@@ -17,7 +18,7 @@ from vllm.model_executor.layers.fla.ops import (
     fused_recurrent_gated_delta_rule,
 )
 
-from quettabench.probes._timing import ncu_op_us
+from quettabench.probes._timing import event_time_us, ncu_op_us
 from quettabench.probes.base import Probe, ProbeRow, add_output_args, run_recorded
 
 # solve_tril needs a scratch allocator (vLLM sets one at model init), else prefill fails with "no allocator was set".
@@ -49,19 +50,7 @@ def _ncu_decode_inner(B, H, K, V) -> str:
     )
 
 
-def time_call(fn) -> float:
-    for _ in range(WARMUP):
-        fn()
-    torch.cuda.synchronize()
-    ts = []
-    for _ in range(REPS):
-        s, e = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
-        s.record()
-        fn()
-        e.record()
-        torch.cuda.synchronize()
-        ts.append(s.elapsed_time(e) * 1000.0)
-    return st.median(ts)
+time_call = functools.partial(event_time_us, warmup=WARMUP, reps=REPS, reduce=st.median)
 
 
 def mk(B, T, H, K, V, dev, dt):

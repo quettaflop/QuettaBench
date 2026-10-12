@@ -13,6 +13,22 @@ import sys
 import torch
 
 
+def event_time_us(fn, warmup: int, reps: int, reduce) -> float:
+    """Eager CUDA-event time of one fn call in us: warmup calls, then reduce over reps timed calls."""
+    for _ in range(warmup):
+        fn()
+    torch.cuda.synchronize()
+    ts = []
+    for _ in range(reps):
+        s, e = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+        s.record()
+        fn()
+        e.record()
+        torch.cuda.synchronize()
+        ts.append(s.elapsed_time(e) * 1000.0)
+    return reduce(ts)
+
+
 def graph_time_us(fn, *, warmup: int = 10, reps: int = 50, reduce=min) -> float:
     """Capture fn into a CUDA graph and time replay in us, reduced over reps; fn must be shape-static with inputs pre-allocated."""
     for _ in range(3):

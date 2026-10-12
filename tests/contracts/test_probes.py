@@ -12,6 +12,7 @@ import json
 import os
 import re
 import shutil
+import statistics
 import subprocess
 import sys
 import tempfile
@@ -483,6 +484,27 @@ def test_bad_probe_flags_fail_at_parse_time(name, flags, said, capsys):
     with pytest.raises(SystemExit) as stop:
         import_without_torch(name).main(["--gpu-label", "H100", *flags])
     assert stop.value.code == 2 and said in capsys.readouterr().err
+
+
+def test_event_time_us_warms_up_then_reduces_over_reps():
+    timing = import_without_torch("_timing")
+    elapsed_ms = iter([1.0, 5.0, 3.0, 1.0, 5.0, 3.0])
+
+    class Event:
+        def __init__(self, enable_timing):
+            pass
+
+        def record(self):
+            pass
+
+        def elapsed_time(self, other):
+            return next(elapsed_ms)
+
+    timing.torch.cuda = types.SimpleNamespace(Event=Event, synchronize=lambda: None)
+    calls = []
+    assert timing.event_time_us(lambda: calls.append(1), 2, 3, min) == 1000.0
+    assert len(calls) == 5
+    assert timing.event_time_us(lambda: None, 0, 3, statistics.median) == 3000.0
 
 
 def test_moe_routing_flag_takes_the_routing_parser(capsys):

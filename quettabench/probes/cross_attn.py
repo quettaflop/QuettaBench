@@ -6,11 +6,13 @@
 from __future__ import annotations
 
 import argparse
+import functools
 import statistics as st
 
 import torch
 from vllm.vllm_flash_attn.flash_attn_interface import flash_attn_varlen_func
 
+from quettabench.probes._timing import event_time_us
 from quettabench.probes.base import Probe, ProbeRow, add_output_args, run_recorded
 
 Q_AXIS = [512, 1024, 2048, 4096, 8192]
@@ -18,19 +20,7 @@ CTX_AXIS = [0, 1024, 2048, 4096, 8192, 12288, 16384, 24576, 32768]
 REPS, WARMUP = 30, 5
 
 
-def time_call(fn) -> float:
-    for _ in range(WARMUP):
-        fn()
-    torch.cuda.synchronize()
-    ts = []
-    for _ in range(REPS):
-        s, e = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
-        s.record()
-        fn()
-        e.record()
-        torch.cuda.synchronize()
-        ts.append(s.elapsed_time(e) * 1000.0)
-    return st.median(ts)
+time_call = functools.partial(event_time_us, warmup=WARMUP, reps=REPS, reduce=st.median)
 
 
 class CrossAttnProbe(Probe):
