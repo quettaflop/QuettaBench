@@ -339,11 +339,8 @@ class WorkloadProfile:
     name: str
     isl_tokens: int  # max ISL
     osl_tokens: int  # max OSL and max_tokens
-    isl_stddev: float  # fraction of isl
-    description: str
-    dataset: (
-        str  # "sharegpt", "test", "jsonl", "sharegpt-multi-turn", "swebench-multi-turn", "terminalbench-multi-turn"
-    )
+    # "sharegpt", "test", "jsonl", "mooncake-trace", "sharegpt-multi-turn", "swebench-multi-turn", "terminalbench-multi-turn"
+    dataset: str
     file_path: str = ""
     system_prompt: str = "You are a helpful assistant."
     mode: str = "single-turn"  # "stress-test" | "single-turn" | "multi-turn"
@@ -351,10 +348,6 @@ class WorkloadProfile:
     min_turns: int = 1  # multi-turn only
     max_turns: int = 1  # multi-turn only
     num_sessions: int = 200  # multi-turn: concurrent sessions
-    agent_type: str = ""  # "chat" | "coding" | "terminal"
-    turn_style: str = "single-turn"  # "single-turn" | "multi-turn"
-    serving_style: str = "not-disaggregated"  # "disaggregated" | "not-disaggregated"
-    data_source: str = ""  # "sharegpt" | "swebench" | "terminalbench" | "random" | "test"
     active: bool = True  # False: runnable but hidden from default listings
 
 

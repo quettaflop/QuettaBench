@@ -465,17 +465,12 @@ class RealTraceWorkloadTests(unittest.TestCase):
                 name="fixture-real-trace",
                 isl_tokens=4096,
                 osl_tokens=50,
-                isl_stddev=0.0,
-                description="fixture",
                 dataset="swebench-multi-turn",
                 file_path=str(path),
                 mode="multi-turn",
                 min_turns=1,
                 max_turns=2,
                 num_sessions=1,
-                agent_type="coding",
-                turn_style="multi-turn",
-                data_source="swebench",
             )
             cfg = Config(
                 engine=EngineCfg(),
@@ -509,10 +504,15 @@ class ProfileRegistryTests(unittest.TestCase):
     def test_unknown_key_is_an_error(self):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "w.yaml"
-            path.write_text(
-                "x:\n  isl_tokens: 1\n  osl_tokens: 1\n  isl_stddev: 0.0\n  description: d\n  dataset: test\n  isl: 3\n"
-            )
+            path.write_text("x:\n  isl_tokens: 1\n  osl_tokens: 1\n  dataset: test\n  isl: 3\n")
             with self.assertRaisesRegex(ValueError, r"w.yaml: x: unknown profile key\(s\) \['isl'\]"):
+                load_profiles(path)
+
+    def test_dropped_profile_fields_are_refused(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "w.yaml"
+            path.write_text("x:\n  isl_tokens: 1\n  osl_tokens: 1\n  dataset: test\n  description: d\n")
+            with self.assertRaisesRegex(ValueError, r"unknown profile key\(s\) \['description'\]"):
                 load_profiles(path)
 
     def test_site_packages_install_names_the_editable_fix(self):
