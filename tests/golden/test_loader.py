@@ -27,8 +27,7 @@ from tests.golden._harness import (
 )
 
 SCENARIOS = {"cleared": {}, "override": ENV_OVERRIDE}
-# Run yamls and grids written after the capture have no old xval_config to
-# match; their own tests pin them (test_crossval_contracts ConfigTree).
+# runs and grids added after the golden capture have no fixture entry
 ADDED_RUNS = {"decode_batch_llama", "llama-tp1-docker"}
 ADDED_GRIDS = {"decode_batch"}
 WORKLOAD_NAMES = sorted(p.stem for p in RUNS.glob("*.yaml") if p.stem not in ADDED_RUNS)
@@ -119,7 +118,6 @@ def resolve_global(env):
     cfg = resolve("llama", env)
     grids, step_points = loader._read_grids(REPO / "configs")
     h = cfg.hardware
-    # xval_config.collective() took the profile from XVAL_LINK_PROFILE, else pcie.
     default = env.get("XVAL_LINK_PROFILE", "pcie")
     by_profile = {p: dict(resolve("llama", env, f"hardware.link_profile={p}").hardware.collective)
                   for p in ("pcie", "nvlink")}
@@ -176,12 +174,11 @@ class ParseTimeFailuresGolden(unittest.TestCase):
         }
         unverified = [n for n in WORKLOAD_NAMES
                       if not WORKLOADS[n]["cleared"]["xval_config"]["workload"].get("verified")]
-        # The loader's refusals, without their `<file> [<run>]: ` prefix.
         failures["vmin_fit_unverified"] = {
             n: loader_message(run_grid_cli(grid_argv(n), {})["exit"]) for n in unverified}
         failures["run_yaml_missing"] = run_grid_cli(grid_argv("nope"), {})["exit"].replace(
             str(REPO), "<REPO>")
-        # The message lists every grid; the ones added since the capture are dropped.
+        # the message lists every grid; drop the ones added after the capture
         unknown_grid = loader_message(run_grid_cli(
             grid_argv("llama", "--set", "mode.grid=nope"), {})["exit"])
         for added in ADDED_GRIDS:
@@ -189,9 +186,6 @@ class ParseTimeFailuresGolden(unittest.TestCase):
         failures["vmin_fit_unknown_grid"] = unknown_grid
         failures["vmin_fit_unknown_prompt_mode"] = loader_message(run_grid_cli(
             grid_argv("llama"), {"PROMPT_MODE": "random"})["exit"])
-        # vmin_fit sized an MLA stack without kv_bytes with the dense per-head
-        # formula, silently (REPORT.md). The loader refuses it; the CAPACITY
-        # vmin_fit printed is what the run gives when told dense explicitly.
         with mla_run_yaml() as run_yaml:
             refused = run_grid_cli(["run", str(run_yaml), "--set", "engine.model=<MODEL>"], {},
                                    model_config=MLA_CONFIG)
@@ -205,8 +199,6 @@ class ParseTimeFailuresGolden(unittest.TestCase):
         check_json(self, "config_failures", failures)
 
     def test_malformed_serving_style_is_refused_at_load(self):
-        # trace_serve.py checked --serving-style before loading the trace; the
-        # loader now checks engine.serving_style before anything runs.
         err = _error(loader.load, RUNS / "llama.yaml",
                      ["engine.model=m", "engine.serving_style=disagg:2p"], env={})
         check_json(self, "config_trace_serve_style_error", err)

@@ -1,26 +1,8 @@
 #!/usr/bin/env python3
-"""Offline repair of the inter-chunk tpot bug in stored benchmark results.
+"""Repair stored results where inter-chunk gaps inflated tpot_ms (reasoning deltas without content were skipped).
 
-gpt-oss on vLLM streams reasoning tokens as content-less deltas; the old
-client skipped them, so mean(itl_ms) measured inter-CHUNK gaps and inflated
-per-request tpot_ms by up to ~13x (QuettaSim tools/GT_QUALITY_FLAGS.md,
-Finding 1). The wall-clock quantities (e2el_ms, ttft_ms, output_tokens) were
-measured correctly, so the derived tpot is repairable offline.
-
-Repair rule (same coverage guard as the fixed metrics.RequestResult.tpot):
-for each successful request with output_tokens > 1, non-empty itl_ms, and
-len(itl_ms) < 0.8 * (output_tokens - 1):
-    tpot_ms := (e2el_ms - ttft_ms) / (output_tokens - 1)
-
-Everything else in the file is left byte-identical. When any row changes,
-the summary tpot stats and the *_per_turn.json sibling's per-turn tpot
-fields are recomputed from the repaired rows, and a top-level
-"tpot_repair" provenance stamp is added to both files. Untouched files get
-no stamp. A per-directory _tpot_repair.json manifest records counts.
-
-Usage:
-    python3 -m analysis.repair_tpot_coverage DIR [DIR ...]          # dry run
-    python3 -m analysis.repair_tpot_coverage --apply DIR [DIR ...]
+For a successful request with output_tokens > 1, non-empty itl_ms and len(itl_ms) < 0.8 * (output_tokens - 1), tpot_ms becomes (e2el_ms - ttft_ms) / (output_tokens - 1).
+Summary and per-turn stats are recomputed, changed files get a tpot_repair stamp, and each directory gets a _tpot_repair.json manifest. Dry run unless --apply.
 """
 
 import argparse
@@ -38,7 +20,7 @@ REASON = "QuettaSim tools/GT_QUALITY_FLAGS.md Finding 1 (inter-chunk tpot)"
 
 
 def repaired_tpot(row):
-    """Return the corrected tpot_ms for a row the guard fires on, else None."""
+    """Corrected tpot_ms for a row the coverage guard fires on, else None."""
     if not row.get("success"):
         return None
     out = row.get("output_tokens") or 0
@@ -103,7 +85,6 @@ def repair_cell(path, apply, stamp):
         with open(path, "w") as f:
             json.dump(data, f, indent=2)
 
-    # Sibling per-turn aggregate file, if present.
     pt_path = path.replace(".json", "_per_turn.json")
     pt_changed = False
     if os.path.exists(pt_path):
@@ -154,7 +135,7 @@ def repair_dir(dirpath, apply):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("dirs", nargs="+")
+    ap.add_argument("dirs", nargs="+", help="result directories to scan")
     ap.add_argument("--apply", action="store_true",
                     help="write changes (default: dry run)")
     args = ap.parse_args()

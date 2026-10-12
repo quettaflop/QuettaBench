@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
-"""Compare two replay results and gate on the differences.
+"""Compare two replay results: mean, p50, p90 and p99 of TTFT, TPOT and E2EL with relative differences.
 
-For TTFT, TPOT and E2EL, print mean, p50, p90 and p99 from each result
-file and the relative difference. Gates: TPOT and E2EL means within
---gate-pct. With --trace-a and --trace-b, also compare ISL and OSL distributions
-with a Kolmogorov-Smirnov statistic. Exit 0 when every gate passes.
+Exits 0 when the TPOT and E2EL means are within --gate-pct and, with both traces given, the ISL and OSL Kolmogorov-Smirnov statistics pass.
 """
 
 import argparse
@@ -44,8 +41,7 @@ def summary_stat(values, which):
 
 
 def ks_statistic(a, b):
-    """Kolmogorov Smirnov statistic: the maximum distance between the
-    two empirical cumulative distribution functions."""
+    """Maximum distance between the two empirical CDFs; 1.0 if either side is empty."""
     if not a or not b:
         return 1.0
     xs = sorted(set(a) | set(b))
@@ -76,7 +72,8 @@ def main() -> int:
     ap.add_argument("--b", required=True, help="result JSON, side B")
     ap.add_argument("--trace-a", help="trace JSONL for ISL OSL comparison")
     ap.add_argument("--trace-b", help="trace JSONL for ISL OSL comparison")
-    ap.add_argument("--gate-pct", type=float, default=5.0)
+    ap.add_argument("--gate-pct", type=float, default=5.0,
+                    help="largest allowed TPOT and E2EL mean difference in percent")
     args = ap.parse_args()
 
     a = load_records(args.a)
@@ -90,7 +87,7 @@ def main() -> int:
             diff = (vb - va) / va * 100 if va else float("nan")
             print(f"{metric:8} {q:5} {va:10.2f} {vb:10.2f} {diff:+8.2f}")
             gated = metric in ("tpot", "e2el") and q == "mean"
-            # nan (no successful requests) must fail the gate.
+            # nan (no successful requests) must fail the gate
             if gated and not abs(diff) <= args.gate_pct:
                 failed.append(f"{metric} mean diff {diff:+.2f}% exceeds "
                               f"{args.gate_pct}% or is undefined")

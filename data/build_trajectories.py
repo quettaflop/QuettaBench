@@ -1,19 +1,7 @@
 #!/usr/bin/env python3
-"""Write the trajectory JSONL the session traces read: one session per line,
-{session_id, source, num_turns, turns[{turn_idx, input_tokens, output_tokens, ...}]}.
+"""Build the trajectory JSONL that the session traces read, one session per line.
 
-chat reads ShareGPT and counts tokens with --tokenizer; each turn's `messages`
-is only the new user message, and input_tokens is the full replayed context.
-claweval converts Claw-Eval event-stream traces (github.com/claw-eval/claw-eval),
-one file per task, taking each assistant turn's server-reported usage and the
-tool time between LLM calls; --lss-out also writes LLMServingSim agentic JSONL.
-
-    python3 data/build_trajectories.py chat \
-      --tokenizer /path/to/Llama-3.1-8B-Instruct \
-      --max-sessions 4000 --out data/chat_trajectories.jsonl
-    python3 data/build_trajectories.py claweval \
-        --traces ~/traces/DeepSeek-V4-Flash-0731_26-08-05-17-13 \
-        --out data/claweval_trajectories.jsonl
+`chat` tokenizes ShareGPT conversations with --tokenizer; `claweval` converts Claw-Eval event-stream traces using the server-reported usage.
 """
 
 from __future__ import annotations
@@ -32,7 +20,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 CHAT_OUT = ROOT / "data" / "chat_trajectories.jsonl"
 CLAWEVAL_OUT = ROOT / "data" / "claweval_trajectories.jsonl"
-HF_DATASET = "Aeala/ShareGPT_Vicuna_unfiltered"   # same id ShareGPTMultiTurnDataset uses
+HF_DATASET = "Aeala/ShareGPT_Vicuna_unfiltered"
 
 
 def _load_tokenizer(name: str):
@@ -41,13 +29,8 @@ def _load_tokenizer(name: str):
 
 
 def _count(tok, messages: list[dict[str, str]]) -> int:
-    """Token length of `messages` as the server would see them: chat template if the
-    tokenizer has one, else a plain role-prefixed concatenation.
-
-    NB: render the template to TEXT and tokenize that, rather than passing
-    tokenize=True. On transformers 5.x the tokenize=True form returns a BatchEncoding,
-    so len() silently yields 2 (its key count) and every context measures 2 tokens.
-    add_special_tokens=False because the template already emits BOS/headers."""
+    """Token length of `messages` via the chat template, else role-prefixed concatenation."""
+    # tokenize=True returns a BatchEncoding on transformers 5.x, so render to text first
     try:
         text = tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         return len(tok(text, add_special_tokens=False)["input_ids"])
@@ -57,8 +40,7 @@ def _count(tok, messages: list[dict[str, str]]) -> int:
 
 
 def _pairs(convs: list[dict[str, Any]]) -> list[tuple[str, str]]:
-    """ShareGPT 'conversations' -> [(human, assistant)] pairs, tolerant of the
-    from-label variants in the dataset and of leading assistant turns."""
+    """ShareGPT conversations to (human, assistant) pairs; leading assistant turns are dropped."""
     human_keys = {"human", "user"}
     out: list[tuple[str, str]] = []
     pending: str | None = None
@@ -103,9 +85,7 @@ def build_chat(args: argparse.Namespace) -> int:
             turns: list[dict[str, Any]] = []
             for idx, (human, assistant) in enumerate(pairs):
                 new_msgs = [{"role": "user", "content": human}]
-                # input_tokens is the FULL context this turn: replayed history + new user
-                # message. That growing total is what the builder differences into
-                # new_prefill / cache_hit_rate, so it must include the history.
+                # full replayed context, readers difference it per turn
                 input_tokens = _count(tok, history + new_msgs)
                 output_tokens = len(tok(assistant, add_special_tokens=False)["input_ids"])
                 if input_tokens <= 0 or output_tokens <= 0:
@@ -143,10 +123,7 @@ def build_chat(args: argparse.Namespace) -> int:
         print("[chat-traj] FAIL: no sessions written", file=sys.stderr)
         return 1
 
-    # Self-check: input_tokens MUST grow across turns, since it is the full replayed
-    # context, and a reader differences it into new_prefill and cache_hit_rate. A flat series means the token counter is broken (this caught
-    # apply_chat_template(tokenize=True) returning a BatchEncoding, which made every
-    # context measure 2 tokens) and would yield garbage deltas.
+    # a flat input_tokens series means the token counter is broken
     grew = flat = 0
     with out_path.open(encoding="utf-8") as fh:
         for line in fh:
@@ -181,7 +158,7 @@ def iter_records(path: Path) -> Iterator[dict[str, Any]]:
 
 
 def convert_trace(path: Path) -> dict[str, Any] | None:
-    """Convert one Claw-Eval trace file into a single trajectory session row."""
+    """One Claw-Eval trace file to a session row, or None if no assistant turn has usage."""
     task_id: str | None = None
     model: str | None = None
     tool_time_s = 0.0
@@ -189,10 +166,7 @@ def convert_trace(path: Path) -> dict[str, Any] | None:
     turns: list[dict[str, Any]] = []
     thinking_turns = 0
     thinking_chars = 0
-    # tool_dispatch records appear AFTER the assistant turn that issued them and
-    # before the next one, so they measure the gap between LLM calls. Verified
-    # against trace_end.tool_time_s: summing (not max-ing) reproduces it exactly,
-    # i.e. Claw-Eval executes a turn's tool calls serially.
+    # tool calls run serially, so latencies are summed (matches trace_end.tool_time_s)
     pending_tool_ms = 0.0
 
     for rec in iter_records(path):
@@ -205,8 +179,6 @@ def convert_trace(path: Path) -> dict[str, Any] | None:
             continue
 
         if kind == "trace_end":
-            # Session-level wall/tool timing; useful for the agentic formats that
-            # model think-time between LLM calls.
             tool_time_s = float(rec.get("tool_time_s") or 0.0)
             continue
 
@@ -219,17 +191,14 @@ def convert_trace(path: Path) -> dict[str, Any] | None:
 
         msg = rec.get("message") or {}
         if msg.get("role") != "assistant":
-            # Only assistant turns correspond to an LLM call. user/tool records
-            # are context that is already priced into the next call's usage.
+            # only assistant turns are LLM calls
             continue
 
         usage = rec.get("usage") or {}
         in_tok = usage.get("input_tokens")
         out_tok = usage.get("output_tokens")
         if in_tok is None or out_tok is None:
-            # No server-reported usage -> we would have to estimate, which would
-            # silently mix fidelity classes within one trajectory set. Skip loudly
-            # instead (counted by the caller).
+            # estimating would mix measured and guessed counts in one set
             continue
 
         in_tok = int(in_tok)
@@ -237,14 +206,13 @@ def convert_trace(path: Path) -> dict[str, Any] | None:
         if in_tok <= 0:
             continue
 
-        # Think Max reasoning is billed inside output_tokens by the engine, so it
-        # is already reflected above. Tracked separately only for reporting.
+        # reasoning is already inside output_tokens
         reasoning = msg.get("reasoning_content") or msg.get("reasoning") or ""
         if reasoning:
             thinking_turns += 1
             thinking_chars += len(reasoning)
 
-        # Attribute tools observed since the PREVIOUS assistant turn to that turn.
+        # tool time seen since the previous assistant turn belongs to that turn
         if turns:
             turns[-1]["tool_ms"] = round(pending_tool_ms, 3)
         pending_tool_ms = 0.0
@@ -252,7 +220,7 @@ def convert_trace(path: Path) -> dict[str, Any] | None:
         turns.append(
             {
                 "turn_idx": len(turns),
-                # TOTAL context at this turn; readers difference successive turns, so never pre-subtract.
+                # total context, not a delta
                 "input_tokens": in_tok,
                 "output_tokens": max(1, out_tok),
                 "tool_ms": 0.0,
@@ -262,7 +230,6 @@ def convert_trace(path: Path) -> dict[str, Any] | None:
     if not turns:
         return None
 
-    # Trailing tools (after the final assistant turn) belong to that turn.
     turns[-1]["tool_ms"] = round(turns[-1].get("tool_ms", 0.0) + pending_tool_ms, 3)
 
     return {
@@ -280,26 +247,13 @@ def convert_trace(path: Path) -> dict[str, Any] | None:
 
 def write_llmservingsim(sessions: list[dict[str, Any]], out: Path,
                         arrival: str, rate: float, seed: int) -> None:
-    """Emit LLMServingSim *agentic* JSONL.
+    """Write LLMServingSim agentic JSONL; only the session carries an arrival time, sub-requests chain on tool_duration_ns.
 
-        {"session_id", "arrival_time_ns",
-         "sub_requests": [{"input_toks", "output_toks", "tool_duration_ns"}]}
-
-    Each sub-request's arrival is derived by the simulator from the previous
-    call's completion plus `tool_duration_ns`, so only the SESSION needs an
-    arrival time.
-
-    Not emitted: `input_tok_ids`. LLMServingSim uses real token IDs to hash
-    prefixes for its cache model; Claw-Eval traces store text, not IDs. Without
-    them the simulator falls back to count-only prefix handling. To get true
-    prefix-cache fidelity you would re-tokenize the stored text with the
-    DeepSeek V4 tokenizer and attach IDs here.
+    input_tok_ids are not written because the traces store text, so the simulator falls back to count-only prefix handling.
     """
     rng = random.Random(seed)
 
-    # Real arrivals preserve the capture's own pacing. Note the capture ran at a
-    # fixed 16-way parallelism, so "real" reproduces THAT schedule, not a natural
-    # arrival process -- use poisson for open-loop rate ladders.
+    # the capture ran at fixed 16-way parallelism, so "real" is not an open-loop arrival process
     base_ns: int | None = None
     if arrival == "real":
         stamps = []
@@ -318,7 +272,6 @@ def write_llmservingsim(sessions: list[dict[str, Any]], out: Path,
             if arrival == "real" and ts is not None:
                 arrival_ns = max(0, ts - (base_ns or 0))
             else:
-                # Exponential inter-arrival = Poisson process at `rate`.
                 clock_ns += int(rng.expovariate(rate) * 1e9)
                 arrival_ns = clock_ns
             f.write(json.dumps({
@@ -349,7 +302,7 @@ def build_claweval(args: argparse.Namespace) -> int:
         print(f"[error] not a directory: {trace_dir}")
         return 1
 
-    # batch_results/batch_summary are run metadata, not traces.
+    # batch_* files are run metadata
     files = sorted(p for p in trace_dir.rglob("*.jsonl") if not p.name.startswith("batch_"))
     if not files:
         print(f"[error] no *.jsonl traces under {trace_dir}")

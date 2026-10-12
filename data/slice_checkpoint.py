@@ -1,45 +1,8 @@
 #!/usr/bin/env python3
-"""Build a VALID standalone 13-layer HF model dir from the downloaded Kimi-K3 slice.
+"""Build a standalone 13-layer HF model dir from the downloaded Kimi-K3 slice (16 of 96 shards, layers 0-12).
 
-Kimi-specific: it knows this one checkpoint (N_LAYERS=13, MLA at layers
-4, 8, 12 1-indexed, MXFP4 experts) and no other model. Ported unchanged in
-behaviour from scripts/crossval/slice_tf/slice_truncate.py on
-origin/feat/slice-tf-verification. A data tool: quettabench never imports
-it. The result is the cut checkpoint dir a vLLM slice run names as
-engine.model. Gate C's meta model builder is ported from that branch's
-ref_slice.build_meta_model into this file, so every gate runs from a clean
-clone with torch, transformers and fla installed.
-
-The slice at <src> has 16 of 96 shards (layers 0-12 complete, plus
-embed/norm/lm_head/output_attn_res in shards 94-96) but a full-model
-config.json and a full 96-shard index. This script materializes <dst> as a
-directory both HF transformers and the kimi crate can load standalone:
-
-  - the 16 shards are symlinked (relative), not copied (197 GiB);
-  - config.json: text_config.num_hidden_layers=13; the 1-INDEXED
-    full_attn_layers / kda_layers lists filtered to entries <= 13; everything
-    else (quantization_config, situ betas, attn_res_block_size, vision_config,
-    gate_lower_bound...) byte-for-byte semantics preserved;
-  - model.safetensors.index.json: weight_map subset to tensors that live in the
-    16 shards (== layers 0-12 plus the non-layer set plus vision tower -- both
-    directions verified), metadata.total_size recomputed from the shard
-    headers' data_offsets over exactly the kept tensors;
-  - every auxiliary python/tokenizer/processor/config file copied verbatim.
-
-Sanity gates (all hard failures):
-  A. transformers AutoConfig.from_pretrained(dst, trust_remote_code=True)
-     parses, and the truncated fields read back exactly;
-  B. every weight_map entry's shard file exists in <dst> (symlinks resolve);
-  C. name-level diff against the actual 13-layer text model: the meta-built
-     KimiLinearForCausalLM (experts as packed MXFP4 buffers, meta_text_model) must
-     find every one of its state-dict tensors in the subset weight_map and
-     vice versa (language_model.* namespace) -- zero missing, zero extra --
-     with shapes checked against the shard headers. Known exception: A_log is
-     stored zero-padded to head_dim (128) while the model has 96 heads; shape
-     is allowed to differ there (the loader slices).
-
-    PYTHONPATH=<fla-dir> \
-    python3 data/slice_checkpoint.py <slice-dir>/model <slice-dir>/truncated
+Symlinks the shards, truncates config.json and the weight index to the kept layers, copies the auxiliary files, then runs three checks: AutoConfig parses, every indexed shard exists, and tensor names and shapes match the meta-built model.
+Usage: PYTHONPATH=<fla-dir> python3 data/slice_checkpoint.py <slice-dir>/model <slice-dir>/truncated
 """
 
 import importlib
@@ -50,8 +13,7 @@ import struct
 import sys
 
 N_LAYERS = 13
-# The checkpoint's own modeling code, copied verbatim into an importable package
-# (the checkpoint dir name is not a Python identifier).
+# the checkpoint dir name is not a Python identifier, so its modeling code is copied into this package
 PKG = "kimi_k3_slice_mod"
 PKG_FILES = ("configuration_kimi_k3.py", "modeling_kimi_linear.py")
 
@@ -80,7 +42,6 @@ def build(src: str, dst: str) -> None:
             os.unlink(link)
         os.symlink(os.path.join("..", "model", f), link)
 
-    # --- config.json ---
     with open(os.path.join(src, "config.json")) as f:
         cfg = json.load(f)
     tc = cfg["text_config"]
@@ -95,7 +56,6 @@ def build(src: str, dst: str) -> None:
           f"full_attn_layers={lac['full_attn_layers']}, "
           f"kda_layers={lac['kda_layers']}")
 
-    # --- index ---
     with open(os.path.join(src, "model.safetensors.index.json")) as f:
         index = json.load(f)
     have = set(present)
@@ -134,7 +94,6 @@ def build(src: str, dst: str) -> None:
     print(f"index: kept {len(kept)} tensors ({total_size / 2**30:.1f} GiB), "
           f"dropped {dropped_missing_shard} entries in absent shards")
 
-    # --- aux files ---
     skip = set(present) | {"config.json", "model.safetensors.index.json"}
     copied = []
     for f in sorted(os.listdir(src)):
@@ -174,12 +133,7 @@ def gate_b_shards_exist(dst: str) -> dict:
 
 
 def meta_text_model(model_dir: str, tmp_root: str):
-    """(model, config): the 13-layer text model on the meta device, each
-    expert's w1/w2/w3 replaced by the packed MXFP4 buffers the checkpoint
-    stores (weight_packed [out, in/2] and weight_scale [out, in/32], uint8).
-    Ported from ref_slice.build_meta_model for names and shapes only: the
-    OutputRecorder alias is kept (the modeling file imports it), the
-    create_causal_mask adapter is not (nothing here runs a forward)."""
+    """(model, config): the 13-layer text model on the meta device with expert w1/w2/w3 swapped for packed MXFP4 buffers (weight_packed, weight_scale, uint8)."""
     import torch
     import transformers.utils.generic as generic
     from torch import nn
@@ -237,7 +191,6 @@ def gate_c_name_diff(dst: str, wm: dict) -> None:
     assert not missing, f"{len(missing)} model tensors absent from index: {missing[:8]}"
     assert not extra, f"{len(extra)} index tensors unknown to the model: {extra[:8]}"
 
-    # shape check against shard headers
     hdr_cache, num_heads = {}, config.linear_attn_config["num_heads"]
     mismatches = []
     for name, shard in wm.items():

@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Audit a live replay result against its source trace.
 
-Per request, server reported input_tokens and output_tokens must equal
-the trace fields. Mismatches, missing usage, or dropped requests fail.
+Server-reported input_tokens and output_tokens must equal the trace fields per request; mismatches, missing usage or dropped requests fail.
 """
 
 import argparse

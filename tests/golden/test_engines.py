@@ -8,7 +8,6 @@ from quettabench.config.schema import ConfigError
 from quettabench.engines import vllm as vllm_adapter
 from tests.golden._harness import ENV_OVERRIDE, FIXTURES, REPO, RUNS, check_json, grid_argv, run_grid_cli
 
-# The merged workload records xval_config resolved, pinned in the config golden.
 WORKLOADS = {name: rec["cleared"]["xval_config"]["workload"] for name, rec in
              json.loads((FIXTURES / "config_workloads.json").read_text()).items()}
 ABSENT = "<absent>"

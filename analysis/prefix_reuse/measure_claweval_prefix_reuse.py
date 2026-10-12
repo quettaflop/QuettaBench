@@ -1,30 +1,8 @@
 #!/usr/bin/env python3
-"""Measure ACTUAL prefix reuse for Claw-Eval traces (Step 1, part 2).
+"""Measure the literal shared prefix between consecutive turn prompts of Claw-Eval traces, with and without reasoning kept in the prompt.
 
-`measure_true_prefix_reuse.py` cannot score Claw-Eval: the trajectory rows carry
-token counts only. But the raw traces keep every message, so the prompts can be
-reconstructed and the same measurement applied.
-
-The specific worry: these traces were captured in Think Max, and vLLM's V4
-encoder runs `drop_thinking=True` -- reasoning is rendered only for messages
-*after* the last user message (`encoding_dsv4.py`:
-`if not drop_thinking or index > last_user_idx`). At request time in an agent
-loop the newest message is always a tool result (a user turn), so every prior
-assistant's reasoning is dropped. Whether that helps or hurts prefix reuse is
-not obvious from reading the code, so measure both:
-
-  drop_thinking=True   what the server actually rendered
-  drop_thinking=False  the counterfactual, reasoning kept inline
-
-If reuse is materially lower with reasoning kept, then dropping it is what
-preserves the prefix; if they match, reasoning was never in the prompt path.
-
-Prompts are approximated by concatenating message parts in order -- the same
-approximation used for swebench/terminalbench/osworld, so the numbers are
-comparable across datasets.
-
-Usage:
-    python analysis/prefix_reuse/measure_claweval_prefix_reuse.py --traces ~/traces/<run-dir>
+Prompts are rebuilt from the raw trace messages by concatenating parts in order.
+Usage: python analysis/prefix_reuse/measure_claweval_prefix_reuse.py --traces <run-dir>
 """
 
 from __future__ import annotations
@@ -62,7 +40,7 @@ def render_message(msg: dict, include_reasoning: bool) -> str:
 
 
 def prompts_for_trace(path: Path, include_reasoning: bool) -> list[str]:
-    """Reconstruct the prompt sent before each assistant turn."""
+    """Prompt text sent before each assistant turn."""
     history: list[dict] = []
     prompts: list[str] = []
     for line in path.open():
@@ -77,7 +55,6 @@ def prompts_for_trace(path: Path, include_reasoning: bool) -> list[str]:
             continue
         m = d.get("message") or {}
         if m.get("role") == "assistant":
-            # Snapshot BEFORE appending: this is what was sent to produce it.
             prompts.append("\n".join(
                 render_message(h, include_reasoning) for h in history))
         history.append(m)

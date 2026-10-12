@@ -1,34 +1,7 @@
 #!/usr/bin/env python3
-"""
-Download and extract multi-turn agent trajectories from GCS.
+"""Download harbor job trajectories from GCS and write per-source session JSONL (growing message history per turn, osl_tokens estimate).
 
-Reads trajectory.json files from harbor/jobs/ runs, extracts per-turn
-messages with growing conversation history, and saves as JSONL files
-suitable for TrajectoryMultiTurnDataset.
-
-Output format (one JSON per line):
-{
-    "session_id": "astropy__astropy-14508",
-    "source": "swebench",
-    "run": "codex-gpt5.2-swebench-verified-2026-02-16-1700",
-    "num_turns": 15,
-    "turns": [
-        {
-            "turn_idx": 0,
-            "messages": [{"role": "system", "content": "..."}, {"role": "user", "content": "..."}],
-            "osl_tokens": 200
-        },
-        {
-            "turn_idx": 1,
-            "messages": [{"role": "system", ...}, {"role": "user", ...}, {"role": "assistant", ...}, {"role": "user", ...}],
-            "osl_tokens": 150
-        },
-        ...
-    ]
-}
-
-Usage:
-    python data/download_agent_trajectories.py [--source swebench|terminalbench|all]
+Usage: python data/download_agent_trajectories.py [--source swebench|terminalbench|all]
 """
 
 import argparse
@@ -52,7 +25,6 @@ except ImportError:
 
 BUCKET_NAME = "sequrity-experiments"
 
-# Map source type to GCS run prefixes
 RUN_PREFIXES = {
     "swebench": [
         "harbor/jobs/codex-gpt5.2-swebench-verified-2026-02-16-1700/",
@@ -74,17 +46,7 @@ def estimate_tokens(text: str) -> int:
 
 
 def extract_turns_from_trajectory(trajectory: dict) -> list[dict]:
-    """
-    Extract multi-turn conversation from ATIF-v1.5 trajectory.
-
-    Builds growing message history from steps:
-    - source=system → system message
-    - source=user → user message
-    - source=agent → assistant message using raw_arguments (the actual model output),
-      followed by observation.results as user message (tool result)
-
-    Returns list of turn dicts with growing messages + osl estimate.
-    """
+    """Turns of an ATIF trajectory: input messages so far plus an osl estimate of the agent's raw_arguments."""
     steps = trajectory.get("steps", [])
     if not steps:
         return []
@@ -106,7 +68,7 @@ def extract_turns_from_trajectory(trajectory: dict) -> list[dict]:
                 messages.append({"role": "user", "content": content})
 
         elif source == "agent":
-            # Use raw_arguments as the actual model output (not the stub message)
+            # raw_arguments is the real model output, message is a stub
             raw_args = step.get("extra", {}).get("raw_arguments", "")
             if not raw_args:
                 raw_args = step.get("message", "")
@@ -115,17 +77,14 @@ def extract_turns_from_trajectory(trajectory: dict) -> list[dict]:
 
             osl_est = estimate_tokens(raw_args)
 
-            # Snapshot messages before adding assistant response = the input context
             turns.append({
                 "turn_idx": len(turns),
                 "messages": list(messages),
                 "osl_tokens": osl_est,
             })
 
-            # Add assistant response to history
             messages.append({"role": "assistant", "content": raw_args})
 
-            # Add tool observation as user message (tool result for next turn's context)
             obs = step.get("observation", {}).get("results", "")
             if isinstance(obs, list) and obs:
                 obs_content = obs[0].get("content", "") if isinstance(obs[0], dict) else str(obs[0])
@@ -140,16 +99,15 @@ def extract_turns_from_trajectory(trajectory: dict) -> list[dict]:
 
 
 def list_task_prefixes(client: storage.Client, run_prefix: str) -> list[str]:
-    """List all task directories under a run prefix."""
+    """Task directory prefixes under a run prefix."""
     bucket = client.bucket(BUCKET_NAME)
     it = bucket.list_blobs(prefix=run_prefix, delimiter="/")
-    list(it)  # consume iterator
-    # Filter out config.json and non-task prefixes
+    list(it)  # prefixes fill only once the iterator is consumed
     return [p for p in sorted(it.prefixes) if not p.endswith("config.json")]
 
 
 def download_trajectory(client: storage.Client, task_prefix: str) -> dict | None:
-    """Download trajectory.json for a task."""
+    """Parsed trajectory.json of a task, or None if the download fails."""
     bucket = client.bucket(BUCKET_NAME)
     blob_path = task_prefix + "agent/trajectory.json"
     blob = bucket.blob(blob_path)
@@ -161,7 +119,7 @@ def download_trajectory(client: storage.Client, task_prefix: str) -> dict | None
 
 
 def process_run(client: storage.Client, run_prefix: str, source: str) -> list[dict]:
-    """Process all tasks in a run, return list of session dicts."""
+    """Session dicts for the first copy of each task in a run, skipping tasks under 2 turns."""
     run_name = run_prefix.rstrip("/").split("/")[-1]
     print(f"\n--- Run: {run_name} ---")
 
@@ -172,11 +130,10 @@ def process_run(client: storage.Client, run_prefix: str, source: str) -> list[di
     seen_tasks: set[str] = set()
 
     for task_prefix in task_prefixes:
-        # Extract task name from prefix
         parts = task_prefix.rstrip("/").split("/")
         task_name = parts[-1]
 
-        # Deduplicate across runs (same task may appear in multiple runs)
+        # the same task can appear in several runs
         base_task = task_name.rsplit("__", 1)[0] if "__" in task_name else task_name
         if base_task in seen_tasks:
             continue
@@ -229,7 +186,6 @@ def main():
             sessions = process_run(client, run_prefix, source)
             all_sessions.extend(sessions)
 
-        # Deduplicate by session_id (keep first occurrence)
         seen = set()
         unique_sessions = []
         for s in all_sessions:
@@ -243,7 +199,6 @@ def main():
             for session in unique_sessions:
                 f.write(json.dumps(session) + "\n")
 
-        # Stats
         if unique_sessions:
             turn_counts = [s["num_turns"] for s in unique_sessions]
             print(f"Total sessions: {len(unique_sessions)}")

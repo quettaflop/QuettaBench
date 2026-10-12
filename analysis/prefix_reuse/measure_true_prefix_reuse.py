@@ -1,26 +1,8 @@
 #!/usr/bin/env python3
-"""Step 1: measure ACTUAL prefix reuse, instead of inferring it from size deltas.
+"""Measure the literal shared prefix between consecutive turn prompts, next to the size-delta estimate of cache_hit_rate.
 
-Inferring prefix reuse from sizes derives cache_hit_rate as
-
-    new_prefill   = max(1, total_context - previous_context)
-    cache_hit     = 1 - new_prefill / total_context
-
-i.e. it assumes that if turn N+1 is only slightly larger than turn N, the
-overlap is a shared prefix. That holds for append-style (growing-history)
-agents. It does NOT hold for agents that REPLACE part of the context each turn:
-two same-sized prompts with completely different content score as a ~100% cache
-hit.
-
-This script ignores sizes and measures the literal shared prefix between
-consecutive turns' prompts, which is what a prefix cache can actually reuse.
-
-Prompts are approximated by concatenating message contents in order. That is not
-the exact chat template, but the question here is 0.5% vs 99%, which is far
-outside any template overhead.
-
-Usage:
-    python3 -m analysis.prefix_reuse.measure_true_prefix_reuse
+The delta estimate overstates reuse for agents that replace context each turn. Prompts are message contents concatenated in order.
+Usage: python3 -m analysis.prefix_reuse.measure_true_prefix_reuse
 """
 
 from __future__ import annotations
@@ -51,8 +33,8 @@ def measure(name: str, max_sessions: int = 40) -> None:
         print(f"  [skip] {name}: missing {path.name}")
         return
 
-    measured: list[float] = []   # true shared-prefix fraction
-    inferred: list[float] = []   # what the builder's delta heuristic would say
+    measured: list[float] = []
+    inferred: list[float] = []
     n_sessions = 0
 
     with path.open() as f:
@@ -76,7 +58,6 @@ def measure(name: str, max_sessions: int = 40) -> None:
                 if prev_txt is not None:
                     shared = len(os.path.commonprefix([prev_txt, txt]))
                     measured.append(shared / len(txt) if txt else 0.0)
-                    # builder's heuristic, in the same char units
                     new_prefill = max(1, len(txt) - prev_len)
                     inferred.append(max(0.0, 1.0 - new_prefill / len(txt)))
                 prev_txt = txt

@@ -1,14 +1,7 @@
 #!/usr/bin/env python3
-"""Pull the large trajectory datasets from R2.
+"""Pull the gitignored trajectory datasets from R2 into data/.
 
-They are gitignored. Needs an aws profile with R2 credentials (default
-profile name: r2). Override with AWS_PROFILE, R2_ENDPOINT, R2_BUCKET.
-
-The GCS pulls and the raw-capture builders stay separate scripts:
-    python3 data/download_agent_trajectories.py
-    python3 data/download_coding_prompts.py
-    python3 data/build_trajectories.py chat --tokenizer DIR
-    python3 data/build_trajectories.py claweval --traces DIR
+Needs an aws profile with R2 credentials (default r2); override with AWS_PROFILE, R2_ENDPOINT, R2_BUCKET.
 """
 
 import os

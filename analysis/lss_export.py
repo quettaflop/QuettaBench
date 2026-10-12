@@ -1,25 +1,8 @@
 #!/usr/bin/env python3
-"""Export qbench per-op probe measurements as an LLMServingSim profiler tree.
+"""Export qbench per-op probe records as an LLMServingSim profiler tree (dense, attention, per_sequence, moe and skew_fit tables plus meta.yaml).
 
-The sim consumes profiler/perf/<HW>/<org>/<model>/<variant>/tp<N>/{dense.csv,
-attention.csv, per_sequence.csv, moe.csv, skew_fit.csv} plus a variant-level
-meta.yaml. This compiles qbench probe records into that exact contract, with
-coverage checked against a reference tree's key set: any cell the probes do
-not cover is printed as MISSING (full list in a gaps file) and the export
-exits 2. Nothing is interpolated and no reference time is ever copied; a
-silently filled cell would poison the sim-vs-live comparison these tables
-exist to make, so gaps must fail loudly here.
-
-Probe interchange, one JSON object per line, merged across --probes files:
-  {"table":"dense","tp":1,"layer":"act_fn","tokens":7,"time_us":3.34}
-  {"table":"attention","tp":1,"prefill_chunk":0,"kv_prefill":0,
-   "n_decode":1,"kv_decode":16,"time_us":11.6}
-  {"table":"per_sequence","tp":1,"layer":"lm_head","sequences":4,"time_us":250.1}
-  {"table":"moe","tp":1,"tokens":64,"activated_experts":8,"time_us":88.0}
-  {"table":"skew_fit","tp":1,"pc":0,"n_label":"n<=128","skew_rate_label":"sr<=15%",
-   "kv_big_label":"kvB<=1k","kp_label":"kp=0","alpha":0.1252,"n_samples":4}
-Duplicate keys take the median. Grid-run slope baselines are aggregates and can
-not be decomposed into per-op cells, so they are deliberately not read.
+Probe input is JSONL merged across --probes files, one {"table", "tp", ...key fields, "time_us"} object per line; duplicate keys take the median.
+Coverage is checked against a reference tree's key set: missing cells are printed, listed in a gaps file, and the export exits 2. Nothing is interpolated.
 """
 
 import argparse
@@ -44,8 +27,7 @@ MISSING_STDOUT_CAP = 40
 
 
 def read_reference(ref_dir, tps=None):
-    """Required cells per (tp, table): the reference tree's exact key tuples,
-    in reference row order so exports diff cleanly against it."""
+    """Required cells per (tp, table): the reference tree's key tuples in reference row order."""
     ref_dir = Path(ref_dir)
     out = {}
     for tp_dir in sorted(ref_dir.glob("tp*")):
@@ -116,9 +98,7 @@ def export(required, probes, out_variant_dir):
 
 
 def write_meta(ref_dir, out_variant_dir, probe_paths, tps, first_token_overhead_us):
-    """meta.yaml: the reference's engine/grid contract with qbench provenance.
-    The sim reads grid fields from here; dropping them breaks its lookup, so
-    they are copied while every provenance field is replaced."""
+    """meta.yaml: the reference's engine and grid fields (the sim looks them up) with provenance fields replaced."""
     import yaml
     ref = yaml.safe_load((Path(ref_dir) / "meta.yaml").read_text())
     ref["profiler_version"] = "qbench-lss-export 1.0"

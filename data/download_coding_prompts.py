@@ -1,14 +1,5 @@
 #!/usr/bin/env python3
-"""
-Download coding-singleturn prompts from GCS and save as JSONL.
-
-For each of 3 runs:
-  1. Download _pllm_full_prompt.md → extract SYSTEM prompt
-  2. For each task .md file → extract Task Description as USER message
-  3. Estimate OSL from PLLM Program code blocks
-  4. Deduplicate by task name
-  5. Save to data/coding_agent_prompts.jsonl
-"""
+"""Download coding-singleturn prompts from GCS and write data/coding_agent_prompts.jsonl (system prompt, task description, osl estimate, deduplicated by task name)."""
 
 import os
 import re
@@ -38,12 +29,10 @@ OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
 def extract_system_prompt(content: str) -> str:
-    """Extract the system prompt text from _pllm_full_prompt.md."""
-    # Find Message 0 section, then grab the first fenced code block
+    """System prompt from _pllm_full_prompt.md: the code block of Message 0, else the first block."""
     msg0_match = re.search(r"## Message 0:.*?\n`{3,4}\n(.*?)\n`{3,4}", content, re.DOTALL)
     if msg0_match:
         return msg0_match.group(1).strip()
-    # Fallback: try any first large fenced block
     blocks = re.findall(r"`{3,4}\n(.*?)\n`{3,4}", content, re.DOTALL)
     if blocks:
         return blocks[0].strip()
@@ -51,7 +40,7 @@ def extract_system_prompt(content: str) -> str:
 
 
 def extract_task_description(content: str) -> str:
-    """Extract text between ## Task Description and the next ## header."""
+    """Text between ## Task Description and the next ## header, empty if absent."""
     match = re.search(r"## Task Description\s*\n(.*?)(?=\n## |\Z)", content, re.DOTALL)
     if match:
         return match.group(1).strip()
@@ -59,12 +48,7 @@ def extract_task_description(content: str) -> str:
 
 
 def estimate_osl_tokens(content: str) -> int:
-    """
-    Estimate output sequence length from PLLM Program code blocks.
-    Look for fenced blocks labeled as 'pllm program', 'program', or any large code block.
-    Average chars / 3.8 → tokens.
-    """
-    # Try to find PLLM Program section
+    """Output tokens as chars / 3.8 of the Program block, else the mean code block, else 200."""
     program_match = re.search(
         r"## (?:PLLM )?Program.*?\n`{3,4}[^\n]*\n(.*?)\n`{3,4}",
         content, re.DOTALL | re.IGNORECASE
@@ -73,24 +57,22 @@ def estimate_osl_tokens(content: str) -> int:
         code = program_match.group(1)
         return max(50, int(len(code) / 3.8))
 
-    # Fallback: average all code block lengths
     blocks = re.findall(r"`{3,4}[^\n]*\n(.*?)\n`{3,4}", content, re.DOTALL)
     if blocks:
         avg_len = sum(len(b) for b in blocks) / len(blocks)
         return max(50, int(avg_len / 3.8))
 
-    # No code blocks found -- use a conservative default
     return 200
 
 
 def list_blobs(client: storage.Client, prefix: str):
-    """List all blobs under a prefix."""
+    """All blobs under a prefix."""
     bucket = client.bucket(BUCKET_NAME)
     return list(bucket.list_blobs(prefix=prefix))
 
 
 def download_blob_text(blob) -> str:
-    """Download blob and return as UTF-8 string."""
+    """Blob content as UTF-8 text."""
     return blob.download_as_text(encoding="utf-8")
 
 
@@ -98,9 +80,7 @@ def main():
     print(f"Connecting to GCS bucket: {BUCKET_NAME}")
     client = storage.Client()
 
-    # task_name → {system, user, osl_tokens}
     seen_tasks: dict[str, dict] = {}
-    # run-level system prompts (keyed by prefix)
     run_system_prompts: dict[str, str] = {}
 
     for prefix in PREFIXES:
@@ -110,7 +90,6 @@ def main():
         blobs = list_blobs(client, prefix)
         print(f"  Found {len(blobs)} blobs")
 
-        # Separate the pllm full prompt blob from task blobs
         pllm_blob = None
         task_blobs = []
         for blob in blobs:
@@ -120,7 +99,6 @@ def main():
             elif fname.endswith(".md") and not fname.startswith("_"):
                 task_blobs.append(blob)
 
-        # Extract system prompt for this run
         system_prompt = ""
         if pllm_blob:
             print(f"  Downloading system prompt from: {pllm_blob.name}")
@@ -132,7 +110,6 @@ def main():
 
         run_system_prompts[prefix] = system_prompt
 
-        # Process each task file
         new_count = 0
         skip_count = 0
         for blob in task_blobs:
@@ -146,7 +123,6 @@ def main():
             content = download_blob_text(blob)
             user_msg = extract_task_description(content)
             if not user_msg:
-                # Skip files without a task description
                 continue
 
             osl_tokens = estimate_osl_tokens(content)
@@ -162,7 +138,6 @@ def main():
 
         print(f"  New tasks added: {new_count}, duplicates skipped: {skip_count}")
 
-    # Write JSONL
     print(f"\nWriting {len(seen_tasks)} unique prompts to {OUTPUT_PATH}")
     with open(OUTPUT_PATH, "w", encoding="utf-8") as f:
         for entry in seen_tasks.values():
@@ -175,7 +150,6 @@ def main():
 
     print(f"\nDone. Saved {len(seen_tasks)} unique prompts.")
 
-    # Quick stats
     if seen_tasks:
         osl_vals = [e["osl_tokens"] for e in seen_tasks.values()]
         user_lens = [len(e["user"]) for e in seen_tasks.values()]

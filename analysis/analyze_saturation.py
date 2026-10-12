@@ -1,29 +1,8 @@
 #!/usr/bin/env python3
-"""Locate the knee and the throughput plateau in an existing concurrency ladder.
+"""Find the knee and throughput plateau of closed-loop concurrency ladders in result JSONs already on disk.
 
-The canonical sweeps already walk a closed-loop concurrency ladder
-(sweep_all_profiles.sh: 1 10 20 40 80 160 256 320), which traces the whole
-throughput-vs-load curve. Nothing read that curve back out. This does, offline,
-from result JSONs already on disk -- no GPU time.
-
-Definitions (closed loop, so the system cannot become unstable; it saturates):
-
-  mu    service rate: max sustainable completions/sec for THIS workload. Read as
-        the plateau the throughput curve flattens onto. mu is workload-specific
-        -- a 150-token prompt and a 17k-token prompt have different mu on the
-        same GPU.
-  R0    unloaded latency: E2EL at the lowest concurrency in the ladder, i.e.
-        service time with no queueing.
-  N*    the knee: concurrency where the pipe is exactly full, N* = mu * R0
-        (Little's Law). Below it, added concurrency buys throughput. Above it,
-        throughput is pinned at mu and added concurrency only buys latency.
-
-A ladder that never flattens gives a LOWER BOUND on mu, not mu. That case is
-reported explicitly rather than fitting a plateau that was never observed.
-
-Usage:
-    python3 analysis/analyze_saturation.py results/            # a sweep dir
-    python3 analysis/analyze_saturation.py results/ --json     # machine-readable
+mu is the plateau throughput, R0 the E2EL at the lowest concurrency, and the knee N* = mu * R0 (Little's law). A ladder that never flattens reports mu as a lower bound.
+Usage: python3 analysis/analyze_saturation.py results/ [--json]
 """
 from __future__ import annotations
 
@@ -33,9 +12,9 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-# Throughput within this fraction of the ladder max counts as "on the plateau".
+# throughput within this fraction of the ladder max is on the plateau
 PLATEAU_TOL = 0.05
-# Need at least this many plateau points to claim saturation was observed.
+# fewer plateau points than this is not saturation
 MIN_PLATEAU_POINTS = 2
 
 
@@ -81,8 +60,7 @@ def analyse(ladder: list[dict]) -> dict:
     plateau = [c for c in ladder if c["req_per_s"] >= peak * (1 - PLATEAU_TOL)]
     saturated = (
         len(plateau) >= MIN_PLATEAU_POINTS
-        # the ladder must actually turn over: the top point must not still be
-        # the sole maximum, or we only ever climbed.
+        # the top point must not be the sole maximum
         and plateau[0]["concurrency"] < ladder[-1]["concurrency"]
     )
 
@@ -142,7 +120,7 @@ def format_group(key: tuple, res: dict) -> str:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("results_dir", type=Path)
+    ap.add_argument("results_dir", type=Path, help="directory of result JSONs, searched recursively")
     ap.add_argument("--json", action="store_true", help="emit JSON instead of a table")
     ap.add_argument("--min-points", type=int, default=3,
                     help="skip ladders with fewer points (default 3)")
@@ -159,8 +137,7 @@ def main() -> int:
 
     groups: dict[tuple, list[dict]] = defaultdict(list)
     for c in cells:
-        # Open-loop cells are not a concurrency ladder; mixing them in would put
-        # points from a different independent variable on the same curve.
+        # open-loop cells vary a different independent variable
         if c["load_mode"] == "open-loop":
             continue
         groups[(c["model"], c["tp"], c["backend"], c["profile"])].append(c)

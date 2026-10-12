@@ -1,11 +1,6 @@
-"""Shared plumbing for the golden tests: fixture compare/regen, crossval
-imports, and a CPU grid run (`qbench run configs/runs/<name>.yaml --set
-...`: runner, then serve.run with a GridTrace and an InProcessDriver) on the
-vllm/torch stubs. The vmin_fit fixtures were captured from
-modes/vmin_fit.py, which this path replaced; they are compared unchanged.
+"""Shared plumbing for the golden tests: fixture compare and regen, crossval imports, and a CPU grid run through `qbench run` on the vllm/torch stubs.
 
-QBENCH_GOLDEN_REGEN=1 rewrites every fixture from the current code instead of
-comparing; run it only when a behaviour change is intended.
+QBENCH_GOLDEN_REGEN=1 rewrites every fixture from the current code instead of comparing.
 """
 
 import contextlib
@@ -28,7 +23,7 @@ REGEN = os.environ.get("QBENCH_GOLDEN_REGEN") == "1"
 CROSSVAL_MODULES = ("quettabench",)
 STUB_MODULE_ROOTS = ("vllm", "torch", "transformers")
 
-# Llama-3.1-8B shaped config.json: the dense kv formula gives 131072 B/token.
+# Llama-3.1-8B shaped config.json, 131072 KV bytes per token
 DENSE_CONFIG = {
     "hidden_size": 4096,
     "num_attention_heads": 32,
@@ -37,7 +32,6 @@ DENSE_CONFIG = {
     "head_dim": 128,
 }
 
-# One representative override of every env knob the crossval path reads.
 ENV_OVERRIDE = {
     "XVAL_LINK_PROFILE": "pcie",
     "XVAL_PP": "2",
@@ -50,19 +44,17 @@ ENV_OVERRIDE = {
 
 RUNS = REPO / "configs" / "runs"
 
-# vmin_fit sized qwen's KV with the dense per-head formula; the loader
-# refuses hybrid attention without kv_bytes, so the golden run says dense.
+# the loader refuses hybrid attention without kv_bytes, so the qwen golden run says dense
 AS_VMIN_FIT = {"qwen": ["engine.attention=dense"]}
 
-# The one (ctx, bs) cell the fake clock makes noisy, so a RESULT line with
-# r2 < 0.999 (crossval's LOW R2) comes out of the real grid code path.
+# the one (ctx, bs) cell the fake clock makes noisy, to produce a RESULT line with r2 < 0.999
 NOISY_CELL = (1024, 16)
 
 
 def check_json(case, name, actual):
     """Compare actual against fixtures/<name>.json (or rewrite it under REGEN)."""
     path = FIXTURES / f"{name}.json"
-    actual = json.loads(json.dumps(actual))  # tuples -> lists, as on disk
+    actual = json.loads(json.dumps(actual))  # tuples become lists, as on disk
     if REGEN:
         path.write_text(json.dumps(actual, indent=1, sort_keys=True) + "\n")
         return
@@ -86,8 +78,7 @@ def _drop_modules(roots):
 
 @contextlib.contextmanager
 def crossval_path(stubs=False):
-    """Fresh imports of the crossval scripts (and the vllm/torch stubs when
-    asked); everything imported inside is dropped again on exit."""
+    """Fresh imports of quettabench, with the vllm/torch stubs if asked; dropped again on exit."""
     added = [str(REPO)] + ([str(STUBS)] if stubs else [])
     roots = CROSSVAL_MODULES + (STUB_MODULE_ROOTS if stubs else ())
     _drop_modules(roots)
@@ -107,9 +98,7 @@ def fresh_import(name):
 
 
 def fake_generate_seconds(prompt_len, batch, max_tokens, call_no):
-    """Fake decode cost: exact line in max_tokens, so r2 is 1 and the fit stops
-    after one attempt, except NOISY_CELL, whose middle step point is bent off
-    the line so every attempt fits r2 < 0.999 and VMIN_ATTEMPTS is used up."""
+    """Linear decode cost in max_tokens (r2 is 1); NOISY_CELL bends one point so every attempt fits r2 < 0.999."""
     step_ms = 4.0 + 0.0005 * prompt_len * batch / 8
     prefill_s = 0.02 + 2e-6 * prompt_len * batch
     bend = 0.3 if (prompt_len, batch) == NOISY_CELL and max_tokens == 230 else 0.0
@@ -128,14 +117,11 @@ def loader_message(exit_msg):
 
 
 def run_grid_cli(argv, env, model_config=None):
-    """cli.main(argv) for a `qbench run` argv on the stubs under exactly `env`
-    (os.environ is replaced, not merged), with the drivers' clock swapped
-    for the stub's fake one. nvidia-smi is hidden so backend and
-    link-profile detection never depend on the host, and the idle-GPU pick
-    answers "0" as on a one-GPU box. results/<run>/ goes to a throwaway
-    dir unless argv names --results-dir, never into the repo. Returns
-    stdout lines, the LLM kwargs, the number of generate() calls and the
-    SystemExit message if one fired."""
+    """Run cli.main(argv) on the stubs with os.environ replaced by `env`, the fake clock, nvidia-smi hidden and one idle GPU.
+
+    Results go to a throwaway dir unless argv names --results-dir.
+    Returns stdout lines, LLM kwargs, the generate() call count and the SystemExit message if any.
+    """
     with tempfile.TemporaryDirectory() as model_dir:
         Path(model_dir, "config.json").write_text(json.dumps(model_config or DENSE_CONFIG))
         argv = [a.replace("<MODEL>", model_dir) for a in argv]
