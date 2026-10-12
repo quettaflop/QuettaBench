@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Times a prefill to decode KV hand-off between two GPUs through NIXL/UCX; run under torchrun with two ranks."""
+"""Prefill to decode KV hand-off between two GPUs through NIXL/UCX; two torchrun ranks."""
 
 from __future__ import annotations
 
@@ -20,17 +20,15 @@ COLS = KEY + ("n_descs", "bytes", "prep_ms", "xfer_ms", "total_ms", "eff_gbps")
 
 
 def _fit(rows):
-    """Least-squares total_ms = floor + bytes / bw over one (heads, layout) series."""
     x = np.array([r["bytes"] for r in rows], dtype=float)
     y = np.array([r["total_ms"] for r in rows], dtype=float)
     A = np.stack([np.ones_like(x), x], axis=1)
     (b0, b1), *_ = np.linalg.lstsq(A, y, rcond=None)
-    bw = 1.0 / (b1 / 1e3) if b1 > 0 else float("inf")  # bytes/s
+    bw = 1.0 / (b1 / 1e3) if b1 > 0 else float("inf")
     return b0, bw
 
 
 def _emit(table: str, rows: list[dict]) -> None:
-    """Emit this run's rows as table, sorted by heads per rank, layout and tokens."""
     for r in sorted(rows, key=lambda r: (r["kv_heads_per_rank"], r["layout"], r["tokens"])):
         emit(
             ProbeRow(
@@ -44,7 +42,7 @@ def _emit(table: str, rows: list[dict]) -> None:
 
 
 def _on_sigterm(signum, frame):
-    """A SIGTERM (torchrun stopping a rank) fails the run in run_recorded."""
+    """torchrun stopping a rank fails the run in run_recorded."""
     raise SystemExit(143)
 
 
@@ -138,7 +136,7 @@ def main(argv=None) -> bool:
             region_ids = np.arange(a.layers, dtype=np.int64)[:, None]
 
             def _block_ids(layout: str, nb: int, side: int) -> np.ndarray:
-                """Block ids of one request on one side (0 local, 1 remote)."""
+                """0 local, 1 remote."""
                 if layout == "contig":
                     return np.arange(nb) + side * nb
                 if layout == "scattered":

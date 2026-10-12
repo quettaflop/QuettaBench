@@ -1,4 +1,4 @@
-"""One idempotent provisioning pass for a GPU box; anything unresolved prints `MISSING: <what>` and exits 1."""
+"""Idempotent GPU-box provisioning; unresolved items print `MISSING: <what>`, exit 1."""
 
 import argparse
 import os
@@ -18,8 +18,6 @@ NCCL_VERSION = "import torch; print(*torch.cuda.nccl.version(), sep='.')"
 
 
 class Plan:
-    """Runs or, on a dry run, prints each action; counts what is missing."""
-
     def __init__(self, dry):
         self.dry, self.missing, self.env = dry, 0, {}
 
@@ -31,7 +29,7 @@ class Plan:
         self.missing += 1
 
     def act(self, argv, what, cwd=None):
-        """Run argv (or say it would); a failure is MISSING `what`."""
+        """A failure is MISSING `what`."""
         if self.dry:
             return self.log(f"would: {shlex.join(argv)}")
         self.log(f"+ {shlex.join(argv)}")
@@ -47,7 +45,6 @@ def succeeds(argv):
 
 
 def compute_capability():
-    """Major compute capability of GPU 0, or None without nvidia-smi."""
     try:
         out = subprocess.run(
             ["nvidia-smi", "--query-gpu=compute_cap", "--format=csv,noheader"],
@@ -66,7 +63,7 @@ def nccl_version(py):
 
 
 def docker_images(plan, configs):
-    """Docker on PATH and every run's engine.image present locally; nothing pulled."""
+    """Nothing is pulled."""
     if not shutil.which("docker"):
         return plan.need("docker is not on PATH; hardware.launcher=docker runs the server with it")
     for name, cfg in configs.items():
@@ -82,7 +79,7 @@ def docker_images(plan, configs):
 
 
 def machine(plan, prov, docker=False, backend="cuda"):
-    """Steps 1-4 (2 and 3 skipped for docker, 3 for a backend other than cuda); returns (python, QuettaServe checkout)."""
+    """Steps 2 and 3 skipped for docker, 3 for non-cuda."""
     cache = Path(prov["cache_root"])
     if plan.dry:
         plan.log("would: mkdir -p " + " ".join(str(cache / d) for d in CACHE_DIRS))
@@ -141,7 +138,6 @@ def machine(plan, prov, docker=False, backend="cuda"):
 
 
 def bench_binary(plan, name, bench, prov, qs):
-    """The prebuilt binary, or the newest test binary cargo builds in qs."""
     if prov.get("bench_bin") and os.access(prov["bench_bin"], os.X_OK):
         plan.log(f"{name}: bench bin {prov['bench_bin']}")
         return prov["bench_bin"]
@@ -168,7 +164,7 @@ def bench_binary(plan, name, bench, prov, qs):
 
 
 def run(plan, name, cfg, py, qs):
-    """Step 5 for one run; returns its `qbench run` lines, the vLLM one only when the model yaml has no quettaserve: block."""
+    """The vLLM line only when the model yaml has no quettaserve: block."""
     prov, bench = cfg.hardware.provision, cfg.engine.extra.get("quettaserve")
     binary = None
     if bench:
@@ -218,7 +214,6 @@ def run(plan, name, cfg, py, qs):
 
 
 def split_sets(items):
-    """(sets for every run, {run stem: its own sets}) from `[<run>:]k=v` items."""
     common, scoped = [], {}
     for item in items:
         key, sep, value = item.partition("=")

@@ -8,27 +8,26 @@ import urllib.request
 
 from quettabench.engines import launcher
 
-GSM8K_MAX_TOKENS = 256  # reply length cap per gsm8k question
+GSM8K_MAX_TOKENS = 256
 
 
 def integrate_power(samples_w, interval_s):
-    """Rectangle-rule joules from per-sample total board watts; a missed sample makes it a floor."""
+    """A missed sample makes it a floor."""
     return sum(samples_w) * interval_s
 
 
 def energy_devices(engine_json, config):
-    """CUDA_VISIBLE_DEVICES from engine.json's launch_spec, else the Config's hardware.visible_devices; "" means every GPU."""
+    """ "" means every GPU."""
     env = ((engine_json or {}).get("launch_spec") or {}).get("env") or {}
     return env.get("CUDA_VISIBLE_DEVICES") or ((config or {}).get("hardware") or {}).get("visible_devices") or ""
 
 
 def device_label(ids):
-    """ENERGYSUM's devices= field: the id count, or `all` when none were named."""
     return len(ids.split(",")) if ids else "all"
 
 
 class PowerSampler:
-    """Total board power over `devices` every interval_s on a daemon thread; a failed or unparsable nvidia-smi call skips that tick."""
+    """A failed or unparsable nvidia-smi call skips that tick."""
 
     def __init__(self, devices, nvidia_smi="nvidia-smi", interval_s=1.0):
         self.devices, self.interval_s = devices or "", interval_s
@@ -54,14 +53,12 @@ class PowerSampler:
         return self
 
     def stop(self, timeout_s=2.0):
-        """Stop sampling; returns the samples taken."""
         self._stop.set()
         self._thread.join(timeout=timeout_s)
         return self.samples
 
 
 def energy_section(samples_w, interval_s, out_tokens, devices):
-    """profile.json `energy`: joules, joules per output token, scope, devices, samples."""
     joules = integrate_power(samples_w, interval_s)
     return {
         "joules": joules,
@@ -74,13 +71,13 @@ def energy_section(samples_w, interval_s, out_tokens, devices):
 
 
 def cost_per_m_tokens(gpu_cost_hr, devices, wall_s, out_tokens):
-    """(run USD, USD per million output tokens) at a flat per-GPU-hour rate over the replay window, excluding model load."""
+    """Flat per-GPU-hour rate over the replay window, excluding model load."""
     usd = gpu_cost_hr * devices * wall_s / 3600.0
     return usd, usd * 1e6 / max(out_tokens, 1)
 
 
 def cost_section(gpu_cost_hr, devices, wall_s, out_tokens):
-    """profile.json `cost`; devices is tp * pp."""
+    """devices is tp * pp."""
     usd, per_m = cost_per_m_tokens(gpu_cost_hr, devices, wall_s, out_tokens)
     return {
         "usd": usd,
@@ -93,7 +90,7 @@ def cost_section(gpu_cost_hr, devices, wall_s, out_tokens):
 
 
 def gsm8k_answer(text):
-    """Last number in the text with commas and dollar signs stripped; gold answers sit after '####'. None when no number appears."""
+    """Gold answers sit after '####'; None when no number appears."""
     if "####" in text:
         text = text.rsplit("####", 1)[-1]
     nums = re.findall(r"-?\d[\d,]*\.?\d*", text.replace("$", ""))
@@ -103,7 +100,7 @@ def gsm8k_answer(text):
 
 
 def load_gsm8k(path, tokenizer_name, n, tokenizer=None):
-    """[(prompt_ids, gold_answer)] for the first n items of a GSM8k JSONL ({question, answer}); tokenizer replaces loading tokenizer_name."""
+    """tokenizer replaces loading tokenizer_name."""
     if tokenizer is None:
         from transformers import AutoTokenizer  # imported here: slow to load
 
@@ -114,7 +111,6 @@ def load_gsm8k(path, tokenizer_name, n, tokenizer=None):
 
 
 def gsm8k_accuracy(generate, items, max_tokens=GSM8K_MAX_TOKENS):
-    """profile.json `accuracy`: greedy answers through generate(prompt_ids, max_tokens) -> text, exact match against gold."""
     correct = 0
     for ids, gold in items:
         got = gsm8k_answer(generate(ids, max_tokens))
@@ -130,7 +126,7 @@ def gsm8k_accuracy(generate, items, max_tokens=GSM8K_MAX_TOKENS):
 
 
 def http_generate(endpoint, model, timeout_s=600):
-    """generate(prompt_ids, max_tokens) -> text over a server's /v1/completions, greedy and non-streaming."""
+    """Greedy, non-streaming."""
 
     def generate(prompt_ids, max_tokens):
         body = json.dumps(

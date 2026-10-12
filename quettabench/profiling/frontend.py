@@ -26,14 +26,13 @@ from kernel_composed.types import FrontendParams
 
 from quettabench.engines import launcher
 
-_SWEEP_PROMPTS = [128, 256, 512, 1024, 2048]  # tokens
+_SWEEP_PROMPTS = [128, 256, 512, 1024, 2048]
 _CONC_SWEEP = [1, 2, 5, 10, 20, 40]
-_SAMPLES = 3  # repeats per point, median taken
-_DECODE_TOKENS = 64  # enough output tokens for a stable TPOT
+_SAMPLES = 3  # Repeats per point, median taken.
+_DECODE_TOKENS = 64  # Enough output tokens for a stable TPOT.
 
 
 def _stream_once(base_url: str, model: str, prompt: str, out_tokens: int = 8) -> tuple[float, float, int]:
-    """(ttft_ms, tpot_ms, prompt_tokens) for one streamed completion."""
     body = json.dumps(
         {
             "model": model,
@@ -55,7 +54,7 @@ def _stream_once(base_url: str, model: str, prompt: str, out_tokens: int = 8) ->
                 continue
             payload = json.loads(line[5:])
             usage = payload.get("usage")
-            if usage:  # the final usage-only chunk carries no token
+            if usage:  # The final usage-only chunk carries no token.
                 prompt_tokens = int(usage.get("prompt_tokens", 0))
                 continue
             if not payload.get("choices"):
@@ -71,7 +70,7 @@ def _stream_once(base_url: str, model: str, prompt: str, out_tokens: int = 8) ->
 
 
 def _linfit(xs: list[float], ys: list[float]) -> tuple[float, float]:
-    """Least-squares y = intercept + slope*x (closed form, no numpy)."""
+    """Closed form, no numpy."""
     n = len(xs)
     sx, sy = sum(xs), sum(ys)
     sxx = sum(x * x for x in xs)
@@ -82,7 +81,7 @@ def _linfit(xs: list[float], ys: list[float]) -> tuple[float, float]:
 
 
 def _conc_sweep(a, cost, model):
-    """Concurrent herds of unique ~512-token prompts; returns (mult_curve points, rows)."""
+    """Herds of unique ~512-token prompts."""
 
     def herd(c: int) -> list[tuple[float, float, int]]:
         prompts = [_prompt(512) for _ in range(c)]
@@ -120,7 +119,7 @@ _SEED = [0]
 
 
 def _prompt(tokens: int, *, reuse: str | None = None) -> str:
-    """~`tokens` tokens behind a unique seed so sweep prompts share no cached prefix; `reuse` returns that prompt unchanged."""
+    """The seed keeps sweep prompts from sharing a cached prefix; `reuse` returns the same one."""
     if reuse is not None:
         return reuse
     _SEED[0] += 1
@@ -148,7 +147,7 @@ def frontend_parser():
 
 
 def frontend_probe(a):
-    """Sweep a.base_url and return {frontend, serving, conc}; each value is measured latency minus the compute-only prediction."""
+    """Each value is measured latency minus the compute-only prediction."""
     gpu = load_kernel_gpu(Path(a.device_yaml))
     # Strip the host terms the yaml already carries, or the residual counts them twice.
     gpu = dataclasses.replace(
@@ -281,7 +280,7 @@ COLS = (
 
 
 class Prompter:
-    """Random-word prompts of a target token length, checked with the model tokenizer."""
+    """Checked with the model tokenizer."""
 
     def __init__(self, tokenizer_name: str, seed: int = 1234):
         from transformers import AutoTokenizer  # imported here: slow to load
@@ -383,7 +382,6 @@ class SimSide:
 
 
 def lstsq(xs, ys):
-    """(a, b) of the least-squares line y = a + b x."""
     n = len(xs)
     mx = sum(xs) / n
     my = sum(ys) / n
@@ -427,7 +425,7 @@ def pd_host_parser() -> argparse.ArgumentParser:
 
 
 def pd_host_probe(a) -> list[dict]:
-    """Run the cold, warm, turn and herd phases through a.proxy_url; one COLS row per scored request."""
+    """One COLS row per scored request."""
     bw, lat, pdu = (float(x) for x in a.link.split(","))
     sim = SimSide(a.device_yaml, a.model_yaml, a.tp, Link(bw, lat, pdu))
     pr = Prompter(a.tokenizer)
@@ -490,7 +488,7 @@ def pd_host_probe(a) -> list[dict]:
             )
             time.sleep(0.3)
             px = proxy_rows(log, since)
-            px[-1]["_cached_d"] = cold_total + 4  # cold prompt plus its 4 generated tokens
+            px[-1]["_cached_d"] = cold_total + 4  # Cold prompt plus its 4 generated tokens.
             rows.append(score("warm", 1, c, px[-1]))
 
     if a.turns > 0:

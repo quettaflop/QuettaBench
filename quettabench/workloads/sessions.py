@@ -1,4 +1,4 @@
-"""Multi-turn traces: sessions of ordered turns built from ShareGPT conversations or agent trajectories, plus the per-turn wait policy."""
+"""Multi-turn traces: sessions of ordered turns, plus the per-turn wait policy."""
 
 import asyncio
 import itertools
@@ -14,7 +14,7 @@ from .live import RealTrace, Request, est_tokens, load_sharegpt
 
 @dataclass(frozen=True)
 class TurnPacing:
-    """per-session runs a session's turns back to back; interleaved waits at a barrier after every turn index."""
+    """per-session runs turns back to back; interleaved waits after every turn index."""
 
     pacing: str = "per-session"
     tool_wait_ms: float = 0.0
@@ -24,7 +24,7 @@ class TurnPacing:
 
 
 class SessionTrace(RealTrace):
-    """A RealTrace whose requests are turns; sessions() groups them by session_id, each ordered by turn."""
+    """Requests are turns; sessions() groups them by session_id."""
 
     pacing = TurnPacing()
     replies: Mapping = MappingProxyType({})
@@ -40,7 +40,7 @@ class SessionTrace(RealTrace):
 
 
 def turn_wait_metadata(turn: dict) -> dict:
-    """The inter-turn wait fields of a trajectory turn (tool_wait_after_ms, human_wait_after_ms), accepting the `*_ms` and `*_wait_ms` aliases; missing is 0."""
+    """Accepts the `*_ms` and `*_wait_ms` aliases; missing is 0."""
 
     def _ms(*keys: str) -> float:
         for key in keys:
@@ -58,7 +58,7 @@ def turn_wait_metadata(turn: dict) -> dict:
 
 
 def session_arrival_ms(entry: dict) -> float:
-    """Session start offset in milliseconds; missing or invalid is 0."""
+    """Missing or invalid is 0."""
     for key in ("arrival_time_ms", "arrival_time"):
         if key in entry and entry[key] is not None:
             try:
@@ -70,7 +70,7 @@ def session_arrival_ms(entry: dict) -> float:
 
 @dataclass
 class MultiTurnSession:
-    """One conversation as Requests with growing history; assistant_messages are the dicts later turns share, empty for a trajectory."""
+    """assistant_messages are the dicts later turns share; empty for a trajectory."""
 
     session_id: int
     turns: list
@@ -79,7 +79,7 @@ class MultiTurnSession:
 
 
 class LoadedSessionTrace(SessionTrace):
-    """Sessions shuffled with the seed and cut to num_sessions and max_turn_index, turn 0 carrying the recorded arrival."""
+    """Turn 0 carries the recorded arrival."""
 
     def __init__(
         self,
@@ -133,7 +133,7 @@ class LoadedSessionTrace(SessionTrace):
 
 
 class ShareGPTSessionTrace(LoadedSessionTrace):
-    """ShareGPT conversations as growing-history turns, loading up to 3x num_sessions."""
+    """Loads up to 3x num_sessions."""
 
     def __init__(
         self,
@@ -187,7 +187,7 @@ class ShareGPTSessionTrace(LoadedSessionTrace):
 
 
 class TrajectorySessionTrace(LoadedSessionTrace):
-    """Agent trajectories, one session per JSONL line: {"session_id", "turns": [{"messages", "osl_tokens"}, ...]}."""
+    """{"session_id", "turns": [{"messages", "osl_tokens"}, ...]}."""
 
     def __init__(
         self,
@@ -250,7 +250,7 @@ def inter_turn_wait_s(
     human_wait_ms: float = 0.0,
     use_recorded_waits: bool = False,
 ) -> float:
-    """Seconds to sleep after a turn: the fixed tool and human waits, plus the recorded waits in the turn metadata when use_recorded_waits."""
+    """Plus the recorded waits in the turn metadata when use_recorded_waits."""
     recorded_tool = 0.0
     recorded_human = 0.0
     if use_recorded_waits and request is not None:
@@ -272,7 +272,6 @@ def resolve_multi_turn_num_sessions(
     concurrency: int,
     override: int | None = None,
 ) -> tuple[int, str]:
-    """Multi-turn runs need enough sessions to saturate the requested concurrency."""
     if profile.mode != "multi-turn":
         return profile.num_sessions, "profile_default"
 

@@ -1,4 +1,4 @@
-"""Recorded traces (replay JSONL, Mooncake), the real-text profile sources and the workload profile registry over configs/workloads.yaml."""
+"""Recorded traces (replay JSONL, Mooncake), real-text sources and the profile registry."""
 
 import dataclasses
 import json
@@ -10,7 +10,7 @@ import yaml
 
 from .base import DrawnTrace, Request, Trace, synth_ids
 
-BLOCK_SIZE = 512  # tokens per Mooncake hash id
+BLOCK_SIZE = 512
 
 # Avoids low special token ids and stays under small vocabs.
 TOKEN_ID_LOW = 1000
@@ -19,7 +19,7 @@ TOKEN_ID_HIGH = 20000
 
 @dataclass(frozen=True)
 class MooncakeRecord:
-    index: int  # line index in the file
+    index: int
     input_length: int
     output_length: int | None
     hash_ids: tuple[int, ...]
@@ -27,7 +27,6 @@ class MooncakeRecord:
 
 
 def _rows(path):
-    """(line index, parsed dict) for every non-blank line."""
     with open(path) as f:
         for i, line in enumerate(f):
             line = line.strip()
@@ -36,7 +35,7 @@ def _rows(path):
 
 
 def mooncake_record(row, index):
-    """input_length is required; output_length, hash_ids and timestamp may be absent."""
+    """output_length, hash_ids and timestamp may be absent."""
     out, ts = row.get("output_length"), row.get("timestamp")
     return MooncakeRecord(
         index=index,
@@ -48,7 +47,6 @@ def mooncake_record(row, index):
 
 
 def parse_mooncake_trace(path, limit=0):
-    """Raw Mooncake records in file order, for tools that study the trace itself."""
     records = []
     for i, row in _rows(path):
         rec = mooncake_record(row, i)
@@ -63,19 +61,17 @@ def parse_mooncake_trace(path, limit=0):
 
 
 def expand_block(hash_id, seed):
-    """One hash id always yields the same BLOCK_SIZE token ids."""
     rng = random.Random(f"{seed}:{hash_id}")
     return [rng.randrange(TOKEN_ID_LOW, TOKEN_ID_HIGH) for _ in range(BLOCK_SIZE)]
 
 
 def fill_tail(record_index, length, seed):
-    """Request-unique filler for input tokens not covered by hash blocks."""
     rng = random.Random(f"{seed}:tail:{record_index}")
     return [rng.randrange(TOKEN_ID_LOW, TOKEN_ID_HIGH) for _ in range(length)]
 
 
 def mooncake_prompt_ids(record, seed=42, block_cache=None):
-    """Exactly input_length ids: hash blocks in order, tail filled per request; no hash_ids gives synth_ids(input_length, line index)."""
+    """No hash_ids gives synth_ids(input_length, line index)."""
     if not record.hash_ids:
         return synth_ids(record.input_length, record.index)
     tokens = []
@@ -95,7 +91,7 @@ def mooncake_prompt_ids(record, seed=42, block_cache=None):
 
 
 def _carry_meta(req, row):
-    """Scheduling and provenance fields; Mooncake timestamp is ms."""
+    """Mooncake timestamp is ms."""
     if row.get("arrival_ts") is not None:
         req.arrival_ts = float(row["arrival_ts"])
     elif row.get("timestamp") is not None:
@@ -107,7 +103,7 @@ def _carry_meta(req, row):
 
 
 def _mooncake_request(row, index, seed, block_cache):
-    """A Mooncake line keeps its own output_length, even 0."""
+    """Keeps its own output_length, even 0."""
     rec = mooncake_record(row, index)
     ids = mooncake_prompt_ids(rec, seed, block_cache)
     req = Request(ids, rec.input_length, order=index, output_length=rec.output_length)
@@ -115,7 +111,7 @@ def _mooncake_request(row, index, seed, block_cache):
 
 
 def _line_request(path, row, index, seed, block_cache):
-    """One replay-schema line; order is the line index, a hash input."""
+    """order is the line index, a hash input."""
     if row.get("prompt_token_ids"):
         ids = list(row["prompt_token_ids"])
         req = Request(ids, len(ids), order=index)
@@ -136,8 +132,6 @@ def _line_request(path, row, index, seed, block_cache):
 
 
 class RealTrace(Trace):
-    """Requests read from a file; supports_spec when any request carries real assistant tokens (output_token_ids)."""
-
     def __init__(self, requests, path, reader):
         if not requests:
             raise ValueError(f"{path}: no requests")
@@ -148,7 +142,7 @@ class RealTrace(Trace):
 
     @classmethod
     def from_jsonl(cls, path, seed=42):
-        """The replay schema; seed only matters for Mooncake hash blocks."""
+        """seed only matters for Mooncake hash blocks."""
         cache = {}
         reqs = [_line_request(path, row, i, seed, cache) for i, row in _rows(path)]
         return cls(reqs, path, "jsonl")
@@ -167,8 +161,6 @@ class RealTrace(Trace):
 
 
 class MooncakeTrace(DrawnTrace):
-    """Mooncake records in file order with expanded token ids, wrapping at the end and rewinding after warmup."""
-
     rewinds = True
 
     def __init__(self, path, seed=42, limit=0):
@@ -177,7 +169,7 @@ class MooncakeTrace(DrawnTrace):
         stamps = [r.timestamp for r in self.records if r.timestamp is not None]
         span = (
             max(stamps) - min(stamps) if stamps else 0
-        )  # 0 has no pace; build_trace refuses such a wrap under arrival=trace
+        )  # 0 has no pace; build_trace refuses such a wrap under arrival=trace.
         self.lap_ms = span + (span / (len(stamps) - 1) if len(stamps) > 1 else 0)
         self.seed = seed
         self._cursor = 0
@@ -207,7 +199,7 @@ class MooncakeTrace(DrawnTrace):
 
 
 def reshuffled(samples, rng):
-    """Yields (messages, max_tokens) samples; when used up they are refilled and reshuffled with rng."""
+    """When used up they are refilled and reshuffled with rng."""
     available = list(samples)
     while True:
         if not available:
@@ -217,8 +209,6 @@ def reshuffled(samples, rng):
 
 
 class SampledChatTrace(DrawnTrace):
-    """Chat prompts drawn from a fixed set, shuffled with the seed and reshuffled by reshuffled() when used up."""
-
     def __init__(self, samples, seed):
         super().__init__()
         self.samples = samples
@@ -230,7 +220,7 @@ class SampledChatTrace(DrawnTrace):
 
 
 class PromptJsonlTrace(SampledChatTrace):
-    """Real prompts, one per line: {"system", "user", "osl_tokens"}; osl_tokens is the max tokens."""
+    """{"system", "user", "osl_tokens"}; osl_tokens is the max tokens."""
 
     def __init__(self, path, seed=42):
         samples = []
@@ -242,7 +232,7 @@ class PromptJsonlTrace(SampledChatTrace):
 
 
 def est_tokens(text):
-    """Token estimate for English: 1.35 tokens per word."""
+    """1.35 tokens per word."""
     return int(len(text.split()) * 1.35)
 
 
@@ -261,7 +251,7 @@ def prompt_token_count(tokenizer, messages):
 
 
 def load_chat_tokenizer(name):
-    """The model's tokenizer for prompt counts; None without a name, raises if it fails to load."""
+    """None without a name; raises if it fails to load."""
     if not name:
         return None
     from transformers import AutoTokenizer  # imported here: slow to load
@@ -270,7 +260,7 @@ def load_chat_tokenizer(name):
 
 
 class ShareGPTTrace(SampledChatTrace):
-    """First user/assistant pair of each ShareGPT conversation; max tokens is the estimated reply length."""
+    """Max tokens is the estimated reply length."""
 
     def __init__(
         self,
@@ -317,8 +307,6 @@ class ShareGPTTrace(SampledChatTrace):
 
 
 class SmokeTrace(DrawnTrace):
-    """One fixed prompt, 20 output tokens: a quick smoke test."""
-
     def __init__(self, prompt="Say hello in one word."):
         super().__init__()
         self.prompt = prompt
@@ -327,29 +315,27 @@ class SmokeTrace(DrawnTrace):
         return Request([], 0, output_length=20, messages=[{"role": "user", "content": self.prompt}], metadata={})
 
 
-# Workload profiles by name from configs/workloads.yaml; an unknown key fails at import.
+# An unknown key fails at import.
 WORKLOADS = Path(__file__).resolve().parents[2] / "configs" / "workloads.yaml"
 
 
 @dataclass
 class WorkloadProfile:
     name: str
-    isl_tokens: int  # max ISL
-    osl_tokens: int  # max OSL and max_tokens
-    # "sharegpt", "test", "jsonl", "mooncake-trace", "sharegpt-multi-turn", "swebench-multi-turn", "terminalbench-multi-turn"
+    isl_tokens: int
+    osl_tokens: int
     dataset: str
     file_path: str = ""
     system_prompt: str = "You are a helpful assistant."
-    mode: str = "single-turn"  # "stress-test" | "single-turn" | "multi-turn"
+    mode: str = "single-turn"
     prefix_caching_required: bool = False  # server needs --enable-prefix-caching
-    min_turns: int = 1  # multi-turn only
-    max_turns: int = 1  # multi-turn only
-    num_sessions: int = 200  # multi-turn: concurrent sessions
+    min_turns: int = 1
+    max_turns: int = 1
+    num_sessions: int = 200
     active: bool = True  # False: runnable but hidden from default listings
 
 
 def load_profiles(path=WORKLOADS):
-    """Every entry of the workloads yaml as a WorkloadProfile, by name."""
     if not Path(path).exists():
         raise FileNotFoundError(
             f"{path} not found: qbench reads configs/ beside its package, "
@@ -372,7 +358,6 @@ PROFILES: dict[str, WorkloadProfile] = load_profiles()
 
 
 def active_profiles() -> list[str]:
-    """The names a listing shows: every profile with active true."""
     return sorted(name for name, p in PROFILES.items() if p.active)
 
 

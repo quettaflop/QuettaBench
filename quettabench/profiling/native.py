@@ -1,4 +1,4 @@
-"""Native profiler sources: the /metrics scrape, armed trace files, nsys kernel tables, and the frontend, pd_host and kv_transfer probes."""
+"""Native profiler sources: /metrics, armed traces, nsys kernel tables, probe wrappers."""
 
 import importlib
 import json
@@ -25,7 +25,6 @@ TRACE_FILES = {
 
 
 def prefix_cache_hit_rate(metrics):
-    """Token-weighted prefix-cache hit rate: hit tokens / queried tokens."""
     hits, queries = counter_total(metrics, HITS), counter_total(metrics, QUERIES)
     if hits is None or not queries:
         return None
@@ -33,13 +32,11 @@ def prefix_cache_hit_rate(metrics):
 
 
 def scrape_metrics(endpoint, timeout_s=10):
-    """GET <endpoint>/metrics and parse it."""
     with launcher.urlopen(f"{endpoint}/metrics", timeout=timeout_s) as resp:
         return parse_prometheus(resp.read().decode())
 
 
 def metrics_section(metrics):
-    """profile.json `metrics`: every sample keyed by name or name{k="v",...}, plus prefix_cache_hit_rate."""
     samples = {}
     for key, value in metrics.items():
         if isinstance(key, tuple):
@@ -50,7 +47,7 @@ def metrics_section(metrics):
 
 
 def collect_armed_traces(results_dir, instrumentation):
-    """profile.json `traces`: files the launch-time instrumentation left in results_dir; missing is true when none exist yet."""
+    """`missing` is true when none exist yet."""
     names = TRACE_FILES.get(instrumentation, ())
     found = [n for n in names if (Path(results_dir) / n).exists()]
     return {"instrumentation": instrumentation, "files": found, "missing": bool(names) and not found}
@@ -91,7 +88,6 @@ KERNEL_FAMILIES = [
 
 
 def _merged(intervals):
-    """(start, end) ns intervals merged where they overlap, in order."""
     out = []
     for s, e in sorted(intervals):
         if out and s <= out[-1][1]:
@@ -102,7 +98,7 @@ def _merged(intervals):
 
 
 def kernel_summary(results_dir, steps, window=None, subtract=None, top=25, gap_us=20.0, nsys="nsys"):
-    """profile.json `kernels` per decode step from the armed nsys trace, exported once to <results_dir>/nsys.sqlite."""
+    """Exported once to <results_dir>/nsys.sqlite."""
     results_dir = Path(results_dir)
     db = results_dir / "nsys.sqlite"
     if not db.exists():
@@ -134,7 +130,7 @@ def kernel_summary(results_dir, steps, window=None, subtract=None, top=25, gap_u
         col = next(c for c in ("shortName", "demangledName", "nameId", "name") if c in cols)
 
         def tally(win):
-            """{kernel: [launches, ns]}, {device: [(start, end)]}, {memop: [count, ns]} for what lies fully inside win (None: everything)."""
+            """win None means everything."""
             bound, args = (" WHERE k.start >= ? AND k.end <= ?", win) if win else ("", ())
             kernels, devices, mem = {}, {}, {}
             for s, e, dev, name in con.execute(
@@ -213,7 +209,6 @@ def kernel_summary(results_dir, steps, window=None, subtract=None, top=25, gap_u
 
 
 def with_defaults(argv, defaults):
-    """argv plus `flag value` for each default flag argv does not already give."""
     argv = list(argv or ())
     for flag, value in defaults.items():
         if value is not None and flag not in argv:
@@ -222,21 +217,19 @@ def with_defaults(argv, defaults):
 
 
 def serving_frontend(endpoint, model, argv=()):
-    """profile.json `frontend`: frontend_probe() against endpoint/v1; argv carries the probe's own flags."""
     probe = importlib.import_module(FRONTEND)
     a = probe.frontend_parser().parse_args(with_defaults(argv, {"--base-url": f"{endpoint}/v1", "--model": model}))
     return probe.frontend_probe(a)
 
 
 def pd_host(endpoint, model, argv=()):
-    """profile.json `pd_host`: frontend.pd_host_probe()'s rows, endpoint as the proxy."""
     probe = importlib.import_module(FRONTEND)
     a = probe.pd_host_parser().parse_args(with_defaults(argv, {"--proxy-url": endpoint, "--model": model}))
     return {"rows": probe.pd_host_probe(a)}
 
 
 def kv_transfer(run_dir):
-    """profile.json `kv_transfer`: the kv_transfer ProbeRows in run_dir/rows.jsonl, read as JSON since the probe module needs torch."""
+    """Read as JSON since the probe module needs torch."""
     path = Path(run_dir) / "rows.jsonl"
     with path.open() as fh:
         rows = [json.loads(line) for line in fh if line.strip()]

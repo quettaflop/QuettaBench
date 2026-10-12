@@ -1,4 +1,4 @@
-"""Attach-only profiler: reads results/<run>/, runs the asked-for sources and merges their sections into profile.json."""
+"""Attach-only profiler: merges source sections into profile.json for a run."""
 
 import argparse
 import json
@@ -24,7 +24,6 @@ def read_json(path):
 
 
 def run_totals(run):
-    """(output tokens, wall seconds) of a run.json summary."""
     s = run.get("summary") or {}
     return (s.get("out_tokens", s.get("total_output_tokens", 0)), s.get("wall_s", s.get("duration_s", 0.0)))
 
@@ -43,7 +42,7 @@ def check_args(sources, args):
 def measure_energy(
     results_dir, engine, config, nvidia_smi="nvidia-smi", interval_s=1.0, energy_s=None, poll_s=0.5, timeout_s=86400
 ):
-    """Sample until run.json appears, or for energy_s seconds. Returns (samples, window "run" or "fixed")."""
+    """Window is "run" or "fixed"."""
     run_json = Path(results_dir) / "run.json"
     if energy_s is None and run_json.exists():
         raise ValueError("run.json already exists: the run is over; pass energy_s for a fixed window")
@@ -63,7 +62,7 @@ def _endpoint(engine):
 
 
 def run_source(source, results_dir, engine, args, energy):
-    """One source's section; run.json is read fresh because energy may have waited for it."""
+    """run.json is read fresh: energy may have waited for it."""
     run = read_json(Path(results_dir) / "run.json") or {}
     config = run.get("config") or {}
     model = args.get("served_model") or (config.get("engine") or {}).get("model")
@@ -102,7 +101,7 @@ def run_source(source, results_dir, engine, args, energy):
 
 
 def profile(results_dir, sources, **source_args):
-    """Run sources against results_dir's run, merge into profile.json and return it. source_args are the flags in get_args, underscored."""
+    """source_args are the flags in get_args, underscored."""
     check_args(sources, source_args)
     results_dir = Path(results_dir)
     engine = read_json(results_dir / "engine.json") or {}
@@ -134,7 +133,7 @@ def profile(results_dir, sources, **source_args):
 
 
 def profile_tag_lines(profile):
-    """ENERGYSUM, ACCSUM and COSTSUM lines for the sections present (ENERGYSUM only for a run window)."""
+    """ENERGYSUM only for a run window."""
     lines = []
     e = profile.get("energy")
     if e is not None and e.get("joules_per_token") is not None:

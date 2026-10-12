@@ -1,4 +1,4 @@
-"""Grid prompts as a Trace: per (ctx, bs) cell and step point, bs requests of ctx prompt tokens asking for step-point output tokens."""
+"""Grid prompts as a Trace: per (ctx, bs) cell and step point."""
 
 from ..config.schema import PROMPT_MODES
 from .base import Request, Trace, synth_ids
@@ -6,7 +6,7 @@ from .live import RealTrace
 
 
 def take(reqs, count, ctx):
-    """Pick `count` requests for a cell, trimming or padding ids to ctx and cycling the trace if short; returns (ids, cycled)."""
+    """Cycles the trace if short; returns (ids, cycled)."""
     usable = [r for r in reqs if r["prompt_len"] >= ctx] or reqs
     out, cycled = [], False
     for j in range(count):
@@ -20,17 +20,16 @@ def take(reqs, count, ctx):
 
 
 def distinct_ids(n, seed=10):
-    """seed + (i % 1000): a different stream per seed, so slots route apart."""
+    """A different stream per seed, so slots route apart."""
     return [seed + (i % 1000) for i in range(n)]
 
 
 def clone_ids(n):
-    """The synthetic prompt the Rust engine benches feed every slot; keep in sync with those bench ids."""
+    """Keep in sync with the Rust engine bench ids."""
     return [(i * 137 + 11) % 100_000 for i in range(n)]
 
 
 def corpus_window(ids, n, slot):
-    """n ids from slot * 997 into the corpus, wrapping to the start when the window outruns the text."""
     start = (slot * 997) % max(1, len(ids))
     out = []
     while len(out) < n:
@@ -40,7 +39,7 @@ def corpus_window(ids, n, slot):
 
 
 class GridTrace(Trace):
-    """Cells over maxlen (ctx + max(step_points) + 2 > maxlen) carry no requests; tokenizer is called at the first corpus cell."""
+    """Cells over maxlen (ctx + max(step_points) + 2 > maxlen) carry no requests."""
 
     def __init__(self, cells, step_points, prompt_mode, maxlen, corpus_path=None, tokenizer=None, trace=None, seed=10):
         if prompt_mode not in PROMPT_MODES:
@@ -60,7 +59,7 @@ class GridTrace(Trace):
 
     @classmethod
     def from_config(cls, cfg, tokenizer=None):
-        """The grid cfg.grid names at engine.max_model_len; workload.source is the corpus text under prompt_mode corpus and the replay JSONL under trace."""
+        """workload.source is the corpus text under prompt_mode corpus, replay JSONL under trace."""
         w = cfg.workload
         trace = RealTrace.from_jsonl(w.source) if w.prompt_mode == "trace" and w.source else None
         corpus = w.source if w.prompt_mode == "corpus" and w.source else None
@@ -88,7 +87,7 @@ class GridTrace(Trace):
         return self._corpus_ids
 
     def cell_prompts(self, ctx, bs):
-        """(bs id lists of ctx tokens, cycled); cycled is True only in trace mode when the trace has fewer usable requests than bs."""
+        """cycled only in trace mode when fewer usable requests than bs."""
         mode = self.prompt_mode
         if mode == "clone":
             base = clone_ids(ctx)

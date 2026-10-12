@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tokenizes an agent-bench JSONL trace into replay requests; needs the serving model's tokenizer."""
+"""Tokenizes an agent-bench JSONL trace into replay requests."""
 
 import argparse
 import json
@@ -7,7 +7,7 @@ import sys
 
 
 def r2_to_requests(records, encode):
-    """One request per session turn with a prompt; encode(text) returns token ids."""
+    """encode(text) returns token ids."""
     reqs = []
     for rec in records:
         for t in rec.get("turns", []):

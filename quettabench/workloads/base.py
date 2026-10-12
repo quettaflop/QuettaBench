@@ -1,22 +1,22 @@
-"""Request, the Trace base class, and workload_hash, which names a request list so two engines can prove they ran identical work."""
+"""Request, the Trace base class and workload_hash."""
 
 import hashlib
 import json
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass, replace
 
-VOCAB = 100_000  # safe id ceiling for the checkpoints under test
+VOCAB = 100_000
 
 
 def synth_ids(n, seed):
-    """Distinct pseudo-random token stream; different seed gives different routing."""
+    """A different seed gives different routing."""
     a = 1103515245 * (seed + 1) + 12345
     return [((a + i * (2 * seed + 7)) % (VOCAB - 1)) + 1 for i in range(n)]
 
 
 @dataclass
 class Request:
-    """One request as the replay schema writes it; None means absent from the line, which the hash treats differently from zero."""
+    """None means absent from the line, which the hash treats differently from zero."""
 
     prompt_token_ids: list
     prompt_len: int
@@ -29,7 +29,7 @@ class Request:
     seed: int | None = None
     image_tokens: int | None = None
     source: str | None = None
-    # Chat messages and metadata shared with the session so later turns see replies; not in the replay schema, hashed only without token ids.
+    # Not in the replay schema; hashed only without token ids.
     messages: list | None = None
     metadata: dict | None = None
 
@@ -38,19 +38,18 @@ class Request:
         return self.output_length
 
     def to_dict(self):
-        """The request as a replay JSONL dict: set fields only."""
         plain = replace(self, messages=None, metadata=None)
         return {k: v for k, v in asdict(plain).items() if v is not None}
 
 
 def messages_digest(messages):
-    """sha256 of the messages as canonical JSON, assistant content left out because a live run writes replies there."""
+    """Assistant content left out because a live run writes replies there."""
     plain = [{k: v for k, v in m.items() if not (m.get("role") == "assistant" and k == "content")} for m in messages]
     return hashlib.sha256(json.dumps(plain, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
 def request_digest(r):
-    """sha256 of one request's deterministic inputs (seed, order, arrival, prompt, requested output), never generated tokens or timings."""
+    """Never generated tokens or timings."""
     messages = r.messages if isinstance(r, Request) else r.get("messages")
     if isinstance(r, Request):
         r = r.to_dict()
@@ -71,7 +70,7 @@ def request_digest(r):
 
 
 def workload_hash(reqs):
-    """First 16 hex of a sha256 over the request count and sorted per-request digests; independent of order."""
+    """Independent of order."""
     digs = sorted(request_digest(r) for r in reqs)
     h = hashlib.sha256()
     h.update(str(len(digs)).encode())
@@ -82,7 +81,7 @@ def workload_hash(reqs):
 
 
 class Trace(ABC):
-    """A fixed request list plus its source; supports_spec says whether requests carry real assistant tokens to score speculative acceptance against."""
+    """supports_spec: requests carry real assistant tokens to score acceptance against."""
 
     supports_spec: bool = False
 
@@ -98,13 +97,13 @@ class Trace(ABC):
         return workload_hash(self.requests())
 
     def warmup_requests(self, n) -> list[Request]:
-        """n requests to warm the engine with: the trace's own, cycled."""
+        """The trace's own, cycled."""
         reqs = self.requests()
         return [reqs[i % len(reqs)] for i in range(n)] if reqs else []
 
 
 class DrawnTrace(Trace):
-    """A trace drawn one request at a time from a source that wraps around; draw() takes `warmup` draws, then `num_requests` draws."""
+    """draw() takes `warmup` draws, then `num_requests` draws."""
 
     rewinds = False
 
@@ -116,7 +115,7 @@ class DrawnTrace(Trace):
         """The next request; the source wraps around at its end."""
 
     def reset(self):
-        """Back to the first request; only sources that rewind override it."""
+        """Only sources that rewind override it."""
 
     def draw(self, num_requests, warmup=0, profile=None):
         self.profile = profile
