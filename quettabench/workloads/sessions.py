@@ -270,7 +270,7 @@ def inter_turn_wait_s(
     return max(0.0, total_ms / 1000.0)
 
 
-async def _sleep_until_elapsed(benchmark_start: float, target_s: float) -> None:
+async def sleep_until_elapsed(benchmark_start: float, target_s: float) -> None:
     delay = target_s - (time.perf_counter() - benchmark_start)
     if delay > 0:
         await asyncio.sleep(delay)

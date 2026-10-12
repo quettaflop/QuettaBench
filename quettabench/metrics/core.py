@@ -916,3 +916,77 @@ def spec_counts(metrics):
     """{accepted_tokens, draft_tokens, drafts} from parsed /metrics, each summed over engines; None when a counter is missing."""
     counts = {key: counter_total(metrics, name) for key, name in SPEC_COUNTERS.items()}
     return None if None in counts.values() else counts
+
+
+# A record's event k>0 arrives at t_first_wall + sum(deltas_ms[:k])/1e3.
+def summarize_cell(records: list[dict], min_samples: int = 64, lag_limit_ms: float = 2.0) -> dict:
+    """Cell row from raw per-request records."""
+    if not records:
+        raise ValueError("empty cell")
+    b = len(records)
+    firsts, lasts, ev_walls = [], [], []
+    for r in records:
+        ts = [r["t_first_wall"]]
+        for d in r["deltas_ms"]:
+            ts.append(ts[-1] + d / 1e3)
+        ev_walls.append(ts)
+        firsts.append(ts[0])
+        lasts.append(ts[-1])
+    w_lo, w_hi = max(firsts), min(lasts)
+    steady_window_s = w_hi - w_lo
+
+    per_req_p50, per_req_progress, per_req_n = [], [], []
+    coalesced = total_deltas = 0
+    for ts in ev_walls:
+        # Delta k (event k to k+1) is in the window only if both ends are.
+        din = [(ts[k + 1] - ts[k]) * 1e3 for k in range(len(ts) - 1) if ts[k] >= w_lo and ts[k + 1] <= w_hi]
+        idx_in = [k + 1 for k in range(len(ts)) if w_lo <= ts[k] <= w_hi]  # 1-based token index
+        per_req_n.append(len(din))
+        if din:
+            per_req_p50.append(statistics.median(din))
+            coalesced += sum(1 for d in din if d < 0.5)
+            total_deltas += len(din)
+        if idx_in:
+            per_req_progress.append(statistics.median(idx_in))
+
+    lag_p99 = max((float(r.get("lag_p99_ms") or 0.0) for r in records), default=0.0)
+    status = "ok"
+    if steady_window_s <= 0 or len(per_req_p50) < b or min(per_req_n) < min_samples:
+        status = "check"
+    if lag_p99 > lag_limit_ms:
+        status = "check"
+
+    prompt = int(records[0]["prompt_tokens"])
+    progress = statistics.median(per_req_progress) if per_req_progress else 0.0
+    return {
+        "batch_size": b,
+        "context_len": int(round(prompt + progress)),  # effective context, the grid axis
+        "decode_step_ms": round(statistics.median(per_req_p50), 4) if per_req_p50 else 0.0,
+        "validation_status": status,
+        "nominal_T": int(records[0].get("nominal_T", 0)),
+        "prompt_tokens": prompt,
+        "osl": int(records[0]["osl"]),
+        "n_samples": min(per_req_n) if per_req_n else 0,  # min in-window deltas per request
+        "steady_window_s": round(steady_window_s, 3),
+        "median_inwindow_progress": round(progress, 1),
+        "p99_loop_lag_ms": round(lag_p99, 3),
+        "coalesce_frac": round(coalesced / total_deltas, 4) if total_deltas else 0.0,
+        "itl_p50_spread_ms": round(max(per_req_p50) - min(per_req_p50), 4) if per_req_p50 else 0.0,
+    }
+
+
+SUMMARY_FIELDS = [
+    "batch_size",
+    "context_len",
+    "decode_step_ms",
+    "validation_status",
+    "nominal_T",
+    "prompt_tokens",
+    "osl",
+    "n_samples",
+    "steady_window_s",
+    "median_inwindow_progress",
+    "p99_loop_lag_ms",
+    "coalesce_frac",
+    "itl_p50_spread_ms",
+]

@@ -38,7 +38,7 @@ from ..metrics.results import goodprobe_line, grid_event_line, print_grid_tag_li
 from ..metrics.step_fit import GIB, fit, fit_run
 from ..workloads.arrival import offered_rate, parse_arrival, rebase_arrivals
 from ..workloads.base import Request, workload_hash
-from ..workloads.sessions import SessionTrace, _sleep_until_elapsed, inter_turn_wait_s
+from ..workloads.sessions import SessionTrace, inter_turn_wait_s, sleep_until_elapsed
 
 TRACE_REQUEST_ID_PREFIX = "agenticbench"
 IDENTITY_EXIT = 3
@@ -827,7 +827,7 @@ class SessionDispatcher:
         counter = itertools.count()
 
         async def session(turns, arrive_at_s):
-            await _sleep_until_elapsed(self.start, arrive_at_s)
+            await sleep_until_elapsed(self.start, arrive_at_s)
             await self._turns(turns, lambda r: next(counter), arrive_at_s)
 
         await asyncio.gather(*[session(s, t) for s, t in zip(self.sessions, arrivals)])
@@ -849,7 +849,7 @@ class SessionDispatcher:
 
         async def session(turns):
             if recorded:
-                await _sleep_until_elapsed(self.start, turns[0].arrival_ts or 0.0)
+                await sleep_until_elapsed(self.start, turns[0].arrival_ts or 0.0)
             await self._turns(turns, lambda r: index[(r.session_id, r.turn)])
 
         await asyncio.gather(*[session(s) for s in self.sessions])

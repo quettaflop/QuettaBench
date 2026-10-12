@@ -22,8 +22,8 @@ from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 
+from quettabench.metrics.core import SUMMARY_FIELDS, summarize_cell
 from quettabench.metrics.results import RUN_MARKERS, bench_sha, write_atomic
-from quettabench.probes import serving_decode_grid as _client
 
 TP_DEGREES = (2, 4)
 # The finish time of a run with none, or none that parses: older than any.
@@ -967,8 +967,6 @@ def run_roofline_utils(results_dirs: Iterable[Path], dest: Path) -> list[Path]:
     return written
 
 
-summarize_cell = _client.summarize_cell
-SUMMARY_FIELDS = _client.SUMMARY_FIELDS
 OUT_FIELDS = SUMMARY_FIELDS + ["effective_context_len", "source_file"]
 
 

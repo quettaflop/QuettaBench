@@ -22,12 +22,13 @@ import pytest
 from quettabench.export import quettasim
 from quettabench.export.quettasim import (
     OUT_FIELDS,
-    _client,
     build_decode_grid,
     export,
     main,
     run_serving_decode_grid,
 )
+from quettabench.metrics.core import summarize_cell
+from quettabench.probes import serving_decode_grid as _client
 from quettabench.probes.base import ProbeRow, add_output_args, emit, out_root, run_id, run_recorded
 
 
@@ -304,7 +305,6 @@ def test_tp_comm_builds_without_ttft_queue_sim(tmp_path):
 
 solve_cell = _client.solve_cell
 lattice_cells = _client.lattice_cells
-summarize_cell = _client.summarize_cell
 LATTICE_TP4 = _client.LATTICE_TP4
 KV_POOL = _client.KV_POOL_TOKENS_TP4
 
