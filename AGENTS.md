@@ -83,7 +83,7 @@ in one results layer, `results/<run>/`, and leaves the repo by
 
 One line each; everything else follows section 2 "Target layout".
 
-- The justfile also carries the kernel probe recipes, `probe`, `remote-probe`, `serving-profile`, `profile-gpu`, `gpu-info`, `hooks` and the `mirror-*` R2 recipes, beyond section 2's nine.
+- The justfile also carries the kernel probe recipes, `probe`, `remote-probe`, `serving-profile`, `profile-gpu`, `gpu-info`, `hooks`, `image` and the `mirror-*` R2 recipes, beyond section 2's nine.
 - `runner.py` is about 370 lines, not under 100: it also holds `build_trace(cfg)`, which picks the Trace a Config names, and runs probe-mode runs, matrix sweeps, the in-process env pins and the run dir rules.
 - `configs/hardware/` holds the NCCL link profiles and `configs/workloads.yaml` the named workload profiles, beside section 2's models, grids and runs.
 - `engines/drivers.py` also holds the transformers FIDELITY reference adapter (`engine.name: reference`) beside `ReferenceDriver`; `engines/__init__.py` imports the adapters so they register.
@@ -96,7 +96,7 @@ One line each; everything else follows section 2 "Target layout".
 - `analysis/` has no synthetic-sampler studies or `build_trace_distributions`: `analysis/synthetic/` was deleted by owner decision (2026-10-12, "scrap synthetic").
 - `data/` keeps `download_agent_trajectories.py` and `download_coding_prompts.py` apart: section 2's `fetch.py` merge is not done.
 - `legacy/trace_serve.py` is gone; `modes/serve.py` replaced it.
-- `scripts/crossval/baselines/` (the compat baselines dir) and `tools/pre_commit/` (the commit-message and em-dash hooks) sit outside section 2's tree.
+- `scripts/crossval/baselines/` (the compat baselines dir), `tools/pre_commit/` (the commit-message and em-dash hooks) and `docker/` (the qbench plus vLLM image `just image` builds) sit outside section 2's tree.
 
 ## Who writes, who starts a process
 
@@ -132,6 +132,8 @@ Every writer and every process starter, exactly:
 - `provision.py`: outside the repo, the `cache_root` dirs, the QuettaServe
   `git clone`, `pip install`, the weights download and `cargo` builds; in the
   repo, `.env`.
+- `justfile` `image`: starts `docker build` of `docker/Dockerfile`, which writes the image
+  `qbench:<short sha>` to the local docker store and nothing in the repo.
 - `justfile` `mirror-up`: uploads `results/probes/` to R2 under
   `profiling/qbench_probes/`, a backup of the probe runs and the second
   route out of the repo; it never deletes there and never writes

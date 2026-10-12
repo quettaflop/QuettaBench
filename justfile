@@ -6,6 +6,7 @@
 #   just profile --run results/llama --source metrics
 #   just xval results/<ours> results/<theirs>
 #   just export --results results/<run> --dest <export dir>
+#   just image
 #
 # .env (written by `just provision`) sets PYTHON_BIN and the cache dirs. Each probe run writes
 # results/probes/<gpu>/<probe>/<run-id>/ (pass --out through `just probe` to change the parent).
@@ -98,6 +99,10 @@ probe name *args:
 # follow the GPU as they are: just remote-probe gemm H100 --ncu --model-shapes llama8b
 remote-probe name gpu=gpu *args:
     python3 -m quettabench.probes.base remote-probe --host "{{remote_host}}" --py "{{py}}" --gpu-id "{{gpu_id}}" --gpu-ids "{{gpu_ids}}" --nproc "{{nproc}}" --ncu-bin "{{ncu_bin}}" -- "$@"
+
+# qbench and vLLM in one image, qbench:<short sha>; another base: just image --build-arg VLLM_IMAGE=<image>
+image *args:
+    docker build --network host ${HTTPS_PROXY:+--build-arg HTTPS_PROXY} ${HTTP_PROXY:+--build-arg HTTP_PROXY} ${NO_PROXY:+--build-arg NO_PROXY} "$@" -f docker/Dockerfile -t qbench:$(git rev-parse --short HEAD) .
 
 # QuettaSim tables from results dirs: just export --results results/<run> --dest <dir> [--kernel-dest <QuettaSim data root>]
 export *args:

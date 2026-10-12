@@ -15,7 +15,10 @@ import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 
-from ..config.schema import WorkloadCfg
+from huggingface_hub import snapshot_download
+from huggingface_hub.errors import HFValidationError, LocalEntryNotFoundError
+
+from ..config.schema import ConfigError, WorkloadCfg
 from ..engines.drivers import PrefixCacheResetError
 from ..metrics.core import (
     BenchmarkSummary,
@@ -451,12 +454,25 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
     return summary
 
 
+def model_dir(model):
+    """engine.model when it is a local dir, else that Hugging Face repo id's
+    snapshot in the local HF cache; never downloads."""
+    if os.path.isdir(model):
+        return model
+    try:
+        return snapshot_download(model, local_files_only=True)
+    except (HFValidationError, LocalEntryNotFoundError):
+        raise ConfigError(f"engine.model={model!r} is no local dir and not in the Hugging Face cache; "
+                          f"download it (huggingface-cli download {model}) or set engine.model to "
+                          "its snapshot dir") from None
+
+
 def kv_bytes_per_token(engine):
     """engine.kv_bytes, else the dense formula over the model's config.json.
     The formula counts every layer; hybrid and MLA stacks must set kv_bytes."""
     if engine.kv_bytes:
         return int(engine.kv_bytes)
-    with open(os.path.join(engine.model, "config.json")) as f:
+    with open(os.path.join(model_dir(engine.model), "config.json")) as f:
         cfg = json.load(f)
     cfg = cfg.get("text_config", cfg)
     hd = cfg.get("head_dim") or cfg["hidden_size"] // cfg["num_attention_heads"]

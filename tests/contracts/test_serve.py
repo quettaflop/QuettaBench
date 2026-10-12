@@ -14,7 +14,7 @@ from unittest import mock
 
 from quettabench import runner
 from quettabench.config import loader
-from quettabench.config.schema import Config, EngineCfg, HardwareCfg, ModeCfg, WorkloadCfg
+from quettabench.config.schema import Config, ConfigError, EngineCfg, HardwareCfg, ModeCfg, WorkloadCfg
 from quettabench.engines import drivers, launcher
 from quettabench.engines.drivers import HttpDriver
 from quettabench.metrics.core import RequestResult
@@ -426,6 +426,28 @@ class GridRunFiles(unittest.TestCase):
         self.assertTrue(text)
         self.assertEqual({r["cell"]["step_point"] for r in text}, {64})
         self.assertEqual(text[0]["token_ids"], list(range(64)))
+
+
+class ModelConfig(unittest.TestCase):
+    """The dense KV formula reads config.json from a local dir, or from a repo id's HF cache snapshot."""
+
+    def test_a_repo_id_reads_its_cached_snapshot(self):
+        with tempfile.TemporaryDirectory() as cache:
+            repo = Path(cache, "models--org--toy")
+            snap = repo / "snapshots" / "abc123"
+            snap.mkdir(parents=True)
+            (repo / "refs").mkdir()
+            (repo / "refs" / "main").write_text("abc123")
+            (snap / "config.json").write_text(json.dumps(DENSE_CONFIG))
+            with mock.patch("huggingface_hub.constants.HF_HUB_CACHE", cache):
+                self.assertEqual(serve.kv_bytes_per_token(EngineCfg(model="org/toy")), 131072)
+                with self.assertRaisesRegex(ConfigError, "huggingface-cli download org/missing"):
+                    serve.kv_bytes_per_token(EngineCfg(model="org/missing"))
+
+    def test_a_local_dir_reads_its_config(self):
+        with tempfile.TemporaryDirectory() as model:
+            Path(model, "config.json").write_text(json.dumps(DENSE_CONFIG))
+            self.assertEqual(serve.kv_bytes_per_token(EngineCfg(model=model)), 131072)
 
 
 class GridRunOverHttp(unittest.TestCase):

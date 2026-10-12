@@ -65,6 +65,18 @@ plan and writes nothing. A complete pass writes `.env` (caches, PYTHON_BIN,
 LD_LIBRARY_PATH; `just` loads it) and prints the `qbench run` lines for both
 engines.
 
+## One image on a fresh box
+
+`just image` builds `docker/Dockerfile`, qbench on the vLLM image (`--build-arg VLLM_IMAGE=<image>` for another platform), tagged `qbench:<short sha>`. Mount the HF cache, so `engine.model` can be a repo id, the vLLM compile cache and `results/`:
+
+```bash
+docker run --rm --gpus all --network host --ipc host -v ~/.cache/huggingface:/root/.cache/huggingface \
+    -v ~/.cache/vllm:/root/.cache/vllm -v $PWD/results:/opt/qbench/results \
+    qbench:<sha> run configs/runs/llama.yaml --set engine.model=meta-llama/Llama-3.1-8B-Instruct
+```
+
+That form against a local run on hwn-z1-gpu11 (2026-10-12, Qwen3-4B HTTP grid): 15/15 cells within 1.51%, mean +0.52%.
+
 ## Running inside docker
 
 `hardware.launcher: docker` runs the server in `engine.image` (`docker run
@@ -314,6 +326,7 @@ quettabench/probes/       kernel probes
 quettabench/export/quettasim.py  the one route to QuettaSim: tp_comm, roofline_utils, serving_decode_grid,
                           kernel_tables
 configs/                  models, runs, grids, hardware
+docker/Dockerfile         qbench on the vLLM image (just image)
 docs/runbooks/            the probe guide (probes.md) and the GPU and verification runbooks
 tests/golden/             characterization fixtures from the pre-refactor code
 tests/contracts/          one test module per package module, plus the crossval contracts and GPU smoke
