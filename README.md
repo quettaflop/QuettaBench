@@ -351,7 +351,7 @@ quettabench/export/quettasim.py  the one route to QuettaSim: tp_comm, roofline_u
                           kernel_tables
 configs/                  models, runs, grids, hardware
 docker/Dockerfile         qbench on the vLLM image (just image)
-docs/runbooks/            the probe guide (probes.md) and the GPU and verification runbooks
+docs/runbooks/            the probe guide (probes.md) and the slice verification runbook
 tests/golden/             characterization fixtures from the pre-refactor code
 tests/contracts/          one test module per package area, plus the crossval contracts and GPU smoke
 tests/parity/             the committed HTTP-vs-in-process slope gate and its test

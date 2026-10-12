@@ -623,7 +623,7 @@ def build_tp2(tp1_csv: Path, tp2_csv: Path, out_json: Path) -> None:
                    "(audit-v2 G3): the like-for-like pair removes the multiprocess-vs-in-process "
                    "mismatch, and the residual lands at the top of the NCCL all-reduce physics "
                    "band. Regenerate: just export. Sources: "
-                   "serving_stage_split.py --tensor-parallel-size {1,2} on h100 (h100_setup.md)."),
+                   "serving_stage_split.py --tensor-parallel-size {1,2} on h100."),
     }
     out_json.parent.mkdir(parents=True, exist_ok=True)
     out_json.write_text(json.dumps(payload, indent=2) + "\n")

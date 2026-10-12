@@ -115,7 +115,7 @@ One line each; everything else follows section 2 "Target layout".
 - `legacy/trace_serve.py` is gone; `modes/serve.py` replaced it.
 - `tools/pre_commit/` (the commit-message and em-dash hooks) and `docker/` (the qbench plus vLLM image `just image` builds) sit outside section 2's tree.
 - The root also holds plumbing outside section 2's tree: `.github/`, `.pre-commit-config.yaml`, `_typos.toml`, `.dockerignore`, `requirements-probe.txt` and `LICENSE`.
-- `docs/runbooks/` keeps `a100_roofline_utils_runbook.md`, `h100_setup.md`, `serving_stage_split_plan.md` and `slice_verification.md` beside the probe guide.
+- `docs/runbooks/` keeps `slice_verification.md` beside the probe guide.
 - `data/slice_checkpoint.py` builds the cut vLLM checkpoint for slice runs; it is not a fetch script.
 - No mypy config: the lint gate is ruff and the pre-commit hooks.
 - `probes/gemm.py`, `flash_attn.py`, `gdn.py`, `vllm_allreduce.py`, `reparallel.py` and `profiling/kv_transfer.py` read `os.environ` themselves: they run as `python -m` modules outside the Config path (under torchrun or on a remote host that gets only the probe package), so torchrun's `RANK`, `WORLD_SIZE`, `LOCAL_RANK`, `LOCAL_WORLD_SIZE` and the `--ncu-bin` default `NCU_BIN` reach them only through the environment.
