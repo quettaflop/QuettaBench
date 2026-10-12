@@ -191,9 +191,9 @@ class ProfileTagLines(unittest.TestCase):
         self.assertEqual(
             profiler.profile_tag_lines(profile),
             [
-                "ENERGYSUM joules=901 joules_per_token=0.012 scope=gpu_board devices=2 samples=3",
-                "ACCSUM dataset=gsm8k exact_match=0.667 n=3",
-                "COSTSUM usd=3.0000 usd_per_m_out_tokens=2.00 gpu_cost_hr=2.5 devices=2 wall_s=1800.0",
+                "ENERGY_SUMMARY joules=901 joules_per_token=0.012 scope=gpu_board devices=2 samples=3",
+                "ACCURACY_SUMMARY dataset=gsm8k exact_match=0.667 n=3",
+                "COST_SUMMARY usd=3.0000 usd_per_m_out_tokens=2.00 gpu_cost_hr=2.5 devices=2 wall_s=1800.0",
             ],
         )
         profile["energy"]["devices"] = "all"
@@ -212,7 +212,7 @@ class Main(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertEqual(
                 stdout.getvalue(),
-                "COSTSUM usd=3.0000 usd_per_m_out_tokens=2.00 gpu_cost_hr=3.0 devices=2 wall_s=1800.0\n",
+                "COST_SUMMARY usd=3.0000 usd_per_m_out_tokens=2.00 gpu_cost_hr=3.0 devices=2 wall_s=1800.0\n",
             )
             self.assertTrue((d / "profile.json").exists())
             with contextlib.redirect_stderr(io.StringIO()):

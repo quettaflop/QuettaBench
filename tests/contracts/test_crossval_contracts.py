@@ -73,7 +73,7 @@ class CrossvalScripts(unittest.TestCase):
 
     def test_serve_wires_the_identity_gate(self):
         self.assertIn("workload_hash", (QB / "modes" / "serve.py").read_text())
-        self.assertIn("WORKLOADSUM", (QB / "metrics" / "results.py").read_text())
+        self.assertIn("WORKLOAD_CHECK", (QB / "metrics" / "results.py").read_text())
 
     def test_backend_detection_and_no_hard_nvidia_smi(self):
         # XVAL_BACKEND wins; with no accel tooling on PATH detection says cpu.
@@ -124,7 +124,7 @@ class CrossvalScripts(unittest.TestCase):
         s = {"ttft_ms": {"p99": 900.0}, "tpot_ms": {"p99": 40.0}}
         self.assertEqual(sla_verdict(s, 500.0, 50.0), ["ttft_p99"])
         self.assertEqual(sla_verdict(s, None, None), [])
-        self.assertIn("GOODPUTSUM", (QB / "metrics" / "results.py").read_text())
+        self.assertIn("GOODPUT_SUMMARY", (QB / "metrics" / "results.py").read_text())
 
     def test_injected_arrivals(self):
         from quettabench.workloads import arrival
@@ -152,7 +152,7 @@ class CrossvalScripts(unittest.TestCase):
 
         self.assertEqual(integrate_power([100.0, 100.0, 100.0], 1.0), 300.0)
         self.assertEqual(integrate_power([], 1.0), 0.0)
-        self.assertIn("ENERGYSUM", (QB / "profiler.py").read_text())
+        self.assertIn("ENERGY_SUMMARY", (QB / "profiler.py").read_text())
 
     def test_cost_math(self):
         from quettabench.profiling.wrapped import cost_per_m_tokens
@@ -161,7 +161,7 @@ class CrossvalScripts(unittest.TestCase):
         usd, per_m = cost_per_m_tokens(3.6, 2, 1800.0, 1_000_000)
         self.assertAlmostEqual(usd, 3.6)
         self.assertAlmostEqual(per_m, 3.6)
-        self.assertIn("COSTSUM", (QB / "profiler.py").read_text())
+        self.assertIn("COST_SUMMARY", (QB / "profiler.py").read_text())
 
     def test_gsm8k_answer_parse(self):
         from quettabench.profiling.wrapped import gsm8k_answer as f
@@ -170,8 +170,8 @@ class CrossvalScripts(unittest.TestCase):
         self.assertEqual(f("so the total is $1,234."), "1234")
         self.assertEqual(f("the answer is 3.5 apples"), "3.5")
         self.assertIsNone(f("no numbers here"))
-        # ACCSUM prints from the profile's accuracy section, not SPECSUM's records.
-        self.assertIn("ACCSUM", (QB / "profiler.py").read_text())
+        # ACCURACY_SUMMARY prints from the profile's accuracy section, not SPEC_DECODE_SUMMARY's records.
+        self.assertIn("ACCURACY_SUMMARY", (QB / "profiler.py").read_text())
 
     def test_serving_style_contract(self):
         sys.path.insert(0, str(REPO))
@@ -655,7 +655,7 @@ class TableParity(unittest.TestCase):
         for field in ("sla_ttft_ms", "sla_tpot_ms"):
             self.assertIn(field, schema)
         lines = (QB / "metrics" / "results.py").read_text()
-        for tag in ("SLASUM", "BURSTSUM", "SPECSUM"):
+        for tag in ("SLA_SUMMARY", "BURST_SUMMARY", "SPEC_DECODE_SUMMARY"):
             self.assertIn(tag, lines)
         self.assertIn("FIDELITY", (QB / "crossval.py").read_text())
 

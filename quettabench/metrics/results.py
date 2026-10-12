@@ -362,12 +362,14 @@ PCTS = (50, 90, 95, 99)
 
 
 def workload_line(w):
-    return f"WORKLOADSUM expected={w['expected']} replayed={w['replayed']} match={int(w['match'])} n={w['n']}/{w['of']}"
+    return (
+        f"WORKLOAD_CHECK expected={w['expected']} replayed={w['replayed']} match={int(w['match'])} n={w['n']}/{w['of']}"
+    )
 
 
 def goodprobe_line(p):
     return (
-        f"GOODPROBE speed={p['speed']:g} verdict={p['verdict']} "
+        f"GOODPUT_PROBE speed={p['speed']:g} verdict={p['verdict']} "
         f"bound={','.join(p['bound']) or 'none'} req_s={p['req_s']:.3f}"
     )
 
@@ -379,12 +381,12 @@ def summary_tag_lines(summary):
         lines.append(workload_line(w))
         if not w["match"]:
             void = "sweep" if "goodput" in summary else "comparison"
-            lines.append(f"WORKLOADVOID replayed workload differs from the trace; {void} is void")
+            lines.append(f"WORKLOAD_MISMATCH replayed workload differs from the trace; {void} is void")
     s = summary.get("serve")
     if s is not None:
         tp = s["tpot_ms"]
         lines.append(
-            f"SERVESUM n={s['n']} "
+            f"SERVE_SUMMARY n={s['n']} "
             + " ".join(f"ttft_ms_p{q}={s['ttft_ms'][f'p{q}']:.1f}" for q in PCTS)
             + " "
             + (
@@ -399,7 +401,7 @@ def summary_tag_lines(summary):
     if sla is not None:
         tpot = "-" if sla["tpot_p99"] is None else f"{sla['tpot_p99']:.3f}"
         lines.append(
-            f"SLASUM verdict={sla['verdict']} bound={','.join(sla['bound']) or 'none'} "
+            f"SLA_SUMMARY verdict={sla['verdict']} bound={','.join(sla['bound']) or 'none'} "
             f"ttft_p99={sla['ttft_p99']:.1f}/{sla['sla_ttft_ms'] or '-'} "
             f"tpot_p99={tpot}/{sla['sla_tpot_ms'] or '-'} "
             f"rate_req_s={sla['rate_req_s']:.3f}"
@@ -407,30 +409,32 @@ def summary_tag_lines(summary):
     b = summary.get("burst")
     if b is not None and b["peak_ttft_p99"] is not None:
         rec = "na" if b["recovery_s"] is None else f"{b['recovery_s']:.1f}"
-        lines.append(f"BURSTSUM peak_ttft_p99={b['peak_ttft_p99']:.1f} recovery_s={rec} target_ms={b['target_ms']}")
+        lines.append(
+            f"BURST_SUMMARY peak_ttft_p99={b['peak_ttft_p99']:.1f} recovery_s={rec} target_ms={b['target_ms']}"
+        )
     spec = summary.get("spec")
     if spec is not None and spec.get("source") == "server_metrics":
         lines.append(
-            f"SPECSUM spec=measured source=server_metrics "
+            f"SPEC_DECODE_SUMMARY spec=measured source=server_metrics "
             f"accept_len={spec['accept_len']:.2f} accept_rate={spec['accept_rate']:.3f} "
             f"drafts={spec['drafts']} draft_tokens={spec['draft_tokens']} "
             f"accepted_tokens={spec['accepted_tokens']}"
         )
     elif spec is not None:
         lines.append(
-            f"SPECSUM spec=measured accept_len={spec['accept_len']:.2f} "
+            f"SPEC_DECODE_SUMMARY spec=measured accept_len={spec['accept_len']:.2f} "
             f"accept_rate={spec['accept_rate']:.3f} n={spec['n']}"
             if spec["spec"] == "measured"
-            else "SPECSUM spec=off note=needs-real-text-trace"
+            else "SPEC_DECODE_SUMMARY spec=off note=needs-real-text-trace"
         )
     g = summary.get("goodput")
     if g is not None and (w is None or w["match"]):
         bound = ",".join(g["fail_bound"])
         lines.append(
-            f"GOODPUTSUM max_req_s={g['max_req_s']:.3f} speed={g['speed']:g} "
+            f"GOODPUT_SUMMARY max_req_s={g['max_req_s']:.3f} speed={g['speed']:g} "
             f"bound={bound or 'none-within-range'} iterations={g['iterations']}"
             if g["max_req_s"] is not None
-            else f"GOODPUTSUM max_req_s=none bound={bound or 'na'} "
+            else f"GOODPUT_SUMMARY max_req_s=none bound={bound or 'na'} "
             f"iterations={g['iterations']} note=no-passing-speed-within-budget"
         )
     return lines

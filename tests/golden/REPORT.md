@@ -12,7 +12,7 @@ Run `python3 -m pytest tests/golden -q`. `QBENCH_GOLDEN_REGEN=1` rewrites the fi
 
 2026-10-11: no fixture changed. A serve run whose workload profile sets `prefix_caching_required: true` gets `engine.prefix_caching = true` (origin `profile`), and an explicit `engine.prefix_caching=false` on such a profile is refused at load.
 
-2026-10-11: no fixture changed. The serve identity gate hashes every dispatched request, failed or not (`serve.served`), in a single run and in each goodput-sweep probe, so one failed request leaves the run `partial`, and below `mode.min_success_rate` it aborts with exit 1. WORKLOADVOID means the requests sent differ from the trace: a request changed after hashing, or a multi-turn session whose failed turn left its later turns unsent. Chat requests without token ids hash their messages.
+2026-10-11: no fixture changed. The serve identity gate hashes every dispatched request, failed or not (`serve.served`), in a single run and in each goodput-sweep probe, so one failed request leaves the run `partial`, and below `mode.min_success_rate` it aborts with exit 1. WORKLOAD_MISMATCH means the requests sent differ from the trace: a request changed after hashing, or a multi-turn session whose failed turn left its later turns unsent. Chat requests without token ids hash their messages.
 
 2026-10-11: no fixture changed; the workload_hash pins in `tests/contracts/test_workloads.py` did. A chat request without token ids hashes a canonical-JSON digest of its messages (assistant content left out) together with seed, order, arrival, lengths, session and turn, so different chat profiles no longer share a hash (`chat-singleturn` held `2c2c330fe937283f`, as `chat-medium` and `chat-singleturn-synth` did). Token-id requests hash as before and the content digests did not move. A run recorded before 4318bf0 does not join on workload_hash with one recorded after it for these profiles:
 
@@ -34,7 +34,7 @@ Run `python3 -m pytest tests/golden -q`. `QBENCH_GOLDEN_REGEN=1` rewrites the fi
 - `pool_capacity` and `serving_stage_split` pass `--enable-chunked-prefill`.
 - `serving_decode_grid` also passes `--enable-chunked-prefill`. Whether that changes its scheduling depends on the vLLM build's default for chunked prefill; no run has measured it.
 
-2026-10-11: no fixture changed. A run with an SLA whose requests produced no TPOT sample (none decoded 2+ tokens) records `sla.tpot_p99` as null and prints `SLASUM ... tpot_p99=-/<sla>`, not a number nothing measured.
+2026-10-11: no fixture changed. A run with an SLA whose requests produced no TPOT sample (none decoded 2+ tokens) records `sla.tpot_p99` as null and prints `SLA_SUMMARY ... tpot_p99=-/<sla>`, not a number nothing measured.
 
 2026-10-11: no fixture changed. `profiling/serving_frontend.py` takes its frontend-off reference from QuettaSim's `engine.sim.closed_loop.predict_cell` (the vLLM-scheduler replay). `mult_curve` is the measured TTFT residual over that reference, so a `mult_curve` exported to a device yaml before 4383be8 is not comparable with one exported after it; no run has measured how far they differ.
 

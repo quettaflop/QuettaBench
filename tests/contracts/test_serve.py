@@ -135,7 +135,7 @@ class SingleTurn(unittest.TestCase):
         self.assertEqual(run_json["run_status"], {"status": "partial", "reason": "1 of 8 requests failed"})
         workload = run_json["summary"]["workload"]
         self.assertEqual((workload["match"], workload["n"], workload["of"]), (True, 8, 8))
-        self.assertNotIn("WORKLOADVOID", out)
+        self.assertNotIn("WORKLOAD_MISMATCH", out)
 
     def test_failures_under_min_success_rate_abort(self):
         with tempfile.TemporaryDirectory() as td:
@@ -153,7 +153,7 @@ class SingleTurn(unittest.TestCase):
         trace.workload_hash = lambda: "0" * 16
         code, out = run(trace, FakeDriver(), ModeCfg(warmup=0))
         self.assertEqual(code, 3)
-        self.assertIn("WORKLOADVOID replayed workload differs from the trace; comparison is void", out)
+        self.assertIn("WORKLOAD_MISMATCH replayed workload differs from the trace; comparison is void", out)
 
     def test_mostly_failed_run_aborts(self):
         with tempfile.TemporaryDirectory() as td:
@@ -192,7 +192,7 @@ class Sessions(unittest.TestCase):
             run_json = json.loads((Path(td) / "run.json").read_text())
             rows = (Path(td) / "requests.jsonl").read_text().splitlines()
         self.assertEqual(code, 3)
-        self.assertIn("WORKLOADVOID", out)
+        self.assertIn("WORKLOAD_MISMATCH", out)
         self.assertEqual(run_json["run_status"], {"status": "failed", "reason": "workload identity"})
         self.assertEqual(run_json["summary"]["workload"]["n"], 5)
         self.assertEqual(len(rows), 5)
@@ -252,15 +252,15 @@ class LineFormats(unittest.TestCase):
         self.assertEqual(
             summary_tag_lines(summary),
             [
-                "WORKLOADSUM expected=aa replayed=aa match=1 n=4/4",
+                "WORKLOAD_CHECK expected=aa replayed=aa match=1 n=4/4",
                 (
-                    "SERVESUM n=4 ttft_ms_p50=10.0 ttft_ms_p90=20.0 ttft_ms_p95=30.0 ttft_ms_p99=40.1 "
+                    "SERVE_SUMMARY n=4 ttft_ms_p50=10.0 ttft_ms_p90=20.0 ttft_ms_p95=30.0 ttft_ms_p99=40.1 "
                     "tpot_ms_p50=10.040 tpot_ms_p90=20.000 tpot_ms_p95=30.000 tpot_ms_p99=40.060 "
                     "req_s=2.500 tok_s=100.0"
                 ),
-                ("SLASUM verdict=FAIL bound=ttft_p99 ttft_p99=40.1/30.0 tpot_p99=40.060/- rate_req_s=2.500"),
-                "BURSTSUM peak_ttft_p99=40.1 recovery_s=na target_ms=30.0",
-                "SPECSUM spec=measured accept_len=2.00 accept_rate=0.500 n=4",
+                ("SLA_SUMMARY verdict=FAIL bound=ttft_p99 ttft_p99=40.1/30.0 tpot_p99=40.060/- rate_req_s=2.500"),
+                "BURST_SUMMARY peak_ttft_p99=40.1 recovery_s=na target_ms=30.0",
+                "SPEC_DECODE_SUMMARY spec=measured accept_len=2.00 accept_rate=0.500 n=4",
             ],
         )
 
@@ -276,7 +276,7 @@ class LineFormats(unittest.TestCase):
         }
         self.assertEqual(
             summary_tag_lines({"sla": sla}),
-            ["SLASUM verdict=PASS bound=none ttft_p99=5.0/30.0 tpot_p99=-/10.0 rate_req_s=1.000"],
+            ["SLA_SUMMARY verdict=PASS bound=none ttft_p99=5.0/30.0 tpot_p99=-/10.0 rate_req_s=1.000"],
         )
         records = [{"ttft_ms": 5.0, "index": 0, "out_tokens": 1, "arrival_s": 0.0, "tpot_ms": None}]
         with mock.patch.object(serve, "serve_records", return_value=records):
@@ -293,32 +293,32 @@ class LineFormats(unittest.TestCase):
             ),
             [
                 (
-                    "SERVESUM n=1 ttft_ms_p50=10.0 ttft_ms_p90=20.0 ttft_ms_p95=30.0 ttft_ms_p99=40.1 "
+                    "SERVE_SUMMARY n=1 ttft_ms_p50=10.0 ttft_ms_p90=20.0 ttft_ms_p95=30.0 ttft_ms_p99=40.1 "
                     "tpot_ms_p50=- req_s=1.000 tok_s=1.0"
                 ),
-                "SPECSUM spec=off note=needs-real-text-trace",
+                "SPEC_DECODE_SUMMARY spec=off note=needs-real-text-trace",
             ],
         )
         bad = {"expected": "aa", "replayed": "bb", "match": False, "n": 3, "of": 4}
         self.assertEqual(
             summary_tag_lines({"workload": bad})[1],
-            "WORKLOADVOID replayed workload differs from the trace; comparison is void",
+            "WORKLOAD_MISMATCH replayed workload differs from the trace; comparison is void",
         )
         g = {"max_req_s": None, "speed": None, "fail_bound": [], "iterations": 1}
         self.assertEqual(
             summary_tag_lines({"workload": bad, "goodput": g}),
             [
-                "WORKLOADSUM expected=aa replayed=bb match=0 n=3/4",
-                "WORKLOADVOID replayed workload differs from the trace; sweep is void",
+                "WORKLOAD_CHECK expected=aa replayed=bb match=0 n=3/4",
+                "WORKLOAD_MISMATCH replayed workload differs from the trace; sweep is void",
             ],
         )
         self.assertEqual(
             summary_tag_lines({"goodput": {**g, "fail_bound": ["ttft_p99"]}}),
-            [("GOODPUTSUM max_req_s=none bound=ttft_p99 iterations=1 note=no-passing-speed-within-budget")],
+            [("GOODPUT_SUMMARY max_req_s=none bound=ttft_p99 iterations=1 note=no-passing-speed-within-budget")],
         )
         self.assertEqual(
             summary_tag_lines({"goodput": {"max_req_s": 3.21, "speed": 2.0, "fail_bound": [], "iterations": 6}}),
-            ["GOODPUTSUM max_req_s=3.210 speed=2 bound=none-within-range iterations=6"],
+            ["GOODPUT_SUMMARY max_req_s=3.210 speed=2 bound=none-within-range iterations=6"],
         )
 
 
@@ -329,12 +329,15 @@ class Sections(unittest.TestCase):
         )
         summary, out = run_sections(trace, TokenDriver(), ModeCfg(warmup=0, concurrency=3))
         self.assertEqual({r.accepted_tokens for r in summary.rows}, {2})
-        self.assertEqual(tail(out, "SPECSUM"), ["SPECSUM spec=measured accept_len=2.00 accept_rate=0.500 n=3"])
+        self.assertEqual(
+            tail(out, "SPEC_DECODE_SUMMARY"),
+            ["SPEC_DECODE_SUMMARY spec=measured accept_len=2.00 accept_rate=0.500 n=3"],
+        )
 
     def test_no_tokens_from_the_driver_means_spec_off(self):
         summary, out = run_sections(single_trace(3), FakeDriver(), ModeCfg(warmup=0, concurrency=3))
         self.assertEqual(summary.sections["spec"], {"spec": "off"})
-        self.assertEqual(tail(out, "SPECSUM"), ["SPECSUM spec=off note=needs-real-text-trace"])
+        self.assertEqual(tail(out, "SPEC_DECODE_SUMMARY"), ["SPEC_DECODE_SUMMARY spec=off note=needs-real-text-trace"])
 
     def test_http_spec_comes_from_server_counter_deltas(self):
         scrapes = iter([(100, 300, 150), (160, 480, 240)])
@@ -364,9 +367,9 @@ class Sections(unittest.TestCase):
             },
         )
         self.assertEqual(
-            tail(out, "SPECSUM"),
+            tail(out, "SPEC_DECODE_SUMMARY"),
             [
-                "SPECSUM spec=measured source=server_metrics accept_len=2.50 accept_rate=0.500 "
+                "SPEC_DECODE_SUMMARY spec=measured source=server_metrics accept_len=2.50 accept_rate=0.500 "
                 "drafts=60 draft_tokens=180 accepted_tokens=90"
             ],
         )
@@ -397,14 +400,14 @@ class Sections(unittest.TestCase):
         )
         self.assertEqual(summary.sections["sla"]["bound"], ["ttft_p99"])
         self.assertEqual(summary.sections["serve"]["ttft_ms"]["p99"], 1.0)
-        self.assertTrue(tail(out, "SLASUM verdict=FAIL bound=ttft_p99 ttft_p99=1.0/0.5"))
-        self.assertTrue(tail(out, "BURSTSUM peak_ttft_p99=1.0 recovery_s=na target_ms=0.5"))
+        self.assertTrue(tail(out, "SLA_SUMMARY verdict=FAIL bound=ttft_p99 ttft_p99=1.0/0.5"))
+        self.assertTrue(tail(out, "BURST_SUMMARY peak_ttft_p99=1.0 recovery_s=na target_ms=0.5"))
         doc = summary.to_dict()
         self.assertEqual([doc[k]["percentile_method"] for k in ("serve", "sla", "burst")], ["nearest"] * 3)
         self.assertEqual(doc["percentile_method"], "linear")
         summary, out = run_sections(single_trace(4), FakeDriver(), ModeCfg(warmup=0, concurrency=4))
         self.assertNotIn("sla", summary.sections)
-        self.assertFalse(tail(out, "SLASUM") or tail(out, "BURSTSUM"))
+        self.assertFalse(tail(out, "SLA_SUMMARY") or tail(out, "BURST_SUMMARY"))
 
 
 class GoodputSweep(unittest.TestCase):
@@ -438,19 +441,19 @@ class GoodputSweep(unittest.TestCase):
             summary, out = run_sections(single_trace(4), FakeDriver(), mode, WorkloadCfg(arrival="poisson:10"))
         g = summary.sections["goodput"]
         self.assertLessEqual(len(speeds), 6)
-        self.assertEqual(len(tail(out, "GOODPROBE")), len(speeds))
+        self.assertEqual(len(tail(out, "GOODPUT_PROBE")), len(speeds))
         self.assertTrue(4.0 <= g["speed"] < 4.5, speeds)
         self.assertEqual(g["fail_bound"], ["ttft_p99"])
         self.assertEqual(
-            tail(out, "GOODPUTSUM"),
+            tail(out, "GOODPUT_SUMMARY"),
             [
                 (
-                    f"GOODPUTSUM max_req_s={g['max_req_s']:.3f} speed={g['speed']:g} bound=ttft_p99 "
+                    f"GOODPUT_SUMMARY max_req_s={g['max_req_s']:.3f} speed={g['speed']:g} bound=ttft_p99 "
                     f"iterations={len(speeds)}"
                 )
             ],
         )
-        self.assertFalse(tail(out, "SERVESUM"))
+        self.assertFalse(tail(out, "SERVE_SUMMARY"))
 
     def test_no_passing_speed_exits_1(self):
         mode = ModeCfg(load="open", warmup=0, sla_ttft_ms=1.0, goodput_sweep=True)

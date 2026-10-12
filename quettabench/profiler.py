@@ -133,22 +133,22 @@ def profile(results_dir, sources, **source_args):
 
 
 def profile_tag_lines(profile):
-    """ENERGYSUM only for a run window."""
+    """ENERGY_SUMMARY only for a run window."""
     lines = []
     e = profile.get("energy")
     if e is not None and e.get("joules_per_token") is not None:
         lines.append(
-            f"ENERGYSUM joules={e['joules']:.0f} "
+            f"ENERGY_SUMMARY joules={e['joules']:.0f} "
             f"joules_per_token={e['joules_per_token']:.3f} scope=gpu_board "
             f"devices={e['devices']} samples={e['samples']}"
         )
     a = profile.get("accuracy")
     if a is not None:
-        lines.append(f"ACCSUM dataset=gsm8k exact_match={a['exact_match']:.3f} n={a['n']}")
+        lines.append(f"ACCURACY_SUMMARY dataset=gsm8k exact_match={a['exact_match']:.3f} n={a['n']}")
     c = profile.get("cost")
     if c is not None:
         lines.append(
-            f"COSTSUM usd={c['usd']:.4f} usd_per_m_out_tokens={c['usd_per_m_out_tokens']:.2f} "
+            f"COST_SUMMARY usd={c['usd']:.4f} usd_per_m_out_tokens={c['usd_per_m_out_tokens']:.2f} "
             f"gpu_cost_hr={c['gpu_cost_hr']} devices={c['devices']} wall_s={c['wall_s']:.1f}"
         )
     return lines
