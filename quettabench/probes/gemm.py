@@ -17,12 +17,12 @@ at M=1 they make FP8 SLOWER than bf16 on H200 (30us vs 19us), while at M=4096 FP
 wins 1.45x (264us vs 382us). A "2x the bf16 peak" assumption is wrong by ~2x in
 both directions, which is why this is measured rather than scaled.
 
-FP8 rows carry dtype_bytes=1 and are written to a SEPARATE table
-({method}/gemm/{gpu}_fp8.csv): a GemmTable is keyed on (M,N,K) only, so mixing
-precisions in one file would silently collapse two different kernels into one cell.
+FP8 rows carry dtype_bytes=1 and go to a SEPARATE table (gemm/{gpu}_fp8.csv):
+a GemmTable is keyed on (M,N,K) only, so mixing precisions in one file would
+silently collapse two different kernels into one cell.
 
-Feeds {method}/gemm/{gpu}.csv (default) or {method}/gemm_wide/{gpu}.csv (--wide),
-where method is ncu/ or cuda_event/. M is the token count; (N, K) are
+Emits rows of gemm/{gpu}.csv (default) or gemm_wide/{gpu}.csv (--wide), which
+export puts under graph/ (--ncu, --graph) or eager/. M is the token count; (N, K) are
 (out_features, in_features) of each projection (qkv / o / gate_up / down /
 lm_head / router). The table interpolates off-grid.
 
@@ -32,15 +32,13 @@ lm_head / router). The table interpolates off-grid.
 from __future__ import annotations
 
 import argparse
-import csv
-import json
 import os
 
 import torch
 
 from quettabench.probes import _timing
 from quettabench.probes._timing import graph_time_us
-from quettabench.probes.base import add_output_args, out_root, run_recorded
+from quettabench.probes.base import Probe, ProbeRow, add_output_args, emit, run_recorded
 
 M_AXIS = [1, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
 # out/in feature dims covering Llama-3.1-8B/70B, Qwen2.5-72B, Qwen3.5-9B/27B
@@ -222,13 +220,81 @@ def time_matmul(m, n, k, dev, dt, graph: bool = False) -> float:
     return min(ts)  # min-reduce, matching the table
 
 
+class GemmProbe(Probe):
+    """One run's (N, K) x M cells: NCU's curated grid with --ncu, else the
+    swept or targeted pairs, each a row of gemm/ (gemm_wide/ with --wide)."""
+
+    def __init__(self, a, fp8_op):
+        self.a, self.fp8_op = a, fp8_op
+        self.dev, self.dt = torch.device("cuda"), torch.bfloat16
+        self.dtype_bytes = 1 if a.dtype == "fp8" else 2
+        # ncu and graph replay are dispatch-free (graph/), eager includes dispatch (eager/).
+        self.timing = "ncu" if a.ncu else "graph_replay" if a.graph else "eager"
+        # FP8 lives in its own table: GemmTable keys on (M,N,K) only, so two precisions
+        # in one file would collapse into one cell (min wins) and silently misprice both.
+        stem = a.gpu_label if a.dtype == "bf16" else f"{a.gpu_label}_{a.dtype}"
+        self.table = f"{'gemm_wide' if a.wide else 'gemm'}/{stem}.csv"
+
+    def grid(self):
+        a = self.a
+        if a.ncu:
+            print(f"[gemm/ncu] {torch.cuda.get_device_name(0)} | {a.ncu_bin} | {len(NCU_NK)} (N,K) x {len(NCU_M)} M", flush=True)
+            cells = [(n, k, m) for (n, k) in NCU_NK for m in NCU_M]
+        else:
+            if a.pairs or a.model_shapes:
+                # Targeted cell list: do NOT also sweep the full dims x dims cross
+                # product (that is ~250 (N,K) x 9 M and would dwarf the cells asked for).
+                pairs = set()
+                for spec in (a.pairs or []):
+                    n_s, _, k_s = spec.partition(":")
+                    pairs.add((int(n_s), int(k_s)))
+                for name in (a.model_shapes or "").split(","):
+                    if name.strip():
+                        if name.strip() not in MODEL_SHAPES:
+                            raise SystemExit(f"unknown --model-shapes {name!r}; "
+                                             f"have {sorted(MODEL_SHAPES)}")
+                        pairs.update(MODEL_SHAPES[name.strip()])
+            else:
+                dims = a.dims if a.dims else DIMS
+                pairs = {(n, k) for n in dims for k in dims}
+                for v in VOCAB:
+                    for h in HIDDENS:
+                        pairs.add((v, h))          # lm_head
+            m_axis = [int(x) for x in a.m_axis.split(",")] if a.m_axis else M_AXIS
+            print(f"[gemm] {torch.cuda.get_device_name(0)} | dtype={a.dtype} | "
+                  f"{len(pairs)} (N,K) x {len(m_axis)} M", flush=True)
+            cells = [(n, k, m) for (n, k) in sorted(pairs) for m in m_axis]
+        for n, k, m in cells:
+            if (m * k + k * n + m * n) * 2 / 1e9 <= a.max_mem_gb:
+                yield n, k, m
+
+    def run_point(self, point):
+        n, k, m = point
+        a = self.a
+        if a.ncu:
+            us = ncu_gemm_us(m, n, k, a.ncu_bin)
+            if us is None:
+                print(f"  ncu MISS M={m} N={n} K={k} (no gemm kernel parsed)", flush=True)
+                return None
+            print(f"  ncu M={m:5d} N={n:6d} K={k:6d}: {us:9.2f} us", flush=True)
+        else:
+            try:
+                us = (time_matmul_fp8(self.fp8_op, m, n, k, self.dev, graph=a.graph)
+                      if self.fp8_op is not None else
+                      time_matmul(m, n, k, self.dev, self.dt, graph=a.graph))
+            except Exception as ex:
+                print(f"  skip M={m} N={n} K={k}: {type(ex).__name__}: {ex}", flush=True)
+                return None
+            print(f"  M={m:5d} N={n:6d} K={k:6d}: {us:9.2f} us", flush=True)
+        return ProbeRow("gemm", self.table, {"M": m, "N": n, "K": k},
+                        {"dtype_bytes": self.dtype_bytes, "latency_us": round(us, 3)}, self.timing)
 
 
 def main(argv=None):
     # No abbreviations: export reads --append from the argv as written.
     ap = argparse.ArgumentParser(allow_abbrev=False)
     add_output_args(ap)
-    ap.add_argument("--wide", action="store_true", help="emit {method}/gemm_wide/{gpu}.csv (wide MoE shapes) instead of {method}/gemm/{gpu}.csv")
+    ap.add_argument("--wide", action="store_true", help="emit gemm_wide/{gpu}.csv rows (wide MoE shapes) instead of gemm/{gpu}.csv")
     ap.add_argument("--dims", type=int, nargs="*", default=None, help="override the (N,K) dim set")
     ap.add_argument("--max-mem-gb", type=float, default=30.0)
     ap.add_argument("--ncu", action="store_true", help="NCU per-kernel timing (the standard); curated grid")
@@ -254,93 +320,23 @@ def main(argv=None):
                     help="at export, add this run's cells over earlier ok runs' tables; "
                          "without it the export drops the rows of runs that finished before it")
     a = ap.parse_args(argv)
-    dev = torch.device("cuda")
-    dt = torch.bfloat16
-    out = out_root(a, "gemm")
-    out.mkdir(parents=True, exist_ok=True)
     if a.dtype == "fp8" and a.ncu:
         raise SystemExit("--dtype fp8 has no --ncu path (the op is a Python-level "
                          "dispatch, not one kernel); use --graph for dispatch-free timing.")
     fp8_op = fp8_linear_op() if a.dtype == "fp8" else None
-    dtype_bytes = 1 if a.dtype == "fp8" else 2
-
-    rows = []
-    if a.ncu:
-        print(f"[gemm/ncu] {torch.cuda.get_device_name(0)} | {a.ncu_bin} | {len(NCU_NK)} (N,K) x {len(NCU_M)} M", flush=True)
-        for (n, k) in NCU_NK:
-            for m in NCU_M:
-                if (m * k + k * n + m * n) * 2 / 1e9 > a.max_mem_gb:
-                    continue
-                us = ncu_gemm_us(m, n, k, a.ncu_bin)
-                if us is None:
-                    print(f"  ncu MISS M={m} N={n} K={k} (no gemm kernel parsed)", flush=True)
-                    continue
-                rows.append({"M": m, "N": n, "K": k, "dtype_bytes": 2, "latency_us": round(us, 3)})
-                print(f"  ncu M={m:5d} N={n:6d} K={k:6d}: {us:9.2f} us", flush=True)
-    else:
-        if a.pairs or a.model_shapes:
-            # Targeted cell list: do NOT also sweep the full dims x dims cross
-            # product (that is ~250 (N,K) x 9 M and would dwarf the cells asked for).
-            pairs = set()
-            for spec in (a.pairs or []):
-                n_s, _, k_s = spec.partition(":")
-                pairs.add((int(n_s), int(k_s)))
-            for name in (a.model_shapes or "").split(","):
-                if name.strip():
-                    if name.strip() not in MODEL_SHAPES:
-                        raise SystemExit(f"unknown --model-shapes {name!r}; "
-                                         f"have {sorted(MODEL_SHAPES)}")
-                    pairs.update(MODEL_SHAPES[name.strip()])
-        else:
-            dims = a.dims if a.dims else DIMS
-            pairs = {(n, k) for n in dims for k in dims}
-            for v in VOCAB:
-                for h in HIDDENS:
-                    pairs.add((v, h))          # lm_head
-        m_axis = [int(x) for x in a.m_axis.split(",")] if a.m_axis else M_AXIS
-        print(f"[gemm] {torch.cuda.get_device_name(0)} | dtype={a.dtype} | "
-              f"{len(pairs)} (N,K) x {len(m_axis)} M", flush=True)
-        for (n, k) in sorted(pairs):
-            for m in m_axis:
-                if (m * k + k * n + m * n) * 2 / 1e9 > a.max_mem_gb:
-                    continue
-                try:
-                    us = (time_matmul_fp8(fp8_op, m, n, k, dev, graph=a.graph)
-                          if fp8_op is not None else
-                          time_matmul(m, n, k, dev, dt, graph=a.graph))
-                except Exception as ex:
-                    print(f"  skip M={m} N={n} K={k}: {type(ex).__name__}: {ex}", flush=True)
-                    continue
-                rows.append({"M": m, "N": n, "K": k, "dtype_bytes": dtype_bytes,
-                             "latency_us": round(us, 3)})
-                print(f"  M={m:5d} N={n:6d} K={k:6d}: {us:9.2f} us", flush=True)
-    # Method-explicit layout: ncu/ = graphed-decode-faithful (per-kernel NCU or
-    # CUDA-graph replay, both dispatch-free) vs cuda_event/ (eager, incl. dispatch);
-    # gemm_wide/ for MoE wide-shape tables, gemm/ for the default narrow set.
-    method = "ncu" if (a.ncu or a.graph) else "cuda_event"
-    sub = f"{method}/{'gemm_wide' if a.wide else 'gemm'}"
-    dst = out / sub
-    dst.mkdir(parents=True, exist_ok=True)
-    # FP8 lives in its own table: GemmTable keys on (M,N,K) only, so two precisions
-    # in one file would collapse into one cell (min wins) and silently misprice both.
-    stem = a.gpu_label if a.dtype == "bf16" else f"{a.gpu_label}_{a.dtype}"
-    path = dst / f"{stem}.csv"
+    probe = GemmProbe(a, fp8_op)
+    n = probe.run()
     if fp8_op is not None and fp8_op.quant_fit() is not None:
         # The standalone activation-quant kernel, as an elementwise affine the
         # composition charges per FP8 GEMM whose quant the server does not fuse.
         floor, bw = fp8_op.quant_fit()
-        ej = out / method / "elementwise" / f"{a.gpu_label}.json"
-        ej.parent.mkdir(parents=True, exist_ok=True)
         # This entry only; kernel_tables merges it into the elementwise probe's table.
-        table = {"fp8_act_quant": {"floor_us": round(floor, 3), "eff_bw_gb_s": round(bw, 1)}}
-        ej.write_text(json.dumps(table, indent=2) + "\n")
+        emit(ProbeRow("gemm", f"elementwise/{a.gpu_label}.json", {"entry": "fp8_act_quant"},
+                      {"value": {"floor_us": round(floor, 3), "eff_bw_gb_s": round(bw, 1)}}, probe.timing))
         print(f"[gemm/fp8] quant kernel: floor {floor:.2f} us, eff_bw {bw:.0f} GB/s "
-              f"({len(fp8_op.quant_pts)} (M,K) points) -> {ej} [fp8_act_quant]", flush=True)
-    with path.open("w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=["M", "N", "K", "dtype_bytes", "latency_us"])
-        w.writeheader()
-        w.writerows(rows)
-    print(f"[gemm] wrote {path} ({len(rows)} rows{', --append' if a.append else ''})", flush=True)
+              f"({len(fp8_op.quant_pts)} (M,K) points) -> elementwise/{a.gpu_label}.json [fp8_act_quant]",
+              flush=True)
+    print(f"[gemm] {n} rows of {probe.table}{', --append' if a.append else ''}", flush=True)
 
 
 if __name__ == "__main__":

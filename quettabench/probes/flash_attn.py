@@ -11,7 +11,6 @@ The unsharded config (32/8) doubles as cross-validation against the NCU grid.
 from __future__ import annotations
 
 import argparse
-import csv
 import os
 import statistics as st
 
@@ -19,7 +18,7 @@ import torch
 from vllm.vllm_flash_attn.flash_attn_interface import flash_attn_varlen_func
 
 from quettabench.probes._timing import graph_median_us, ncu_op_us
-from quettabench.probes.base import add_output_args, out_root, run_recorded
+from quettabench.probes.base import Probe, ProbeRow, add_output_args, run_recorded
 
 KV_AXIS = [128, 256, 512, 1024, 2048, 4096, 8192, 16384]
 BATCH_AXIS = [1, 2, 4, 8, 16, 32, 40, 64, 80, 120, 160, 200, 256, 320]
@@ -65,6 +64,83 @@ def time_call(fn) -> float:
     return st.median(times)
 
 
+class FlashAttnProbe(Probe):
+    """The decode grid (kv_len x batch, NCU, graph replay or eager) of
+    flash_attn/{gpu}.csv, then the prefill grid (seq, always eager) of
+    fa3_prefill/{gpu}.csv, for one head config."""
+
+    def __init__(self, a):
+        self.a = a
+        self.dev, self.dt = torch.device("cuda"), torch.bfloat16
+        # Decode is CUDA-graphed in serving (graph/); prefill is eager, dispatch real (eager/).
+        self.decode_timing = "ncu" if a.ncu else "graph_replay" if a.graph else "eager"
+
+    def grid(self):
+        a = self.a
+        kv_axis = ([int(x) for x in a.kv_axis.split(",")] if a.kv_axis
+                   else (KV_NCU if a.ncu else KV_AXIS))
+        batch_axis = ([int(x) for x in a.batch_axis.split(",")] if a.batch_axis
+                      else (BATCH_NCU if a.ncu else BATCH_AXIS))
+        for kv in kv_axis:
+            for b in batch_axis:
+                if 2 * b * kv * a.n_kv_heads * a.head_dim * 2 / 1e9 <= a.max_mem_gb:
+                    yield "decode", kv, b
+        # Prefill is EAGER in serving (dynamic shapes, not CUDA-graphed) so dispatch
+        # overhead is real -> always cuda_event, never NCU (which would drop it).
+        for seq in SEQ_AXIS:
+            yield "prefill", seq, None
+
+    def run_point(self, point):
+        phase, n, b = point
+        return self.decode(n, b) if phase == "decode" else self.prefill(n)
+
+    def decode(self, kv, b):
+        a, dev, dt = self.a, self.dev, self.dt
+        if a.ncu:
+            us = _ncu_us(_decode_inner(b, a.n_heads, a.n_kv_heads, a.head_dim, kv, a.fa_version), a.ncu_bin)
+            if us is None:
+                print(f"  ncu MISS decode kv={kv} b={b}", flush=True)
+                return None
+        else:
+            q = torch.randn(b, a.n_heads, a.head_dim, device=dev, dtype=dt)
+            k = torch.randn(b * kv, a.n_kv_heads, a.head_dim, device=dev, dtype=dt)
+            v = torch.randn_like(k)
+            cu_q = torch.arange(0, b + 1, dtype=torch.int32, device=dev)
+            cu_k = torch.arange(0, (b + 1) * kv, kv, dtype=torch.int32, device=dev)
+            fn = lambda: flash_attn_varlen_func(  # noqa: E731
+                q, k, v, 1, cu_q, kv, cu_seqlens_k=cu_k, causal=True,
+                fa_version=a.fa_version)
+            if a.graph:
+                us = graph_median_us(fn)
+            else:
+                us = time_call(fn)
+            del q, k, v
+            torch.cuda.empty_cache()
+        print(f"{'ncu ' if a.ncu else ''}decode kv={kv} b={b}: {us:.1f}us/call", flush=True)
+        return ProbeRow("flash_attn", f"flash_attn/{a.gpu_label}.csv",
+                        {"q_len": 1, "kv_len": kv, "n_heads": a.n_heads, "n_kv_heads": a.n_kv_heads,
+                         "head_dim": a.head_dim, "batch": b, "causal": False, "phase": "decode"},
+                        {"layers": a.layers, "latency_us": round(us * a.layers, 3)}, self.decode_timing)
+
+    def prefill(self, seq):
+        a, dev, dt = self.a, self.dev, self.dt
+        q = torch.randn(seq, a.n_heads, a.head_dim, device=dev, dtype=dt)
+        k = torch.randn(seq, a.n_kv_heads, a.head_dim, device=dev, dtype=dt)
+        v = torch.randn_like(k)
+        cu = torch.tensor([0, seq], dtype=torch.int32, device=dev)
+        us = time_call(lambda: flash_attn_varlen_func(
+            q, k, v, seq, cu, seq, cu_seqlens_k=cu, causal=True,
+            fa_version=a.fa_version))
+        del q, k, v
+        torch.cuda.empty_cache()
+        print(f"prefill seq={seq}: {us:.1f}us/call", flush=True)
+        return ProbeRow("flash_attn", f"fa3_prefill/{a.gpu_label}.csv",
+                        {"gpu": a.gpu_label, "prefill_tokens": seq, "q_len": seq, "kv_len": seq,
+                         "causal": True, "fa_version": f"vllm-fa{a.fa_version}", "n_heads": a.n_heads,
+                         "n_kv_heads": a.n_kv_heads, "head_dim": a.head_dim, "dtype": "bfloat16"},
+                        {"layers": a.layers, "flash_ms_median": round(us / 1000.0, 6),
+                         "flash_ms_mean": round(us / 1000.0, 6),
+                         "flash_full_model_ms": round(us / 1000.0 * a.layers, 6)}, "eager")
 
 
 def main(argv=None):
@@ -86,98 +162,17 @@ def main(argv=None):
     ap.add_argument("--ncu-bin", default=os.environ.get("NCU_BIN", "ncu"))
     ap.add_argument("--graph", action="store_true",
                     help="CUDA-graph-replay DECODE timing (graphed-decode-faithful, "
-                         "no NCU needed) -> ncu/flash_attn/; prefill stays cuda_event")
+                         "no NCU needed) -> graph/flash_attn/; prefill stays eager")
     a = ap.parse_args(argv)
     if a.fa_version == 0:   # auto: FA3 is Hopper-only (sm90+); Ampere/older need FA2
         a.fa_version = 3 if torch.cuda.get_device_capability()[0] >= 9 else 2
         print(f"[flash] auto fa_version={a.fa_version} for {torch.cuda.get_device_name(0)}", flush=True)
 
-    dev = torch.device("cuda")
-    dt = torch.bfloat16
-    out = out_root(a, "flash_attn")
-    out.mkdir(parents=True, exist_ok=True)
-
-    kv_axis = ([int(x) for x in a.kv_axis.split(",")] if a.kv_axis
-               else (KV_NCU if a.ncu else KV_AXIS))
-    batch_axis = ([int(x) for x in a.batch_axis.split(",")] if a.batch_axis
-                  else (BATCH_NCU if a.ncu else BATCH_AXIS))
-    dec_rows = []
-    for kv in kv_axis:
-        for b in batch_axis:
-            if 2 * b * kv * a.n_kv_heads * a.head_dim * 2 / 1e9 > a.max_mem_gb:
-                continue
-            if a.ncu:
-                us = _ncu_us(_decode_inner(b, a.n_heads, a.n_kv_heads, a.head_dim, kv, a.fa_version), a.ncu_bin)
-                if us is None:
-                    print(f"  ncu MISS decode kv={kv} b={b}", flush=True)
-                    continue
-            else:
-                q = torch.randn(b, a.n_heads, a.head_dim, device=dev, dtype=dt)
-                k = torch.randn(b * kv, a.n_kv_heads, a.head_dim, device=dev, dtype=dt)
-                v = torch.randn_like(k)
-                cu_q = torch.arange(0, b + 1, dtype=torch.int32, device=dev)
-                cu_k = torch.arange(0, (b + 1) * kv, kv, dtype=torch.int32, device=dev)
-                fn = lambda: flash_attn_varlen_func(  # noqa: E731
-                    q, k, v, 1, cu_q, kv, cu_seqlens_k=cu_k, causal=True,
-                    fa_version=a.fa_version)
-                if a.graph:
-                    us = graph_median_us(fn)
-                else:
-                    us = time_call(fn)
-                del q, k, v
-                torch.cuda.empty_cache()
-            dec_rows.append({"q_len": 1, "kv_len": kv, "n_heads": a.n_heads,
-                             "n_kv_heads": a.n_kv_heads, "head_dim": a.head_dim,
-                             "batch": b, "causal": False, "phase": "decode",
-                             "layers": a.layers,
-                             "latency_us": round(us * a.layers, 3)})
-            print(f"{'ncu ' if a.ncu else ''}decode kv={kv} b={b}: {us:.1f}us/call", flush=True)
-
-    # Prefill is EAGER in serving (dynamic shapes, not CUDA-graphed) so dispatch
-    # overhead is real -> always cuda_event, never NCU (which would drop it).
-    pf_rows = []
-    for seq in SEQ_AXIS:
-        q = torch.randn(seq, a.n_heads, a.head_dim, device=dev, dtype=dt)
-        k = torch.randn(seq, a.n_kv_heads, a.head_dim, device=dev, dtype=dt)
-        v = torch.randn_like(k)
-        cu = torch.tensor([0, seq], dtype=torch.int32, device=dev)
-        us = time_call(lambda: flash_attn_varlen_func(
-            q, k, v, seq, cu, seq, cu_seqlens_k=cu, causal=True,
-            fa_version=a.fa_version))
-        del q, k, v
-        torch.cuda.empty_cache()
-        pf_rows.append({"gpu": a.gpu_label, "prefill_tokens": seq, "q_len": seq,
-                        "kv_len": seq, "causal": True,
-                        "fa_version": f"vllm-fa{a.fa_version}",
-                        "n_heads": a.n_heads, "n_kv_heads": a.n_kv_heads,
-                        "head_dim": a.head_dim, "dtype": "bfloat16",
-                        "layers": a.layers,
-                        "flash_ms_median": round(us / 1000.0, 6),
-                        "flash_ms_mean": round(us / 1000.0, 6),
-                        "flash_full_model_ms": round(us / 1000.0 * a.layers, 6)})
-        print(f"prefill seq={seq}: {us:.1f}us/call", flush=True)
-
-    # Method-explicit kernel_data layout the loader resolves: decode grids read
-    # from ncu/ (CUDA-graphed decode -> NCU faithful), prefill from cuda_event/
-    # (eager prefill -> dispatch real). Decode's method follows --ncu; prefill is
-    # always cuda_event. Grids are CONSOLIDATED per (method, kind, GPU) at export:
-    # this run writes the rows of the head config it measured, and kernel_tables
-    # unions every ok run's rows on (n_heads, n_kv_heads, head_dim), the run that
-    # finished last winning a head config (the loader selects by those columns).
-    def _write(path, rows):
-        with path.open("w", newline="") as fh:
-            w = csv.DictWriter(fh, fieldnames=list(rows[0].keys()))
-            w.writeheader()
-            w.writerows(rows)
-
-    dec_method = "ncu" if (a.ncu or a.graph) else "cuda_event"
-    (out / dec_method / "flash_attn").mkdir(parents=True, exist_ok=True)
-    dec_path = out / dec_method / "flash_attn" / f"{a.gpu_label}.csv"
-    _write(dec_path, dec_rows)
-    (out / "cuda_event" / "fa3_prefill").mkdir(parents=True, exist_ok=True)
-    pf_path = out / "cuda_event" / "fa3_prefill" / f"{a.gpu_label}.csv"
-    _write(pf_path, pf_rows)
-    print(f"wrote {dec_path} ({len(dec_rows)} cells) and {pf_path} ({len(pf_rows)} rows)")
+    # This run emits the rows of the head config it measured; kernel_tables unions
+    # every ok run's rows on (n_heads, n_kv_heads, head_dim), the run that finished
+    # last winning a head config (the loader selects by those columns).
+    n = FlashAttnProbe(a).run()
+    print(f"{n} rows of flash_attn/{a.gpu_label}.csv and fa3_prefill/{a.gpu_label}.csv")
 
 
 if __name__ == "__main__":

@@ -220,13 +220,14 @@ class LiveProbes(unittest.TestCase):
                 self.assertTrue({f"{name}_probe", f"{name}_main"} <= set(funcs))
 
     def test_kv_transfer_records_a_probe_run(self):
-        """kv_transfer records its run through run_recorded with the probes' output args; only `qbench export` moves it to kernel_data."""
+        """kv_transfer records its run through run_recorded, so its rows land in rows.jsonl and only `qbench export` moves them to kernel_data."""
         text = (Path(native.__file__).parent / "kv_transfer.py").read_text()
         calls = {(n.func.id, tuple(getattr(a, "id", getattr(a, "value", None)) for a in n.args))
                  for n in ast.walk(ast.parse(text))
                  if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
         self.assertIn(("add_output_args", ("ap",)), calls)
-        self.assertIn(("out_root", ("a", "kv_transfer")), calls)
+        self.assertIn("emit(ProbeRow(", text)
+        self.assertNotIn("import csv", text)
         self.assertIn(("run_recorded", ("main", "kv_transfer")), calls)
         self.assertNotIn("data/kernel_data", text)
 

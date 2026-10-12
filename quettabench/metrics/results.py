@@ -13,6 +13,8 @@ metrics.step_fit.fit_run over those rows (None for a run without cells).
 A driver that times a whole cell itself (BenchDriver) yields dict rows,
 {cell, measured_ms_per_step, group, kv, method}; append writes them with
 the RequestResult keys that apply to them, success and error.
+A probe run also gets rows.jsonl, one ProbeRow (probes/base.py) per line,
+appended as each is measured; export turns those rows into QuettaSim tables.
 run_status is {"status": ok | partial | aborted | failed, "reason": ...}.
 Secrets (redact) are written as REDACTED: in the provenance's launch env
 and in the config.
@@ -20,6 +22,7 @@ Grid runs write no baselines/ file; crossval reads the run dir, and old
 baselines through its compat reader.
 """
 
+import dataclasses
 import json
 import os
 import re
@@ -318,6 +321,7 @@ class RunWriter:
         self.rows = 0
         self.finished = False
         self._fh = None
+        self._probe_fh = None
         if self.dir is not None:
             self.dir.parent.mkdir(parents=True, exist_ok=True)
             self.dir.mkdir(exist_ok=not exclusive)
@@ -326,6 +330,7 @@ class RunWriter:
     def discard(self):
         """Close requests.jsonl and remove it and the run dir while they are
         empty: for a run this process turns out not to record."""
+        self._close_probe_rows()
         if self._fh is not None:
             self._fh.close()
             self._fh = None
@@ -354,6 +359,21 @@ class RunWriter:
             self._fh.write(json.dumps(row) + "\n")
             self._fh.flush()
 
+    def probe_row(self, row):
+        """Append one ProbeRow to rows.jsonl and flush it, so a crash keeps
+        every row already measured."""
+        line = json.dumps(dataclasses.asdict(row)) + "\n"
+        if self.dir is not None:
+            if self._probe_fh is None:
+                self._probe_fh = (self.dir / "rows.jsonl").open("a")
+            self._probe_fh.write(line)
+            self._probe_fh.flush()
+
+    def _close_probe_rows(self):
+        if self._probe_fh is not None:
+            self._probe_fh.close()
+            self._probe_fh = None
+
     def finish(self, summary, steps=None, status="ok", reason=None):
         """Write run.json; returns its content. summary is a plain dict."""
         if status not in RUN_STATUSES:
@@ -371,6 +391,7 @@ class RunWriter:
             "steps": steps,
             "run_status": {"status": status, "reason": reason},
         }
+        self._close_probe_rows()
         if self._fh is not None:
             self._fh.close()
             self._fh = None

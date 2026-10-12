@@ -1,8 +1,10 @@
-"""Output arguments every kernel probe shares, the run record each writes,
-the one way a live-server probe starts vLLM (launch_vllm), and the
-remote-probe recipe's ssh and rsync (remote_probe)."""
+"""What every kernel probe shares: ProbeRow and the Probe ABC, the output
+arguments, the run record each writes, the one way a live-server probe
+starts vLLM (launch_vllm), and the remote-probe recipe's ssh and rsync
+(remote_probe)."""
 from __future__ import annotations
 
+import abc
 import argparse
 import contextlib
 import dataclasses
@@ -10,6 +12,7 @@ import re
 import shlex
 import subprocess
 import sys
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -20,24 +23,76 @@ from quettabench.metrics.results import RunWriter, exit_status, redact, stamp_pu
 DEFAULT_OUT = Path("results") / "probes"
 # A run id: the run's start in UTC to the microsecond, so a probe's run dirs sort by start.
 RUN_ID = re.compile(r"\d{8}T\d{6}\.\d{6}Z")
+# How a row was timed, in QuettaSim's mode words; export maps each to kernel_data's graph/ or eager/.
+TIMINGS = ("graph_replay", "ncu", "amortized_wallclock", "eager", "host_wallclock")
 # The Config of the `qbench run` (mode: probe) running this probe, if any.
 _RUN_CFG: Config | None = None
+# The writer of the run recording this probe (run_recorded or `qbench run`), if any.
+_WRITER: RunWriter | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class ProbeRow:
+    """One measured row of a QuettaSim table: table is <kind>/<file> (gemm/H200.csv),
+    its columns are key then value in order, and timing (TIMINGS) picks the dir.
+    A JSON table's row is one entry: key {"entry": name}, value {"value": ...}."""
+    probe: str
+    table: str
+    key: dict
+    value: dict
+    timing: str
+
+    def __post_init__(self):
+        if self.timing not in TIMINGS:
+            raise ValueError(f"{self.probe}: timing {self.timing!r} is not one of {TIMINGS}")
+
+
+def emit(row: ProbeRow) -> None:
+    """Append row to the recording run's rows.jsonl."""
+    if _WRITER is None:
+        raise RuntimeError(f"{row.probe}: no run records its rows; run it as a probe "
+                           "(python -m, just probe) or through qbench run")
+    _WRITER.probe_row(row)
+
+
+class Probe(abc.ABC):
+    """STRUCTURE.md's probe: grid() yields the points, run_point() times one
+    into a ProbeRow (None when the point is skipped), run() emits each row
+    as it is measured and returns how many."""
+
+    @abc.abstractmethod
+    def grid(self) -> Iterable:
+        """The points to time, in order."""
+
+    @abc.abstractmethod
+    def run_point(self, point) -> ProbeRow | None:
+        """One point's row, or None when it is skipped."""
+
+    def run(self) -> int:
+        n = 0
+        for point in self.grid():
+            row = self.run_point(point)
+            if row is not None:
+                emit(row)
+                n += 1
+        return n
 
 
 @contextlib.contextmanager
-def run_config(cfg: Config):
-    """Hand the run's Config to launch_vllm for the duration of a probe's main."""
-    global _RUN_CFG
-    _RUN_CFG = cfg
+def run_config(cfg: Config, writer: RunWriter | None = None):
+    """Hand the run's Config to launch_vllm, and its writer to emit, for the
+    duration of a probe's main."""
+    global _RUN_CFG, _WRITER
+    _RUN_CFG, _WRITER = cfg, writer
     try:
         yield
     finally:
-        _RUN_CFG = None
+        _RUN_CFG, _WRITER = None, None
 
 
 def add_output_args(ap: argparse.ArgumentParser) -> None:
     """Add --gpu-label, --out and --run-id; --out defaults to
-    results/probes/<gpu-label>, and each probe writes under its own
+    results/probes/<gpu-label>, and each probe run records under its own
     <out>/<probe>/<run-id>/ (out_root). The parser takes flags only as
     written, so export reads probe_args as the probe did."""
     ap.allow_abbrev = False
@@ -46,7 +101,7 @@ def add_output_args(ap: argparse.ArgumentParser) -> None:
                     help="parent of the probe's own <probe>/ dir (default: results/probes/<gpu-label>)")
     ap.add_argument("--run-id", default=None,
                     help="this run's own dir under <out>/<probe>/; the probe CLI sets it to the "
-                         "start time, and without it the tables go into <out>/<probe>/ itself")
+                         "start time, and without it the run records into <out>/<probe>/ itself")
 
 
 def run_id(now: datetime) -> str:
@@ -55,9 +110,8 @@ def run_id(now: datetime) -> str:
 
 
 def out_root(args: argparse.Namespace, name: str) -> Path:
-    """<out>/<name>/<run-id>/: the dir a probe's tables and its run.json go
-    under; <out>/<name>/ when no run id is given (a `qbench run` probe, whose
-    --out is already its own run dir)."""
+    """<out>/<name>/<run-id>/: the run dir a probe's run.json and rows.jsonl
+    go in; <out>/<name>/ when no run id is given."""
     root = (Path(args.out_dir) if args.out_dir else DEFAULT_OUT / args.gpu_label) / name
     run = getattr(args, "run_id", None)
     if run is None:
@@ -68,9 +122,9 @@ def out_root(args: argparse.Namespace, name: str) -> Path:
 
 
 def record_dir(name: str, argv: list[str], file_flag: str | None = None) -> Path | None:
-    """Where a probe's run.json goes: out_root, the dir its tables are written
-    under, or with file_flag (a probe that names its output file) that file's
-    dir. None when argv names no output (no --gpu-label, or --out -)."""
+    """Where a probe's run.json goes: out_root, or with file_flag (a probe
+    that names its output file) that file's dir. None when argv names no
+    output (no --gpu-label, or --out -)."""
     ap = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
     if file_flag:
         ap.add_argument(file_flag, dest="file")
@@ -89,12 +143,14 @@ def run_recorded(main, name: str, file_flag: str | None = None, now: datetime | 
     """main(argv) with its run recorded: <record_dir>/run.json through RunWriter,
     holding the probe and its argv as config (mode=probe), provenance and
     run_status ok, or failed (aborted on Ctrl-C) with the exception, which is
-    raised on. A probe without file_flag gets --run-id from now (the start,
-    taken here once when not given), so each run has its own dir. The writer
-    opens before main, so a run killed before it finishes leaves
-    requests.jsonl and no run.json, which export skips; a run dir that
-    already exists is refused (RunWriter exclusive). Under torchrun only RANK 0 records, whatever
-    its main does; a main that returns False writes nothing either."""
+    raised on; the rows main emits go to rows.jsonl beside it. A probe
+    without file_flag gets --run-id from now (the start, taken here once
+    when not given), so each run has its own dir. The writer opens before
+    main, so a run killed before it finishes leaves requests.jsonl and no
+    run.json, which export skips; a run dir that already exists is refused
+    (RunWriter exclusive). Under torchrun only RANK 0 records, whatever its
+    main does; a main that returns False writes nothing either."""
+    global _WRITER
     now = now or datetime.now(timezone.utc)
     argv = sys.argv[1:] if file_flag else ["--run-id", run_id(now), *sys.argv[1:]]
     run_dir = record_dir(name, argv, file_flag) if env_map.torchrun_rank() in (None, 0) else None
@@ -109,12 +165,14 @@ def run_recorded(main, name: str, file_flag: str | None = None, now: datetime | 
             raise SystemExit(f"{run_dir} already exists; each probe run makes its own dir") from None
         writer.provenance["started"] = now.isoformat()
     primary, status, reason = None, "ok", None
+    _WRITER = writer
     try:
         primary = main(argv)
     except BaseException as e:
         status, reason = exit_status(e)
         raise
     finally:
+        _WRITER = None
         if writer is not None and primary is False:
             writer.discard()
         elif writer is not None:

@@ -26,7 +26,7 @@ from quettabench import runner
 from quettabench.config.schema import Config, ConfigError, EngineCfg, HardwareCfg, ModeCfg, WorkloadCfg
 from quettabench.metrics.results import RunWriter
 from quettabench.probes import base as probes_base
-from quettabench.probes.base import launch_vllm, out_root, run_id, run_recorded
+from quettabench.probes.base import ProbeRow, emit, launch_vllm, out_root, run_id, run_recorded
 
 PROBES = Path(__file__).resolve().parents[2] / "quettabench" / "probes"
 NOW = datetime(2026, 10, 11, 12, 0, 0, 123456, tzinfo=timezone.utc)
@@ -94,18 +94,50 @@ class RunRecorded(unittest.TestCase):
                                name="serving_decode_grid", file_flag="--out-raw")
         self.assertEqual(files, ["h100/run.json"])
 
-    def test_tables_and_run_json_share_the_run_dir(self):
+    def test_emitted_rows_and_run_json_share_the_run_dir(self):
+        row = ProbeRow("gemm", "gemm/H100.csv", {"M": 1, "N": 2, "K": 3}, {"latency_us": 4.5}, "ncu")
+
         def main(argv):
-            ap = argparse.ArgumentParser()
-            probes_base.add_output_args(ap)
-            table = out_root(ap.parse_args(argv), "gemm") / "ncu" / "gemm" / "H100.csv"
-            table.parent.mkdir(parents=True)
-            table.write_text("m,n,k,us\n")
-            seen.append(table)
-        seen = []
-        _, _, files = recorded(["--gpu-label", "H100", "--out", "<TD>"], main)
-        self.assertEqual(files, [f"gemm/{RUN}/run.json"])
-        self.assertEqual(seen[0].parts[-5:], ("gemm", RUN, "ncu", "gemm", "H100.csv"))
+            emit(row)
+            emit(row)
+        with tempfile.TemporaryDirectory() as td, \
+                mock.patch.object(sys, "argv", ["probe", "--gpu-label", "H100", "--out", td]):
+            run_recorded(main, "gemm", now=NOW)
+            run = Path(td, "gemm", RUN)
+            self.assertEqual(sorted(p.name for p in run.iterdir()), ["requests.jsonl", "rows.jsonl", "run.json"])
+            lines = (run / "rows.jsonl").read_text().splitlines()
+        self.assertEqual([json.loads(line) for line in lines], [dataclasses.asdict(row)] * 2)
+        self.assertIsNone(probes_base._WRITER)
+
+    def test_a_row_outside_a_recorded_run_is_refused(self):
+        row = ProbeRow("gemm", "gemm/H100.csv", {"M": 1}, {"latency_us": 4.5}, "eager")
+        with self.assertRaisesRegex(RuntimeError, "no run records"):
+            emit(row)
+        with self.assertRaisesRegex(ValueError, "timing 'cuda_event'"):
+            ProbeRow("gemm", "gemm/H100.csv", {}, {}, "cuda_event")
+
+    def test_a_probe_emits_each_measured_point_and_skips_none(self):
+        class Grid(probes_base.Probe):
+            def grid(self):
+                return [1, 2, 3]
+
+            def run_point(self, point):
+                return None if point == 2 else ProbeRow("x", "x/A.csv", {"n": point}, {"us": 1}, "eager")
+        writer = mock.Mock()
+        cfg = Config(EngineCfg(), WorkloadCfg(), ModeCfg(), HardwareCfg(), run_name="x")
+        with probes_base.run_config(cfg, writer):
+            self.assertEqual(Grid().run(), 2)
+        self.assertEqual([c.args[0].key for c in writer.probe_row.call_args_list], [{"n": 1}, {"n": 3}])
+
+    def test_a_qbench_run_probe_writes_its_rows_into_the_run_dir(self):
+        def main(argv):
+            emit(ProbeRow("gemm", "gemm/A.csv", {"M": 1}, {"us": 2}, "eager"))
+        with tempfile.TemporaryDirectory() as td, mock.patch.dict(os.environ), \
+                mock.patch.dict(sys.modules, {"quettabench.probes.gemm": mock.Mock(main=main)}), \
+                mock.patch.object(runner.launcher, "idle_gpus", return_value="0"):
+            runner.run_probe(probe_cfg("gemm"), Path(td))
+            self.assertEqual(json.loads(Path(td, "rows.jsonl").read_text())["table"], "gemm/A.csv")
+            self.assertTrue(Path(td, "run.json").is_file())
 
     def test_each_invocation_gets_its_own_run_dir(self):
         """Two runs of one probe never share a dir, so the second's run.json

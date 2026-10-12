@@ -1,31 +1,16 @@
 #!/usr/bin/env python3
-"""TP all-reduce through vLLM's OWN communicator -> the measured collectives grid.
-
-collective_probe.py times torch.distributed (plain NCCL). vLLM does not call that
-for tensor-parallel all-reduce: its GroupCoordinator routes small payloads through
-the custom all-reduce kernel (one-/two-shot over NVLink P2P) and only large ones to
-NCCL. On H200 tp2 the plain-NCCL grid over-priced graphed decode comm by ~1.5 ms/step
-(legacy 15.8 us/op x 96 sub-layers), which showed up as a 15-17pp TPOT MAPE gap vs a
-zero-latency analytic ring (Mooncake GT, 2026-08-25). This probe measures the path
-vLLM actually takes and writes them as the all_reduce rows of its own
-vllm_allreduce/<run-id>/ncu/collectives/{gpu}_tp{N}.csv. The other ops' NCCL rows (vLLM
-uses NCCL for those) are the collective probe's; the kernel_tables export merges the
-two into one ncu/collectives/{gpu}_tp{N}.csv, these all_reduce rows over the
-collective probe's.
-
-  CUDA_VISIBLE_DEVICES=0,1 python3 -m torch.distributed.run --nproc_per_node=2 -m quettabench.probes.vllm_allreduce \
-      --gpu-label H200 --out <dir>
+"""TP all-reduce through vLLM's own GroupCoordinator (custom all-reduce for small payloads, NCCL for large), next to plain NCCL, under torchrun.
+Rank 0 emits the vLLM path as all_reduce rows of collectives/{gpu}_tp{N}.csv, which kernel_tables merges over the collective probe's, and both paths as collectives/{gpu}_tp{N}_nccl_vs_vllm.csv.
 """
 from __future__ import annotations
 
 import argparse
-import csv
 import os
 
 import torch
 import torch.distributed as dist
 
-from quettabench.probes.base import add_output_args, out_root, run_recorded
+from quettabench.probes.base import ProbeRow, add_output_args, emit, run_recorded
 
 _ITERS, _WARMUP = 50, 10
 # Full logical buffer sizes (bytes): decode payloads (batch x hidden x 2B, a few KB..MB)
@@ -84,22 +69,16 @@ def main(argv=None):
         if rank == 0:
             print(f"  {nbytes:>9d} B: vllm path {us_vllm:8.2f} us   plain nccl {us_nccl:8.2f} us", flush=True)
     if rank == 0:
-        root = out_root(a, "vllm_allreduce")
-        out = root / "ncu" / "collectives" / f"{a.gpu_label}_tp{world}.csv"
-        out.parent.mkdir(parents=True, exist_ok=True)
-        with out.open("w", newline="") as f:
-            w = csv.DictWriter(f, fieldnames=["op", "world", "bytes", "latency_us", "dtype_bytes", "path"])
-            w.writeheader()
-            for nbytes, us_v, _ in rows:
-                w.writerow({"op": "all_reduce", "world": world, "bytes": nbytes,
-                            "latency_us": round(us_v, 4), "dtype_bytes": 2, "path": "vllm"})
-        print(f"[vllm-ar] wrote {out}: {len(rows)} all_reduce rows (vllm path)", flush=True)
-        ref = root / "ncu" / "collectives" / f"{a.gpu_label}_tp{world}_nccl_vs_vllm.csv"
-        with ref.open("w", newline="") as f:
-            w = csv.writer(f)
-            w.writerow(["bytes", "vllm_us", "nccl_us"])
-            for r in rows:
-                w.writerow([r[0], round(r[1], 4), round(r[2], 4)])
+        table = f"collectives/{a.gpu_label}_tp{world}.csv"
+        for nbytes, us_v, _ in rows:
+            emit(ProbeRow("vllm_allreduce", table, {"op": "all_reduce", "world": world, "bytes": nbytes},
+                          {"latency_us": round(us_v, 4), "dtype_bytes": 2, "path": "vllm"},
+                          "amortized_wallclock"))
+        print(f"[vllm-ar] {len(rows)} all_reduce rows (vllm path) of {table}", flush=True)
+        for nbytes, us_v, us_n in rows:
+            emit(ProbeRow("vllm_allreduce", f"collectives/{a.gpu_label}_tp{world}_nccl_vs_vllm.csv",
+                          {"bytes": nbytes}, {"vllm_us": round(us_v, 4), "nccl_us": round(us_n, 4)},
+                          "amortized_wallclock"))
     dist.barrier()
     dist.destroy_process_group()
     return rank == 0  # run_recorded: only rank 0 records the run

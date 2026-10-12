@@ -90,6 +90,21 @@ class RoundTrip(unittest.TestCase):
         self.assertEqual(run["run_status"]["status"], "ok")
         self.assertEqual(writer.rows, 1)
 
+    def test_probe_rows_append_to_rows_jsonl_and_survive_a_discard(self):
+        @dataclasses.dataclass
+        class Row:
+            probe: str
+            key: dict
+        with tempfile.TemporaryDirectory() as td:
+            writer = results.RunWriter(Path(td, "run"), config())
+            writer.probe_row(Row("gemm", {"M": 1}))
+            writer.probe_row(Row("gemm", {"M": 2}))
+            self.assertEqual((Path(td, "run", "rows.jsonl")).read_text(),
+                             '{"probe": "gemm", "key": {"M": 1}}\n{"probe": "gemm", "key": {"M": 2}}\n')
+            writer.discard()
+            self.assertEqual(sorted(p.name for p in Path(td, "run").iterdir()), ["rows.jsonl"])
+            results.RunWriter(None, config()).probe_row(Row("gemm", {}))
+
     def test_unknown_status_is_refused(self):
         with self.assertRaises(ValueError):
             results.RunWriter(None, config()).finish({}, status="done")

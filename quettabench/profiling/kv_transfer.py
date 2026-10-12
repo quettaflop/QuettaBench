@@ -1,23 +1,22 @@
 #!/usr/bin/env python3
 """Times a prefill to decode KV hand-off between two GPUs through NIXL/UCX, laid out as vLLM's NixlConnector does.
 
-Run under torchrun with two ranks (rank 0 = P, rank 1 = D). Writes results/probes/<gpu>/kv_transfer/<run-id>/cuda_event/kv_transfer/<gpu>_nixl.csv and prints the floor + per-byte fit per (kv_heads_per_rank, layout)."""
+Run under torchrun with two ranks (rank 0 = P, rank 1 = D). Rank 0 emits kv_transfer/<gpu>_nixl.csv ProbeRows and prints the floor + per-byte fit per (kv_heads_per_rank, layout).
+A peer that never joins fails the run after five minutes; SIGTERM raises SystemExit(143) so the run is recorded as failed."""
 
 from __future__ import annotations
 
 import argparse
-import csv
 import os
 import signal
 import time
 from datetime import timedelta
-from pathlib import Path
 
 import numpy as np
 import torch
 import torch.distributed as dist
 
-from quettabench.probes.base import add_output_args, out_root, run_recorded
+from quettabench.probes.base import ProbeRow, add_output_args, emit, run_recorded
 
 KEY = ("gpu", "kv_heads_per_rank", "head_dim", "block_size", "layers", "layout", "tokens")
 COLS = KEY + ("n_descs", "bytes", "prep_ms", "xfer_ms", "total_ms", "eff_gbps")
@@ -33,13 +32,11 @@ def _fit(rows):
     return b0, bw
 
 
-def _write(path: Path, rows: list[dict]) -> None:
-    """This run's rows, sorted by heads, layout and tokens."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", newline="") as fh:
-        w = csv.DictWriter(fh, fieldnames=list(COLS))
-        w.writeheader()
-        w.writerows(sorted(rows, key=lambda r: (r["kv_heads_per_rank"], r["layout"], r["tokens"])))
+def _emit(table: str, rows: list[dict]) -> None:
+    """Emit this run's rows as table, sorted as the old upsert kept the shared file."""
+    for r in sorted(rows, key=lambda r: (r["kv_heads_per_rank"], r["layout"], r["tokens"])):
+        emit(ProbeRow("kv_transfer", table, {c: r.get(c) for c in KEY},
+                      {c: r.get(c) for c in COLS if c not in KEY}, "host_wallclock"))
 
 
 def _on_sigterm(signum, frame):
@@ -182,9 +179,8 @@ def main(argv=None) -> bool:
     dist.broadcast_object_list(sent, src=1)
     out_rows = sent[0]
     if rank == 0:
-        path = out_root(a, "kv_transfer") / "cuda_event" / "kv_transfer" / f"{a.gpu_label}_nixl.csv"
-        _write(path, out_rows)
-        print(f"\nwrote {path}")
+        _emit(f"kv_transfer/{a.gpu_label}_nixl.csv", out_rows)
+        print(f"\n{len(out_rows)} rows of kv_transfer/{a.gpu_label}_nixl.csv")
         print("\nfit total_ms = floor + bytes/bw   (per GPU pair; system YAML links.intra_node)")
         for heads in a.kv_heads_per_rank:
             for layout in a.layouts:

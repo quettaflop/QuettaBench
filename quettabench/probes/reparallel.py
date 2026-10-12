@@ -30,7 +30,7 @@ Run (all 8 GPUs of the node, over NVLink):
     python3 -m torch.distributed.run --nproc_per_node=8 \
         -m quettabench.probes.reparallel --gpu-label H200 --out <dir>
 
-Writes cuda_event/reparallel/<gpu>_reshard.csv (this run's rows; the export unions
+Emits rows of reparallel/<gpu>_reshard.csv (this run's rows; the export unions
 every ok run's rows on the key columns) and prints,
 per (tp_from, tp_to), the floor + per-byte fit to paste into a device YAML's
 ``reshard:`` block (see engine/reparallel.py::ReshardLink).
@@ -38,15 +38,13 @@ per (tp_from, tp_to), the floor + per-byte fit to paste into a device YAML's
 from __future__ import annotations
 
 import argparse
-import csv
 import os
-from pathlib import Path
 
 import numpy as np
 import torch
 import torch.distributed as dist
 
-from quettabench.probes.base import add_output_args, out_root, run_recorded
+from quettabench.probes.base import ProbeRow, add_output_args, emit, run_recorded
 
 KEY = ("gpu", "world", "tp_from", "tp_to", "total_weight_gb")
 COLS = KEY + ("k", "bytes_moved_per_gpu", "comm_ms", "eff_gbps", "pattern",
@@ -67,16 +65,13 @@ def _fit(rows: list[dict]) -> tuple[float, float]:
     return b0, bw
 
 
-def _write(path: Path, rows: list[dict]) -> None:
-    """Write this run's rows to path, sorted on KEY."""
-    table = {tuple(str(r[k]) for k in KEY): {k: str(r.get(k, 0)) for k in COLS} for r in rows}
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", newline="") as fh:
-        w = csv.DictWriter(fh, fieldnames=list(COLS), restval="0")
-        w.writeheader()
-        for k in sorted(table, key=lambda t: (t[0], int(t[1]), int(t[2]), int(t[3]),
-                                              float(t[4]))):
-            w.writerow(table[k])
+def _emit(table: str, rows: list[dict]) -> None:
+    """Emit this run's rows as table, the last row on a KEY winning, sorted on KEY."""
+    cells = {tuple(str(r[k]) for k in KEY): {k: str(r.get(k, 0)) for k in COLS} for r in rows}
+    for k in sorted(cells, key=lambda t: (t[0], int(t[1]), int(t[2]), int(t[3]), float(t[4]))):
+        row = cells[k]
+        emit(ProbeRow("reparallel", table, {c: row[c] for c in KEY},
+                      {c: row[c] for c in COLS if c not in KEY}, "host_wallclock"))
 
 
 def _time_ms(fn, iters: int) -> float:
@@ -172,9 +167,8 @@ def main(argv=None) -> bool:
                         "pp": "reshard_pp", "kv": "reshard_kv",
                         "plan": "reshard_plan", "xnode": "reshard_xnode"}[a.mode]
         stem = a.out_name or f"{a.gpu_label}_{default_stem}"
-        path = out_root(a, "reparallel") / "cuda_event" / "reparallel" / f"{stem}.csv"
-        _write(path, out_rows)
-        print(f"\nwrote {path}")
+        _emit(f"reparallel/{stem}.csv", out_rows)
+        print(f"\n{len(out_rows)} rows of reparallel/{stem}.csv")
         print(f"\nfit comm_ms = floor + bytes/bw   (mode={a.mode}, per GPU)")
         seen = []
         pairs = sorted({(r["tp_from"], r["tp_to"]) for r in out_rows})

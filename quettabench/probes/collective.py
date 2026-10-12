@@ -1,51 +1,15 @@
 #!/usr/bin/env python3
-"""NCCL collective microbenchmark -> the measured collective GRID (+ legacy scalars).
-
-Method B for the kernel-composed backend. Sweeps message size across the ranks for
-EVERY collective LLM inference emits, and writes the whole curve to
-
-    <run dir>/ncu/collectives/{GPU}_tp{world}.csv   (op, world, bytes, latency_us, ...)
-
-under results/probes/<gpu>/collective/<run-id>/; `qbench export --only kernel_tables`
-carries it to QuettaSim's kernel_data/graph/collectives/.
-
-  all_reduce      TP: 2 per layer (after o-proj, after down-proj)
-  reduce_scatter  TP + sequence parallelism: replaces half of each all-reduce
-  all_gather      TP + SP (the other half); also the vocab-parallel lm_head gather
-  all_to_all      EP: 2 per MoE layer (expert dispatch + combine)
-
-Measuring each separately matters: their cost shapes genuinely differ (all-reduce
-moves 2(n-1)/n of the buffer, the others (n-1)/n), and all-to-all's real cost is
-routing-dependent in a way no closed form captures.
-
-which `kernel_composed.collectives.CollectiveTable` reads under
-``comm_source="measured"``. Measuring the curve rather than fitting it means we
-capture whatever NCCL/vLLM actually selected -- custom-all-reduce thresholds,
-LL/LL128/SIMPLE protocol switchover, NVLS on NVSwitch parts -- without having to
-model any of it. That is the whole point of the measured source.
-
-It ALSO still prints the legacy two-scalar `tp_comm:` block (small-message floor +
-large-message bandwidth) so existing device YAMLs can be refreshed; those scalars
-are tp-invariant by construction, which is the limitation the grid removes.
-
-Launch with torchrun across the tp ranks (run_probe.sh does this when NPROC>1):
-
-  python3 -m torch.distributed.run --nproc_per_node=2 -m quettabench.probes.collective --gpu-label A100 --hidden 4096 --layers 32
-
-Run it once per world size you care about (2, 4, 8): each writes its own
-`_tp{world}.csv`, and the table interpolates across world only for sizes you did
-not measure. Rank 0 writes the CSV and prints the YAML block; like
-derive_device_yaml.py it does NOT edit the YAML.
+"""NCCL collective microbenchmark under torchrun: every op LLM inference emits (all_reduce, all_gather, reduce_scatter, all_to_all) across message sizes, amortized over back-to-back calls.
+Rank 0 emits the curve as collectives/{gpu}_tp{world}.csv ProbeRows and prints the legacy tp_comm: YAML block; run it once per world size.
 """
 from __future__ import annotations
 
 import argparse
-import csv
 
 import torch
 import torch.distributed as dist
 
-from quettabench.probes.base import add_output_args, out_root, run_recorded
+from quettabench.probes.base import ProbeRow, add_output_args, emit, run_recorded
 
 _DTYPE = torch.bfloat16
 _ITERS, _WARMUP = 50, 10
@@ -138,16 +102,12 @@ def main(argv=None):
     if rank == 0:
         # ── Method B: the whole curve, as a grid ──────────────────────────────
         if a.out_dir != "-":  # --out - prints without writing
-            root = out_root(a, "collective")
-            out = root / "ncu" / "collectives" / f"{a.gpu_label}_tp{world}.csv"
-            out.parent.mkdir(parents=True, exist_ok=True)
-            with out.open("w", newline="") as f:
-                w = csv.writer(f)
-                w.writerow(["op", "world", "bytes", "latency_us", "dtype_bytes"])
-                for op, wd, nbytes, t_us in rows:
-                    w.writerow([op, wd, nbytes, round(t_us, 4), 2])
+            table = f"collectives/{a.gpu_label}_tp{world}.csv"
+            for op, wd, nbytes, t_us in rows:
+                emit(ProbeRow("collective", table, {"op": op, "world": wd, "bytes": nbytes},
+                              {"latency_us": round(t_us, 4), "dtype_bytes": 2}, "amortized_wallclock"))
             got = sorted({op for op, _, _, _ in rows})
-            print(f"wrote {out}  ({len(rows)} points, world={world}, ops={got})\n")
+            print(f"{len(rows)} rows of {table}  (world={world}, ops={got})\n")
 
         # ── legacy two-scalar block (tp-invariant; kept for refreshes) ────────
         print(f"[{a.gpu_label}] all-reduce over {world} ranks, hidden={a.hidden} layers={a.layers}\n")

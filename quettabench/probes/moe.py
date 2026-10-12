@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Grouped-MoE expert-kernel grid -> {method}/moe/{gpu}.csv, plus the routing
-kernels -> {method}/moe/{gpu}_routing.json.
+"""Grouped-MoE expert-kernel grid -> moe/{gpu}.csv rows, plus the routing
+kernels -> moe/{gpu}_routing.json entries.
 
 WHY THIS PROBE EXISTS. Every other kernel family in `kernel_composed` prices off a
 measured table; the grouped MoE FFN does not. `sum_kernels._moe_ffn_us` is an
@@ -50,8 +50,6 @@ input (slice verification), to results/probes/<gpu>/moe_routing/<run-id>/<model>
 from __future__ import annotations
 
 import argparse
-import csv
-import json
 import statistics as st
 import sys
 from pathlib import Path
@@ -59,7 +57,7 @@ from pathlib import Path
 import torch
 
 from quettabench.probes._timing import graph_time_us
-from quettabench.probes.base import add_output_args, out_root, run_recorded
+from quettabench.probes.base import ProbeRow, add_output_args, emit, out_root, run_recorded
 
 # Per-expert geometry of every MoE model in engine/device_spec/models/.
 # (n_experts, top_k, intermediate_per_expert, hidden). `intermediate` is sharded
@@ -89,6 +87,8 @@ _FP8 = False
 FP8_BLOCK = [128, 128]
 # Element counts for the routing affine fits (bytes = elements * 2 * (r + w)).
 ROUTE_ELEMS = [2**e for e in range(12, 26)]
+# The columns a moe/{gpu}.csv row is keyed on.
+KEY = ("tokens", "n_experts", "top_k", "intermediate", "hidden")
 
 
 def _fused_experts():
@@ -448,7 +448,7 @@ def main(argv=None) -> None:
                     help="at export, add this run's rows over earlier ok runs' tables; "
                          "without it the export drops the rows of runs that finished before it")
     ap.add_argument("--graph", action="store_true",
-                    help="CUDA-graph-replay timing -> ncu/moe/. Faithful for vLLM's "
+                    help="CUDA-graph-replay timing -> graph/moe/. Faithful for vLLM's "
                          "CUDA-graphed MoE DECODE (the eager rationale below only "
                          "holds for eager execution); slight underprice of small "
                          "eager prefill chunks, negligible at real chunk sizes.")
@@ -501,27 +501,24 @@ def main(argv=None) -> None:
             rows += sweep_expert_kernel(f"{key}/tp{tp}", e, k, shard, hidden,
                                         tokens_axis, dev, a.max_mem_gb)
 
-    # Default cuda_event: the grouped kernel's LAUNCH cost is the term the roofline
+    # Default eager: the grouped kernel's LAUNCH cost is the term the roofline
     # misses -- but that is only faithful for EAGER execution. vLLM CUDA-graphs MoE
-    # decode, so --graph (dispatch-free, ncu/-equivalent) is the decode-faithful
-    # method; H200 GT showed the eager grid overprices graphed decode 2.3x.
-    dst = out_root(a, "moe") / ("ncu" if _GRAPH else "cuda_event") / "moe"
-    dst.mkdir(parents=True, exist_ok=True)
-    path = dst / f"{a.gpu_label}{'' if a.dtype == 'bf16' else '_' + a.dtype}.csv"
-    with path.open("w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=["tokens", "n_experts", "top_k", "intermediate",
-                                          "hidden", "dtype_bytes", "latency_us"])
-        w.writeheader()
-        w.writerows(rows)
-    print(f"[moe] wrote {path} ({len(rows)} rows{', --append' if a.append else ''})", flush=True)
+    # decode, so --graph (dispatch-free, graph/) is the decode-faithful method;
+    # H200 GT showed the eager grid overprices graphed decode 2.3x.
+    timing = "graph_replay" if _GRAPH else "eager"
+    table = f"moe/{a.gpu_label}{'' if a.dtype == 'bf16' else '_' + a.dtype}.csv"
+    for r in rows:
+        emit(ProbeRow("moe", table, {c: r[c] for c in KEY},
+                      {"dtype_bytes": r["dtype_bytes"], "latency_us": r["latency_us"]}, timing))
+    print(f"[moe] {len(rows)} rows of {table}{', --append' if a.append else ''}", flush=True)
 
     if not a.skip_routing and a.dtype == "bf16":
         # Routing (topk / permute / align) is dtype-agnostic -- it moves indices and
         # bf16 hidden states either way -- so an fp8 run must not rewrite the fit.
         routing = sweep_routing(dev)
-        rp = dst / f"{a.gpu_label}_routing.json"
-        rp.write_text(json.dumps(routing, indent=1) + "\n")
-        print(f"[moe] wrote {rp}", flush=True)
+        for name, value in routing.items():
+            emit(ProbeRow("moe", f"moe/{a.gpu_label}_routing.json", {"entry": name}, {"value": value}, timing))
+        print(f"[moe] {len(routing)} entries of moe/{a.gpu_label}_routing.json", flush=True)
         if "_moe_align_launch_us" in routing:
             print(f"[moe] set `moe.routing_launch_us: "
                   f"{routing['_moe_align_launch_us']}` in the {a.gpu_label} device YAML",

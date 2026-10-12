@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Elementwise kernel affine fits -> cuda_event/elementwise/{gpu}.json, matching the
+"""Elementwise kernel affine fits -> elementwise/{gpu}.json entries, matching the
 kernel_composed ElementwiseTable model: latency_us = floor_us + bytes / eff_bw,
 bytes = elements * dtype_bytes * (reads + writes). For each kernel we CUDA-event
 time a torch equivalent across element counts and least-squares fit (floor_us,
@@ -10,14 +10,13 @@ eff_bw_gb_s). eff_bw is *effective* (may exceed peak HBM: cache/fusion).
 from __future__ import annotations
 
 import argparse
-import json
 import statistics as st
 
 import torch
 import torch.nn.functional as F
 
 from quettabench.probes._timing import graph_median_us
-from quettabench.probes.base import add_output_args, out_root, run_recorded
+from quettabench.probes.base import Probe, ProbeRow, add_output_args, run_recorded
 
 # (reads, writes) per kernel -- MUST match kernel_composed/elementwise.py::_IO
 IO = {"rmsnorm": (1, 1), "silu_mul": (2, 1), "rotary_emb": (1, 1), "residual_add": (2, 1)}
@@ -134,13 +133,43 @@ def fit(bytes_list, us_list) -> tuple[float, float]:
     return round(max(0.0, floor), 3), round(eff_bw_gb_s, 1)
 
 
+class ElementwiseProbe(Probe):
+    """One entry of elementwise/{gpu}.json per kernel: its latency across
+    ELEMS, least-squares fitted to (floor_us, eff_bw_gb_s)."""
+
+    def __init__(self, a):
+        self.a = a
+        self.dev, self.dt = torch.device("cuda"), torch.bfloat16
+        # graph replay is graphed-decode-faithful (graph/), eager includes dispatch (eager/).
+        self.timing = "graph_replay" if a.graph else "eager"
+
+    def grid(self):
+        return (VLLM_IO if self.a.vllm else IO).items()
+
+    def run_point(self, point):
+        kernel, (r, w) = point
+        a = self.a
+        bl, ul = [], []
+        for n in ELEMS:
+            if n * DT_BYTES * (r + w + 1) / 1e9 > a.max_mem_gb:
+                continue
+            fn = op_for_vllm(kernel, n, self.dev, self.dt) if a.vllm else op_for(kernel, n, self.dev, self.dt)
+            us = graph_median_us(fn) if a.graph else time_op(fn)
+            bl.append(n * DT_BYTES * (r + w))
+            ul.append(us)
+        floor, bw = fit(bl, ul)
+        print(f"  {kernel:14} floor={floor} us  eff_bw={bw} GB/s", flush=True)
+        return ProbeRow("elementwise", f"elementwise/{a.gpu_label}.json", {"entry": kernel},
+                        {"value": {"floor_us": floor, "eff_bw_gb_s": bw}}, self.timing)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     add_output_args(ap)
     ap.add_argument("--max-mem-gb", type=float, default=20.0)
     ap.add_argument("--graph", action="store_true",
                     help="CUDA-graph-replay timing (graphed-decode-faithful, no NCU "
-                         "needed) -> ncu/elementwise/; default eager -> cuda_event/")
+                         "needed) -> graph/elementwise/; default eager -> eager/")
     ap.add_argument("--vllm", action="store_true",
                     help="time the REAL vLLM fused kernels (rms_norm, "
                          "fused_add_rms_norm, silu_and_mul, rotary_embedding, "
@@ -148,32 +177,10 @@ def main(argv=None):
                          "adds the fused_add_rmsnorm + kv_cache_write entries the "
                          "composition prefers when present")
     a = ap.parse_args(argv)
-    dev = torch.device("cuda")
-    dt = torch.bfloat16
     tag = ("/graph" if a.graph else "") + ("/vllm" if a.vllm else "")
     print(f"[elem{tag}] {torch.cuda.get_device_name(0)}", flush=True)
-    io_map = VLLM_IO if a.vllm else IO
-    result = {}
-    for kernel, (r, w) in io_map.items():
-        bl, ul = [], []
-        for n in ELEMS:
-            if n * DT_BYTES * (r + w + 1) / 1e9 > a.max_mem_gb:
-                continue
-            fn = op_for_vllm(kernel, n, dev, dt) if a.vllm else op_for(kernel, n, dev, dt)
-            us = graph_median_us(fn) if a.graph else time_op(fn)
-            bl.append(n * DT_BYTES * (r + w))
-            ul.append(us)
-        floor, bw = fit(bl, ul)
-        result[kernel] = {"floor_us": floor, "eff_bw_gb_s": bw}
-        print(f"  {kernel:14} floor={floor} us  eff_bw={bw} GB/s", flush=True)
-    # ncu/ = graphed-decode-faithful (NCU or --graph replay, both dispatch-free);
-    # cuda_event/ = eager incl. dispatch. The loader prefers ncu/ and falls back.
-    method = "ncu" if a.graph else "cuda_event"
-    out = out_root(a, "elementwise") / method / "elementwise"
-    out.mkdir(parents=True, exist_ok=True)
-    path = out / f"{a.gpu_label}.json"
-    path.write_text(json.dumps(result, indent=2))
-    print(f"[elem] wrote {path}", flush=True)
+    n = ElementwiseProbe(a).run()
+    print(f"[elem] {n} entries of elementwise/{a.gpu_label}.json", flush=True)
 
 
 if __name__ == "__main__":

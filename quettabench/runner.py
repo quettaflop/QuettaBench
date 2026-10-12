@@ -207,8 +207,8 @@ def run_probe(cfg, out):
     """The probe's main with its own flags and --out set to the run dir, on
     the run's GPUs (hardware.visible_devices, else the first idle ones),
     exported before the probe is imported; a live-server probe launches with
-    the run's hardware. A probe that raises leaves run.json failed (aborted
-    on Ctrl-C)."""
+    the run's hardware, and the rows it emits go to the run dir's rows.jsonl.
+    A probe that raises leaves run.json failed (aborted on Ctrl-C)."""
     check_probe(cfg)
     argv = [*shlex.split(cfg.mode.probe_args), "--out", str(out)]
     writer = RunWriter(out, cfg)
@@ -218,7 +218,7 @@ def run_probe(cfg, out):
         env_map.export({"CUDA_VISIBLE_DEVICES": gpus})
         writer.provenance["launch_env"] = {"CUDA_VISIBLE_DEVICES": gpus}
         probe = importlib.import_module(f"quettabench.probes.{cfg.mode.probe}")
-        with probes_base.run_config(cfg):
+        with probes_base.run_config(cfg, writer):
             probe.main(argv)
     except BaseException as e:
         writer.fail(e)

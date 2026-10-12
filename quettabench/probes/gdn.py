@@ -6,8 +6,8 @@ kernels vllm/sglang serve Qwen3.5 with):
   decode:  fla.ops.fused_recurrent_gated_delta_rule (T=1 + state)      batch grid
 
 Method follows the serving reality (see kernel_data/PROVENANCE.md): decode is
-CUDA-graphed -> NCU faithful (`--ncu` -> ncu/gdn/…_decode.csv); prefill is eager ->
-always cuda_event -> cuda_event/gdn/…_prefill.csv (the multi-kernel dispatch floor
+CUDA-graphed -> NCU faithful (`--ncu` -> graph/gdn/…_decode.csv); prefill is eager ->
+always cuda_event -> eager/gdn/…_prefill.csv (the multi-kernel dispatch floor
 is real). The delta-rule core is the GDN analog of the flash-attention grid;
 projections are GEMMs (gemm table) and conv/gating are elementwise. Emits per-call
 median us and us x n_linear (all-GDN-layers convention).
@@ -18,7 +18,6 @@ median us and us x n_linear (all-GDN-layers convention).
 from __future__ import annotations
 
 import argparse
-import csv
 import os
 import statistics as st
 import traceback
@@ -31,7 +30,7 @@ from vllm.model_executor.layers.fla.ops import (
 )
 
 from quettabench.probes._timing import ncu_op_us
-from quettabench.probes.base import add_output_args, out_root, run_recorded
+from quettabench.probes.base import Probe, ProbeRow, add_output_args, run_recorded
 
 # chunk_gated_delta_rule's solve_tril merge kernel autotunes on a fresh host (no
 # Triton disk cache) and needs a scratch allocator; vLLM sets one at model init, a
@@ -94,6 +93,91 @@ def mk(B, T, H, K, V, dev, dt):
     return q, k, v, g, beta
 
 
+class GdnProbe(Probe):
+    """The prefill grid (seq, always eager) of gdn/{gpu}_{geom}_prefill.csv,
+    then the decode grid (batch, NCU or eager) of ..._decode.csv. A phase
+    stops at its first failure: the decode proxy's illegal-memory bug
+    corrupts the CUDA context."""
+
+    def __init__(self, a):
+        self.a = a
+        self.dev, self.dt = torch.device("cuda"), torch.bfloat16
+        self.scale = 1.0 / (a.dk ** 0.5)
+        self.base = f"{a.gpu_label}_{a.geometry_tag}"
+        self.failed = False
+
+    def grid(self):
+        a = self.a
+        # PREFILL grid FIRST: chunk_gated_delta_rule, B=1, T=seq (eager in serving ->
+        # always cuda_event). Deliberately before decode: the fragile fused_recurrent
+        # decode proxy hits an illegal-memory bug (B=16 on 3090, B>=120 on A100/H100)
+        # that corrupts the CUDA context; running prefill first saves the floor grid
+        # regardless of where decode dies.
+        for T in SEQ_SMOKE if a.mode == "smoke" else SEQ_FULL:
+            if self.failed:
+                break
+            yield "prefill", T
+        self.failed = False
+        # DECODE grid: fused recurrent, T=1, initial recurrent state [B,H,V,K]
+        for B in BATCH_NCU if a.ncu else (BATCH_SMOKE if a.mode == "smoke" else BATCH_FULL):
+            if self.failed:
+                break
+            yield "decode", B
+
+    def run_point(self, point):
+        phase, n = point
+        a = self.a
+        try:
+            us = self.prefill_us(n) if phase == "prefill" else self.decode_us(n)
+        except Exception as ex:
+            print(f"  {phase} {'T' if phase == 'prefill' else 'B'}={n} FAILED: {type(ex).__name__}: {ex}",
+                  flush=True)
+            traceback.print_exc()
+            self.failed = True
+            return None
+        if us is None:
+            return None
+        if phase == "prefill":
+            print(f"  prefill T={n:5d}: {us:8.2f} us/call  x{a.n_linear}L={us*a.n_linear:9.1f} us", flush=True)
+            return ProbeRow("gdn", f"gdn/{self.base}_prefill.csv", {"seq_len": n},
+                            {"us_per_call": round(us, 3), "us_x_nlinear": round(us * a.n_linear, 3)}, "eager")
+        print(f"  {'ncu ' if a.ncu else ''}decode B={n:4d}: {us:8.2f} us/call  x{a.n_linear}L={us*a.n_linear:9.1f} us", flush=True)
+        # Decode is CUDA-graphed in serving -> NCU (--ncu) is faithful.
+        return ProbeRow("gdn", f"gdn/{self.base}_decode.csv", {"batch": n},
+                        {"us_per_call": round(us, 3), "us_x_nlinear": round(us * a.n_linear, 3)},
+                        "ncu" if a.ncu else "eager")
+
+    def prefill_us(self, T):
+        a = self.a
+        q, k, v, g, beta = mk(1, T, a.hv, a.dk, a.dv, self.dev, self.dt)
+
+        def call():
+            return chunk_gated_delta_rule(
+                q, k, v, g, beta, scale=self.scale, output_final_state=True,
+                use_qk_l2norm_in_kernel=True)
+        return time_call(call)
+
+    def decode_us(self, B):
+        a = self.a
+        H, K, V = a.hv, a.dk, a.dv
+        if a.ncu:
+            us = ncu_op_us(_ncu_decode_inner(B, H, K, V), a.ncu_bin, NCU_REPS)
+            if us is None:
+                print(f"  ncu MISS decode B={B}", flush=True)
+            return us
+        q, k, v, g, beta = mk(B, 1, H, K, V, self.dev, self.dt)
+        state = torch.randn(B, H, V, K, device=self.dev, dtype=torch.float32)
+        # NOTE: representative GDN decode-core cost. The faithful serving decode
+        # is fused_sigmoid_gating_delta_rule_update (fixed-param, no autotune);
+        # the generic recurrent delta-rule is the same math and a valid proxy.
+
+        def call():
+            return fused_recurrent_gated_delta_rule(
+                q, k, v, g, beta, scale=self.scale, initial_state=state,
+                inplace_final_state=False, use_qk_l2norm_in_kernel=True)
+        return time_call(call)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--hv", type=int, default=32)     # linear_num_value_heads
@@ -107,82 +191,9 @@ def main(argv=None):
     ap.add_argument("--ncu", action="store_true", help="NCU per-kernel timing (the standard); curated grid")
     ap.add_argument("--ncu-bin", default=os.environ.get("NCU_BIN", "ncu"))
     a = ap.parse_args(argv)
-    dev = torch.device("cuda")
-    dt = torch.bfloat16
-    H, K, V = a.hv, a.dk, a.dv
-    scale = 1.0 / (K ** 0.5)
-    out = out_root(a, "gdn")
-    out.mkdir(parents=True, exist_ok=True)
-    # Decode is CUDA-graphed in serving -> NCU (--ncu) is faithful; prefill is eager
-    # -> always cuda_event (the multi-kernel dispatch floor is real), never NCU.
-    batch_ax = BATCH_NCU if a.ncu else (BATCH_SMOKE if a.mode == "smoke" else BATCH_FULL)
-    seq_ax = SEQ_SMOKE if a.mode == "smoke" else SEQ_FULL
-    print(f"[gdn{'/ncu' if a.ncu else ''}] dev={torch.cuda.get_device_name(0)} H={H} K={K} V={V} n_linear={a.n_linear}", flush=True)
-
-    # PREFILL grid FIRST: chunk_gated_delta_rule, B=1, T=seq (eager in serving ->
-    # always cuda_event). Deliberately before decode: the fragile fused_recurrent
-    # decode proxy hits an illegal-memory bug (B=16 on 3090, B>=120 on A100/H100)
-    # that corrupts the CUDA context; running prefill first saves the floor grid
-    # regardless of where decode dies.
-    pre_rows = []
-    for T in seq_ax:
-        try:
-            q, k, v, g, beta = mk(1, T, H, K, V, dev, dt)
-            def call():
-                return chunk_gated_delta_rule(
-                    q, k, v, g, beta, scale=scale, output_final_state=True,
-                    use_qk_l2norm_in_kernel=True)
-            us = time_call(call)
-            pre_rows.append((T, round(us, 3), round(us * a.n_linear, 3)))
-            print(f"  prefill T={T:5d}: {us:8.2f} us/call  x{a.n_linear}L={us*a.n_linear:9.1f} us", flush=True)
-        except Exception as ex:
-            print(f"  prefill T={T} FAILED: {type(ex).__name__}: {ex}", flush=True)
-            traceback.print_exc()
-            break
-
-    # DECODE grid: fused recurrent, T=1, initial recurrent state [B,H,V,K]
-    dec_rows = []
-    for B in batch_ax:
-        try:
-            if a.ncu:
-                us = ncu_op_us(_ncu_decode_inner(B, H, K, V), a.ncu_bin, NCU_REPS)
-                if us is None:
-                    print(f"  ncu MISS decode B={B}", flush=True)
-                    continue
-            else:
-                q, k, v, g, beta = mk(B, 1, H, K, V, dev, dt)
-                state = torch.randn(B, H, V, K, device=dev, dtype=torch.float32)
-                # NOTE: representative GDN decode-core cost. The faithful serving decode
-                # is fused_sigmoid_gating_delta_rule_update (fixed-param, no autotune);
-                # the generic recurrent delta-rule is the same math and a valid proxy.
-                def call():
-                    return fused_recurrent_gated_delta_rule(
-                        q, k, v, g, beta, scale=scale, initial_state=state,
-                        inplace_final_state=False, use_qk_l2norm_in_kernel=True)
-                us = time_call(call)
-            dec_rows.append((B, round(us, 3), round(us * a.n_linear, 3)))
-            print(f"  {'ncu ' if a.ncu else ''}decode B={B:4d}: {us:8.2f} us/call  x{a.n_linear}L={us*a.n_linear:9.1f} us", flush=True)
-        except Exception as ex:
-            print(f"  decode B={B} FAILED: {type(ex).__name__}: {ex}", flush=True)
-            traceback.print_exc()
-            break
-
-    # decode -> {ncu,cuda_event}/gdn/ (follows --ncu); prefill -> cuda_event/gdn/.
-    base = f"{a.gpu_label}_{a.geometry_tag}"
-    dec_method = "ncu" if a.ncu else "cuda_event"
-    ddir = out / dec_method / "gdn"
-    ddir.mkdir(parents=True, exist_ok=True)
-    pdir = out / "cuda_event" / "gdn"
-    pdir.mkdir(parents=True, exist_ok=True)
-    with open(ddir / f"{base}_decode.csv", "w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(["batch", "us_per_call", "us_x_nlinear"])
-        w.writerows(dec_rows)
-    with open(pdir / f"{base}_prefill.csv", "w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(["seq_len", "us_per_call", "us_x_nlinear"])
-        w.writerows(pre_rows)
-    print(f"[gdn] wrote {ddir}/{base}_decode.csv + {pdir}/{base}_prefill.csv ({len(dec_rows)}/{len(pre_rows)} rows)", flush=True)
+    print(f"[gdn{'/ncu' if a.ncu else ''}] dev={torch.cuda.get_device_name(0)} H={a.hv} K={a.dk} V={a.dv} n_linear={a.n_linear}", flush=True)
+    n = GdnProbe(a).run()
+    print(f"[gdn] {n} rows of gdn/{a.gpu_label}_{a.geometry_tag}_decode.csv and _prefill.csv", flush=True)
 
 
 if __name__ == "__main__":

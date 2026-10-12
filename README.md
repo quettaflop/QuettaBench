@@ -117,9 +117,9 @@ matrix suffixes are cut to that charset.
 Grid runs no longer write `results/baselines/*.json`; `qbench xval`
 reads the run dir, and still reads old baselines files. Each probe run writes
 its own `results/probes/<gpu>/<probe>/<run-id>/` (the run id is its UTC start,
-e.g. `20261011T120000.000000Z`) and records itself beside its tables in
-`run.json` there (argv, provenance, run_status), holding only the rows that
-run measured. `just export` unions every ok run's rows per table on the key
+e.g. `20261011T120000.000000Z`): `run.json` (argv, provenance, run_status) and
+`rows.jsonl`, one `ProbeRow` (probe, table, key, value, timing) per measured row.
+`just export` builds every kernel table from those rows, unioning every ok run's rows per table on the key
 the probe's old upsert used, the run that finished last winning a key, and
 takes a table with no row key from the run that finished last
 (`docs/runbooks/probes.md`). It merges into the tables QuettaSim already

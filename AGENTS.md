@@ -10,7 +10,7 @@ doors: `run | profile | xval | export`; `just provision` sets the box up.
 It has one measurement procedure, `quettabench/modes/serve.py`. Three structs flow one way, `Config ->
 LaunchSpec -> RequestResult`, and nothing flows back. Every measurement lands
 in one results layer, `results/<run>/`, and leaves the repo by
-`quettabench/export/quettasim.py`; the probes' tables also leave by `just mirror-up`
+`quettabench/export/quettasim.py`; the probe runs also leave by `just mirror-up`
 (below).
 
 ## Layout
@@ -35,8 +35,8 @@ in one results layer, `results/<run>/`, and leaves the repo by
   engine name; an engine difference is a driver.
 - `quettabench/metrics/`: one percentile function, and the caller states the
   method. `step_fit.py` turns grid rows into ms per step. `results.py`
-  writes every `run.json` and `requests.jsonl`; besides it only the probes
-  (their tables under `results/probes/`), the profiler (`profile.json` and
+  writes every `run.json`, `requests.jsonl` and a probe run's `rows.jsonl`
+  (one `ProbeRow` per line, append-only); besides it only the profiler (`profile.json` and
   the nsys export in the run dir) and crossval (`results/xval/`) write
   under `results/`.
 - `quettabench/profiling/` and `profiler.py`: attach only. They never launch
@@ -45,7 +45,10 @@ in one results layer, `results/<run>/`, and leaves the repo by
   is a torchrun target whose CSV the `kv_transfer` source reads.
 - `quettabench/probes/`: kernel microbenchmarks and live-server probes. Each
   run records itself in `run.json` through `metrics/results.py`
-  (`probes/base.py` `run_recorded`). `probes/_timing.py` holds the shared
+  (`probes/base.py` `run_recorded`). A kernel probe emits `ProbeRow`s
+  (`probes/base.py`: probe, table, key, value, timing) into its run's
+  `rows.jsonl`; it writes no table, and only `kernel_tables` builds them.
+  `Probe` (`grid()`, `run_point() -> ProbeRow`) is the ABC the grid probes use. `probes/_timing.py` holds the shared
   CUDA-graph and NCU timing. Their guide and runbooks are in `docs/runbooks/`.
 - Owner decision (2026-10-11): probes and profiler sources may send requests
   to an engine that launcher.py started, to measure engine-level behaviour;
@@ -91,6 +94,8 @@ One line each; everything else follows section 2 "Target layout".
 - `probes/_timing.py` holds the CUDA-graph and NCU timing, not `probes/base.py`: it imports torch, and the runner imports `base.py` on CPU.
 - `serving_decode_grid.py` and `serving_stage_split.py` (read by the export builders) are probes beyond section 2's list.
 - `profiling/frontend.py` holds the `frontend` and `pd_host` sources, not `native.py`: both import QuettaSim at the top, and the profiler imports `native.py` for every source.
+- `moe`, `collective`, `vllm_allreduce`, `reparallel` and `profiling/kv_transfer.py` emit `ProbeRow`s without the `Probe` ABC: moe allocates each geometry's weights once for all its token points, and the others run under torchrun, where rank 0 emits rows the ranks measured together.
+- A run that measured no rows for a table exports no table for it; the per-probe CSVs wrote a header-only table, which replaced (or, without `--append`, reset) the earlier runs' rows.
 - `profiling/kv_transfer.py` stays its own module: it is a torchrun target (`-m quettabench.profiling.kv_transfer`) and the tool name in the kernel manifest.
 - `tests/` has `golden/` and `contracts/` only: the probe contracts and GPU smoke tests live in `contracts/` (owner decision 2026-10-12), and `tests/parity/` waits for the GPU parity gate.
 - `analysis/` has no synthetic-sampler studies or `build_trace_distributions`: `analysis/synthetic/` was deleted by owner decision (2026-10-12, "scrap synthetic").
@@ -109,8 +114,9 @@ Every writer and every process starter, exactly:
 - `InProcessDriver` (`engines/drivers.py`): builds the vLLM engine inside this
   process; starts no process.
 - `metrics/results.py` `RunWriter`: `run.json` and `requests.jsonl`.
-- probes: their tables and their `run.json` in one dir under `results/`
-  (default `results/probes/<gpu>/<probe>/<run-id>/`); `serving_decode_grid` also starts its request
+- probes: their `run.json` and `rows.jsonl` (through `RunWriter`) in one dir under `results/`
+  (default `results/probes/<gpu>/<probe>/<run-id>/`); the live-server probes their CSV and
+  JSONL outputs there; `serving_decode_grid` also starts its request
   shards as `multiprocessing` processes, and `probes/_timing.py` (gemm, flash_attn,
   gdn `--ncu`) starts `ncu` with a `python -c` child per timed point.
 - `justfile` `remote-probe` (`probes/base.py` `remote_probe`): starts `ssh`
@@ -120,15 +126,15 @@ Every writer and every process starter, exactly:
   the pulled run under `results/probes/<gpu>/` and stamps its `run.json`
   `provenance.pulled` through `metrics/results.py` `stamp_pulled`.
 - `profiler.py`: `profile.json` (and the nsys export) in the run dir.
-- `profiling/kv_transfer.py`: its table and `run.json` in its probe run dir
+- `profiling/kv_transfer.py`: its `rows.jsonl` and `run.json` in its probe run dir
   (`results/probes/<gpu>/kv_transfer/<run-id>/`), run under its own torchrun
   ranks.
 - `profiling/frontend.py`: the frontend source's JSON at `--out`, when given,
   and the pd_host source's CSV at `--out`.
 - `workloads/tokenize.py`: the tokenized request jsonl at `--out`.
 - `crossval.py`: its report json (default `results/xval/`).
-- `export/quettasim.py`: the QuettaSim tables at `--dest`, and the kernel tables under
-  `--kernel-dest` (QuettaSim's data root), outside the repo.
+- `export/quettasim.py`: the QuettaSim tables at `--dest`, and the kernel tables, built from
+  the ok probe runs' `rows.jsonl`, under `--kernel-dest` (QuettaSim's data root), outside the repo.
 - `provision.py`: outside the repo, the `cache_root` dirs, the QuettaServe
   `git clone`, `pip install`, the weights download and `cargo` builds; in the
   repo, `.env`.

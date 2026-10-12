@@ -1,12 +1,13 @@
 """qbench export: results dirs in, QuettaSim's files out; the one route out of QuettaBench.
 
-kernel_tables merges the probes' kernel tables into QuettaSim's data root (--kernel-dest), the tree its kernel_composed backend reads.
+kernel_tables builds QuettaSim's kernel tables from the probe runs' rows.jsonl into its data root (--kernel-dest), the tree its kernel_composed backend reads.
 The other builders write their fitted constants and grids under --dest; every export writes a manifest of the runs it read.
 """
 from __future__ import annotations
 
 import argparse
 import csv
+import dataclasses
 import functools
 import gzip
 import inspect
@@ -127,10 +128,11 @@ def stage_split_legs(results_dirs: Iterable[Path], gpu: str) -> list[tuple[int, 
     return legs
 
 
-# A probe run's method dir -> QuettaSim's kernel_data dir (kernel_composed/provenance.py DIRS).
-DIRS = {"ncu": "graph", "cuda_event": "eager"}
-# eager/ kinds timed by host clocks around a whole operation (mode host_wallclock).
-HOST_KINDS = ("reparallel", "kv_transfer")
+# A row's timing -> QuettaSim's kernel_data dir (kernel_composed/provenance.py MODES).
+DIRS = {"graph_replay": "graph", "ncu": "graph", "amortized_wallclock": "graph",
+        "eager": "eager", "host_wallclock": "eager"}
+# The indent and ending of a probe's JSON table, as its own file was written.
+JSON_STYLE = {"elementwise": (2, ""), "gemm": (2, "\n"), "moe": (1, "\n")}
 # The reduce each probe takes over its timings, for graph_replay and eager tables.
 REDUCE = {"gemm": "min", "moe": "min", "elementwise": "median", "flash_attn": "median",
           "cross_attn": "median", "gdn": "median"}
@@ -178,16 +180,6 @@ def _record(run_dir: Path) -> tuple[str | None, list[str], str | None]:
     return probe, args, finished[:10] if isinstance(finished, str) else None
 
 
-def _mode(rel: Path, args: list[str]) -> str:
-    """QuettaSim's mode for a table one run wrote with args."""
-    where, kind = rel.parts[0], rel.parts[1]
-    if where == "eager":
-        return "host_wallclock" if kind in HOST_KINDS else "eager"
-    if kind == "collectives":
-        return "reference" if rel.stem.endswith("_nccl_vs_vllm") else "amortized_wallclock"
-    return "ncu" if "--ncu" in args else "graph_replay"
-
-
 def _gpu(args: list[str]) -> str | None:
     ap = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
     ap.add_argument("--gpu-label", "--gpu")
@@ -199,14 +191,14 @@ def _sidecar(rel: Path, by_probe: dict[str, list[Source]], runs: set[Path]) -> d
     two modes make mode unknown."""
     probes, modes, gpus, reduces, days = set(), set(), set(), set(), []
     for probe, sources in by_probe.items():
-        for run in (s[2] for s in sources if s[2] in runs):
+        for _, table, run, _ in (s for s in sources if s[2] in runs):
             _, args, day = _record(run)
-            mode = _mode(rel, args)
+            for mode in ({"reference"} if rel.stem.endswith("_nccl_vs_vllm") else table.timings):
+                modes.add(mode)
+                reduces.add("min" if mode == "ncu" else REDUCE.get(probe)
+                            if mode in ("graph_replay", "eager") else None)
             probes.add(probe)
-            modes.add(mode)
             gpus.add(_gpu(args))
-            reduces.add("min" if mode == "ncu" else REDUCE.get(probe)
-                        if mode in ("graph_replay", "eager") else None)
             days.append(day or "")
     return {"schema": 1, "table": rel.as_posix(), "dir": rel.parts[0],
             "gpu": gpus.pop() if len(gpus) == 1 else None,
@@ -241,7 +233,16 @@ def _keep_sidecar(meta: dict, table: Path, kept: bool) -> dict:
             "measured": " .. ".join(dict.fromkeys(days[:1] + days[-1:])) or None}
 
 
-Source = tuple[datetime, Path, Path, bool]  # (finished, table, its run dir, ran with --append)
+@dataclasses.dataclass
+class Rows:
+    """One run's rows of one table from its rows.jsonl: each row's key and
+    value cells, the probe and how the rows were timed."""
+    probe: str
+    timings: set[str]
+    cells: list[dict]
+
+
+Source = tuple[datetime, "Path | Rows", Path, bool]  # (finished, dest table or a run's rows, run dir, --append)
 
 
 class Lost(SystemExit):
@@ -249,22 +250,38 @@ class Lost(SystemExit):
     replaces just the tables that stop with it."""
 
 
+def _rows(run: Path) -> list[dict]:
+    """run's rows.jsonl, one ProbeRow dict per line; stops the export on a
+    line that is not one."""
+    rows = []
+    for n, line in enumerate((run / "rows.jsonl").read_text().splitlines(), 1):
+        try:
+            row = json.loads(line)
+            if row["timing"] not in DIRS or not all(isinstance(row[f], dict) for f in ("key", "value")):
+                raise ValueError
+            rows.append(row)
+        except (ValueError, KeyError, TypeError):
+            raise SystemExit(f"{run}/rows.jsonl line {n} malformed") from None
+    return rows
+
+
 def found(results_dirs: Iterable[Path]) -> dict[Path, dict[str, list[Source]]]:
-    """{<dir>/<kind>/<file>: {probe: its ok runs' tables, in finished order}}."""
+    """{<dir>/<kind>/<file>: {probe: its ok runs' rows, in finished order}}."""
     tables: dict[Path, dict[str, list[Source]]] = {}
     for root in map(Path, results_dirs):
-        runs = run_dirs(root)
-        for method, where in DIRS.items():
-            for path in files(root, f"{method}/*/*"):
-                run = owner(path, root, runs)
-                if not path.is_file() or run is None or not (run / "run.json").is_file():
-                    continue
-                rel = path.relative_to(run).parts
-                probe, args, _ = _record(run)
-                if probe is None or rel[-3] != method or rel[:-3] not in ((), (probe,)):
-                    continue
-                source = (finished(run), path, run, "--append" in args)
-                tables.setdefault(Path(where, *rel[-2:]), {}).setdefault(probe, []).append(source)
+        for path in files(root, "rows.jsonl"):
+            run = path.parent
+            if not (run / "run.json").is_file() or _record(run)[0] is None:
+                continue
+            args = _record(run)[1]
+            mine: dict[Path, Rows] = {}
+            for row in _rows(run):
+                rows = mine.setdefault(Path(DIRS[row["timing"]], row["table"]), Rows(row["probe"], set(), []))
+                rows.timings.add(row["timing"])
+                rows.cells.append({**row["key"], **row["value"]})
+            for rel, rows in mine.items():
+                tables.setdefault(rel, {}).setdefault(rows.probe, []).append(
+                    (finished(run), rows, run, "--append" in args))
     for by_probe in tables.values():
         for sources in by_probe.values():
             sources.sort(key=lambda s: (s[0], str(s[2])))
@@ -293,13 +310,15 @@ def _key(row: dict, key: tuple[str, ...]) -> tuple:
                  else float(row[c]) if c == "total_weight_gb" else int(row[c]) for c in key)
 
 
-def _newline(table: Path) -> str:
-    """The line ending of table's first line."""
+def _newline(table: Path | Rows) -> str:
+    """The line ending of table's first line; a run's rows get csv's own."""
+    if isinstance(table, Rows):
+        return "\r\n"
     with table.open("rb") as f:
         return "\r\n" if f.readline().endswith(b"\r\n") else "\n"
 
 
-def _write_csv(out: Path, fields: list[str], rows: Iterable[dict], like: Path) -> None:
+def _write_csv(out: Path, fields: list[str], rows: Iterable[dict], like: Path | Rows) -> None:
     """rows under fields, with like's line ending."""
     with out.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fields, restval="", lineterminator=_newline(like))
@@ -307,14 +326,19 @@ def _write_csv(out: Path, fields: list[str], rows: Iterable[dict], like: Path) -
         w.writerows(rows)
 
 
-def _read_csv(rel: Path, table: Path, run: Path,
+def _read_csv(rel: Path, table: Path | Rows, run: Path,
               key: tuple[str, ...] = ()) -> tuple[list[str], list[dict]]:
-    """table's header and rows; stops the export on a row with a missing or
-    extra cell or a key that is empty or does not parse."""
-    with table.open(newline="") as f:
-        reader = csv.DictReader(f)
-        rows = list(reader)
-        fields = list(reader.fieldnames or [])
+    """table's header and rows as csv reads them (a run's cells as strings);
+    stops the export on a row with a missing or extra cell or a key that is
+    empty or does not parse."""
+    if isinstance(table, Rows):
+        fields = list(dict.fromkeys(c for cells in table.cells for c in cells))
+        rows = [{c: "" if cells.get(c) is None else str(cells[c]) for c in fields} for cells in table.cells]
+    else:
+        with table.open(newline="") as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+            fields = list(reader.fieldnames or [])
     if not fields:
         raise SystemExit(f"{rel.as_posix()}: {run} has no header (empty CSV)")
     for n, row in enumerate(rows, 1):
@@ -327,7 +351,9 @@ def _read_csv(rel: Path, table: Path, run: Path,
     return fields, rows
 
 
-def _read_json(rel: Path, table: Path, run: Path) -> object:
+def _read_json(rel: Path, table: Path | Rows, run: Path) -> object:
+    if isinstance(table, Rows):
+        return {cells["entry"]: cells["value"] for cells in table.cells}
     try:
         return json.loads(table.read_text())
     except ValueError:
@@ -376,12 +402,19 @@ def _union_json(rel: Path, sources: list[Source], out: Path) -> list[Path]:
         if not isinstance(entries, dict):
             raise SystemExit(f"{rel.as_posix()}: {run} malformed JSON (not an object)")
         merged.update({k: (v, run) for k, v in entries.items()})
-    text = sources[0][1].read_text()
+    indent, end = _json_style(sources[0][1])
+    out.write_text(json.dumps({k: v for k, (v, _) in merged.items()}, indent=indent) + end)
+    return list(dict.fromkeys(run for _, run in merged.values()))
+
+
+def _json_style(table: Path | Rows) -> tuple[int | None, str]:
+    """(indent, ending) of a dest JSON table, or of the probe's own JSON."""
+    if isinstance(table, Rows):
+        return JSON_STYLE[table.probe]
+    text = table.read_text()
     lines = text.splitlines()
     indent = len(lines[1]) - len(lines[1].lstrip(" ")) if len(lines) > 1 else None
-    out.write_text(json.dumps({k: v for k, (v, _) in merged.items()}, indent=indent)
-                   + "\n" * text.endswith("\n"))
-    return list(dict.fromkeys(run for _, run in merged.values()))
+    return indent, "\n" * text.endswith("\n")
 
 
 def _merge_collectives(rel: Path, collective: Source | None, vllm: Source | None, out: Path,
@@ -482,13 +515,9 @@ def _write(rel: Path, by_probe: dict[str, list[Source]], out: Path,
         newer = {_key(r, key) for s in sources if key for r in _read_csv(rel, s[1], s[2], key)[1]}
         _lost(rel, old, out, key, newer)
         return runs
-    if len(sources) == 1:
+    if len(sources) == 1 and rel.suffix == ".csv":
         _, table, run, _ = sources[0]
-        if rel.suffix == ".json":
-            _read_json(rel, table, run)
-        elif rel.suffix == ".csv":
-            _read_csv(rel, table, run, key)
-        shutil.copyfile(table, out)
+        _write_csv(out, *_read_csv(rel, table, run, key), table)
         return [run]
     if rel.suffix == ".json":
         return _union_json(rel, sources, out)
