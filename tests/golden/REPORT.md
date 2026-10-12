@@ -17,7 +17,6 @@ Run `python3 -m pytest tests/golden -q`. `QBENCH_GOLDEN_REGEN=1` rewrites the fi
 | `chat-singleturn` | `2c2c330fe937283f` | `1b84966cb9c4facc` |
 | `chat-multiturn-short` | `57c82245406bcdf1` | `c51f134d3946f53d` |
 | `coding-singleturn` | `03481570266bb2d4` | `15384d696a4d7a1b` |
-| `random-1k` | `fdaa0aa7451df053` | `00740b698acbf0f7` |
 | `swebench-multiturn-short` | `d4dca931e18de175` | `9f0aa9d6f98e5bd3` |
 | `test` | `c19e2bb3db6d4434` | `7ae706bdf8eeae1d` |
 
@@ -99,7 +98,7 @@ Run `python3 -m pytest tests/golden -q`. `QBENCH_GOLDEN_REGEN=1` rewrites the fi
 
 2026-10-12: no fixture changed. Redaction replaces a non-empty list or mapping under a secret name with REDACTED whole; a secret NAME=value after a comma (`A=1,HF_TOKEN=sk`) is redacted, and in a command line a quoted value (`export HF_TOKEN='sk x'`) is replaced whole. The stale-baseline warning points at `just run configs/runs/<wl>.yaml`.
 
-2026-10-12: no fixture changed; `configs/workloads.yaml` holds every workload profile, and `tests/contracts/test_workloads.py` pins only the profiles it still names: `chat-singleturn`, `chat-multiturn-short`, `coding-singleturn`, `mooncake-trace`, `random-1k`, `swebench-multiturn-short` and `test`. The `cut` pin truncates `swebench-multiturn-short`: `0e8b8a8de4442ecb` / `c8f75cbcdd1e78dc` (workload_hash / content digest).
+2026-10-12: no fixture changed; `configs/workloads.yaml` holds every workload profile, and `tests/contracts/test_workloads.py` pins only the profiles it still names: `chat-singleturn`, `chat-multiturn-short`, `coding-singleturn`, `mooncake-trace`, `swebench-multiturn-short` and `test`. The `cut` pin truncates `swebench-multiturn-short`: `0e8b8a8de4442ecb` / `c8f75cbcdd1e78dc` (workload_hash / content digest).
 
 2026-10-12: `bootstrap_plan.json` holds llama's weights gap, not a quettaserve block gap, because a model yaml without a `quettaserve:` block does not count as MISSING: provision logs `llama: no quettaserve: block in its model yaml; vLLM side only` and resolves the vLLM side. Exit code and every other line are unchanged.
 
@@ -114,3 +113,5 @@ Run `python3 -m pytest tests/golden -q`. `QBENCH_GOLDEN_REGEN=1` rewrites the fi
 2026-10-12: grid timing runs over HTTP; the golden harness serves it with `StandInServer`, which runs each posted batch on the stub engine, so every grid fixture (`vmin_fit_llama.log`, `config_workloads.json`, `engine_args.json`, the crossval tables) holds the same bytes as a direct run. The eleven `override` `vmin_fit` records in `config_workloads.json` are present because vLLM serves `engine.pp` as `--pipeline-parallel-size` and `engine.cudagraph=false` as `--enforce-eager`, so the `XVAL_PP=2` timing grid launches the server. `engine_args.json`'s kwargs are taken from a `mode.returns=text` run, the path that builds `vllm.LLM`.
 
 2026-10-12: `config_global.json`, `config_workloads.json`, `engine_args.json` and `config_failures.json` name the runs `llama-big` and `llama-big-fp8kv` and the grids `table_big` and `table_16k_bs64` (its one cell is ctx 16384 at batch 64); no value changed. `table_16k_bs64` sorts ahead of `table_big` in `config_global.json`'s keys.
+
+2026-10-12: no fixture changed; qbench runs real traces only. `RandomTokenTrace` and the `random-1k` profile are gone, so their pin is too, and a workload source named `random*` or `synthetic*` that is not a file is refused.
