@@ -13,7 +13,7 @@ quettaserve:
   test: batch_bench
   env_prefix: DS
   family: moe
-crossval:
+compare:
   comm_bound_bs: 64
 provenance:
   engine_commit: 8f99a55

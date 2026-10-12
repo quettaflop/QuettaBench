@@ -18,7 +18,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 import aiohttp
 
-from quettabench import crossval
+from quettabench import compare
 from quettabench.config import env_map
 from quettabench.config.schema import OTHER_ACCELERATORS, ConfigError
 from quettabench.engines import launcher
@@ -550,7 +550,7 @@ class BenchDriver(Driver):
 
     def rows(self):
         """Already ms per step, so step_fit passes it through."""
-        points, method, notes = crossval.bench_log_points(self.log_path)
+        points, method, notes = compare.bench_log_points(self.log_path)
         for note in notes:
             print(note)
         for (ctx, bs, tp), (ms, group, kv) in points.items():

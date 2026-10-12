@@ -105,7 +105,7 @@ class LoaderRules(unittest.TestCase):
         cfg = self.one(env={"XVAL_LINK_PROFILE": "nvlink"})
         self.assertEqual(cfg.hardware.collective, {"NCCL_ALGO": ""})
 
-    def test_auto_link_profile_detects_like_xval_config(self):
+    def test_auto_link_profile_detects_like_captured_config(self):
         path = self.write("runs/r.yaml", {"model": "toy"})
         with mock.patch("shutil.which", return_value=None):
             cfg = load(path, env={})[0]
@@ -117,7 +117,7 @@ class LoaderRules(unittest.TestCase):
             ("runs/r.yaml", lambda: self.load({"engines": {}}), "engines"),
             ("models/toy.yaml", lambda: self.load(model={"maxlen": 1}), "maxlen"),
             ("models/toy.yaml", lambda: self.load(model={"quettaserve": {"ok": "x"}}), "ok"),
-            ("models/toy.yaml", lambda: self.load(model={"crossval": {"x": 1}}), "crossval.x"),
+            ("models/toy.yaml", lambda: self.load(model={"compare": {"x": 1}}), "compare.x"),
             (
                 "runs/r.yaml",
                 lambda: self.load({"hardware": {"collective": {"NCCL_X": 1}}}),
@@ -343,7 +343,7 @@ class LoaderRules(unittest.TestCase):
             "/tmp/x",
             "a/../..",
             "probes",
-            "xval",
+            "compare",
             "baselines",
             "Probes",
             "",

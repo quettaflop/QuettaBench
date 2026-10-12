@@ -36,7 +36,7 @@ class ReadEnv(unittest.TestCase):
                 "engine.ep": True,
                 "provenance.engine_sha": "1234567",
                 "hardware.visible_devices": "0",
-                "crossval.allow_method_mismatch": True,
+                "compare.allow_method_mismatch": True,
                 "detect.tpu_name": "v5",
             },
         )

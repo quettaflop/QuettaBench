@@ -280,7 +280,7 @@ class LineFormats(unittest.TestCase):
         )
         records = [{"ttft_ms": 5.0, "index": 0, "out_tokens": 1, "arrival_s": 0.0, "tpot_ms": None}]
         with mock.patch.object(serve, "serve_records", return_value=records):
-            sections = serve.crossval_sections([], 1.0, ModeCfg(sla_ttft_ms=30.0, sla_tpot_ms=10.0))
+            sections = serve.compare_sections([], 1.0, ModeCfg(sla_ttft_ms=30.0, sla_tpot_ms=10.0))
         self.assertIsNone(sections["sla"]["tpot_p99"])
 
     def test_off_and_void_and_goodput(self):

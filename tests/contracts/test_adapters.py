@@ -479,7 +479,7 @@ class OkPattern(unittest.TestCase):
     def test_matches_the_workload_records(self):
         records = json.loads((FIXTURES / "config_workloads.json").read_text())
         for name in ("deepseek", "qwen3"):
-            bench = records[name]["cleared"]["xval_config"]["workload"]["bench"]
+            bench = records[name]["cleared"]["captured_config"]["workload"]["bench"]
             self.assertEqual(quettaserve.OK_BY_TEST[bench["test"]], bench["ok"])
 
 

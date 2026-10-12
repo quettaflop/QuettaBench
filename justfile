@@ -61,8 +61,8 @@ profile *args:
     {{py}} -m quettabench.cli profile {{args}}
 
 # Compare results dirs at matched cells
-xval *args:
-    {{py}} -m quettabench.cli xval {{args}}
+compare *args:
+    {{py}} -m quettabench.cli compare {{args}}
 
 test:
     python3 -m pytest tests -q

@@ -1,4 +1,4 @@
-"""Shared test plumbing: a fake OpenAI endpoint and stub run dirs for crossval."""
+"""Shared test plumbing: a fake OpenAI endpoint and stub run dirs for compare."""
 
 import http.server
 import json

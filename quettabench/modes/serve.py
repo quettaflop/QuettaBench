@@ -272,7 +272,7 @@ def server_spec_section(before, after):
     }
 
 
-def crossval_sections(pairs, duration, mode, server_spec=None):
+def compare_sections(pairs, duration, mode, server_spec=None):
     """spec prefers the server's counters over the rows'."""
     out = {"spec": server_spec or spec_section(pairs)}
     records = serve_records(pairs, mode.load == "open")
@@ -444,7 +444,7 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
     enforce(usage_gate(core, mode.allow_missing_usage), writer, summary)
 
     ident = summary.sections["workload"] = identity(trace, served(pairs))
-    summary.sections.update({"goodput": goodput} if goodput else crossval_sections(pairs, duration, mode, server_spec))
+    summary.sections.update({"goodput": goodput} if goodput else compare_sections(pairs, duration, mode, server_spec))
     print_summary_tag_lines(summary.sections)
     if not ident["match"]:
         stop(writer, summary.to_dict(), "failed", "workload identity", IDENTITY_EXIT)

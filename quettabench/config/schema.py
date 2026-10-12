@@ -64,7 +64,7 @@ DICT_KEYS = {
         "hf_id",
     ),
     "provenance": ("engine_sha", "engine_commit", "checkpoint"),
-    "crossval": ("comm_bound_bs", "allow_method_mismatch"),
+    "compare": ("comm_bound_bs", "allow_method_mismatch"),
 }
 
 
@@ -72,7 +72,7 @@ DICT_KEYS = {
 class EngineCfg:
     name: str = "vllm"
     model: str | None = None  # weights dir or HF id
-    model_name: str = ""  # display name: grid META model=, crossval comm_bound_bs match
+    model_name: str = ""  # display name: grid META model=, compare comm_bound_bs match
     tp: int = 1
     pp: int = 1
     ep: bool = False  # model yaml ep, ENABLE_EP
@@ -181,7 +181,7 @@ class Config:
     grid: GridCfg | None = None
     run_name: str = ""
     provenance: Mapping[str, Any] = field(default_factory=dict)  # engine_sha
-    crossval: Mapping[str, Any] = field(default_factory=dict)  # crossval comm_bound_bs
+    compare: Mapping[str, Any] = field(default_factory=dict)  # compare comm_bound_bs
     origins: Mapping[str, str] = field(default_factory=dict)
 
     def to_dict(self):
@@ -224,7 +224,7 @@ def default_values():
             out[f"{section}.{f.name}"] = dv
     out["run_name"] = ""
     out["provenance"] = {}
-    out["crossval"] = {}
+    out["compare"] = {}
     return out
 
 

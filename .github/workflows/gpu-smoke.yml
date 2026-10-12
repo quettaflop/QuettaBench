@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   probe-smoke:
-    # Self-hosted GPU runner whose default python has torch, vllm and pytest; the crossval smoke also needs MODEL set to a Llama weights dir.
+    # Self-hosted GPU runner whose default python has torch, vllm and pytest; the compare smoke also needs MODEL set to a Llama weights dir.
     runs-on: [self-hosted, gpu]
     steps:
       - uses: actions/checkout@v4

@@ -10,7 +10,7 @@ collective:
   LLMSRV_NO_NVLS: '1'
   LLMSRV_TWOSHOT_MIN_BYTES: '0'
 provision:
-  cache_root: /workspace/.xval-cache
+  cache_root: /workspace/.qbench-cache
   py: ''
   vllm_spec: ''
   qs_repo: ''

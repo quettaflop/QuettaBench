@@ -105,7 +105,7 @@ def check_record(case, cfg, old, env):
         bench
         and {"crate": bench["crate"], "test": bench["test"], "env_prefix": bench["env"], "family": bench["family"]},
     )
-    case.assertEqual(cfg.crossval.get("comm_bound_bs"), wl.get("comm_bound_bs"))
+    case.assertEqual(cfg.compare.get("comm_bound_bs"), wl.get("comm_bound_bs"))
     for key in ("engine_commit", "checkpoint"):
         case.assertEqual(cfg.provenance.get(key), wl.get(key))
     case.assertEqual(cfg.workload.prompt_mode, env.get("PROMPT_MODE", wl.get("prompt_mode", "distinct")))
@@ -153,11 +153,11 @@ class ConfigResolutionGolden(unittest.TestCase):
         for name in WORKLOAD_NAMES:
             record[name] = {}
             for s, env in SCENARIOS.items():
-                old = WORKLOADS[name][s]["xval_config"]
+                old = WORKLOADS[name][s]["captured_config"]
                 with self.subTest(workload=name, env=s):
                     check_record(self, resolve(name, env), old, env)
                 record[name][s] = {
-                    "xval_config": {k: v for k, v in old.items() if k != "cli"},
+                    "captured_config": {k: v for k, v in old.items() if k != "cli"},
                     "vmin_fit": resolve_vmin_fit(name, env),
                     "dry_run": resolve_dry_run(name, env),
                 }
@@ -184,7 +184,7 @@ class ParseTimeFailuresGolden(unittest.TestCase):
             "engine_unknown": _error(base.get, "tgi"),
         }
         unverified = [
-            n for n in WORKLOAD_NAMES if not WORKLOADS[n]["cleared"]["xval_config"]["workload"].get("verified")
+            n for n in WORKLOAD_NAMES if not WORKLOADS[n]["cleared"]["captured_config"]["workload"].get("verified")
         ]
         failures["vmin_fit_unverified"] = {
             n: loader_message(run_grid_cli(grid_argv(n), {})["exit"]) for n in unverified

@@ -16,7 +16,7 @@ from unittest import mock
 
 import aiohttp
 
-from quettabench import cli, crossval
+from quettabench import cli, compare
 from quettabench.config import loader
 from quettabench.engines import drivers, launcher, quettaserve, vllm as vllm_adapter
 from quettabench.engines.base import LaunchSpec
@@ -35,7 +35,7 @@ from quettabench.metrics.step_fit import fit_run
 from quettabench.modes import serve
 from quettabench.workloads.base import Request
 from tests.contracts import helpers
-from tests.golden._harness import FIXTURES, REPO, crossval_path, fresh_import, grid_argv, run_grid_cli
+from tests.golden._harness import FIXTURES, REPO, compare_path, fresh_import, grid_argv, run_grid_cli
 
 
 class _Resp:
@@ -628,7 +628,7 @@ class GoldenLogs(unittest.TestCase):
             with self.subTest(log=name):
                 path = FIXTURES / name
                 rows = list(BenchDriver(path).rows())
-                points, method, _ = crossval.bench_log_points(path)
+                points, method, _ = compare.bench_log_points(path)
                 self.assertTrue(points)
                 self.assertEqual(as_points(rows), points)
                 self.assertEqual({r["method"] for r in rows}, {method})
@@ -706,7 +706,7 @@ CELL = {"ctx": 8, "bs": 3, "tp": 1, "step_point": 5, "phase": "fit", "attempt": 
 
 class Builders(unittest.TestCase):
     def test_llm_gets_the_kwargs_on_first_use(self):
-        with crossval_path(stubs=True):
+        with compare_path(stubs=True):
             vllm = fresh_import("vllm")
             vllm.reset()
             driver = InProcessDriver(LaunchSpec(adapter="vllm", engine_kwargs=KWARGS))
@@ -715,7 +715,7 @@ class Builders(unittest.TestCase):
             self.assertEqual(vllm.CALLS, [("LLM", KWARGS)])
 
     def test_llm_is_built_once(self):
-        with crossval_path(stubs=True):
+        with compare_path(stubs=True):
             vllm = fresh_import("vllm")
             vllm.reset()
             driver = InProcessDriver(LaunchSpec(adapter="vllm", engine_kwargs=KWARGS))
@@ -725,7 +725,7 @@ class Builders(unittest.TestCase):
     def test_spec_env_is_in_the_process_before_llm(self):
         env = {"VLLM_SERVER_DEV_MODE": "1", "VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS": "1"}
         seen = {}
-        with crossval_path(stubs=True), mock.patch.dict(os.environ, {"VLLM_SERVER_DEV_MODE": "0"}, clear=True):
+        with compare_path(stubs=True), mock.patch.dict(os.environ, {"VLLM_SERVER_DEV_MODE": "0"}, clear=True):
             vllm = fresh_import("vllm")
             vllm.reset()
             real = vllm.LLM
@@ -741,7 +741,7 @@ class Builders(unittest.TestCase):
 
 class GridBatch(unittest.TestCase):
     def run_batch(self, seconds):
-        with crossval_path(stubs=True):
+        with compare_path(stubs=True):
             vllm = fresh_import("vllm")
             vllm.reset()
             vllm.generate_seconds = lambda prompt_len, batch, max_tokens, call_no: seconds
@@ -807,7 +807,7 @@ class Halves(unittest.TestCase):
         return rows
 
     def test_layers_cut_the_config_as_slice_truncate_did(self):
-        with crossval_path(stubs=True):
+        with compare_path(stubs=True):
             transformers = fresh_import("transformers")
             torch = fresh_import("torch")
             transformers.CALLS.clear()
@@ -827,7 +827,7 @@ class Halves(unittest.TestCase):
                 deep.model()
 
     def test_summaries_line_up(self):
-        with crossval_path(stubs=True):
+        with compare_path(stubs=True):
             ours, ref = self.vllm_rows(), self.reference_rows()
         for o, r, ids in zip(ours, ref, PROMPTS):
             self.assertEqual(o.cell, LOGITS_CELL)
@@ -836,7 +836,7 @@ class Halves(unittest.TestCase):
             self.assertEqual(len(r.logits["logprob"]), len(ids) - 1)
             for a, b in zip(o.logits["logprob"] + o.logits["top2_gap"], r.logits["logprob"] + r.logits["top2_gap"]):
                 self.assertAlmostEqual(a, b, places=12)
-        summary = crossval.logit(
+        summary = compare.logit(
             [{"cell": LOGITS_CELL, "logits": o.logits} for o in ours],
             [{"cell": LOGITS_CELL, "logits": r.logits} for r in ref],
         )[-1]
@@ -844,7 +844,7 @@ class Halves(unittest.TestCase):
 
 
 class Recipe(unittest.TestCase):
-    def test_run_run_crossval_is_fidelity_and_band_pass(self):
+    def test_run_run_compare_is_fidelity_and_band_pass(self):
         sets = ["--set", "mode.grid=smoke"]
         with tempfile.TemporaryDirectory() as td:
             for name, extra in (
@@ -856,11 +856,11 @@ class Recipe(unittest.TestCase):
                     grid_argv("llama", *sets, *extra, "--set", f"run_name={name}", "--results-dir", td), {}
                 )
                 self.assertIsNone(run["exit"])
-            from quettabench import crossval
+            from quettabench import compare
 
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
-                crossval.main(
+                compare.main(
                     [
                         str(Path(td, "ours")),
                         str(Path(td, "ref")),

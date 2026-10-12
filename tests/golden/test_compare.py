@@ -1,4 +1,4 @@
-"""Golden: baseline cache packing and the crossval table text."""
+"""Golden: baseline cache packing and the compare table text."""
 
 import calendar
 import contextlib
@@ -11,9 +11,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from quettabench import crossval
+from quettabench import compare
 from tests.contracts.helpers import bench_run_dir, grid_run_dir
-from tests.golden._harness import FIXTURES, check_text, crossval_path, fresh_import, grid_argv, run_grid_cli
+from tests.golden._harness import FIXTURES, check_text, compare_path, fresh_import, grid_argv, run_grid_cli
 
 VMIN_FIT_LOG = "vmin_fit_llama.log"
 BASELINE = "baseline_llama.json"
@@ -35,8 +35,8 @@ class VminFitLogGolden(unittest.TestCase):
 class CompatReaderGolden(unittest.TestCase):
     def test_old_baseline_and_new_run_dir_are_one_side(self):
         with tempfile.TemporaryDirectory() as td:
-            run = crossval.read_run(grid_run_dir(Path(td) / "vllm-llama"))
-        old = crossval.read_baseline(FIXTURES / BASELINE)
+            run = compare.read_run(grid_run_dir(Path(td) / "vllm-llama"))
+        old = compare.read_baseline(FIXTURES / BASELINE)
         self.assertEqual(run.header, old.header)
         self.assertEqual(run.rows, old.rows)
         self.assertEqual(len(run.rows), 15)
@@ -45,13 +45,13 @@ class CompatReaderGolden(unittest.TestCase):
 NOW = calendar.timegm(time.strptime("2026-09-21T14:13:20Z", "%Y-%m-%dT%H:%M:%SZ")) + 2.5 * 86400
 
 
-def run_crossval(ours, theirs):
+def run_compare(ours, theirs):
     out = io.StringIO()
-    with tempfile.TemporaryDirectory() as td, crossval_path(), mock.patch.dict(os.environ, {}, clear=True):
-        crossval = fresh_import("quettabench.crossval")
-        with mock.patch.object(crossval.time, "time", return_value=NOW), contextlib.redirect_stdout(out):
+    with tempfile.TemporaryDirectory() as td, compare_path(), mock.patch.dict(os.environ, {}, clear=True):
+        compare = fresh_import("quettabench.compare")
+        with mock.patch.object(compare.time, "time", return_value=NOW), contextlib.redirect_stdout(out):
             try:
-                crossval.main([str(ours), str(theirs), "--json", str(Path(td) / "xval.json")])
+                compare.main([str(ours), str(theirs), "--json", str(Path(td) / "compare.json")])
             except SystemExit as e:
                 print(f"<exit {e.code}>")
     return out.getvalue()
@@ -61,18 +61,18 @@ def run_dirs_text(bench_log, td):
     with contextlib.redirect_stdout(io.StringIO()):
         ours = bench_run_dir(Path(td) / "qs-llama", FIXTURES / bench_log)
         theirs = grid_run_dir(Path(td) / "vllm-llama")
-    return run_crossval(ours, theirs)
+    return run_compare(ours, theirs)
 
 
 class TableTextGolden(unittest.TestCase):
     def test_loop_log(self):
-        text = run_crossval(FIXTURES / "bench_loop.log", FIXTURES / "baseline_llama.json")
+        text = run_compare(FIXTURES / "bench_loop.log", FIXTURES / "baseline_llama.json")
         for marker in ("LOW R2", "RAW", "KV bf16/fp16", "EAGER", "ours-only", "vLLM-only"):
             self.assertIn(marker, text)
         check_text(self, "table_loop.txt", text)
 
     def test_criterion_log_withholds_every_ratio(self):
-        text = run_crossval(FIXTURES / "bench_criterion.log", FIXTURES / "baseline_llama.json")
+        text = run_compare(FIXTURES / "bench_criterion.log", FIXTURES / "baseline_llama.json")
         self.assertIn("ratios are withheld", text)
         check_text(self, "table_criterion.txt", text)
 

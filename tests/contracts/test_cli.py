@@ -1,4 +1,4 @@
-"""qbench doors hand argv to their module's main; `qbench run` refuses bad values."""
+"""qbench subcommands hand argv to their module's main; `qbench run` refuses bad values."""
 
 import subprocess
 import sys
@@ -10,12 +10,12 @@ from quettabench import cli
 from tests.golden._harness import REPO
 
 
-class Doors(unittest.TestCase):
+class Subcommands(unittest.TestCase):
     def test_each_door_gets_the_rest_of_argv(self):
-        for door, module in cli.DOORS.items():
-            with self.subTest(door=door), mock.patch("importlib.import_module") as imp:
+        for subcommand, module in cli.SUBCOMMANDS.items():
+            with self.subTest(subcommand=subcommand), mock.patch("importlib.import_module") as imp:
                 imp.return_value.main.return_value = 0
-                self.assertEqual(cli.main([door, "--x", "y"]), 0)
+                self.assertEqual(cli.main([subcommand, "--x", "y"]), 0)
                 imp.assert_called_once_with(module)
                 imp.return_value.main.assert_called_once_with(["--x", "y"])
 
@@ -30,12 +30,12 @@ class Doors(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertTrue(proc.stdout.startswith("usage: qbench export"))
 
-    def test_no_door_prints_the_doors(self):
+    def test_no_subcommand_prints_the_subcommands(self):
         proc = subprocess.run(
             [sys.executable, "-m", "quettabench.cli"], cwd=REPO, capture_output=True, text=True, check=False
         )
         self.assertEqual(proc.returncode, 2)
-        self.assertIn("{run,profile,xval,export}", proc.stdout)
+        self.assertIn("{run,profile,compare,export}", proc.stdout)
 
 
 ROOT = Path(__file__).resolve().parents[2]

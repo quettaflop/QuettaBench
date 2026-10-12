@@ -44,7 +44,7 @@
      "DONE"
     ]
    },
-   "xval_config": {
+   "captured_config": {
     "grid_cells": [
      [
       1024,
@@ -166,7 +166,7 @@
      "DONE"
     ]
    },
-   "xval_config": {
+   "captured_config": {
     "grid_cells": [
      [
       1024,
@@ -289,7 +289,7 @@
      "DONE"
     ]
    },
-   "xval_config": {
+   "captured_config": {
     "grid_cells": [
      [
       1024,
@@ -400,7 +400,7 @@
      "DONE"
     ]
    },
-   "xval_config": {
+   "captured_config": {
     "grid_cells": [
      [
       1024,
@@ -513,7 +513,7 @@
      "DONE"
     ]
    },
-   "xval_config": {
+   "captured_config": {
     "grid_cells": [
      [
       1024,
@@ -624,7 +624,7 @@
      "DONE"
     ]
    },
-   "xval_config": {
+   "captured_config": {
     "grid_cells": [
      [
       1024,
@@ -739,7 +739,7 @@
      "DONE"
     ]
    },
-   "xval_config": {
+   "captured_config": {
     "grid_cells": [
      [
       4096,
@@ -860,7 +860,7 @@
      "DONE"
     ]
    },
-   "xval_config": {
+   "captured_config": {
     "grid_cells": [
      [
       4096,
@@ -980,7 +980,7 @@
      "DONE"
     ]
    },
-   "xval_config": {
+   "captured_config": {
     "grid_cells": [
      [
       1024,
@@ -1087,7 +1087,7 @@
      "DONE"
     ]
    },
-   "xval_config": {
+   "captured_config": {
     "grid_cells": [
      [
       1024,
@@ -1185,7 +1185,7 @@
      "DONE"
     ]
    },
-   "xval_config": {
+   "captured_config": {
     "grid_cells": [
      [
       16384,
@@ -1239,7 +1239,7 @@
      "DONE"
     ]
    },
-   "xval_config": {
+   "captured_config": {
     "grid_cells": [
      [
       16384,
@@ -1298,7 +1298,7 @@
      "DONE"
     ]
    },
-   "xval_config": {
+   "captured_config": {
     "grid_cells": [
      [
       100,
@@ -1365,7 +1365,7 @@
      "DONE"
     ]
    },
-   "xval_config": {
+   "captured_config": {
     "grid_cells": [
      [
       100,
@@ -1434,7 +1434,7 @@
      "DONE"
     ]
    },
-   "xval_config": {
+   "captured_config": {
     "grid_cells": [
      [
       100,
@@ -1501,7 +1501,7 @@
      "DONE"
     ]
    },
-   "xval_config": {
+   "captured_config": {
     "grid_cells": [
      [
       100,
@@ -1570,7 +1570,7 @@
      "DONE"
     ]
    },
-   "xval_config": {
+   "captured_config": {
     "grid_cells": [
      [
       100,
@@ -1637,7 +1637,7 @@
      "DONE"
     ]
    },
-   "xval_config": {
+   "captured_config": {
     "grid_cells": [
      [
       100,
@@ -1719,7 +1719,7 @@
      "DONE"
     ]
    },
-   "xval_config": {
+   "captured_config": {
     "grid_cells": [
      [
       100,
@@ -1850,7 +1850,7 @@
      "DONE"
     ]
    },
-   "xval_config": {
+   "captured_config": {
     "grid_cells": [
      [
       100,
@@ -1983,7 +1983,7 @@
      "DONE"
     ]
    },
-   "xval_config": {
+   "captured_config": {
     "grid_cells": [
      [
       1024,
@@ -2119,7 +2119,7 @@
      "DONE"
     ]
    },
-   "xval_config": {
+   "captured_config": {
     "grid_cells": [
      [
       1024,

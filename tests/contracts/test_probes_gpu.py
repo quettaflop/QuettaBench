@@ -101,7 +101,7 @@ def test_vllm_allreduce_probe_world2(tmp_path):
 
 
 @unittest.skipUnless(os.environ.get("MODEL"), "needs MODEL (a Llama weights dir)")
-class CrossvalBaselineSmoke(unittest.TestCase):
+class CompareBaselineSmoke(unittest.TestCase):
     def test_vllm_baseline_smoke_grid(self):
         env = {**os.environ, "GPU_UTIL": os.environ.get("GPU_UTIL", "0.6")}
         with tempfile.TemporaryDirectory() as td:

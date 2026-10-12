@@ -37,7 +37,7 @@ ENV_MAP = {
     "XVAL_SERVING_STYLE": ("engine.serving_style", str, "serving style"),
     "XVAL_AFD": ("engine.serving_style", _attn_ffn, "attention/FFN disaggregated pools"),
     "XVAL_ALLOW_METHOD_MISMATCH": (
-        "crossval.allow_method_mismatch",
+        "compare.allow_method_mismatch",
         _nonempty,
         "accept a table whose method differs from the header",
     ),

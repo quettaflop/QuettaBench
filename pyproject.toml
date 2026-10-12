@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "quettabench"
 version = "0.1.0"
-description = "LLM serving benchmark and QuettaServe-vs-vLLM cross-validator"
+description = "LLM serving benchmark and QuettaServe-vs-vLLM comparison"
 requires-python = ">=3.10"
 dependencies = [
     "aiohttp>=3.9",

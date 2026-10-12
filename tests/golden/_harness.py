@@ -20,7 +20,7 @@ STUBS = REPO / "tests" / "_stubs"
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 REGEN = os.environ.get("QBENCH_GOLDEN_REGEN") == "1"
 
-CROSSVAL_MODULES = ("quettabench",)
+COMPARE_MODULES = ("quettabench",)
 STUB_MODULE_ROOTS = ("vllm", "torch", "transformers")
 
 # Llama-3.1-8B shaped config.json, 131072 KV bytes per token.
@@ -75,10 +75,10 @@ def _drop_modules(roots):
 
 
 @contextlib.contextmanager
-def crossval_path(stubs=False):
+def compare_path(stubs=False):
     """Dropped again on exit."""
     added = [str(REPO)] + ([str(STUBS)] if stubs else [])
-    roots = CROSSVAL_MODULES + (STUB_MODULE_ROOTS if stubs else ())
+    roots = COMPARE_MODULES + (STUB_MODULE_ROOTS if stubs else ())
     _drop_modules(roots)
     for p in added:
         sys.path.insert(0, p)
@@ -188,7 +188,7 @@ def run_grid_cli(argv, env, model_config=None):
             argv += ["--results-dir", str(Path(model_dir, "results"))]
         out = io.StringIO()
         with (
-            crossval_path(stubs=True),
+            compare_path(stubs=True),
             mock.patch.dict(os.environ, env, clear=True),
             mock.patch("shutil.which", return_value=None),
         ):

@@ -368,7 +368,7 @@
   },
   "link_profile": "nvlink",
   "provision": {
-   "cache_root": "/workspace/.xval-cache",
+   "cache_root": "/workspace/.qbench-cache",
    "nccl_lib": "",
    "py": "",
    "qs_commit": "",
@@ -755,7 +755,7 @@
   },
   "link_profile": "pcie",
   "provision": {
-   "cache_root": "/workspace/.xval-cache",
+   "cache_root": "/workspace/.qbench-cache",
    "nccl_lib": "",
    "py": "",
    "qs_commit": "",

@@ -1,12 +1,12 @@
 {
  "arange_1000": {
-  "crossval_pct": {
+  "compare_pct": {
    "p50": 500.0,
    "p90": 900.0,
    "p95": 950.0,
    "p99": 990.0
   },
-  "crossval_pcts": {
+  "compare_pcts": {
    "p50": 500.0,
    "p90": 900.0,
    "p95": 950.0,
@@ -20,7 +20,7 @@
   }
  },
  "empty": {
-  "crossval_pct": {
+  "compare_pct": {
    "p50": {
     "error": "ValueError",
     "message": "nearest-rank percentile of no values"
@@ -38,7 +38,7 @@
     "message": "nearest-rank percentile of no values"
    }
   },
-  "crossval_pcts": {
+  "compare_pcts": {
    "error": "ValueError",
    "message": "nearest-rank percentile of no values"
   },
@@ -50,13 +50,13 @@
   }
  },
  "seven": {
-  "crossval_pct": {
+  "compare_pct": {
    "p50": 7.0,
    "p90": 13.0,
    "p95": 13.0,
    "p99": 13.0
   },
-  "crossval_pcts": {
+  "compare_pcts": {
    "p50": 7.0,
    "p90": 13.0,
    "p95": 13.0,
@@ -70,13 +70,13 @@
   }
  },
  "single": {
-  "crossval_pct": {
+  "compare_pct": {
    "p50": 42.0,
    "p90": 42.0,
    "p95": 42.0,
    "p99": 42.0
   },
-  "crossval_pcts": {
+  "compare_pcts": {
    "p50": 42.0,
    "p90": 42.0,
    "p95": 42.0,
@@ -90,13 +90,13 @@
   }
  },
  "ties": {
-  "crossval_pct": {
+  "compare_pct": {
    "p50": 2.0,
    "p90": 3.0,
    "p95": 3.0,
    "p99": 3.0
   },
-  "crossval_pcts": {
+  "compare_pcts": {
    "p50": 2.0,
    "p90": 3.0,
    "p95": 3.0,
@@ -110,13 +110,13 @@
   }
  },
  "two": {
-  "crossval_pct": {
+  "compare_pct": {
    "p50": 20.0,
    "p90": 20.0,
    "p95": 20.0,
    "p99": 20.0
   },
-  "crossval_pcts": {
+  "compare_pcts": {
    "p50": 20.0,
    "p90": 20.0,
    "p95": 20.0,

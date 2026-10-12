@@ -118,8 +118,8 @@ class PercentileGolden(unittest.TestCase):
         record = {}
         for name, data in ARRAYS.items():
             record[name] = {
-                "crossval_pct": {f"p{q}": _call(percentile, data, q, "nearest") for q in QUANTILES},
-                "crossval_pcts": _call(pcts, data, "nearest"),
+                "compare_pct": {f"p{q}": _call(percentile, data, q, "nearest") for q in QUANTILES},
+                "compare_pcts": _call(pcts, data, "nearest"),
                 "metrics_percentile": {f"p{q}": _call(percentile, data, q, "linear") for q in QUANTILES},
             }
         check_json(self, "percentiles", record)

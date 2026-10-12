@@ -19,7 +19,7 @@ from quettabench.config.schema import serving_style_compatible
 
 REPO = Path(__file__).resolve().parents[1]
 CONFIGS = REPO / "configs"
-XVAL_DIR = REPO / "results" / "xval"
+COMPARE_DIR = REPO / "results" / "compare"
 ENV = ("XVAL_QUANT", "XVAL_SERVING_STYLE", "NCCL_ALGO", "NCCL_PROTO", "XVAL_ALLOW_METHOD_MISMATCH")
 
 
@@ -188,7 +188,7 @@ def comm_bound_bs(model):
     for run in sorted((CONFIGS / "runs").glob("*.yaml")):
         raw = yaml.safe_load(run.read_text())
         spec = yaml.safe_load((CONFIGS / "models" / f"{raw['model']}.yaml").read_text())
-        bs = (spec.get("crossval") or {}).get("comm_bound_bs")
+        bs = (spec.get("compare") or {}).get("comm_bound_bs")
         if (run.stem == model or spec["name"] == model) and bs is not None:
             return int(bs)
     return None
@@ -324,7 +324,7 @@ def read_run(results_dir):
             bench_sha=prov.get("bench_sha"),
             engine_sha=prov.get("engine_sha"),
             workload_hash=workload,
-            comm_bound_bs=(cfg.get("crossval") or {}).get("comm_bound_bs"),
+            comm_bound_bs=(cfg.get("compare") or {}).get("comm_bound_bs"),
         ),
         notes,
     )
@@ -716,7 +716,7 @@ def report_json(report):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="qbench xval", description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(prog="qbench compare", description=__doc__.splitlines()[0])
     ap.add_argument("ours", help="results/<run>/ dir, baselines/*.json, or bench log")
     ap.add_argument("theirs", help="results/<run>/ dir, baselines/*.json, or bench log")
     ap.add_argument(
@@ -731,7 +731,7 @@ def main(argv=None):
         "and ours passes BAND within the worst floor run's argmax flips",
     )
     ap.add_argument(
-        "--json", type=Path, default=None, help="report path (default results/xval/<ours>_vs_<theirs>.json)"
+        "--json", type=Path, default=None, help="report path (default results/compare/<ours>_vs_<theirs>.json)"
     )
     args = ap.parse_args(argv)
     for path in (args.ours, args.theirs, *args.floor):
@@ -746,7 +746,7 @@ def main(argv=None):
         print("".join(n + "\n" for n in ours.notes), end="")
         sys.exit(f"no engine rows parsed from {args.ours}")
     theirs = read_side(args.theirs, values)
-    allow = args.allow_method_mismatch or values.get("crossval.allow_method_mismatch", False)
+    allow = args.allow_method_mismatch or values.get("compare.allow_method_mismatch", False)
     report = pair(ours, theirs, allow, now=time.time())
     if Path(args.ours).is_dir() and Path(args.theirs).is_dir():
         ours_rows, theirs_rows = read_rows(args.ours), read_rows(args.theirs)
@@ -756,7 +756,7 @@ def main(argv=None):
     print(render(report), end="")
 
     a, b = (Path(p).name if Path(p).is_dir() else Path(p).stem for p in (args.ours, args.theirs))
-    out = args.json or XVAL_DIR / f"{a}_vs_{b}.json"
+    out = args.json or COMPARE_DIR / f"{a}_vs_{b}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(report_json(report), indent=2) + "\n")
     if not report.rows and not report.agreement:

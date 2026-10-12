@@ -40,7 +40,7 @@ MODEL_KEYS = {
     "verified": "engine.verified",
     "quettaserve": "engine.extra.quettaserve",
     "provenance": "provenance",
-    "crossval": "crossval",
+    "compare": "compare",
 }
 QUETTASERVE_KEYS = ("crate", "test", "env_prefix", "family")
 RUN_KEYS = ("model", "engine", "workload", "mode", "hardware", "matrix")
@@ -49,7 +49,7 @@ GRIDS_KEYS = ("grids", "step_points")
 RATE_ARRIVALS = ("poisson", "ramp", "burst")
 # At most 200 chars (clear_run_dir's sibling name must fit in 255), no trailing '.'.
 RUN_NAME = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._-]{0,198}[A-Za-z0-9_-])?")
-RESERVED_RUN_NAMES = ("probes", "xval", "baselines")
+RESERVED_RUN_NAMES = ("probes", "compare", "baselines")
 # None is no bound.
 RANGES = {
     "mode.concurrency": (1, None),
@@ -326,7 +326,7 @@ def _build(values, origins, grid):
         grid=grid,
         run_name=values["run_name"],
         provenance=values["provenance"],
-        crossval=values["crossval"],
+        compare=values["compare"],
         origins=dict(sorted(origins.items())),
     )
 

@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from tests.golden._harness import FIXTURES, check_json, crossval_path, fresh_import
+from tests.golden._harness import FIXTURES, check_json, compare_path, fresh_import
 
 MOONCAKE_TRACE = FIXTURES / "mooncake_5.jsonl"
 BLOCK = 512
@@ -33,7 +33,7 @@ def describe_ids(ids, first_ids):
 
 def read_all(case, path):
     """Ids must agree across both entry points."""
-    with crossval_path(), mock.patch.dict(os.environ, {}, clear=True):
+    with compare_path(), mock.patch.dict(os.environ, {}, clear=True):
         live = fresh_import("quettabench.workloads.live")
         trace = live.RealTrace.from_jsonl(str(path))
         ds = live.MooncakeTrace(str(path))
@@ -87,7 +87,7 @@ HASH_TRACE = FIXTURES / "hash_trace.jsonl"
 
 class WorkloadHashGolden(unittest.TestCase):
     def test_hash_identity_rules(self):
-        with crossval_path(), mock.patch.dict(os.environ, {}, clear=True):
+        with compare_path(), mock.patch.dict(os.environ, {}, clear=True):
             base = fresh_import("quettabench.workloads.base")
             live = fresh_import("quettabench.workloads.live")
             arrival = fresh_import("quettabench.workloads.arrival")

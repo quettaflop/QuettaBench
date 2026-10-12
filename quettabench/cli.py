@@ -8,9 +8,9 @@ from quettabench import runner
 from quettabench.config.schema import ConfigError
 from quettabench.engines.base import UnsupportedField
 
-DOORS = {
+SUBCOMMANDS = {
     "profile": "quettabench.profiler",
-    "xval": "quettabench.crossval",
+    "compare": "quettabench.compare",
     "export": "quettabench.export.quettasim",
 }
 
@@ -19,7 +19,7 @@ def parser():
     ap = argparse.ArgumentParser(
         prog="qbench", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    sub = ap.add_subparsers(dest="door", metavar="{run," + ",".join(DOORS) + "}")
+    sub = ap.add_subparsers(dest="subcommand", metavar="{run," + ",".join(SUBCOMMANDS) + "}")
     run = sub.add_parser("run", help="quettabench.runner: one run yaml to results/<run>/")
     run.add_argument("run_yaml", help="configs/runs/<name>.yaml")
     run.add_argument(
@@ -40,22 +40,22 @@ def parser():
     run.add_argument(
         "--overwrite", action="store_true", help="empty a results/<run>/ that already holds a run before running"
     )
-    for door, module in DOORS.items():
-        sub.add_parser(door, help=f"{module}.main", add_help=False)
+    for subcommand, module in SUBCOMMANDS.items():
+        sub.add_parser(subcommand, help=f"{module}.main", add_help=False)
     return ap
 
 
-def delegate(door, argv):
-    return importlib.import_module(DOORS[door]).main(argv)
+def delegate(subcommand, argv):
+    return importlib.import_module(SUBCOMMANDS[subcommand]).main(argv)
 
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else list(argv)
-    if argv and argv[0] in DOORS:
+    if argv and argv[0] in SUBCOMMANDS:
         return delegate(argv[0], argv[1:])
     ap = parser()
     a = ap.parse_args(argv)
-    if a.door != "run":
+    if a.subcommand != "run":
         ap.print_help()
         return 2
     try:

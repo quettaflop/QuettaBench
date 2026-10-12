@@ -1,4 +1,4 @@
-"""Offline crossval checks: readers, pairing, withhold rules, agreement rows."""
+"""Offline compare checks: readers, pairing, withhold rules, agreement rows."""
 
 import ast
 import calendar
@@ -19,7 +19,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from quettabench import crossval
+from quettabench import compare
 from quettabench.config import loader
 from quettabench.config.schema import ConfigError, check_ep_legal
 from quettabench.engines.drivers import BenchDriver
@@ -60,7 +60,7 @@ def load_trace(path):
     return [r.to_dict() for r in RealTrace.from_jsonl(path).requests()]
 
 
-class CrossvalScripts(unittest.TestCase):
+class CompareScripts(unittest.TestCase):
     def test_python_scripts_parse(self):
         # Parse only: importing would pull in vllm, which CI lacks.
         scripts = _scripts(".py")
@@ -102,7 +102,7 @@ class CrossvalScripts(unittest.TestCase):
         )
 
     def test_provision_defaults(self):
-        self.assertEqual(_config("llama").hardware.provision["cache_root"], "/workspace/.xval-cache")
+        self.assertEqual(_config("llama").hardware.provision["cache_root"], "/workspace/.qbench-cache")
 
     def test_goodput_search_and_verdict(self):
         from quettabench.metrics.core import sla_verdict
@@ -358,11 +358,11 @@ class TableParity(unittest.TestCase):
                 [
                     sys.executable,
                     "-m",
-                    "quettabench.crossval",
+                    "quettabench.compare",
                     str(bench),
                     str(cache),
                     "--json",
-                    str(Path(td) / "xval.json"),
+                    str(Path(td) / "compare.json"),
                 ],
                 capture_output=True,
                 text=True,
@@ -518,11 +518,11 @@ class TableParity(unittest.TestCase):
                 [
                     sys.executable,
                     "-m",
-                    "quettabench.crossval",
+                    "quettabench.compare",
                     str(bench),
                     str(cache),
                     "--json",
-                    str(Path(td) / "xval.json"),
+                    str(Path(td) / "compare.json"),
                 ],
                 capture_output=True,
                 text=True,
@@ -563,11 +563,11 @@ class TableParity(unittest.TestCase):
                 [
                     sys.executable,
                     "-m",
-                    "quettabench.crossval",
+                    "quettabench.compare",
                     str(bench),
                     str(cache),
                     "--json",
-                    str(Path(td) / "xval.json"),
+                    str(Path(td) / "compare.json"),
                 ],
                 capture_output=True,
                 text=True,
@@ -588,7 +588,7 @@ class TableParity(unittest.TestCase):
         self.assertIn('returns: str = "none"', src)
 
     def test_cache_records_prompt_mode(self):
-        self.assertIn("prompt_mode", (QB / "crossval.py").read_text())
+        self.assertIn("prompt_mode", (QB / "compare.py").read_text())
 
     def test_corpus_mode_requires_an_explicit_corpus(self):
         # No experimental text ships in the repo; corpus mode takes XVAL_CORPUS.
@@ -657,7 +657,7 @@ class TableParity(unittest.TestCase):
         lines = (QB / "metrics" / "results.py").read_text()
         for tag in ("SLA_SUMMARY", "BURST_SUMMARY", "SPEC_DECODE_SUMMARY"):
             self.assertIn(tag, lines)
-        self.assertIn("FIDELITY", (QB / "crossval.py").read_text())
+        self.assertIn("FIDELITY", (QB / "compare.py").read_text())
 
     def test_burst_recovery_and_acceptance(self):
         from quettabench.metrics.core import acceptance, burst_recovery
@@ -837,7 +837,7 @@ def text_run(out):
         {},
     )
     assert run["exit"] is None, run["exit"]
-    return crossval.read_rows(out)
+    return compare.read_rows(out)
 
 
 def logit_row(i, argmax, gap, logprob):
@@ -854,7 +854,7 @@ class Greedy(unittest.TestCase):
             cls.rows = text_run(Path(td) / "a")
 
     def test_same_run_agrees_everywhere(self):
-        rows = crossval.greedy(self.rows, self.rows)
+        rows = compare.greedy(self.rows, self.rows)
         per_request = [r for r in rows if r["kind"] == "greedy"]
         self.assertEqual(len(per_request), sum(1 for r in self.rows if r.get("token_ids")))
         self.assertTrue(all(r["prefix"] == r["of"] == 64 for r in per_request))
@@ -865,41 +865,41 @@ class Greedy(unittest.TestCase):
         theirs = json.loads(json.dumps(self.rows))
         first = next(r for r in theirs if r.get("token_ids"))
         first["token_ids"][10] += 1
-        rows = {r["request"]: r for r in crossval.greedy(self.rows, theirs) if r["kind"] == "greedy"}
+        rows = {r["request"]: r for r in compare.greedy(self.rows, theirs) if r["kind"] == "greedy"}
         cell = first["cell"]
         hit = rows[f"{cell['ctx']}x{cell['bs']} #0"]
         self.assertEqual((hit["prefix"], hit["of"]), (10, 64))
         self.assertIn(
-            "AGREE 10/64 tokens ( 15.6%)", "\n".join(crossval.render_agreement(crossval.greedy(self.rows, theirs)))
+            "AGREE 10/64 tokens ( 15.6%)", "\n".join(compare.render_agreement(compare.greedy(self.rows, theirs)))
         )
 
     def test_runs_without_returns_give_no_rows(self):
-        self.assertEqual(crossval.compare_runs([{"cell": None}], [{"cell": None}]), [])
+        self.assertEqual(compare.compare_runs([{"cell": None}], [{"cell": None}]), [])
 
 
 class Logit(unittest.TestCase):
     def test_identical_logits_pass(self):
-        rows = crossval.logit(REF, REF)
+        rows = compare.logit(REF, REF)
         self.assertEqual(rows[-1]["verdict"], "PASS")
         self.assertEqual(rows[-1]["delta_max"], 0.0)
 
     def test_near_tie_flip_passes_and_hard_flip_fails(self):
         near = [logit_row(0, [5, 9, 7, 8], [0, 0, 0, 0], [-0.1, -0.25, -0.3, -0.4])]
-        rows = crossval.logit(near, REF)
+        rows = compare.logit(near, REF)
         self.assertEqual((rows[-1]["near_tie_flips"], rows[-1]["verdict"]), (1, "PASS"))
         hard = [logit_row(0, [5, 6, 9, 8], [0, 0, 0, 0], [-0.1, -0.2, -0.3, -0.9])]
-        rows = crossval.logit(hard, REF)
+        rows = compare.logit(hard, REF)
         self.assertEqual(rows[-1]["verdict"], "FAIL")
         self.assertAlmostEqual(rows[-1]["delta_max"], 0.5)
-        text = crossval.render_agreement(rows)
+        text = compare.render_agreement(rows)
         self.assertEqual(text[0], "DISAGREE req 0 pos=2 reference_gap=1.0000 reference=7 ours=9")
         self.assertEqual(text[-1], "FIDELITY verdict=FAIL hard_disagreements=1")
 
     def test_one_bf16_step_is_a_near_tie(self):
         ref = [logit_row(0, [5, 6], [0.125, 0.126], [-0.1, -0.2])]
-        rows = crossval.logit([logit_row(0, [9, 6], [0, 0], [-0.1, -0.2])], ref)
+        rows = compare.logit([logit_row(0, [9, 6], [0, 0], [-0.1, -0.2])], ref)
         self.assertEqual((rows[-1]["near_tie_flips"], rows[-1]["verdict"]), (1, "PASS"))
-        rows = crossval.logit([logit_row(0, [5, 9], [0, 0], [-0.1, -0.2])], ref)
+        rows = compare.logit([logit_row(0, [5, 9], [0, 0], [-0.1, -0.2])], ref)
         self.assertEqual(rows[-1]["verdict"], "FAIL")
 
 
@@ -908,27 +908,27 @@ class Band(unittest.TestCase):
     TWO_FLIPS = [logit_row(0, [1, 9, 7, 8], [0, 0, 0, 0], [-0.1, -0.2, -0.3, -0.4])]
 
     def test_inside_the_worst_floor_run_passes(self):
-        row = crossval.band(self.ONE_FLIP, REF, [REF, self.TWO_FLIPS])
+        row = compare.band(self.ONE_FLIP, REF, [REF, self.TWO_FLIPS])
         self.assertEqual((row["flips"], row["floor_flips"], row["verdict"]), (1, [0, 2], "PASS"))
         self.assertEqual(
-            crossval.render_agreement([row]), ["BAND verdict=PASS flips=1 floor=2 floor_runs=0,2 positions=4"]
+            compare.render_agreement([row]), ["BAND verdict=PASS flips=1 floor=2 floor_runs=0,2 positions=4"]
         )
 
     def test_above_the_floor_fails(self):
-        row = crossval.band(self.TWO_FLIPS, REF, [self.ONE_FLIP])
+        row = compare.band(self.TWO_FLIPS, REF, [self.ONE_FLIP])
         self.assertEqual(row["verdict"], "FAIL")
 
     def test_different_position_counts_are_withheld(self):
         short = [logit_row(0, [5, 6], [0, 0], [-0.1, -0.2])]
-        self.assertEqual(crossval.band(self.ONE_FLIP, REF, [short])["verdict"], "WITHHELD")
+        self.assertEqual(compare.band(self.ONE_FLIP, REF, [short])["verdict"], "WITHHELD")
 
 
 NOW = calendar.timegm(time.strptime("2026-09-21T14:13:20Z", "%Y-%m-%dT%H:%M:%SZ")) + 2.5 * 86400
 
 
 def golden_pair(log="bench_loop.log", **kw):
-    return crossval.pair(
-        crossval.read_bench_log(FIXTURES / log), crossval.read_baseline(FIXTURES / "baseline_llama.json"), now=NOW, **kw
+    return compare.pair(
+        compare.read_bench_log(FIXTURES / log), compare.read_baseline(FIXTURES / "baseline_llama.json"), now=NOW, **kw
     )
 
 
@@ -962,30 +962,30 @@ class GoldenRows(unittest.TestCase):
 class StaleBaseline(unittest.TestCase):
     def test_the_warning_names_a_justfile_recipe(self):
         report = golden_pair()
-        report.age_days = crossval.STALE_DAYS + 1
-        self.assertIn("re-run `just run configs/runs/<wl>.yaml`", crossval.render(report))
+        report.age_days = compare.STALE_DAYS + 1
+        self.assertIn("re-run `just run configs/runs/<wl>.yaml`", compare.render(report))
         justfile = (Path(__file__).resolve().parents[2] / "justfile").read_text()
         self.assertIn("\nrun cfg *args:", justfile)
 
 
 class WorkloadGate(unittest.TestCase):
     def sides(self, ours_hash, theirs_hash):
-        ours = crossval.read_bench_log(FIXTURES / "bench_loop.log")
-        theirs = crossval.read_baseline(FIXTURES / "baseline_llama.json")
+        ours = compare.read_bench_log(FIXTURES / "bench_loop.log")
+        theirs = compare.read_baseline(FIXTURES / "baseline_llama.json")
         ours.header["workload_hash"], theirs.header["workload_hash"] = ours_hash, theirs_hash
         return ours, theirs
 
     def test_different_hashes_withhold_every_row(self):
-        report = crossval.pair(*self.sides("aaaa", "bbbb"), now=NOW)
+        report = compare.pair(*self.sides("aaaa", "bbbb"), now=NOW)
         self.assertTrue(report.workload_mismatch)
         self.assertTrue(all("workload" in r["withheld"] and r["ratio"] is None for r in report.rows))
-        self.assertIn("WORKLOAD MISMATCH engine=aaaa vllm=bbbb", crossval.render(report))
+        self.assertIn("WORKLOAD MISMATCH engine=aaaa vllm=bbbb", compare.render(report))
 
     def test_one_missing_hash_joins_on_cells_alone(self):
         for hashes in (("aaaa", None), (None, "bbbb"), ("aaaa", "aaaa")):
-            report = crossval.pair(*self.sides(*hashes), now=NOW)
+            report = compare.pair(*self.sides(*hashes), now=NOW)
             self.assertFalse(report.workload_mismatch)
-            self.assertEqual(crossval.render(report), crossval.render(golden_pair()))
+            self.assertEqual(compare.render(report), compare.render(golden_pair()))
 
 
 BASELINE = FIXTURES / "baseline_llama.json"
@@ -994,11 +994,11 @@ BASELINE = FIXTURES / "baseline_llama.json"
 def run(argv, env=None):
     out = io.StringIO()
     with mock.patch.dict(os.environ, env or {}, clear=True), contextlib.redirect_stdout(out):
-        crossval.main([str(a) for a in argv])
+        compare.main([str(a) for a in argv])
     return out.getvalue()
 
 
-class Door(unittest.TestCase):
+class Subcommand(unittest.TestCase):
     def test_floor_with_a_file_input_is_a_parse_error(self):
         err = io.StringIO()
         with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as stop:
@@ -1019,7 +1019,7 @@ class Door(unittest.TestCase):
         self.assertEqual(report["ours_only"], [[2048, 4, 2], [8192, 1, 1]])
 
     def test_default_report_path(self):
-        with tempfile.TemporaryDirectory() as td, mock.patch.object(crossval, "XVAL_DIR", Path(td)):
+        with tempfile.TemporaryDirectory() as td, mock.patch.object(compare, "COMPARE_DIR", Path(td)):
             run([FIXTURES / "bench_loop.log", BASELINE])
             self.assertTrue((Path(td) / "bench_loop_vs_baseline_llama.json").is_file())
 
@@ -1045,12 +1045,12 @@ class Door(unittest.TestCase):
             with (
                 self.subTest(kind),
                 tempfile.TemporaryDirectory() as td,
-                mock.patch.object(crossval, "read_side"),
-                mock.patch.object(crossval, "read_rows"),
-                mock.patch.object(crossval, "render", return_value=""),
-                mock.patch.object(crossval, "pair", return_value=mock.Mock(rows=[], agreement=[])),
-                mock.patch.object(crossval, "report_json", return_value={}),
-                mock.patch.object(crossval, "compare_runs", return_value=[{"kind": kind, "verdict": "FAIL"}]),
+                mock.patch.object(compare, "read_side"),
+                mock.patch.object(compare, "read_rows"),
+                mock.patch.object(compare, "render", return_value=""),
+                mock.patch.object(compare, "pair", return_value=mock.Mock(rows=[], agreement=[])),
+                mock.patch.object(compare, "report_json", return_value={}),
+                mock.patch.object(compare, "compare_runs", return_value=[{"kind": kind, "verdict": "FAIL"}]),
             ):
                 with self.assertRaises(SystemExit) as e:
                     run([td, td, "--json", Path(td) / "r.json"])
@@ -1069,7 +1069,7 @@ def side_by_cell(side):
 
 class BenchLog(unittest.TestCase):
     def test_loop_log(self):
-        side = crossval.read_bench_log(FIXTURES / "bench_loop.log")
+        side = compare.read_bench_log(FIXTURES / "bench_loop.log")
         self.assertEqual(side.header["method"], "loop")
         self.assertEqual(
             side.notes, ["ignored 1 truncated-model batch_bench line(s) (layers != all)", "engine gdn kernel(s): Tiled"]
@@ -1083,7 +1083,7 @@ class BenchLog(unittest.TestCase):
         self.assertTrue(all(r["measured"] for r in side.rows))
 
     def test_criterion_log(self):
-        side = crossval.read_bench_log(FIXTURES / "bench_criterion.log")
+        side = compare.read_bench_log(FIXTURES / "bench_criterion.log")
         self.assertEqual(side.header["method"], "criterion")
         cells = side_by_cell(side)
         self.assertEqual(cells[(100, 1, 1)]["group"], "decode_graph")
@@ -1091,13 +1091,13 @@ class BenchLog(unittest.TestCase):
         self.assertIsNone(cells[(1024, 1, 1)]["kv"])
 
     def test_engine_facts_fill_the_header(self):
-        side = crossval.read_bench_log(FIXTURES / "bench_loop.log", {"quant": "nvfp4", "nccl_algo": "Ring"})
+        side = compare.read_bench_log(FIXTURES / "bench_loop.log", {"quant": "nvfp4", "nccl_algo": "Ring"})
         self.assertEqual((side.header["quant"], side.header["nccl_algo"]), ("nvfp4", "Ring"))
 
 
 class Baseline(unittest.TestCase):
     def test_golden_baseline(self):
-        side = crossval.read_baseline(FIXTURES / "baseline_llama.json")
+        side = compare.read_baseline(FIXTURES / "baseline_llama.json")
         self.assertEqual(len(side.rows), 15)
         h = side.header
         self.assertEqual(
@@ -1110,16 +1110,16 @@ class Baseline(unittest.TestCase):
         self.assertFalse(raw["measured"])
 
     def test_age(self):
-        side = crossval.read_baseline(FIXTURES / "baseline_llama.json")
-        self.assertTrue(math.isclose(crossval.age_days(side, 1790000000 + 86400), 1.0))
+        side = compare.read_baseline(FIXTURES / "baseline_llama.json")
+        self.assertTrue(math.isclose(compare.age_days(side, 1790000000 + 86400), 1.0))
 
 
 class RunDir(unittest.TestCase):
     def test_bench_run_reads_as_its_log(self):
         for log in ("bench_loop.log", "bench_criterion.log"):
             with self.subTest(log=log), tempfile.TemporaryDirectory() as td:
-                run = crossval.read_run(bench_run_dir(Path(td) / "qs", FIXTURES / log))
-                side = crossval.read_bench_log(FIXTURES / log)
+                run = compare.read_run(bench_run_dir(Path(td) / "qs", FIXTURES / log))
+                side = compare.read_bench_log(FIXTURES / log)
                 self.assertEqual(run.rows, side.rows)
                 self.assertEqual(run.notes, side.notes)
                 self.assertEqual(run.header["method"], side.header["method"])
@@ -1145,8 +1145,8 @@ class RunDir(unittest.TestCase):
                     {"_now": lambda: "2026-10-09T00:00:00+00:00", "bench_sha": lambda *a, **k: "0123abc"},
                 ),
             ):
-                ours = crossval.read_run(bench_run_dir(Path(td) / "qs", FIXTURES / log))
-                theirs = crossval.read_run(hand_written(Path(td) / "hand" / "qs", FIXTURES / log))
+                ours = compare.read_run(bench_run_dir(Path(td) / "qs", FIXTURES / log))
+                theirs = compare.read_run(hand_written(Path(td) / "hand" / "qs", FIXTURES / log))
                 self.assertEqual(ours, theirs)
                 self.assertTrue(ours.rows)
 

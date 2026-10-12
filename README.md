@@ -1,6 +1,6 @@
 # QuettaBench
 
-Measures LLM serving engines on production-shaped workloads, and cross-validates the QuettaServe engine against vLLM per decode step. One command, `qbench`, with four doors: `run | profile | xval | export`, and `just provision` for box setup.
+Measures LLM serving engines on production-shaped workloads, and compares the QuettaServe engine against vLLM per decode step. One command, `qbench`, with four subcommands: `run | profile | compare | export`, and `just provision` for box setup.
 
 ## Quickstart
 
@@ -13,7 +13,7 @@ just provision configs/runs/llama.yaml --dry-run \
 just dry configs/runs/llama.yaml --set engine.model=/w/llama   # Config + LaunchSpec, starts nothing
 just run configs/runs/llama.yaml --set engine.model=/w/llama   # -> results/llama/
 just profile --run results/llama --source metrics --source energy
-just xval results/<ours> results/<theirs>       # compares two results dirs
+just compare results/<ours> results/<theirs>       # compares two results dirs
 just export --results results/llama --dest <export dir>   # the builders but kernel_tables
 just export --only kernel_tables --results results/probes --kernel-dest ../QuettaSim/data   # -> kernel_data/{graph,eager}/
 ```
@@ -89,11 +89,11 @@ just run configs/runs/llama-tp1-docker.yaml --set engine.model=/w/llama
 | `profile.json` | `qbench profile` | metrics, energy, cost, accuracy; never changes run.json |
 | `nsys.*`, `nsys-<ctx>x<bs>.*` | `engine.instrumentation=nsys` | the capture armed at launch (QuettaServe: one per bench cell) |
 
-`qbench run` refuses a `results/<run>/` that already holds files; `--overwrite` empties it first: every file and subdirectory there belongs to the old run, so `profile.json` and the nsys export go with it. A run whose `run.json` says failed is replaced without `--overwrite`. Only a real dir directly under the results dir that holds `run.json`, `requests.jsonl` or `engine.json` is ever emptied; a symlink or a dir qbench did not make is refused. `run_name` (the yaml stem or `--set run_name=`) matches `[A-Za-z0-9][A-Za-z0-9._-]*` and is none of `probes`, `xval`, `baselines`; matrix suffixes are cut to that charset.
+`qbench run` refuses a `results/<run>/` that already holds files; `--overwrite` empties it first: every file and subdirectory there belongs to the old run, so `profile.json` and the nsys export go with it. A run whose `run.json` says failed is replaced without `--overwrite`. Only a real dir directly under the results dir that holds `run.json`, `requests.jsonl` or `engine.json` is ever emptied; a symlink or a dir qbench did not make is refused. `run_name` (the yaml stem or `--set run_name=`) matches `[A-Za-z0-9][A-Za-z0-9._-]*` and is none of `probes`, `compare`, `baselines`; matrix suffixes are cut to that charset.
 
-Grid runs write no `results/baselines/*.json`; `qbench xval` reads the run dir, and also reads baselines json files. Each probe run writes its own `results/probes/<gpu>/<probe>/<run-id>/` (the run id is its UTC start, e.g. `20261011T120000.000000Z`): `run.json` (argv, provenance, run_status) and `rows.jsonl`, one `ProbeRow` (probe, table, key, value, timing) per measured row. `just export` builds every kernel table from those rows, unioning every ok run's rows per table on the probe's row key, the run that finished last winning a key, and takes a table with no row key from the run that finished last (`docs/runbooks/probes.md`). It merges into the tables QuettaSim already holds, keeping their rows unless a run supersedes them, and stops where it would drop one unless given `--replace-tables`, which replaces just the tables that would stop. It is the only route to QuettaSim.
+Grid runs write no `results/baselines/*.json`; `qbench compare` reads the run dir, and also reads baselines json files. Each probe run writes its own `results/probes/<gpu>/<probe>/<run-id>/` (the run id is its UTC start, e.g. `20261011T120000.000000Z`): `run.json` (argv, provenance, run_status) and `rows.jsonl`, one `ProbeRow` (probe, table, key, value, timing) per measured row. `just export` builds every kernel table from those rows, unioning every ok run's rows per table on the probe's row key, the run that finished last winning a key, and takes a table with no row key from the run that finished last (`docs/runbooks/probes.md`). It merges into the tables QuettaSim already holds, keeping their rows unless a run supersedes them, and stops where it would drop one unless given `--replace-tables`, which replaces just the tables that would stop. It is the only route to QuettaSim.
 
-## Cross-validation
+## Compare
 
 ### Measurement contract
 
@@ -118,7 +118,7 @@ The baseline records the mode and the table prints it.
 
 The model yaml's `quettaserve:` block names the cargo `crate` and `test`, the env prefix (`DS_`, `QW_`) and the family:
 
-- `moe` (deepseek): needs `engine.extra.qs_cfg`; an inherited `<P>_LAYERS` is removed, since layer truncation would invalidate the run. `engine.layers=N` sets it on purpose for a slice run; crossval ignores the `layers=N` lines.
+- `moe` (deepseek): needs `engine.extra.qs_cfg`; an inherited `<P>_LAYERS` is removed, since layer truncation would invalidate the run. `engine.layers=N` sets it on purpose for a slice run; compare ignores the `layers=N` lines.
 - `gdn` (qwen3 and other linear-attention hybrids): exact kernels only when `engine.extra.gdn_dir` holds the vLLM GDN cubins (the loader panics without them), else the tiled rust suite; custom all-reduce at tp >= 2; the exact suite has no CUDA-graph wiring, so it runs eager, rust runs graph.
 - `dense`: nothing extra.
 
@@ -130,30 +130,30 @@ A host without cargo sets `engine.extra.bench_bin` to a prebuilt test binary.
 
 ### Correctness
 
-Agreement is two runs compared by `qbench xval`. Runs with `mode.returns=text` give greedy-agreement rows (engine vs vLLM text); runs with `mode.returns=logits` give the FIDELITY gate, vLLM against the transformers reference on the same grid prompts:
+Agreement is two runs compared by `qbench compare`. Runs with `mode.returns=text` give greedy-agreement rows (engine vs vLLM text); runs with `mode.returns=logits` give the FIDELITY gate, vLLM against the transformers reference on the same grid prompts:
 
 ```bash
 qbench run configs/runs/llama.yaml --set mode.grid=smoke --set mode.returns=logits \
     --set 'engine.extra.vllm={enforce_eager: true}' --set run_name=llama-logits
 qbench run configs/runs/llama.yaml --set mode.grid=smoke --set engine.name=reference \
     --set run_name=llama-reference
-qbench xval results/llama-logits results/llama-reference
+qbench compare results/llama-logits results/llama-reference
 ```
 
 FIDELITY passes only with zero hard disagreements (an argmax flip where the reference's top-2 gap is not a near tie). deepseek has no transformers reference; its correctness comes from the engine's own batch gates.
 
 ### Slice verification
 
-A model cut to its first N layers cannot be checked on a free-running greedy chain: bf16 rounding flips its router within a few steps. The check is teacher-forced logits against a float32 reference anchor, passing when the engine's argmax flips are no more than the reference's own at the engine's dtype (the noise floor). `engine.layers=N` cuts the reference (and sets the QuettaServe batch_bench's `<P>_LAYERS`); vLLM loads a checkpoint dir cut the same way as `engine.model`. `qbench xval <ours> <anchor> --floor <run>` prints the BAND line:
+A model cut to its first N layers cannot be checked on a free-running greedy chain: bf16 rounding flips its router within a few steps. The check is teacher-forced logits against a float32 reference anchor, passing when the engine's argmax flips are no more than the reference's own at the engine's dtype (the noise floor). `engine.layers=N` cuts the reference (and sets the QuettaServe batch_bench's `<P>_LAYERS`); vLLM loads a checkpoint dir cut the same way as `engine.model`. `qbench compare <ours> <anchor> --floor <run>` prints the BAND line:
 
 ```
 qbench run <run>.yaml --set mode.returns=logits --set engine.model=<cut dir> --set run_name=slice-vllm
 qbench run <run>.yaml --set engine.name=reference --set engine.layers=N --set engine.dtype=float32 --set run_name=slice-f32
 qbench run <run>.yaml --set engine.name=reference --set engine.layers=N --set engine.dtype=bfloat16 --set run_name=slice-bf16
-qbench xval results/slice-vllm results/slice-f32 --floor results/slice-bf16
+qbench compare results/slice-vllm results/slice-f32 --floor results/slice-bf16
 ```
 
-A floor run is trusted once it is deterministic: the same run twice crossvals to argmax_agree equal to positions and delta max 0. `qbench profile --source kernels` gives per-kernel GPU time per decode step from an nsys-armed run, and `just moe-routing <model>` (`probes/moe.py --routing`) dumps one MoE block for an engine-side diff.
+A floor run is trusted once it is deterministic: the same run compared twice gives argmax_agree equal to positions and delta max 0. `qbench profile --source kernels` gives per-kernel GPU time per decode step from an nsys-armed run, and `just moe-routing <model>` (`probes/moe.py --routing`) dumps one MoE block for an engine-side diff.
 
 ### Model notes
 
@@ -162,13 +162,13 @@ llama is verified. deepseek, qwen, qwen3, glm53 and glm53flash are bring-up (`ve
 ## Layout
 
 ```
-quettabench/cli.py        qbench: run | profile | xval | export
+quettabench/cli.py        qbench: run | profile | compare | export
 quettabench/runner.py     run: load, build the Trace, translate, launch, drive, serve, write
 quettabench/provision.py  box setup, --dry-run plan, MISSING: and stop
 quettabench/config/       schema (with topology rules), loader (yaml + --set + env), env_map
 quettabench/workloads/    traces: live (with the profiles registry), sessions, grid; arrival schedules
 quettabench/engines/      adapters (vllm, quettaserve), drivers (with the reference adapter), launcher
-quettabench/crossval.py   pairs two runs' cells; withhold rules; agreement rows
+quettabench/compare.py   pairs two runs' cells; withhold rules; agreement rows
 quettabench/modes/serve.py  the one measurement procedure: replay, sessions, grid cells
 quettabench/metrics/      percentiles, step fit, the results writer
 quettabench/profiling/    sources the profiler attaches with
@@ -179,7 +179,7 @@ configs/                  models, runs, grids, hardware
 docker/Dockerfile         qbench on the vLLM image (just image)
 docs/runbooks/            the probe guide (probes.md)
 tests/golden/             characterization fixtures
-tests/contracts/          one test module per package area, plus the crossval contracts and GPU smoke
+tests/contracts/          one test module per package area, plus the compare contracts and GPU smoke
 tests/parity/             the committed HTTP-vs-in-process slope gate and its test
 data/                     data fetch scripts; not imported by the package
 ```
