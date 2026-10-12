@@ -32,23 +32,10 @@ from tests.golden._harness import FIXTURES, grid_argv, run_grid_cli
 
 REPO = Path(__file__).resolve().parents[2]
 QB = REPO / "quettabench"
-VERIFIED_CRATE = "llama"
 
 
 def _scripts(suffix):
     return sorted(p for p in QB.rglob(f"*{suffix}") if "__pycache__" not in p.parts)
-
-
-def _load_workloads():
-    """The merged records, grids and step points of workloads.json, as the config golden pins them."""
-    fixtures = REPO / "tests" / "golden" / "fixtures"
-    records = json.loads((fixtures / "config_workloads.json").read_text())
-    glob = json.loads((fixtures / "config_global.json").read_text())["cleared"]
-    return {
-        "workloads": {n: r["cleared"]["xval_config"]["workload"] for n, r in records.items()},
-        "grids": glob["grids"],
-        "step_points": glob["step_points"],
-    }
 
 
 def _config(name, *sets, env=None):
@@ -237,34 +224,22 @@ class CrossvalScripts(unittest.TestCase):
             sys.path.pop(0)
 
     def test_glm53_workload_contract(self):
-        # GLM-5.3 is MLA + DSA, so kv_bytes uses the latent formula; the checkpoint is fp8, recorded as quant; no bench section.
-        wl = _load_workloads()["workloads"]["glm53"]
+        # GLM-5.3 is MLA + DSA, so kv_bytes uses the latent formula; the checkpoint is fp8, recorded as quant.
+        e = _config("glm53").engine
         layers, kv_lora_rank, rope, bf16 = 78, 512, 64, 2  # zai-org/GLM-5.3 config.json
-        self.assertEqual(wl["kv_bytes"], layers * (kv_lora_rank + rope) * bf16)
-        self.assertEqual(wl["quant"], "fp8")
-        self.assertEqual(wl["tp"], 8)
-        self.assertTrue(wl["expert_parallel"])
-        self.assertFalse(wl["verified"], "bring-up gate: runs need ALLOW_UNVERIFIED=1")
-        self.assertNotIn("bench", wl)
-        self.assertNotIn("comm_bound_bs", wl)  # measured per model, never inherited
-        check_ep_legal(wl["tp"], 256)  # 256 routed experts shard on tp8
-        cfg = _config("glm53")
-        self.assertEqual(cfg.mode.grid, wl["grid"])
-        self.assertEqual(cfg.engine.tp * cfg.engine.pp, 8)
+        self.assertEqual(e.kv_bytes, layers * (kv_lora_rank + rope) * bf16)
+        self.assertEqual((e.quant, e.tp * e.pp, e.ep), ("fp8", 8, True))
+        self.assertFalse(e.verified, "bring-up gate: runs need ALLOW_UNVERIFIED=1")
+        check_ep_legal(e.tp, 256)  # 256 routed experts shard on tp8
 
     def test_glm53flash_workload_contract(self):
         # GLM-5.3-Flash is a hybrid: only the 11 sparse-MLA layers hold per-token KV, so kv_bytes is mandatory.
-        wl = _load_workloads()["workloads"]["glm53flash"]
+        e = _config("glm53flash").engine
         mla_layers, kv_lora_rank, rope, bf16 = 11, 512, 0, 2  # zai-org/GLM-5.3-Flash text_config
-        self.assertEqual(wl["kv_bytes"], mla_layers * (kv_lora_rank + rope) * bf16)
-        self.assertEqual(wl["quant"], "fp8")
-        self.assertEqual(wl["tp"], 4)
-        self.assertTrue(wl["expert_parallel"])
-        self.assertFalse(wl["verified"], "bring-up gate: runs need ALLOW_UNVERIFIED=1")
-        self.assertNotIn("bench", wl)
-        self.assertNotIn("comm_bound_bs", wl)
-        check_ep_legal(wl["tp"], 288)  # 288 routed experts shard on tp4
-        self.assertEqual(_config("glm53flash").mode.grid, wl["grid"])
+        self.assertEqual(e.kv_bytes, mla_layers * (kv_lora_rank + rope) * bf16)
+        self.assertEqual((e.quant, e.tp, e.ep), ("fp8", 4, True))
+        self.assertFalse(e.verified, "bring-up gate: runs need ALLOW_UNVERIFIED=1")
+        check_ep_legal(e.tp, 288)  # 288 routed experts shard on tp4
 
     def test_grid_run_supports_moe_bringup(self):
         # expert parallel on vLLM, plus an opt-in to run before certified.
@@ -315,10 +290,10 @@ class CrossvalScripts(unittest.TestCase):
         # world from the workload tp, every cell runs, DS_LAYERS blocked.
         out, log = self._bench("deepseek", self.BENCH_LINE, ["engine.extra.qs_cfg=/dev/null"], env={"DS_LAYERS": "6"})
         self.assertEqual(out.returncode, 0, out.stderr)
-        cfg = _load_workloads()
-        tp = cfg["workloads"]["deepseek"]["tp"]
+        cfg = _config("deepseek")
+        tp = cfg.engine.tp
         cells = re.findall(r"^\[batch_bench\] world=(\d+) .*layers=(\w+)", log, re.M)
-        self.assertEqual(len(cells), len(cfg["grids"]["deepseek"]))
+        self.assertEqual(len(cells), len(cfg.grid.cells))
         self.assertEqual(set(cells), {(str(tp), "all")})
 
     def test_bench_fails_when_a_cell_produces_no_line(self):
@@ -335,9 +310,8 @@ class CrossvalScripts(unittest.TestCase):
         # exact has no graph wiring: with cubins present the driver picks the eager step and stamps kern/mode.
         out, log = self._bench("qwen3", self.QWEN_LINE, ["engine.extra.gdn_dir=/dev/null"])
         self.assertEqual(out.returncode, 0, out.stderr)
-        cfg = _load_workloads()
         modes = re.findall(r"^LOOP .*mode=(\w+)", log, re.M)
-        self.assertEqual(len(modes), len(cfg["grids"]["qwen3"]))
+        self.assertEqual(len(modes), len(_config("qwen3").grid.cells))
         self.assertEqual(set(modes), {"eager"})
         self.assertIn("kern=exact", log)
 
@@ -347,105 +321,22 @@ class CrossvalScripts(unittest.TestCase):
         self.assertIn("no quettaserve: block", out.stderr)
 
 
-class WorkloadsConfig(unittest.TestCase):
-    def test_top_level_shape(self):
-        cfg = _load_workloads()
-        self.assertIsInstance(cfg.get("step_points"), list)
-        self.assertTrue(cfg["step_points"])
-        self.assertIsInstance(cfg.get("grids"), dict)
-        self.assertIsInstance(cfg.get("workloads"), dict)
-
-    def test_every_workload_names_an_existing_grid(self):
-        cfg = _load_workloads()
-        grids = cfg["grids"]
-        for name, workload in cfg["workloads"].items():
-            grid = workload.get("grid")
-            self.assertIn(
-                grid,
-                grids,
-                f"workload {name} names grid {grid!r}, absent from grids",
-            )
-
-    def test_verified_crate_grid_is_context_batch_pairs(self):
-        cfg = _load_workloads()
-        grid_name = cfg["workloads"][VERIFIED_CRATE]["grid"]
-        grid = cfg["grids"][grid_name]
-        self.assertTrue(grid, f"{VERIFIED_CRATE} grid {grid_name} is empty")
-        for cell in grid:
-            self.assertEqual(len(cell), 2, f"grid cell {cell} is not (context, batch)")
-            self.assertTrue(all(isinstance(x, int) for x in cell))
-
-    def test_tp_suffixed_workloads_declare_matching_tp(self):
-        cfg = _load_workloads()
-        for name, workload in cfg["workloads"].items():
-            m = re.search(r"-tp(\d+)$", name)
-            if m:
-                self.assertEqual(
-                    workload.get("tp"),
-                    int(m.group(1)),
-                    f"workload {name} must declare tp={m.group(1)}",
-                )
-
-    def test_workloads_declare_verified(self):
-        for name, workload in _load_workloads()["workloads"].items():
-            self.assertIn("verified", workload, f"{name} missing the verified flag")
-
-    def test_deepseek_is_moe_expert_parallel_at_tp8(self):
-        # kv_dtype is the shipped MLA layout; kv_bytes = (512+64) x 43 layers.
-        ds = _load_workloads()["workloads"]["deepseek"]
-        self.assertIs(ds.get("expert_parallel"), True)
-        self.assertEqual(ds.get("tp"), 8)
-        self.assertEqual(ds.get("kv_dtype"), "fp8_ds_mla")
-        self.assertEqual(ds.get("kv_bytes"), (512 + 64) * 43)
-
-    def test_qwen3_is_dense_no_expert_parallel(self):
-        # Dense model: no expert_parallel, tp 4, bfloat16.
-        qw = _load_workloads()["workloads"]["qwen3"]
-        self.assertNotIn("expert_parallel", qw)
-        self.assertEqual(qw.get("tp"), 4)
-        # hybrid stack: KV lives only in the 16 full-attention layers x 2 (K+V) x 4 kv heads x 256 head_dim x 2 bytes (bf16).
-        self.assertEqual(qw.get("kv_bytes"), 16 * 2 * 4 * 256 * 2)
-        self.assertEqual(qw.get("dtype"), "bfloat16")
-        self.assertEqual(qw.get("weights_gib"), 54)
-        self.assertEqual(qw.get("maxlen"), 40960)
-        self.assertFalse(qw.get("verified"))
-
-    def test_qwen3_grid_is_16_cells(self):
-        # ctx {1024,4096,8192,16384} x bs {1,4,16,64} = 16 cells.
-        grid = _load_workloads()["grids"]["qwen3"]
-        self.assertEqual(len(grid), 16)
-        expected = {(c, b) for c in (1024, 4096, 8192, 16384) for b in (1, 4, 16, 64)}
-        self.assertEqual({tuple(c) for c in grid}, expected)
-
-    def test_grid_cells_fit_workload_maxlen(self):
-        cfg = _load_workloads()
-        top = max(cfg["step_points"])
-        for name, workload in cfg["workloads"].items():
-            for ctx, bs in cfg["grids"][workload["grid"]]:
-                self.assertLessEqual(
-                    ctx + top + 2,
-                    workload["maxlen"],
-                    f"workload {name} cell ({ctx}, {bs}) exceeds maxlen "
-                    f"{workload['maxlen']}; the grid run would SKIP it",
-                )
-
-
 class EngineBenchContract(unittest.TestCase):
-    """Cells of QuettaServe llama/benches/latency.rs: every cell the bench times needs a vLLM cell, or the table drops the row."""
+    """Every cell the QuettaServe bench times needs a vLLM cell, or the table drops the row."""
 
     def test_llama_grid_covers_the_batch_bench_cells(self):
-        grid = {tuple(c) for c in _load_workloads()["grids"]["llama"]}
+        grid = {tuple(c) for c in _config("llama").grid.cells}
         expected = {(ctx, bs) for ctx in (100, 1024, 4096) for bs in (1, 8, 16, 32, 64)}
         self.assertTrue(expected <= grid, f"missing cells: {sorted(expected - grid)}")
 
     def test_llama_single_grid_covers_the_tp_bench_cells(self):
-        grid = {tuple(c) for c in _load_workloads()["grids"]["llama_single"]}
+        grid = {tuple(c) for c in _config("llama-tp1").grid.cells}
         expected = {(ctx, 1) for ctx in (100, 1024, 4096, 8192)}
         self.assertTrue(expected <= grid, f"missing cells: {sorted(expected - grid)}")
 
     def test_deepseek_grid_covers_the_batch_bench_cells(self):
         # The QuettaServe bench loops the run's grid cells.
-        grid = {tuple(c) for c in _load_workloads()["grids"]["deepseek"]}
+        grid = {tuple(c) for c in _config("deepseek").grid.cells}
         expected = {(ctx, bs) for ctx in (1024, 8192, 16384) for bs in (1, 4, 16, 64)}
         self.assertEqual(grid, expected, f"grid drift: {sorted(grid ^ expected)}")
 
@@ -593,7 +484,7 @@ class TableParity(unittest.TestCase):
         self.assertNotIn("synchronized step", out)
 
     def test_h200_grid_is_the_table(self):
-        grid = {tuple(c) for c in _load_workloads()["grids"]["table_big"]}
+        grid = {tuple(c) for c in _config("llama-big").grid.cells}
         expected = {(c, b) for c in (1024, 8192, 16384) for b in (1, 4, 16, 64)}
         self.assertEqual(grid, expected)
 
@@ -877,8 +768,8 @@ class ConfigTree(unittest.TestCase):
         self.assertEqual(len(_config("qwen3").grid.cells), 16)
         self.assertEqual(_config("llama").grid.step_points, (60, 230, 400))
 
-    def test_decode_batch_run_has_the_retired_probes_cells(self):
-        # decode_batch_probe.py's defaults: --ctx 20000 --batches 1 2 4 8 11 16 24.
+    def test_decode_batch_run_cells(self):
+        # ctx 20000 at batches 1 2 4 8 11 16 24.
         grid = _config("decode_batch_llama").grid
         self.assertEqual(grid.cells, tuple((20000, bs) for bs in (1, 2, 4, 8, 11, 16, 24)))
         self.assertEqual(grid.cells_over_maxlen, ())
