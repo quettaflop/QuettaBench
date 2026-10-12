@@ -163,6 +163,9 @@ def main(argv=None):
         "composition prefers when present",
     )
     a = ap.parse_args(argv)
+    _timing.require_backend("elementwise", "cuda", "rocm", "cpu")
+    if a.vllm:
+        _timing.require_backend("elementwise --vllm", "cuda", "rocm")
     tag = ("/graph" if a.graph else "") + ("/vllm" if a.vllm else "")
     print(f"[elem{tag}] {_timing.device_name()}", flush=True)
     n = ElementwiseProbe(a).run()

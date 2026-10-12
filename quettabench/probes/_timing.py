@@ -23,6 +23,16 @@ def backend() -> str:
     return "cpu"
 
 
+def require_backend(what: str, *supported: str) -> None:
+    if backend() not in supported:
+        raise SystemExit(f"{what} runs on {', '.join(supported)}, not {backend()}")
+
+
+def require_ncu() -> None:
+    if backend() != "cuda":
+        raise SystemExit(f"--ncu needs cuda; the {backend()} kernel profiler (rocprofv3) is not wired yet")
+
+
 def device() -> str:
     """ROCm builds of torch use the cuda device type."""
     return "cuda" if torch.cuda.is_available() else "cpu"

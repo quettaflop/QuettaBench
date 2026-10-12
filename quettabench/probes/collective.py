@@ -47,6 +47,7 @@ def main(argv=None):
         help="collectives to sweep (comma-separated). all_reduce is required for the tp_comm scalars.",
     )
     a = ap.parse_args(argv)
+    _timing.require_backend("collective", "cuda", "rocm")
 
     dist.init_process_group(backend="nccl")
     rank = dist.get_rank()

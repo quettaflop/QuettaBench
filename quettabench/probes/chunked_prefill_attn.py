@@ -96,6 +96,7 @@ def main(argv=None):
     ap.add_argument("--q-axis", default=",".join(map(str, Q_AXIS)))
     ap.add_argument("--ctx-axis", default=",".join(map(str, CTX_AXIS)))
     a = ap.parse_args(argv)
+    _timing.require_backend("chunked_prefill_attn", "cuda", "rocm")
     if a.fa_version == 0:
         a.fa_version = 3 if _timing.device_capability()[0] >= 9 else 2
     print(

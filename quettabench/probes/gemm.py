@@ -288,6 +288,11 @@ def main(argv=None):
         ap.error(f"unknown --model-shapes {unknown}; use {','.join(sorted(MODEL_SHAPES))}")
     if a.dtype == "fp8" and a.ncu:
         ap.error("--dtype fp8 has no --ncu path (the op is a Python-level dispatch, not one kernel); use --graph")
+    _timing.require_backend("gemm", "cuda", "rocm", "cpu")
+    if a.dtype == "fp8":
+        _timing.require_backend("gemm --dtype fp8", "cuda")
+    if a.ncu:
+        _timing.require_ncu()
     fp8_op = fp8_linear_op() if a.dtype == "fp8" else None
     probe = GemmProbe(a, fp8_op)
     n = probe.run()

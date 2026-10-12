@@ -122,6 +122,7 @@ def main(argv=None) -> bool:
         "for a held-out validation sweep that must not touch calibration",
     )
     a = ap.parse_args(argv)
+    _timing.require_backend("reparallel", "cuda", "rocm")
 
     rank = int(os.environ["RANK"])
     world = int(os.environ["WORLD_SIZE"])

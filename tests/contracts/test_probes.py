@@ -532,6 +532,73 @@ def test_probe_device_layer_leaves_the_launcher_visible_device_names():
     assert launcher.visible_env("rocm", "2")[0] == {"HIP_VISIBLE_DEVICES": "2", "CUDA_VISIBLE_DEVICES": "2"}
 
 
+@pytest.mark.parametrize(
+    "name,flags,backend,said",
+    [
+        ("gemm", ["--ncu"], "rocm", "rocprofv3"),
+        ("gemm", ["--dtype", "fp8"], "cpu", "gemm --dtype fp8 runs on cuda, not cpu"),
+        ("moe", [], "cpu", "moe runs on cuda, rocm, not cpu"),
+        ("elementwise", ["--vllm"], "cpu", "elementwise --vllm runs on cuda, rocm, not cpu"),
+        ("elementwise", [], "tpu", "elementwise runs on cuda, rocm, cpu, not tpu"),
+        ("moe", [], "neuron", "moe runs on cuda, rocm, not neuron"),
+    ],
+)
+def test_probe_refuses_a_backend_it_does_not_support(name, flags, backend, said):
+    probe = import_without_torch(name)
+    with mock.patch.object(probe._timing, "backend", return_value=backend):
+        with pytest.raises(SystemExit, match=said):
+            probe.main(["--gpu-label", "H100", *flags])
+
+
+SUPPORTED = {
+    "gemm": ("cuda", "rocm", "cpu"),
+    "elementwise": ("cuda", "rocm", "cpu"),
+    "moe": ("cuda", "rocm"),
+    "gdn": ("cuda", "rocm"),
+    "flash_attn": ("cuda", "rocm"),
+    "chunked_prefill_attn": ("cuda", "rocm"),
+    "collective": ("cuda", "rocm"),
+    "reparallel": ("cuda", "rocm"),
+    "vllm_allreduce": ("cuda",),
+}
+
+
+def declared_backends(path):
+    """The (probe, backends...) of every plain require_backend call in the file."""
+    calls = (n for n in ast.walk(ast.parse(path.read_text())) if isinstance(n, ast.Call))
+    return [
+        tuple(a.value for a in c.args)
+        for c in calls
+        if getattr(c.func, "attr", None) == "require_backend" and all(isinstance(a, ast.Constant) for a in c.args)
+    ]
+
+
+@pytest.mark.parametrize("name", sorted(SUPPORTED))
+def test_each_probe_declares_its_backends_once(name):
+    assert (name, *SUPPORTED[name]) in declared_backends(PROBES / f"{name}.py")
+
+
+def test_kv_transfer_declares_cuda_only():
+    assert ("kv_transfer", "cuda") in declared_backends(PROBES.parent / "profiling" / "kv_transfer.py")
+
+
+def run_on_cpu(tmp_path, name, *flags):
+    """A child with no visible GPU, so a GPU box runs the cpu path too."""
+    env = {**os.environ, "CUDA_VISIBLE_DEVICES": "", "HIP_VISIBLE_DEVICES": ""}
+    cmd = [sys.executable, "-m", f"quettabench.probes.{name}", "--gpu-label", "T", "--out", str(tmp_path), *flags]
+    subprocess.run(cmd, check=True, timeout=300, cwd=PROBES.parents[1], env=env, capture_output=True)
+    return [json.loads(line) for f in tmp_path.rglob("rows.jsonl") for line in f.read_text().splitlines()]
+
+
+def test_elementwise_and_gemm_run_on_cpu_through_the_device_layer(tmp_path):
+    pytest.importorskip("torch")
+    elem = run_on_cpu(tmp_path / "e", "elementwise", "--max-mem-gb", "0.01")
+    assert {r["key"]["entry"] for r in elem} == {"rmsnorm", "silu_mul", "rotary_emb", "residual_add"}
+    gemm = run_on_cpu(tmp_path / "g", "gemm", "--pairs", "8:8", "--m-axis", "1,4")
+    assert sorted(r["key"]["M"] for r in gemm) == [1, 4]
+    assert all(r["value"]["latency_us"] > 0 for r in gemm)
+
+
 def test_moe_routing_flag_takes_the_routing_parser(capsys):
     with pytest.raises(SystemExit) as stop:
         import_without_torch("moe").main(["--routing", "--gpu-label", "H100"])

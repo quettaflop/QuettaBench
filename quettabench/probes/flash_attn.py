@@ -175,6 +175,10 @@ def main(argv=None):
         "no NCU needed) -> graph/flash_attn/; prefill stays eager",
     )
     a = ap.parse_args(argv)
+    # rocm only where a vLLM build ships vllm_flash_attn; the import above fails otherwise.
+    _timing.require_backend("flash_attn", "cuda", "rocm")
+    if a.ncu:
+        _timing.require_ncu()
     if a.fa_version == 0:  # auto: FA3 needs sm90+.
         a.fa_version = 3 if _timing.device_capability()[0] >= 9 else 2
         print(f"[flash] auto fa_version={a.fa_version} for {_timing.device_name()}", flush=True)

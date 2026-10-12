@@ -47,6 +47,7 @@ def main(argv=None):
         "(vLLM then routes TP all-reduce through pynccl)",
     )
     a = ap.parse_args(argv)
+    _timing.require_backend("vllm_allreduce", "cuda")
     rank, world, local = int(os.environ["RANK"]), int(os.environ["WORLD_SIZE"]), int(os.environ["LOCAL_RANK"])
     _timing.set_device(local)
     # Imported after set_device, the order a vLLM worker uses.

@@ -170,6 +170,9 @@ def main(argv=None):
     ap.add_argument("--ncu", action="store_true", help="NCU per-kernel timing (the standard); curated grid")
     ap.add_argument("--ncu-bin", default=os.environ.get("NCU_BIN", "ncu"))
     a = ap.parse_args(argv)
+    _timing.require_backend("gdn", "cuda", "rocm")
+    if a.ncu:
+        _timing.require_ncu()
     print(
         f"[gdn{'/ncu' if a.ncu else ''}] dev={_timing.device_name()} H={a.value_heads} K={a.key_dim} V={a.value_dim} gdn_layers={a.gdn_layers}",
         flush=True,

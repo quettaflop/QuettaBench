@@ -393,6 +393,7 @@ def main(argv=None) -> None:
     unknown = [k for k in a.geometries.split(",") if k.strip() and k.strip() not in GEOMETRIES]
     if unknown and not a.geometry_spec:
         ap.error(f"unknown --geometries {unknown}; use {','.join(GEOMETRIES)}")
+    _timing.require_backend("moe", "cuda", "rocm")
     global _GRAPH, _FP8, _BACKEND
     _GRAPH = a.graph
     _FP8 = a.dtype == "fp8"

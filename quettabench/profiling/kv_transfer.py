@@ -78,6 +78,7 @@ def main(argv=None) -> bool:
         "with gaps), scattered (nothing merges)",
     )
     a = ap.parse_args(argv)
+    _timing.require_backend("kv_transfer", "cuda")
 
     rank = int(os.environ["RANK"])
     world = int(os.environ["WORLD_SIZE"])
