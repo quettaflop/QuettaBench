@@ -1,5 +1,4 @@
-# llama-tp1 with the server in a container: the RTX PRO 6000 nodes have vLLM
-# only as docker images (vllm/vllm-openai:v0.26.0, the base the qbench image is built and tested on).
+# llama-tp1 with the server in a container, for hosts that have vLLM only as a docker image (vllm/vllm-openai:v0.26.0, the base the qbench image is built and tested on).
 model: llama31_8b
 engine:
   tp: 1

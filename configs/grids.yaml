@@ -87,8 +87,7 @@ grids:
   - [16384, 64]
   smoke:
   - [100, 1]
-  # decode step vs batch at one long context: the cells of the retired
-  # profiling/kernel_composed/probes/decode_batch_probe.py (--ctx 20000 --batches 1 2 4 8 11 16 24)
+  # decode step vs batch at one long context
   decode_batch:
   - [20000, 1]
   - [20000, 2]

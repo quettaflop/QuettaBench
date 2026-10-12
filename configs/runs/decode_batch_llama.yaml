@@ -1,6 +1,4 @@
-# Decode step time vs batch at ctx 20000 (grids.yaml decode_batch). The model
-# yaml's 9216 max_model_len would SKIP every cell; Llama-3.1 takes 128k, so the
-# run raises it to fit ctx + the top step point.
+# Decode step time vs batch at ctx 20000 (grids.yaml decode_batch). The model yaml's 9216 max_model_len would SKIP every cell; Llama-3.1 takes 128k, so the run raises it to fit ctx + the top step point.
 model: llama31_8b
 engine:
   max_model_len: 20480

@@ -82,6 +82,7 @@ just run configs/runs/llama-tp1-docker.yaml --set engine.model=/w/llama
 | file | written by | holds |
 |---|---|---|
 | `run.json` | run | schema_version, provenance (secrets redacted), config, origins, summary, steps, run_status |
+| `rows.jsonl` | probe run | one `ProbeRow` per measured row (probe, table, key, value, timing); `just export` builds the kernel tables from them |
 | `requests.jsonl` | run | one row per request (grid: per request of every batch, `cell` tells them apart), appended as each finishes |
 | `engine.json`, `server.log` | launcher | endpoint, pid, launch spec of a launched server |
 | `bench.log` | QuettaServe runs | the bench's stdout per cell |
@@ -152,9 +153,7 @@ qbench run <run>.yaml --set engine.name=reference --set engine.layers=N --set en
 qbench xval results/slice-vllm results/slice-f32 --floor results/slice-bf16
 ```
 
-A floor run is trusted once it is deterministic: the same run twice crossvals to argmax_agree equal to positions and delta max 0. `qbench profile --source kernels` gives per-kernel GPU time per decode step from an nsys-armed run, and `just moe-routing
-<model>` (`probes/moe.py --routing`) dumps one MoE block for an engine-side diff. The verdict log of the
-original harness is `docs/runbooks/slice_verification.md`.
+A floor run is trusted once it is deterministic: the same run twice crossvals to argmax_agree equal to positions and delta max 0. `qbench profile --source kernels` gives per-kernel GPU time per decode step from an nsys-armed run, and `just moe-routing <model>` (`probes/moe.py --routing`) dumps one MoE block for an engine-side diff. The verdict log of the original harness is `docs/runbooks/slice_verification.md`.
 
 ### Model notes
 
@@ -203,10 +202,10 @@ QuettaSim's `justfile` still runs five probe recipes from paths this refactor de
 # reparallel-probe-val mode=tp (pp, kv, plan: the same line with that mode's flags,
 # as QuettaSim's recipe lists them; quote --plans, its values hold '>')
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 $PYTHON_BIN -m torch.distributed.run --nproc_per_node=8 \
-  -m quettabench.probes.reparallel --gpu-label H200 --out-name H200_reshard_val \
+  -m quettabench.probes.reparallel --gpu-label <gpu> --out-name <gpu>_reshard_val \
   --switches 4:2 2:1 8:4 4:1 8:2 --weights-gb 3 6 12 24 48
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 $PYTHON_BIN -m torch.distributed.run --nproc_per_node=8 \
-  -m quettabench.probes.reparallel --gpu-label H200 --mode kv --out-name H200_reshard_kv_val \
+  -m quettabench.probes.reparallel --gpu-label <gpu> --mode kv --out-name <gpu>_reshard_kv_val \
   --kv-tokens 2048 8192 32768 98304 196608
 
 # then, for any of the five: the tables into QuettaSim's kernel_data/{graph,eager}/

@@ -8,24 +8,23 @@
 #   just export --results results/<run> --dest <export dir>
 #   just image
 #
-# .env (written by `just provision`) sets PYTHON_BIN and the cache dirs. Each probe run writes
-# results/probes/<gpu>/<probe>/<run-id>/ (pass --out through `just probe` to change the parent).
-# `just export` is the only route from results/ to QuettaSim; the probes' kernel tables go by
-# its kernel_tables builder into <QuettaSim data root>/kernel_data/ (--kernel-dest).
+# .env (written by `just provision`) sets PYTHON_BIN and the cache dirs. Each probe run writes results/probes/<gpu>/<probe>/<run-id>/ (pass --out through `just probe` to change the parent).
+# `just export` is the only route from results/ to QuettaSim; the probes' kernel tables go by its kernel_tables builder into <QuettaSim data root>/kernel_data/ (--kernel-dest).
 #
-#   REMOTE_HOST=a100  GPU_ID=0  PYTHON_BIN=~/miniconda3/envs/vllm/bin/python
+#   REMOTE_HOST=<host>  GPU_ID=0  PYTHON_BIN=~/miniconda3/envs/vllm/bin/python
 #
 #   just gpu-info
-#   just gpu=A100 profile-gpu
-#   just gpu=A100 flash tag=tp1 nh=32 nkv=8 hd=128
-#   just probe gemm "--gpu-label A100 --ncu"
+#   just gpu=<gpu> profile-gpu
+#   just gpu=<gpu> flash tag=tp1 nh=32 nkv=8 hd=128
+#   just probe gemm "--gpu-label <gpu> --ncu"
 #   just export --only kernel_tables --results results/probes --kernel-dest ../QuettaSim/data
 
 set dotenv-load := true
 # Recipe args reach the shell as $1, $2, ... too, so "$@" passes them on unsplit.
 set positional-arguments
 
-gpu := "A100"
+# The label the kernel tables are keyed by; name it per run: just gpu=<gpu> <recipe>
+gpu := ""
 gpu_id := env_var_or_default("GPU_ID", "0")
 py := env_var_or_default("PYTHON_BIN", "python3")
 sim_root := env_var_or_default("QUETTASIM", "../QuettaSim")
@@ -88,15 +87,11 @@ gpu-info:
         nvidia-smi --query-gpu=index,name,memory.used,utilization.gpu --format=csv
     fi
 
-# Any probe by module name, its flags in one quoted argument: just probe gemm "--gpu-label A100 --ncu"
+# Any probe by module name, its flags in one quoted argument: just probe gemm "--gpu-label <gpu> --ncu"
 probe name *args:
     CUDA_VISIBLE_DEVICES={{gpu_id}} {{py}} -m quettabench.probes.{{name}} {{args}}
 
-# Run a probe on REMOTE_HOST in its own mktemp dir (probes/base.py remote_probe): ship the
-# probes package and what its run.json needs, run it (NPROC>1 = one rank per GPU in GPU_IDS
-# through torchrun) with --run-id from this machine's clock, always pull the run into
-# results/probes/<gpu>/<probe>/<run-id>/, then remove that remote dir. The probe's flags
-# follow the GPU as they are: just remote-probe gemm H100 --ncu --model-shapes llama8b
+# Run a probe on REMOTE_HOST in its own mktemp dir (probes/base.py remote_probe): ship the probes package and what its run.json needs, run it (NPROC>1 = one rank per GPU in GPU_IDS through torchrun) with --run-id from this machine's clock, always pull the run into results/probes/<gpu>/<probe>/<run-id>/, then remove that remote dir. The probe's flags follow the GPU as they are: just remote-probe gemm <gpu> --ncu --model-shapes llama8b
 remote-probe name gpu=gpu *args:
     python3 -m quettabench.probes.base remote-probe --host "{{remote_host}}" --py "{{py}}" --gpu-id "{{gpu_id}}" --gpu-ids "{{gpu_ids}}" --nproc "{{nproc}}" --ncu-bin "{{ncu_bin}}" -- "$@"
 
