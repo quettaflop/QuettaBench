@@ -1,5 +1,5 @@
-"""qbench run: a run yaml to results/<run>/, the same sequence every time: one Config per matrix point, its LaunchSpec, the GPUs and collective pins in the child env, the server launched unless the adapter drives the engine itself, then modes/serve.py runs the Trace through the driver into a RunWriter; the server is stopped whatever happens.
-mode: probe runs quettabench.probes.<name> on the same GPUs into the run dir instead. --dry-run prints each Config with its origins and LaunchSpec (and the docker command when hardware.launcher=docker), secrets redacted, and starts nothing.
+"""qbench run: a run yaml to results/<run>/, the same sequence every time: one Config per matrix point, its LaunchSpec, the GPUs and collective pins in the child env, the server launched unless the adapter drives the engine itself (a grid run with mode.returns, cargo bench), then modes/serve.py runs the Trace through the driver into a RunWriter; the server is stopped whatever happens.
+mode: probe runs quettabench.probes.<name> on the same GPUs into the run dir instead. --dry-run prints each Config with its origins and LaunchSpec (and the docker command when hardware.launcher=docker), secrets redacted, and starts nothing. hardware.launcher=docker needs a launched server, so a grid run with mode.returns cannot use it.
 """
 
 import ast
@@ -133,7 +133,7 @@ def in_docker(cfg, adapter):
         return False
     if not adapter.needs_server(cfg):
         raise ConfigError(f"{cfg.run_name}: hardware.launcher=docker needs a launched server; "
-                          "a grid run sets engine.driver=http")
+                          "a grid run with mode.returns builds vLLM in this process")
     return True
 
 

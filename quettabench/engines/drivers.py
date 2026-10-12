@@ -1,7 +1,8 @@
 """How work reaches an engine: one Driver per way of driving it.
 
-InProcessDriver builds vLLM inside this process from spec.engine_kwargs and
-times one grid batch per generate() call, or scores it (returns="logits").
+InProcessDriver builds vLLM inside this process from spec.engine_kwargs for
+a grid run with mode.returns: it times one grid batch per generate() call,
+returns its ids and text, or scores it (returns="logits").
 ReferenceDriver scores with transformers, the FIDELITY reference, and
 ReferenceAdapter (engine.name: reference) hands it its spec. BenchDriver runs a QuettaServe
 bench per grid cell, as bench.sh did, and reads its rows with
@@ -423,10 +424,8 @@ class HttpDriver(Driver):
     url, model, api_key and timeout (seconds, for every request and the
     reset) bind the driver to one server; send() and run() use them over
     the aiohttp session opened by session(). run() with a cell is a grid
-    batch (see grid_batch); device() and warmup() serve the grid loop.
+    batch (see grid_batch); device(), version and warmup() serve the grid loop.
     """
-
-    version = None  # the server is not asked for one
 
     def __init__(self, endpoint, backend_name="vllm", *, url=None, model=None,
                  api_key="test", timeout=60):
@@ -439,6 +438,17 @@ class HttpDriver(Driver):
     def device(self):
         """GPU 0 as nvidia-smi reports it on this box, as BenchDriver reads it."""
         return nvidia_smi_device()
+
+    @property
+    def version(self):
+        """The server's GET /version; None without a bound url or an answer."""
+        if not self.url:
+            return None
+        try:
+            with launcher.urlopen(f"{server_base_url(self.url)}/version", timeout=10) as resp:
+                return json.loads(resp.read())["version"]
+        except (OSError, http.client.HTTPException, ValueError, KeyError, TypeError):
+            return None
 
     async def send_request(self, *args, **kwargs) -> RequestResult:
         result = await self._stream(*args, **kwargs)
@@ -673,10 +683,9 @@ class BenchDriver(Driver):
 class InProcessDriver(Driver):
     """vLLM in this process, built from spec.engine_kwargs and spec.env on first use.
 
-    Grid runs only, and only until the HTTP-vs-in-process parity gate
-    (QBENCH_STRUCTURE.md section 5) passes; a pass deletes this class.
-    vllm and torch are imported inside the methods because they exist only
-    on GPU boxes.
+    Grid runs with mode.returns only: timing goes over HTTP since the parity
+    gate passed (tests/parity/slope_gate.json), and only this path returns
+    token ids, text or logits.
     """
 
     def __init__(self, spec):

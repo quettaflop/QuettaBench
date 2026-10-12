@@ -99,9 +99,8 @@ class EngineAdapter(ABC):
         is the run's, for an adapter whose endpoint depends on it."""
 
     def needs_server(self, cfg):
-        """Whether runner launches spec.server_argv before driving. A grid run
-        does not: it times batches in-process until the HTTP-vs-in-process
-        parity gate passes."""
+        """Whether runner launches spec.server_argv before driving; by default
+        only a serve run does."""
         return cfg.mode.grid is None
 
 

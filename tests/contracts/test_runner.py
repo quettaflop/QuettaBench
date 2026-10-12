@@ -83,7 +83,7 @@ class DryRun(unittest.TestCase):
         self.assertIsNone(exit_msg)
         self.assertEqual([line for line in out.splitlines() if line.startswith("==")],
                          ["== sweep-tp1", "== sweep-tp2"])
-        self.assertIn("launch = none, the driver runs it", out)  # grid runs launch nothing
+        self.assertIn("launch = server", out)  # a timing grid runs over HTTP
 
     def test_refusal_is_the_exit_message(self):
         _, exit_msg = qbench("run", str(RUNS[0].with_name("llama.yaml")), "--dry-run",
@@ -138,7 +138,8 @@ class MatrixEnv(unittest.TestCase):
         export.assert_not_called()
 
     def test_in_process_points_that_differ_are_refused(self):
-        run = {"model": "llama31_8b", "workload": {"kind": "grid"}, "mode": {"grid": "smoke"},
+        run = {"model": "llama31_8b", "workload": {"kind": "grid"},
+               "mode": {"grid": "smoke", "returns": "text"},
                "matrix": {"engine.tp": [1, 2]}}
         with scratch_configs("sweep", run) as (path, td), \
                 self.assertRaisesRegex(ConfigError, "one process cannot change them"):
@@ -155,7 +156,7 @@ class InProcessEnv(unittest.TestCase):
     def test_a_server_point_after_an_in_process_one_drops_its_exports(self):
         load = functools.partial(loader.load, RUNS[0].with_name("llama.yaml"), env={})
         (grid,) = load(["engine.model=/w", "hardware.visible_devices=0",
-                        "hardware.link_profile=pcie"])
+                        "hardware.link_profile=pcie", "mode.returns=text"])
         (served,) = load(["engine.model=/w", "hardware.visible_devices=1", "mode.grid=null"])
         exported = set()
         with tempfile.TemporaryDirectory() as td, mock.patch.dict(os.environ, {}, clear=True), \
@@ -174,7 +175,8 @@ class InProcessEnv(unittest.TestCase):
         self.assertEqual(spec.child_argv(["x"])[:3], ["env", "-u", spec.env_drop[0]])
 
     def test_a_multi_point_in_process_matrix_names_its_gpus(self):
-        run = {"model": "llama31_8b", "workload": {"kind": "grid"}, "mode": {"grid": "smoke"},
+        run = {"model": "llama31_8b", "workload": {"kind": "grid"},
+               "mode": {"grid": "smoke", "returns": "text"},
                "matrix": {"engine.gpu_util": [0.8, 0.9]}}
         with scratch_configs("sweep", run) as (path, td):
             with self.assertRaisesRegex(ConfigError, "set hardware.visible_devices"):
@@ -205,7 +207,8 @@ class InProcessEnv(unittest.TestCase):
                     runner.main(path, sets, results_dir=td, allow_unverified=True)
                 self.assertEqual(run_one.call_count, 0 if refused else 2)
         (grid,) = loader.load(RUNS[0].with_name("llama.yaml"),
-                              ["engine.model=/w", "hardware.visible_devices=0"], env={})
+                              ["engine.model=/w", "hardware.visible_devices=0", "mode.returns=text"],
+                              env={})
         (gemm,) = loader.load(RUNS[0].with_name("llama.yaml"),
                               ["hardware.visible_devices=1", "mode.mode=probe", "mode.probe=gemm",
                                "mode.grid=null"], env={})
@@ -290,7 +293,8 @@ class DockerDryRun(unittest.TestCase):
 
     def test_docker_needs_a_launched_server(self):
         _, exit_msg = qbench("run", str(RUNS[0].with_name("llama-tp1.yaml")), "--dry-run",
-                             "--set", "engine.model=/w", "--set", "hardware.launcher=docker")
+                             "--set", "engine.model=/w", "--set", "hardware.launcher=docker",
+                             "--set", "mode.returns=text")
         self.assertIn("needs a launched server", exit_msg)
 
 
@@ -364,7 +368,8 @@ class FailureRecord(unittest.TestCase):
     def test_translate_gpu_pick_and_env_export_failures_are_recorded(self):
         targets = {"translate": (runner.base.get("vllm"), "translate", ()),
                    "idle_gpus": (runner.launcher, "idle_gpus", ("hardware.visible_devices=null",)),
-                   "export": (runner.env_map, "export", ("mode.grid=llama_single",))}
+                   "export": (runner.env_map, "export", ("mode.grid=llama_single",
+                                                          "mode.returns=text"))}
         for name, (obj, attr, sets) in targets.items():
             with self.subTest(name), mock.patch.object(obj, attr, side_effect=OSError(name)):
                 exc, doc, files = self.run_raising(sets=("hardware.visible_devices=0", *sets))

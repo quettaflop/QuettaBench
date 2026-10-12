@@ -38,10 +38,14 @@ schema defaults. Unknown keys are refused. `just dry` prints every value
 with its origin.
 
 A grid run (`mode.grid` set) times decode ms per step per (ctx, bs) cell:
-vLLM in-process, or over HTTP against a launched server
-(`--set engine.driver=http`: bs concurrent completions per batch, prefix
-cache reset per cell), QuettaServe through its cargo bench
-(`--set engine.name=quettaserve`). A serve run (`mode.grid` unset)
+vLLM over HTTP against a launched server (bs concurrent completions per
+batch, prefix cache reset per cell), QuettaServe through its cargo bench
+(`--set engine.name=quettaserve`). A vLLM grid run with `mode.returns`
+text or logits builds vLLM in-process instead, the only path that returns
+token ids, text or logits; only such a run takes `engine.pp > 1`,
+`engine.cudagraph=false` or `prompt_mode=corpus`, which a timing grid
+refuses. `tests/parity/slope_gate.json` holds the HTTP-vs-in-process gate
+both paths passed (8x H200, vLLM 0.30.1: 15 cells, worst |delta| 0.228 ms). A serve run (`mode.grid` unset)
 launches the server and replays the workload against it. `mode: probe`
 runs a kernel probe (`mode.probe`, `mode.probe_args`) with `--out
 results/<run>/`. It refuses the torchrun probes (`collective`,
@@ -168,7 +172,7 @@ settings that differ between the sides print `NCCL MISMATCH`.
 
 - `distinct` (default): per-slot synthetic seeds, spread routing
 - `clone`: the engine benches' exact ids on every slot, identical routing
-- `corpus`: sliding windows over the text at `workload.source` (`XVAL_CORPUS`)
+- `corpus`: sliding windows over the text at `workload.source` (`XVAL_CORPUS`); in-process, so `mode.returns` runs only
 - `trace`: prompts from the replay JSONL at `workload.source` (`XVAL_TRACE`)
 
 The baseline records the mode and the table prints it.
@@ -271,7 +275,7 @@ are withheld. glm53 and glm53flash have no engine bench yet: vLLM side only.
 | `benchmark.sh`, `scripts/bench.sh`, `scripts/launch_server.sh` + `python -m src.benchmark.runner --profile P --concurrency N` | `just run configs/runs/<model>.yaml --set mode.grid=null --set workload.kind=live --set workload.source=P --set mode.concurrency=N --set engine.model=<weights>` (the runner launches the server) |
 | `scripts/sweep_*_profiles[_sglang].sh` | a `matrix:` block in the run yaml, `just sweep <yaml>` (sglang has no adapter yet; `engine.name: sglang` is refused at load) |
 | `python -m quettabench.modes.serve ...` (and its `--output` file) | `just run ...`; results in `results/<run>/` |
-| `vmin_fit.py <wl>` / `serve --grid --workload <wl>` | `just run configs/runs/<wl>.yaml --set engine.model=<weights>` (`--nograph`: `--set engine.cudagraph=false`, `--dump-tokens`: `--set mode.returns=text`) |
+| `vmin_fit.py <wl>` / `serve --grid --workload <wl>` | `just run configs/runs/<wl>.yaml --set engine.model=<weights>` (`--dump-tokens`: `--set mode.returns=text`; `--nograph`: `--set engine.cudagraph=false`, with `mode.returns` only) |
 | `trace_serve.py <trace> --model <w>` | `just run <yaml> --set mode.grid=null --set workload.kind=live --set workload.source=<trace> --set mode.load=open --set workload.arrival=trace`; energy, cost, gsm8k: `just profile --source energy|cost|gsm8k` |
 | `cache.py <log> <out>` | nothing: grid runs no longer write `results/baselines/*.json`; old files are still readable by `qbench xval` |
 | `python3 table.py <bench-log> <baseline>` | `qbench xval <ours> <theirs>` (`just xval`); each side a results dir, an old baselines json or a bench log |
@@ -339,6 +343,7 @@ docker/Dockerfile         qbench on the vLLM image (just image)
 docs/runbooks/            the probe guide (probes.md) and the GPU and verification runbooks
 tests/golden/             characterization fixtures from the pre-refactor code
 tests/contracts/          one test module per package area, plus the crossval contracts and GPU smoke
+tests/parity/             the committed HTTP-vs-in-process slope gate and its test
 analysis/, data/          one-off studies and data fetch; not imported by the package
 ```
 
@@ -356,4 +361,4 @@ Canonical data lives on the `agent-bench` R2 bucket:
 
 ## Known open items
 
-- The GPU parity gate (HTTP grid vs in-process grid, `QBENCH_STRUCTURE.md` section 5) is open: no GPU run has passed it, so `InProcessDriver` stays and the two grid paths are not yet shown to agree.
+- `InProcessDriver` stays though the parity gate passed: it is the only path that returns token ids, text or logits (FIDELITY, greedy agreement, routing parity, corpus prompts).

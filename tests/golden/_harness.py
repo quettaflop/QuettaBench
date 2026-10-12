@@ -1,8 +1,9 @@
-"""Shared plumbing for the golden tests: fixture compare and regen, crossval imports, and a CPU grid run through `qbench run` on the vllm/torch stubs.
+"""Shared plumbing for the golden tests: fixture compare and regen, crossval imports, and a CPU grid run through `qbench run` on the vllm/torch stubs, served by StandInServer (an InProcessDriver for a mode.returns run).
 
 QBENCH_GOLDEN_REGEN=1 rewrites every fixture from the current code instead of comparing.
 """
 
+import asyncio
 import contextlib
 import importlib
 import io
@@ -11,8 +12,11 @@ import os
 import sys
 import tempfile
 import types
+import urllib.error
 from pathlib import Path
 from unittest import mock
+
+import aiohttp
 
 REPO = Path(__file__).resolve().parents[2]
 STUBS = REPO / "tests" / "_stubs"
@@ -104,6 +108,79 @@ def fake_generate_seconds(prompt_len, batch, max_tokens, call_no):
     return prefill_s + max_tokens * step_ms / 1000.0 + bend
 
 
+class StandInServer:
+    """`vllm serve` on the stubs, reached through the aiohttp session
+    HttpDriver opens: the requests a grid batch posts together run as one
+    vllm.run_batch on the fake clock, as in-process generate() ran them."""
+
+    URL = "http://stand-in:8000"
+
+    def __init__(self, vllm, launcher):
+        self.vllm, self.launcher, self.pending = vllm, launcher, []
+
+    def start(self, spec, results_dir, **kwargs):
+        """launcher.start: the spec must name a server; the handle points here."""
+        if spec.server_unsupported or not spec.server_argv:
+            raise ValueError(f"{spec.adapter}: the spec has no server to launch")
+        return self.launcher.NoServer(Path(results_dir), endpoint=self.URL)
+
+    def urlopen(self, url, timeout=None):
+        if url != self.URL + "/version":
+            raise urllib.error.URLError(url)
+        return io.BytesIO(json.dumps({"version": self.vllm.__version__}).encode())
+
+    def session(self, **kwargs):
+        return self
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    @contextlib.asynccontextmanager
+    async def post(self, url, headers=None, json=None, timeout=None):
+        yield await self.answer(url, json)
+
+    async def answer(self, url, body):
+        """Every post of a gather is pending before the first one resumes, so
+        that one runs them all as one batch."""
+        if url.endswith("/reset_prefix_cache"):
+            return Reply([])
+        entry = {"body": body}
+        self.pending.append(entry)
+        await asyncio.sleep(0)
+        if self.pending:
+            batch, self.pending = self.pending, []
+            params = self.vllm.SamplingParams(temperature=0.0, ignore_eos=True,
+                                              max_tokens=batch[0]["body"]["max_tokens"])
+            outs = self.vllm.run_batch([{"prompt_token_ids": e["body"]["prompt"]} for e in batch],
+                                       params)
+            for e, out in zip(batch, outs):
+                e["tokens"] = len(out.outputs[0].token_ids)
+        usage = {"prompt_tokens": len(body["prompt"]), "completion_tokens": entry["tokens"]}
+        return Reply([{"choices": [{"text": "t"}]}, {"choices": [], "usage": usage}])
+
+
+class Reply:
+    """An SSE response: one `data:` line per chunk, then [DONE]."""
+
+    status = 200
+
+    def __init__(self, chunks):
+        self.lines = [f"data: {json.dumps(c)}".encode() for c in chunks] + [b"data: [DONE]"]
+
+    @property
+    def content(self):
+        async def lines():
+            for line in self.lines:
+                yield line
+        return lines()
+
+    async def text(self):
+        return ""
+
+
 def grid_argv(name, *extra):
     """`qbench run` argv for a workload's grid run on the stub weights dir."""
     sets = ["engine.model=<MODEL>", *AS_VMIN_FIT.get(name, [])]
@@ -116,7 +193,7 @@ def loader_message(exit_msg):
 
 
 def run_grid_cli(argv, env, model_config=None):
-    """Run cli.main(argv) on the stubs with os.environ replaced by `env`, the fake clock, nvidia-smi hidden and one idle GPU.
+    """Run cli.main(argv) on the stubs with os.environ replaced by `env`, the fake clock, nvidia-smi hidden, one idle GPU and the server launch swapped for StandInServer.
 
     Results go to a throwaway dir unless argv names --results-dir.
     Returns stdout lines, LLM kwargs, the generate() call count and the SystemExit message if any.
@@ -136,10 +213,18 @@ def run_grid_cli(argv, env, model_config=None):
             cli = fresh_import("quettabench.cli")
             drivers = importlib.import_module("quettabench.engines.drivers")
             launcher = importlib.import_module("quettabench.engines.launcher")
+            torch = importlib.import_module("torch")
             clock = types.SimpleNamespace(perf_counter=vllm.CLOCK.perf_counter)
+            server = StandInServer(vllm, launcher)
+            gpu = (torch.cuda.get_device_name(0), torch.cuda.get_device_properties(0).total_memory)
             exit_msg = None
             with mock.patch.object(drivers, "time", clock), \
                     mock.patch.object(launcher, "idle_gpus", return_value="0"), \
+                    mock.patch.object(launcher, "start", server.start), \
+                    mock.patch.object(launcher, "urlopen", server.urlopen), \
+                    mock.patch.object(drivers, "nvidia_smi_device", return_value=gpu), \
+                    mock.patch.object(aiohttp, "ClientSession", server.session), \
+                    mock.patch.object(aiohttp, "TCPConnector", lambda **kw: None), \
                     contextlib.redirect_stdout(out):
                 try:
                     cli.main(argv)

@@ -233,9 +233,8 @@ class LoaderRules(unittest.TestCase):
                      "workload": {"arrival": "poisson:2"}}):
             with self.subTest(run), self.assertRaisesRegex(ConfigError, "goodput sweep needs"):
                 self.load(run)
-        with self.assertRaisesRegex(ConfigError, "engine.driver=http has no tokenizer"):
-            self.load({"mode": {"grid": "toy"}, "engine": {"driver": "http"},
-                       "workload": {"prompt_mode": "corpus"}})
+        with self.assertRaisesRegex(ConfigError, "a timing grid runs over HTTP with no tokenizer"):
+            self.load({"mode": {"grid": "toy"}, "workload": {"prompt_mode": "corpus"}})
 
     def test_empty_step_points_are_refused(self):
         self.write("grids.yaml", {**GRIDS, "step_points": []})

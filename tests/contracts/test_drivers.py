@@ -815,8 +815,8 @@ def config(name, *sets):
 
 
 class VllmDriver(unittest.TestCase):
-    def test_grid_run_is_in_process(self):
-        cfg = config("llama", "engine.model=/w")
+    def test_grid_run_with_returns_is_in_process(self):
+        cfg = config("llama", "engine.model=/w", "mode.returns=text")
         self.assertFalse(vllm_adapter.ADAPTER.needs_server(cfg))
         spec = vllm_adapter.ADAPTER.translate(cfg)
         driver = vllm_adapter.ADAPTER.driver(spec, launcher.NoServer(Path("/r")))

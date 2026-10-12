@@ -451,14 +451,14 @@ class ModelConfig(unittest.TestCase):
 
 
 class GridRunOverHttp(unittest.TestCase):
-    """runner.run_one with engine.driver=http: the launched server (the fake
+    """runner.run_one of a timing grid: the launched server (the fake
     endpoint) gets every batch, and run.json's steps come from the fit."""
 
     def test_smoke_grid_end_to_end(self):
         with tempfile.TemporaryDirectory() as td, helpers.serve() as (endpoint, posts):
             Path(td, "config.json").write_text(json.dumps(DENSE_CONFIG))
             (cfg,) = loader.load(RUNS / "llama.yaml", [
-                f"engine.model={td}", "engine.driver=http", "mode.grid=smoke",
+                f"engine.model={td}", "mode.grid=smoke",
                 "mode.vmin_attempts=1", "hardware.visible_devices=0",
                 "hardware.backend=cpu", "hardware.link_profile=nvlink"], env={})
             handle = launcher.NoServer(Path(td) / "out", endpoint=endpoint)

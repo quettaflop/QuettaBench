@@ -129,43 +129,6 @@
     "engine.extra.quettaserve = {'crate': 'deepseek', 'test': 'batch_bench', 'env_prefix': 'DS', 'family': 'moe'}  (model)",
     "grid.cells = [(1024, 1), (1024, 4), (1024, 16), (1024, 64), (8192, 1), (8192, 4), (8192, 16), (8192, 64), (16384, 1), (16384, 4), (16384, 16), (16384, 64)]"
    ],
-   "vmin_fit": {
-    "exit": null,
-    "generate_calls": 52,
-    "stdout": [
-     "META gpu=STUB-GPU-48GiB",
-     "META vllm=0.0.0+stub",
-     "META model=DeepSeek-V4-Flash-0731",
-     "META dtype=bfloat16",
-     "META grid=deepseek",
-     "META mode=FULL",
-     "META eval_pos=25",
-     "META step_points=[60, 230, 400]",
-     "META nccl_algo=allreduce:tree;allgather:ring",
-     "META nccl_proto=Simple",
-     "META link_profile=pcie",
-     "META prompt_mode=clone",
-     "META tp=8",
-     "META pp=2",
-     "META quant=bfloat16",
-     "META expert_parallel=1",
-     "CAPACITY mode=FULL tp=8 dtype=bfloat16 kv_bytes_per_token=24768 free_gib=130 kv_tokens=5653098",
-     "WARM_OK",
-     "RESULT mode=FULL tp=8 kv=fp8_ds_mla ctx=1024 bs=1 ms_per_step=4.064 ms_at_eval=4.064 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.02 kv_gib=0.0 attn_share=0.000 raw=[0.27, 0.96, 1.65]",
-     "RESULT mode=FULL tp=8 kv=fp8_ds_mla ctx=1024 bs=4 ms_per_step=4.256 ms_at_eval=4.256 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.03 kv_gib=0.1 attn_share=0.001 raw=[0.28, 1.01, 1.73]",
-     "RESULT mode=FULL tp=8 kv=fp8_ds_mla ctx=1024 bs=16 ms_per_step=5.024 ms_at_eval=5.022 eval_pos=25 mean_steps=230 r2=0.96050 prefill_s=0.15 kv_gib=0.4 attn_share=0.002 raw=[0.35, 1.51, 2.06]",
-     "RESULT mode=FULL tp=8 kv=fp8_ds_mla ctx=1024 bs=64 ms_per_step=8.096 ms_at_eval=8.083 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.15 kv_gib=1.5 attn_share=0.010 raw=[0.64, 2.01, 3.39]",
-     "RESULT mode=FULL tp=8 kv=fp8_ds_mla ctx=8192 bs=1 ms_per_step=4.512 ms_at_eval=4.512 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.04 kv_gib=0.2 attn_share=0.001 raw=[0.31, 1.07, 1.84]",
-     "RESULT mode=FULL tp=8 kv=fp8_ds_mla ctx=8192 bs=4 ms_per_step=6.048 ms_at_eval=6.047 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.09 kv_gib=0.8 attn_share=0.005 raw=[0.45, 1.48, 2.5]",
-     "RESULT mode=FULL tp=8 kv=fp8_ds_mla ctx=8192 bs=16 ms_per_step=12.192 ms_at_eval=12.186 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.28 kv_gib=3.0 attn_share=0.019 raw=[1.01, 3.09, 5.16]",
-     "RESULT mode=FULL tp=8 kv=fp8_ds_mla ctx=8192 bs=64 ms_per_step=36.768 ms_at_eval=36.704 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=1.07 kv_gib=12.1 attn_share=0.072 raw=[3.27, 9.53, 15.78]",
-     "RESULT mode=FULL tp=8 kv=fp8_ds_mla ctx=16384 bs=1 ms_per_step=5.024 ms_at_eval=5.024 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.05 kv_gib=0.4 attn_share=0.002 raw=[0.35, 1.21, 2.06]",
-     "RESULT mode=FULL tp=8 kv=fp8_ds_mla ctx=16384 bs=4 ms_per_step=8.096 ms_at_eval=8.095 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.15 kv_gib=1.5 attn_share=0.010 raw=[0.64, 2.01, 3.39]",
-     "RESULT mode=FULL tp=8 kv=fp8_ds_mla ctx=16384 bs=16 ms_per_step=20.384 ms_at_eval=20.375 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.54 kv_gib=6.0 attn_share=0.037 raw=[1.77, 5.23, 8.7]",
-     "RESULT mode=FULL tp=8 kv=fp8_ds_mla ctx=16384 bs=64 ms_per_step=69.536 ms_at_eval=69.421 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=2.12 kv_gib=24.2 attn_share=0.134 raw=[6.29, 18.11, 29.93]",
-     "DONE"
-    ]
-   },
    "xval_config": {
     "grid_cells": [
      [
@@ -363,43 +326,6 @@
     "engine.pp = 2  (env)",
     "grid.cells = [(1024, 1), (1024, 4), (1024, 16), (1024, 64), (8192, 1), (8192, 4), (8192, 16), (8192, 64), (16384, 1), (16384, 4), (16384, 16), (16384, 64)]"
    ],
-   "vmin_fit": {
-    "exit": null,
-    "generate_calls": 52,
-    "stdout": [
-     "META gpu=STUB-GPU-48GiB",
-     "META vllm=0.0.0+stub",
-     "META model=GLM-5.3",
-     "META dtype=bfloat16",
-     "META grid=deepseek",
-     "META mode=FULL",
-     "META eval_pos=25",
-     "META step_points=[60, 230, 400]",
-     "META nccl_algo=allreduce:tree;allgather:ring",
-     "META nccl_proto=Simple",
-     "META link_profile=pcie",
-     "META prompt_mode=clone",
-     "META tp=8",
-     "META pp=2",
-     "META quant=fp8",
-     "META expert_parallel=1",
-     "CAPACITY mode=FULL tp=8 dtype=bfloat16 kv_bytes_per_token=89856 free_gib=-418 kv_tokens=0",
-     "WARM_OK",
-     "RESULT mode=FULL tp=8 kv=bfloat16 ctx=1024 bs=1 ms_per_step=4.064 ms_at_eval=4.064 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.02 kv_gib=0.1 attn_share=0.000 raw=[0.27, 0.96, 1.65]",
-     "RESULT mode=FULL tp=8 kv=bfloat16 ctx=1024 bs=4 ms_per_step=4.256 ms_at_eval=4.256 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.03 kv_gib=0.3 attn_share=0.000 raw=[0.28, 1.01, 1.73]",
-     "RESULT mode=FULL tp=8 kv=bfloat16 ctx=1024 bs=16 ms_per_step=5.024 ms_at_eval=5.022 eval_pos=25 mean_steps=230 r2=0.96050 prefill_s=0.15 kv_gib=1.4 attn_share=0.002 raw=[0.35, 1.51, 2.06]",
-     "RESULT mode=FULL tp=8 kv=bfloat16 ctx=1024 bs=64 ms_per_step=8.096 ms_at_eval=8.086 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.15 kv_gib=5.5 attn_share=0.008 raw=[0.64, 2.01, 3.39]",
-     "RESULT mode=FULL tp=8 kv=bfloat16 ctx=8192 bs=1 ms_per_step=4.512 ms_at_eval=4.512 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.04 kv_gib=0.7 attn_share=0.001 raw=[0.31, 1.07, 1.84]",
-     "RESULT mode=FULL tp=8 kv=bfloat16 ctx=8192 bs=4 ms_per_step=6.048 ms_at_eval=6.047 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.09 kv_gib=2.7 attn_share=0.004 raw=[0.45, 1.48, 2.5]",
-     "RESULT mode=FULL tp=8 kv=bfloat16 ctx=8192 bs=16 ms_per_step=12.192 ms_at_eval=12.187 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.28 kv_gib=11.0 attn_share=0.015 raw=[1.01, 3.09, 5.16]",
-     "RESULT mode=FULL tp=8 kv=bfloat16 ctx=8192 bs=64 ms_per_step=36.768 ms_at_eval=36.715 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=1.07 kv_gib=43.9 attn_share=0.059 raw=[3.27, 9.53, 15.78]",
-     "RESULT mode=FULL tp=8 kv=bfloat16 ctx=16384 bs=1 ms_per_step=5.024 ms_at_eval=5.024 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.05 kv_gib=1.4 attn_share=0.002 raw=[0.35, 1.21, 2.06]",
-     "RESULT mode=FULL tp=8 kv=bfloat16 ctx=16384 bs=4 ms_per_step=8.096 ms_at_eval=8.095 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.15 kv_gib=5.5 attn_share=0.008 raw=[0.64, 2.01, 3.39]",
-     "RESULT mode=FULL tp=8 kv=bfloat16 ctx=16384 bs=16 ms_per_step=20.384 ms_at_eval=20.376 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.54 kv_gib=21.9 attn_share=0.030 raw=[1.77, 5.23, 8.7]",
-     "RESULT mode=FULL tp=8 kv=bfloat16 ctx=16384 bs=64 ms_per_step=69.536 ms_at_eval=69.441 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=2.12 kv_gib=87.8 attn_share=0.111 raw=[6.29, 18.11, 29.93]",
-     "DONE"
-    ]
-   },
    "xval_config": {
     "grid_cells": [
      [
@@ -587,43 +513,6 @@
     "engine.pp = 2  (env)",
     "grid.cells = [(1024, 1), (1024, 4), (1024, 16), (1024, 64), (8192, 1), (8192, 4), (8192, 16), (8192, 64), (16384, 1), (16384, 4), (16384, 16), (16384, 64)]"
    ],
-   "vmin_fit": {
-    "exit": null,
-    "generate_calls": 52,
-    "stdout": [
-     "META gpu=STUB-GPU-48GiB",
-     "META vllm=0.0.0+stub",
-     "META model=GLM-5.3-Flash",
-     "META dtype=bfloat16",
-     "META grid=deepseek",
-     "META mode=FULL",
-     "META eval_pos=25",
-     "META step_points=[60, 230, 400]",
-     "META nccl_algo=allreduce:tree;allgather:ring",
-     "META nccl_proto=Simple",
-     "META link_profile=pcie",
-     "META prompt_mode=clone",
-     "META tp=4",
-     "META pp=2",
-     "META quant=fp8",
-     "META expert_parallel=1",
-     "CAPACITY mode=FULL tp=4 dtype=bfloat16 kv_bytes_per_token=11264 free_gib=-163 kv_tokens=0",
-     "WARM_OK",
-     "RESULT mode=FULL tp=4 kv=bfloat16 ctx=1024 bs=1 ms_per_step=4.064 ms_at_eval=4.064 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.02 kv_gib=0.0 attn_share=0.000 raw=[0.27, 0.96, 1.65]",
-     "RESULT mode=FULL tp=4 kv=bfloat16 ctx=1024 bs=4 ms_per_step=4.256 ms_at_eval=4.256 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.03 kv_gib=0.0 attn_share=0.000 raw=[0.28, 1.01, 1.73]",
-     "RESULT mode=FULL tp=4 kv=bfloat16 ctx=1024 bs=16 ms_per_step=5.024 ms_at_eval=5.024 eval_pos=25 mean_steps=230 r2=0.96050 prefill_s=0.15 kv_gib=0.2 attn_share=0.001 raw=[0.35, 1.51, 2.06]",
-     "RESULT mode=FULL tp=4 kv=bfloat16 ctx=1024 bs=64 ms_per_step=8.096 ms_at_eval=8.093 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.15 kv_gib=0.7 attn_share=0.002 raw=[0.64, 2.01, 3.39]",
-     "RESULT mode=FULL tp=4 kv=bfloat16 ctx=8192 bs=1 ms_per_step=4.512 ms_at_eval=4.512 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.04 kv_gib=0.1 attn_share=0.000 raw=[0.31, 1.07, 1.84]",
-     "RESULT mode=FULL tp=4 kv=bfloat16 ctx=8192 bs=4 ms_per_step=6.048 ms_at_eval=6.048 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.09 kv_gib=0.3 attn_share=0.001 raw=[0.45, 1.48, 2.5]",
-     "RESULT mode=FULL tp=4 kv=bfloat16 ctx=8192 bs=16 ms_per_step=12.192 ms_at_eval=12.191 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.28 kv_gib=1.4 attn_share=0.004 raw=[1.01, 3.09, 5.16]",
-     "RESULT mode=FULL tp=4 kv=bfloat16 ctx=8192 bs=64 ms_per_step=36.768 ms_at_eval=36.752 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=1.07 kv_gib=5.5 attn_share=0.018 raw=[3.27, 9.53, 15.78]",
-     "RESULT mode=FULL tp=4 kv=bfloat16 ctx=16384 bs=1 ms_per_step=5.024 ms_at_eval=5.024 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.05 kv_gib=0.2 attn_share=0.001 raw=[0.35, 1.21, 2.06]",
-     "RESULT mode=FULL tp=4 kv=bfloat16 ctx=16384 bs=4 ms_per_step=8.096 ms_at_eval=8.096 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.15 kv_gib=0.7 attn_share=0.002 raw=[0.64, 2.01, 3.39]",
-     "RESULT mode=FULL tp=4 kv=bfloat16 ctx=16384 bs=16 ms_per_step=20.384 ms_at_eval=20.382 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.54 kv_gib=2.8 attn_share=0.009 raw=[1.77, 5.23, 8.7]",
-     "RESULT mode=FULL tp=4 kv=bfloat16 ctx=16384 bs=64 ms_per_step=69.536 ms_at_eval=69.506 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=2.12 kv_gib=11.0 attn_share=0.035 raw=[6.29, 18.11, 29.93]",
-     "DONE"
-    ]
-   },
    "xval_config": {
     "grid_cells": [
      [
@@ -821,45 +710,6 @@
     "engine.pp = 2  (env)",
     "grid.cells = [(4096, 1), (4096, 8), (4096, 16), (4096, 32), (4096, 64), (1024, 1), (1024, 8), (1024, 16), (1024, 32), (1024, 64), (100, 1), (100, 8), (100, 16), (100, 32), (100, 64)]"
    ],
-   "vmin_fit": {
-    "exit": null,
-    "generate_calls": 56,
-    "stdout": [
-     "META gpu=STUB-GPU-48GiB",
-     "META vllm=0.0.0+stub",
-     "META model=Llama-3.1-8B-Instruct",
-     "META dtype=float16",
-     "META grid=llama",
-     "META mode=FULL",
-     "META eval_pos=25",
-     "META step_points=[60, 230, 400]",
-     "META nccl_algo=allreduce:tree;allgather:ring",
-     "META nccl_proto=Simple",
-     "META link_profile=pcie",
-     "META prompt_mode=clone",
-     "META tp=1",
-     "META pp=2",
-     "META quant=float16",
-     "CAPACITY mode=FULL tp=1 dtype=float16 kv_bytes_per_token=131072 free_gib=21 kv_tokens=170393",
-     "WARM_OK",
-     "RESULT mode=FULL tp=1 kv=float16 ctx=4096 bs=1 ms_per_step=4.256 ms_at_eval=4.249 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.03 kv_gib=0.5 attn_share=0.032 raw=[0.28, 1.01, 1.73]",
-     "RESULT mode=FULL tp=1 kv=float16 ctx=4096 bs=8 ms_per_step=6.048 ms_at_eval=5.988 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.09 kv_gib=4.0 attn_share=0.211 raw=[0.45, 1.48, 2.5]",
-     "RESULT mode=FULL tp=1 kv=float16 ctx=4096 bs=16 ms_per_step=8.096 ms_at_eval=7.963 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.15 kv_gib=8.0 attn_share=0.348 raw=[0.64, 2.01, 3.39]",
-     "SKIP ctx=4096 bs=32 need_kv=143872 cap=170393",
-     "SKIP ctx=4096 bs=64 need_kv=287744 cap=170393",
-     "RESULT mode=FULL tp=1 kv=float16 ctx=1024 bs=1 ms_per_step=4.064 ms_at_eval=4.059 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.02 kv_gib=0.1 attn_share=0.008 raw=[0.27, 0.96, 1.65]",
-     "RESULT mode=FULL tp=1 kv=float16 ctx=1024 bs=8 ms_per_step=4.512 ms_at_eval=4.466 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.04 kv_gib=1.0 attn_share=0.062 raw=[0.31, 1.07, 1.84]",
-     "RESULT mode=FULL tp=1 kv=float16 ctx=1024 bs=16 ms_per_step=5.024 ms_at_eval=4.927 eval_pos=25 mean_steps=230 r2=0.96050 prefill_s=0.15 kv_gib=2.0 attn_share=0.118 raw=[0.35, 1.51, 2.06]",
-     "RESULT mode=FULL tp=1 kv=float16 ctx=1024 bs=32 ms_per_step=6.048 ms_at_eval=5.840 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.09 kv_gib=4.0 attn_share=0.211 raw=[0.45, 1.48, 2.5]",
-     "RESULT mode=FULL tp=1 kv=float16 ctx=1024 bs=64 ms_per_step=8.096 ms_at_eval=7.636 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.15 kv_gib=8.0 attn_share=0.348 raw=[0.64, 2.01, 3.39]",
-     "RESULT mode=FULL tp=1 kv=float16 ctx=100 bs=1 ms_per_step=4.006 ms_at_eval=4.004 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.02 kv_gib=0.0 attn_share=0.001 raw=[0.26, 0.94, 1.62]",
-     "RESULT mode=FULL tp=1 kv=float16 ctx=100 bs=8 ms_per_step=4.050 ms_at_eval=4.034 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.02 kv_gib=0.1 attn_share=0.006 raw=[0.26, 0.95, 1.64]",
-     "RESULT mode=FULL tp=1 kv=float16 ctx=100 bs=16 ms_per_step=4.100 ms_at_eval=4.067 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.02 kv_gib=0.2 attn_share=0.013 raw=[0.27, 0.97, 1.66]",
-     "RESULT mode=FULL tp=1 kv=float16 ctx=100 bs=32 ms_per_step=4.200 ms_at_eval=4.134 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.03 kv_gib=0.4 attn_share=0.025 raw=[0.28, 0.99, 1.71]",
-     "RESULT mode=FULL tp=1 kv=float16 ctx=100 bs=64 ms_per_step=4.400 ms_at_eval=4.265 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.03 kv_gib=0.8 attn_share=0.050 raw=[0.3, 1.04, 1.79]",
-     "DONE"
-    ]
-   },
    "xval_config": {
     "grid_cells": [
      [
@@ -1051,42 +901,6 @@
     "engine.pp = 2  (env)",
     "grid.cells = [(1024, 1), (1024, 4), (1024, 16), (1024, 64), (8192, 1), (8192, 4), (8192, 16), (8192, 64), (16384, 1), (16384, 4), (16384, 16), (16384, 64)]"
    ],
-   "vmin_fit": {
-    "exit": null,
-    "generate_calls": 36,
-    "stdout": [
-     "META gpu=STUB-GPU-48GiB",
-     "META vllm=0.0.0+stub",
-     "META model=Llama-3.1-8B-Instruct",
-     "META dtype=float16",
-     "META grid=table_h200",
-     "META mode=FULL",
-     "META eval_pos=25",
-     "META step_points=[60, 230, 400]",
-     "META nccl_algo=allreduce:tree;allgather:ring",
-     "META nccl_proto=Simple",
-     "META link_profile=pcie",
-     "META prompt_mode=clone",
-     "META tp=1",
-     "META pp=2",
-     "META quant=float16",
-     "CAPACITY mode=FULL tp=1 dtype=float16 kv_bytes_per_token=131072 free_gib=21 kv_tokens=170393",
-     "WARM_OK",
-     "RESULT mode=FULL tp=1 kv=float16 ctx=1024 bs=1 ms_per_step=4.064 ms_at_eval=4.059 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.02 kv_gib=0.1 attn_share=0.008 raw=[0.27, 0.96, 1.65]",
-     "RESULT mode=FULL tp=1 kv=float16 ctx=1024 bs=4 ms_per_step=4.256 ms_at_eval=4.234 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.03 kv_gib=0.5 attn_share=0.032 raw=[0.28, 1.01, 1.73]",
-     "RESULT mode=FULL tp=1 kv=float16 ctx=1024 bs=16 ms_per_step=5.024 ms_at_eval=4.927 eval_pos=25 mean_steps=230 r2=0.96050 prefill_s=0.15 kv_gib=2.0 attn_share=0.118 raw=[0.35, 1.51, 2.06]",
-     "RESULT mode=FULL tp=1 kv=float16 ctx=1024 bs=64 ms_per_step=8.096 ms_at_eval=7.636 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.15 kv_gib=8.0 attn_share=0.348 raw=[0.64, 2.01, 3.39]",
-     "RESULT mode=FULL tp=1 kv=float16 ctx=8192 bs=1 ms_per_step=4.512 ms_at_eval=4.505 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.04 kv_gib=1.0 attn_share=0.062 raw=[0.31, 1.07, 1.84]",
-     "RESULT mode=FULL tp=1 kv=float16 ctx=8192 bs=4 ms_per_step=6.048 ms_at_eval=6.017 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.09 kv_gib=4.0 attn_share=0.211 raw=[0.45, 1.48, 2.5]",
-     "SKIP ctx=8192 bs=16 need_kv=137472 cap=170393",
-     "SKIP ctx=8192 bs=64 need_kv=549888 cap=170393",
-     "RESULT mode=FULL tp=1 kv=float16 ctx=16384 bs=1 ms_per_step=5.024 ms_at_eval=5.017 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.05 kv_gib=2.0 attn_share=0.118 raw=[0.35, 1.21, 2.06]",
-     "RESULT mode=FULL tp=1 kv=float16 ctx=16384 bs=4 ms_per_step=8.096 ms_at_eval=8.061 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.15 kv_gib=8.0 attn_share=0.348 raw=[0.64, 2.01, 3.39]",
-     "SKIP ctx=16384 bs=16 need_kv=268544 cap=170393",
-     "SKIP ctx=16384 bs=64 need_kv=1074176 cap=170393",
-     "DONE"
-    ]
-   },
    "xval_config": {
     "grid_cells": [
      [
@@ -1214,31 +1028,6 @@
     "engine.pp = 2  (env)",
     "grid.cells = [(16384, 64)]"
    ],
-   "vmin_fit": {
-    "exit": null,
-    "generate_calls": 1,
-    "stdout": [
-     "META gpu=STUB-GPU-48GiB",
-     "META vllm=0.0.0+stub",
-     "META model=Llama-3.1-8B-Instruct",
-     "META dtype=bfloat16",
-     "META grid=table_h200_big",
-     "META mode=FULL",
-     "META eval_pos=25",
-     "META step_points=[60, 230, 400]",
-     "META nccl_algo=allreduce:tree;allgather:ring",
-     "META nccl_proto=Simple",
-     "META link_profile=pcie",
-     "META prompt_mode=clone",
-     "META tp=1",
-     "META pp=2",
-     "META quant=bfloat16",
-     "CAPACITY mode=FULL tp=1 dtype=bfloat16 kv_bytes_per_token=65536 free_gib=21 kv_tokens=340787",
-     "WARM_OK",
-     "SKIP ctx=16384 bs=64 need_kv=1074176 cap=340787",
-     "DONE"
-    ]
-   },
    "xval_config": {
     "grid_cells": [
      [
@@ -1337,34 +1126,6 @@
     "engine.pp = 2  (env)",
     "grid.cells = [(100, 1), (1024, 1), (4096, 1), (8192, 1)]"
    ],
-   "vmin_fit": {
-    "exit": null,
-    "generate_calls": 17,
-    "stdout": [
-     "META gpu=STUB-GPU-48GiB",
-     "META vllm=0.0.0+stub",
-     "META model=Llama-3.1-8B-Instruct",
-     "META dtype=float16",
-     "META grid=llama_single",
-     "META mode=FULL",
-     "META eval_pos=25",
-     "META step_points=[60, 230, 400]",
-     "META nccl_algo=allreduce:tree;allgather:ring",
-     "META nccl_proto=Simple",
-     "META link_profile=pcie",
-     "META prompt_mode=clone",
-     "META tp=1",
-     "META pp=2",
-     "META quant=float16",
-     "CAPACITY mode=FULL tp=1 dtype=float16 kv_bytes_per_token=131072 free_gib=21 kv_tokens=170393",
-     "WARM_OK",
-     "RESULT mode=FULL tp=1 kv=float16 ctx=100 bs=1 ms_per_step=4.006 ms_at_eval=4.004 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.02 kv_gib=0.0 attn_share=0.001 raw=[0.26, 0.94, 1.62]",
-     "RESULT mode=FULL tp=1 kv=float16 ctx=1024 bs=1 ms_per_step=4.064 ms_at_eval=4.059 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.02 kv_gib=0.1 attn_share=0.008 raw=[0.27, 0.96, 1.65]",
-     "RESULT mode=FULL tp=1 kv=float16 ctx=4096 bs=1 ms_per_step=4.256 ms_at_eval=4.249 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.03 kv_gib=0.5 attn_share=0.032 raw=[0.28, 1.01, 1.73]",
-     "RESULT mode=FULL tp=1 kv=float16 ctx=8192 bs=1 ms_per_step=4.512 ms_at_eval=4.505 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.04 kv_gib=1.0 attn_share=0.062 raw=[0.31, 1.07, 1.84]",
-     "DONE"
-    ]
-   },
    "xval_config": {
     "grid_cells": [
      [
@@ -1473,34 +1234,6 @@
     "engine.pp = 2  (env)",
     "grid.cells = [(100, 1), (1024, 1), (4096, 1), (8192, 1)]"
    ],
-   "vmin_fit": {
-    "exit": null,
-    "generate_calls": 17,
-    "stdout": [
-     "META gpu=STUB-GPU-48GiB",
-     "META vllm=0.0.0+stub",
-     "META model=Llama-3.1-8B-Instruct",
-     "META dtype=float16",
-     "META grid=llama_single",
-     "META mode=FULL",
-     "META eval_pos=25",
-     "META step_points=[60, 230, 400]",
-     "META nccl_algo=allreduce:tree;allgather:ring",
-     "META nccl_proto=Simple",
-     "META link_profile=pcie",
-     "META prompt_mode=clone",
-     "META tp=2",
-     "META pp=2",
-     "META quant=float16",
-     "CAPACITY mode=FULL tp=2 dtype=float16 kv_bytes_per_token=131072 free_gib=57 kv_tokens=463667",
-     "WARM_OK",
-     "RESULT mode=FULL tp=2 kv=float16 ctx=100 bs=1 ms_per_step=4.006 ms_at_eval=4.004 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.02 kv_gib=0.0 attn_share=0.001 raw=[0.26, 0.94, 1.62]",
-     "RESULT mode=FULL tp=2 kv=float16 ctx=1024 bs=1 ms_per_step=4.064 ms_at_eval=4.059 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.02 kv_gib=0.1 attn_share=0.008 raw=[0.27, 0.96, 1.65]",
-     "RESULT mode=FULL tp=2 kv=float16 ctx=4096 bs=1 ms_per_step=4.256 ms_at_eval=4.249 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.03 kv_gib=0.5 attn_share=0.032 raw=[0.28, 1.01, 1.73]",
-     "RESULT mode=FULL tp=2 kv=float16 ctx=8192 bs=1 ms_per_step=4.512 ms_at_eval=4.505 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.04 kv_gib=1.0 attn_share=0.062 raw=[0.31, 1.07, 1.84]",
-     "DONE"
-    ]
-   },
    "xval_config": {
     "grid_cells": [
      [
@@ -1609,34 +1342,6 @@
     "engine.pp = 2  (env)",
     "grid.cells = [(100, 1), (1024, 1), (4096, 1), (8192, 1)]"
    ],
-   "vmin_fit": {
-    "exit": null,
-    "generate_calls": 17,
-    "stdout": [
-     "META gpu=STUB-GPU-48GiB",
-     "META vllm=0.0.0+stub",
-     "META model=Llama-3.1-8B-Instruct",
-     "META dtype=float16",
-     "META grid=llama_single",
-     "META mode=FULL",
-     "META eval_pos=25",
-     "META step_points=[60, 230, 400]",
-     "META nccl_algo=allreduce:tree;allgather:ring",
-     "META nccl_proto=Simple",
-     "META link_profile=pcie",
-     "META prompt_mode=clone",
-     "META tp=4",
-     "META pp=2",
-     "META quant=float16",
-     "CAPACITY mode=FULL tp=4 dtype=float16 kv_bytes_per_token=131072 free_gib=128 kv_tokens=1050214",
-     "WARM_OK",
-     "RESULT mode=FULL tp=4 kv=float16 ctx=100 bs=1 ms_per_step=4.006 ms_at_eval=4.004 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.02 kv_gib=0.0 attn_share=0.001 raw=[0.26, 0.94, 1.62]",
-     "RESULT mode=FULL tp=4 kv=float16 ctx=1024 bs=1 ms_per_step=4.064 ms_at_eval=4.059 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.02 kv_gib=0.1 attn_share=0.008 raw=[0.27, 0.96, 1.65]",
-     "RESULT mode=FULL tp=4 kv=float16 ctx=4096 bs=1 ms_per_step=4.256 ms_at_eval=4.249 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.03 kv_gib=0.5 attn_share=0.032 raw=[0.28, 1.01, 1.73]",
-     "RESULT mode=FULL tp=4 kv=float16 ctx=8192 bs=1 ms_per_step=4.512 ms_at_eval=4.505 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.04 kv_gib=1.0 attn_share=0.062 raw=[0.31, 1.07, 1.84]",
-     "DONE"
-    ]
-   },
    "xval_config": {
     "grid_cells": [
      [
@@ -1809,47 +1514,6 @@
     "engine.pp = 2  (env)",
     "grid.cells = [(100, 1), (1024, 1), (4096, 1), (8192, 1), (32768, 1), (100, 8), (100, 16), (100, 32), (100, 64), (1024, 8), (1024, 16), (1024, 32), (1024, 64), (4096, 8), (4096, 16), (4096, 32), (4096, 64)]"
    ],
-   "vmin_fit": {
-    "exit": null,
-    "generate_calls": 64,
-    "stdout": [
-     "META gpu=STUB-GPU-48GiB",
-     "META vllm=0.0.0+stub",
-     "META model=Qwen3.5-9B",
-     "META dtype=bfloat16",
-     "META grid=qwen",
-     "META mode=FULL",
-     "META eval_pos=25",
-     "META step_points=[60, 230, 400]",
-     "META nccl_algo=allreduce:tree;allgather:ring",
-     "META nccl_proto=Simple",
-     "META link_profile=pcie",
-     "META prompt_mode=clone",
-     "META tp=1",
-     "META pp=2",
-     "META quant=bfloat16",
-     "CAPACITY mode=FULL tp=1 dtype=bfloat16 kv_bytes_per_token=131072 free_gib=17 kv_tokens=137625",
-     "WARM_OK",
-     "RESULT mode=FULL tp=1 kv=bfloat16 ctx=100 bs=1 ms_per_step=4.006 ms_at_eval=4.005 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.02 kv_gib=0.0 attn_share=0.001 raw=[0.26, 0.94, 1.62]",
-     "RESULT mode=FULL tp=1 kv=bfloat16 ctx=1024 bs=1 ms_per_step=4.064 ms_at_eval=4.060 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.02 kv_gib=0.1 attn_share=0.007 raw=[0.27, 0.96, 1.65]",
-     "RESULT mode=FULL tp=1 kv=bfloat16 ctx=4096 bs=1 ms_per_step=4.256 ms_at_eval=4.251 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.03 kv_gib=0.5 attn_share=0.026 raw=[0.28, 1.01, 1.73]",
-     "RESULT mode=FULL tp=1 kv=bfloat16 ctx=8192 bs=1 ms_per_step=4.512 ms_at_eval=4.507 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.04 kv_gib=1.0 attn_share=0.050 raw=[0.31, 1.07, 1.84]",
-     "RESULT mode=FULL tp=1 kv=bfloat16 ctx=32768 bs=1 ms_per_step=6.048 ms_at_eval=6.041 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.09 kv_gib=4.0 attn_share=0.174 raw=[0.45, 1.48, 2.5]",
-     "RESULT mode=FULL tp=1 kv=bfloat16 ctx=100 bs=8 ms_per_step=4.050 ms_at_eval=4.037 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.02 kv_gib=0.1 attn_share=0.005 raw=[0.26, 0.95, 1.64]",
-     "RESULT mode=FULL tp=1 kv=bfloat16 ctx=100 bs=16 ms_per_step=4.100 ms_at_eval=4.074 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.02 kv_gib=0.2 attn_share=0.010 raw=[0.27, 0.97, 1.66]",
-     "RESULT mode=FULL tp=1 kv=bfloat16 ctx=100 bs=32 ms_per_step=4.200 ms_at_eval=4.147 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.03 kv_gib=0.4 attn_share=0.020 raw=[0.28, 0.99, 1.71]",
-     "RESULT mode=FULL tp=1 kv=bfloat16 ctx=100 bs=64 ms_per_step=4.400 ms_at_eval=4.292 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.03 kv_gib=0.8 attn_share=0.039 raw=[0.3, 1.04, 1.79]",
-     "RESULT mode=FULL tp=1 kv=bfloat16 ctx=1024 bs=8 ms_per_step=4.512 ms_at_eval=4.475 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.04 kv_gib=1.0 attn_share=0.050 raw=[0.31, 1.07, 1.84]",
-     "RESULT mode=FULL tp=1 kv=bfloat16 ctx=1024 bs=16 ms_per_step=5.024 ms_at_eval=4.946 eval_pos=25 mean_steps=230 r2=0.96050 prefill_s=0.15 kv_gib=2.0 attn_share=0.095 raw=[0.35, 1.51, 2.06]",
-     "RESULT mode=FULL tp=1 kv=bfloat16 ctx=1024 bs=32 ms_per_step=6.048 ms_at_eval=5.876 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.09 kv_gib=4.0 attn_share=0.174 raw=[0.45, 1.48, 2.5]",
-     "RESULT mode=FULL tp=1 kv=bfloat16 ctx=1024 bs=64 ms_per_step=8.096 ms_at_eval=7.704 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.15 kv_gib=8.0 attn_share=0.296 raw=[0.64, 2.01, 3.39]",
-     "RESULT mode=FULL tp=1 kv=bfloat16 ctx=4096 bs=8 ms_per_step=6.048 ms_at_eval=5.998 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.09 kv_gib=4.0 attn_share=0.174 raw=[0.45, 1.48, 2.5]",
-     "RESULT mode=FULL tp=1 kv=bfloat16 ctx=4096 bs=16 ms_per_step=8.096 ms_at_eval=7.982 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.15 kv_gib=8.0 attn_share=0.296 raw=[0.64, 2.01, 3.39]",
-     "SKIP ctx=4096 bs=32 need_kv=143872 cap=137625",
-     "SKIP ctx=4096 bs=64 need_kv=287744 cap=137625",
-     "DONE"
-    ]
-   },
    "xval_config": {
     "grid_cells": [
      [
@@ -2079,46 +1743,6 @@
     "engine.extra.quettaserve = {'crate': 'qwen', 'test': 'decode_loop', 'env_prefix': 'QW', 'family': 'gdn'}  (model)",
     "grid.cells = [(1024, 1), (1024, 4), (1024, 16), (1024, 64), (4096, 1), (4096, 4), (4096, 16), (4096, 64), (8192, 1), (8192, 4), (8192, 16), (8192, 64), (16384, 1), (16384, 4), (16384, 16), (16384, 64)]"
    ],
-   "vmin_fit": {
-    "exit": null,
-    "generate_calls": 68,
-    "stdout": [
-     "META gpu=STUB-GPU-48GiB",
-     "META vllm=0.0.0+stub",
-     "META model=Qwen3.8-27B",
-     "META dtype=bfloat16",
-     "META grid=qwen3",
-     "META mode=FULL",
-     "META eval_pos=25",
-     "META step_points=[60, 230, 400]",
-     "META nccl_algo=allreduce:tree;allgather:ring",
-     "META nccl_proto=Simple",
-     "META link_profile=pcie",
-     "META prompt_mode=clone",
-     "META tp=4",
-     "META pp=2",
-     "META quant=bfloat16",
-     "CAPACITY mode=FULL tp=4 dtype=bfloat16 kv_bytes_per_token=65536 free_gib=89 kv_tokens=1461452",
-     "WARM_OK",
-     "RESULT mode=FULL tp=4 kv=bfloat16 ctx=1024 bs=1 ms_per_step=4.064 ms_at_eval=4.063 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.02 kv_gib=0.1 attn_share=0.001 raw=[0.27, 0.96, 1.65]",
-     "RESULT mode=FULL tp=4 kv=bfloat16 ctx=1024 bs=4 ms_per_step=4.256 ms_at_eval=4.253 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.03 kv_gib=0.2 attn_share=0.005 raw=[0.28, 1.01, 1.73]",
-     "RESULT mode=FULL tp=4 kv=bfloat16 ctx=1024 bs=16 ms_per_step=5.024 ms_at_eval=5.009 eval_pos=25 mean_steps=230 r2=0.96050 prefill_s=0.15 kv_gib=1.0 attn_share=0.018 raw=[0.35, 1.51, 2.06]",
-     "RESULT mode=FULL tp=4 kv=bfloat16 ctx=1024 bs=64 ms_per_step=8.096 ms_at_eval=8.005 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.15 kv_gib=4.0 attn_share=0.069 raw=[0.64, 2.01, 3.39]",
-     "RESULT mode=FULL tp=4 kv=bfloat16 ctx=4096 bs=1 ms_per_step=4.256 ms_at_eval=4.255 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.03 kv_gib=0.2 attn_share=0.005 raw=[0.28, 1.01, 1.73]",
-     "RESULT mode=FULL tp=4 kv=bfloat16 ctx=4096 bs=4 ms_per_step=5.024 ms_at_eval=5.020 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.05 kv_gib=1.0 attn_share=0.018 raw=[0.35, 1.21, 2.06]",
-     "RESULT mode=FULL tp=4 kv=bfloat16 ctx=4096 bs=16 ms_per_step=8.096 ms_at_eval=8.070 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.15 kv_gib=4.0 attn_share=0.069 raw=[0.64, 2.01, 3.39]",
-     "RESULT mode=FULL tp=4 kv=bfloat16 ctx=4096 bs=64 ms_per_step=20.384 ms_at_eval=20.163 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.54 kv_gib=16.0 attn_share=0.229 raw=[1.77, 5.23, 8.7]",
-     "RESULT mode=FULL tp=4 kv=bfloat16 ctx=8192 bs=1 ms_per_step=4.512 ms_at_eval=4.511 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.04 kv_gib=0.5 attn_share=0.009 raw=[0.31, 1.07, 1.84]",
-     "RESULT mode=FULL tp=4 kv=bfloat16 ctx=8192 bs=4 ms_per_step=6.048 ms_at_eval=6.043 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.09 kv_gib=2.0 attn_share=0.036 raw=[0.45, 1.48, 2.5]",
-     "RESULT mode=FULL tp=4 kv=bfloat16 ctx=8192 bs=16 ms_per_step=12.192 ms_at_eval=12.154 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.28 kv_gib=8.0 attn_share=0.129 raw=[1.01, 3.09, 5.16]",
-     "RESULT mode=FULL tp=4 kv=bfloat16 ctx=8192 bs=64 ms_per_step=36.768 ms_at_eval=36.435 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=1.07 kv_gib=32.0 attn_share=0.372 raw=[3.27, 9.53, 15.78]",
-     "RESULT mode=FULL tp=4 kv=bfloat16 ctx=16384 bs=1 ms_per_step=5.024 ms_at_eval=5.023 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.05 kv_gib=1.0 attn_share=0.018 raw=[0.35, 1.21, 2.06]",
-     "RESULT mode=FULL tp=4 kv=bfloat16 ctx=16384 bs=4 ms_per_step=8.096 ms_at_eval=8.089 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.15 kv_gib=4.0 attn_share=0.069 raw=[0.64, 2.01, 3.39]",
-     "RESULT mode=FULL tp=4 kv=bfloat16 ctx=16384 bs=16 ms_per_step=20.384 ms_at_eval=20.327 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=0.54 kv_gib=16.0 attn_share=0.229 raw=[1.77, 5.23, 8.7]",
-     "RESULT mode=FULL tp=4 kv=bfloat16 ctx=16384 bs=64 ms_per_step=69.536 ms_at_eval=69.071 eval_pos=25 mean_steps=230 r2=1.00000 prefill_s=2.12 kv_gib=64.0 attn_share=0.542 raw=[6.29, 18.11, 29.93]",
-     "DONE"
-    ]
-   },
    "xval_config": {
     "grid_cells": [
      [

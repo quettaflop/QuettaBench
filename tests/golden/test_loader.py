@@ -148,8 +148,12 @@ class ConfigResolutionGolden(unittest.TestCase):
                 with self.subTest(workload=name, env=s):
                     check_record(self, resolve(name, env), old, env)
                 record[name][s] = {"xval_config": {k: v for k, v in old.items() if k != "cli"},
-                                   "vmin_fit": resolve_vmin_fit(name, env),
                                    "dry_run": resolve_dry_run(name, env)}
+                vmin_fit = resolve_vmin_fit(name, env)
+                if "XVAL_PP" in env:  # a pp > 1 timing grid is refused (REPORT.md)
+                    self.assertIn("pp=2 has no server flag", vmin_fit["exit"])
+                else:
+                    record[name][s]["vmin_fit"] = vmin_fit
         check_json(self, "config_workloads", record)
 
     def test_qwen_needs_the_dense_override(self):

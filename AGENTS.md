@@ -85,6 +85,8 @@ in one results layer, `results/<run>/`, and leaves the repo by
   tested in `tests/golden/test_provision.py` only. Plus
   `test_crossval_contracts.py`, `test_imports.py` and the two GPU smoke
   modules; `helpers.py` and the `fake_*.py` scripts are their plumbing.
+- `tests/parity/`: `slope_gate.json`, the committed HTTP-vs-in-process slope
+  gate, and the test that holds every cell to its rule.
 
 ## Deviations from QBENCH_STRUCTURE.md
 
@@ -94,6 +96,7 @@ One line each; everything else follows section 2 "Target layout".
 - The probe recipes (`just probe`, the kernel recipes, `remote-probe`) run `python -m quettabench.probes.<name>`, a second door beside `qbench run` `mode: probe`: torchrun needs a module path per rank, a remote host gets only the probe package, and a live-server probe names its output file; both doors record through `run_recorded` or `run_probe` into the same `run.json` and `rows.jsonl`.
 - `runner.py` is about 370 lines, not under 100: it also holds `build_trace(cfg)`, which picks the Trace a Config names, and runs probe-mode runs, matrix sweeps, the in-process env pins and the run dir rules.
 - `configs/hardware/` holds the NCCL link profiles and `configs/workloads.yaml` the named workload profiles, beside section 2's models, grids and runs.
+- `InProcessDriver` stays though the parity gate passed (`tests/parity/slope_gate.json`): grid timing runs over HTTP, and in-process is kept only for `mode.returns` text or logits runs, the only path that returns token ids, text or logits (owner decision 2026-10-12).
 - `engines/drivers.py` also holds the transformers FIDELITY reference adapter (`engine.name: reference`) beside `ReferenceDriver`; `engines/__init__.py` imports the adapters so they register.
 - `modes/serve.py` is about 820 lines, not under 400: the replay, the session dispatch and the grid cells all live in serve, as section 2 assigns them.
 - `probes/_timing.py` holds the CUDA-graph and NCU timing, not `probes/base.py`: it imports torch, and the runner imports `base.py` on CPU.
@@ -102,7 +105,7 @@ One line each; everything else follows section 2 "Target layout".
 - `moe`, `collective`, `vllm_allreduce`, `reparallel` and `profiling/kv_transfer.py` emit `ProbeRow`s without the `Probe` ABC: moe allocates each geometry's weights once for all its token points, and the others run under torchrun, where rank 0 emits rows the ranks measured together.
 - A run that measured no rows for a table exports no table for it; the per-probe CSVs wrote a header-only table, which replaced (or, without `--append`, reset) the earlier runs' rows.
 - `profiling/kv_transfer.py` stays its own module: it is a torchrun target (`-m quettabench.profiling.kv_transfer`) and the tool name in the kernel manifest.
-- `tests/` has `golden/`, `contracts/` and `_stubs/` (the vllm, torch and transformers stand-ins the golden CPU runs import): the probe contracts and GPU smoke tests live in `contracts/` (owner decision 2026-10-12), and `tests/parity/` waits for the GPU parity gate.
+- `tests/` has `golden/`, `contracts/`, `parity/` and `_stubs/` (the vllm, torch and transformers stand-ins the golden CPU runs import): the probe contracts and GPU smoke tests live in `contracts/` (owner decision 2026-10-12).
 - `analysis/` has no synthetic-sampler studies or `build_trace_distributions`: `analysis/synthetic/` was deleted by owner decision (2026-10-12, "scrap synthetic").
 - `data/` keeps `download_agent_trajectories.py` and `download_coding_prompts.py` apart: section 2's `fetch.py` merge is not done.
 - `legacy/trace_serve.py` is gone; `modes/serve.py` replaced it.

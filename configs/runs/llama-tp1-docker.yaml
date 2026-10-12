@@ -3,7 +3,6 @@
 model: llama31_8b
 engine:
   tp: 1
-  driver: http
   image: vllm/vllm-openai:v0.26.0
 workload:
   kind: grid

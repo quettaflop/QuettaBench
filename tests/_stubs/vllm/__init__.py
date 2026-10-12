@@ -76,18 +76,24 @@ class _RequestOutput:
         self.prompt_logprobs = prompt_logprobs
 
 
+def run_batch(prompts, sampling_params):
+    """One batch on the fake clock: LLM.generate's body, which the golden
+    harness's HTTP stand-in also runs for what a grid batch posts."""
+    CLOCK.generate_calls += 1
+    prompt_len = len(prompts[0]["prompt_token_ids"])
+    n = sampling_params.max_tokens
+    CLOCK.now += generate_seconds(prompt_len, len(prompts), n, CLOCK.generate_calls)
+    k = sampling_params.kwargs.get("prompt_logprobs")
+    return [_RequestOutput(list(range(n)), k and _prompt_logprobs(p["prompt_token_ids"], k))
+            for p in prompts]
+
+
 class LLM:
     def __init__(self, **kwargs):
         CALLS.append(("LLM", kwargs))
 
     def generate(self, prompts, sampling_params, use_tqdm=True):
-        CLOCK.generate_calls += 1
-        prompt_len = len(prompts[0]["prompt_token_ids"])
-        n = sampling_params.max_tokens
-        CLOCK.now += generate_seconds(prompt_len, len(prompts), n, CLOCK.generate_calls)
-        k = sampling_params.kwargs.get("prompt_logprobs")
-        return [_RequestOutput(list(range(n)), k and _prompt_logprobs(p["prompt_token_ids"], k))
-                for p in prompts]
+        return run_batch(prompts, sampling_params)
 
     def get_tokenizer(self):
         raise StubHalt("corpus prompt mode needs a real tokenizer")

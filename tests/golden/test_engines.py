@@ -14,7 +14,9 @@ ABSENT = "<absent>"
 
 
 def vmin_fit_kwargs(name, env, extra_argv=()):
-    run = run_grid_cli(grid_argv(name, "--allow-unverified", *extra_argv), env)
+    """vllm.LLM's kwargs in a mode.returns grid run, the one path that still builds it."""
+    run = run_grid_cli(grid_argv(name, "--allow-unverified", "--set", "mode.returns=text",
+                                 *extra_argv), env)
     (kwargs,) = run["llm_kwargs"]
     return kwargs
 

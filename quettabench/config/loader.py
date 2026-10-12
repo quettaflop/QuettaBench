@@ -256,9 +256,9 @@ def _validate(values, origins, allow_unverified, where):
         raise ConfigError(f"{where}: goodput sweep needs open load and mode.sla_ttft_ms "
                           "and/or sla_tpot_ms")
     if (values["mode.grid"] and values["workload.prompt_mode"] == "corpus"
-            and values["engine.driver"] == "http"):
-        raise ConfigError(f"{where}: prompt_mode=corpus tokenizes in-process; "
-                          "engine.driver=http has no tokenizer")
+            and values["mode.returns"] == "none"):
+        raise ConfigError(f"{where}: prompt_mode=corpus tokenizes in-process, which only a "
+                          "mode.returns run builds; a timing grid runs over HTTP with no tokenizer")
 
 
 def _grid(values, grids, step_points, where):

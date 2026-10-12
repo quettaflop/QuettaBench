@@ -20,7 +20,6 @@ CHOICES = {
     "engine.name": ("vllm", "quettaserve", "reference"),
     "engine.attention": ("dense", "mla", "hybrid"),
     "engine.instrumentation": ("none", "nsys", "torch"),
-    "engine.driver": ("in-process", "http"),
     "workload.kind": ("live", "grid", "sessions"),
     "workload.prompt_mode": ("distinct", "clone", "corpus", "trace"),
     "workload.pacing": ("per-session", "interleaved"),
@@ -65,7 +64,6 @@ class EngineCfg:
     cudagraph: bool = True            # inverse of the old serve --grid --nograph
     port: int = 8000                  # launch_server.sh default
     instrumentation: str = "none"     # armed at launch: none | nsys | torch
-    driver: str = "in-process"        # grid runs: in-process vllm.LLM | http (a launched server)
     image: str | None = None          # the server's docker image; required by hardware.launcher=docker
     extra: Mapping[str, Any] = field(default_factory=dict)  # quettaserve bench block lives here
     # Facts the capacity gate needs (grid CAPACITY line).

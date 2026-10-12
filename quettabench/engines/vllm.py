@@ -22,8 +22,9 @@ The server binary is `vllm` on PATH, or the `vllm` script beside
 hardware.provision.py when a venv is provisioned (v4sweep ran {VENV}/vllm).
 
 A field whose value has no flag in those launches lands in
-server_unsupported: the launcher refuses the spec, the in-process path still
-builds. Today that is pp > 1 and cudagraph=False (the sweeps'
+server_unsupported: the launcher refuses the spec, a timing grid refuses it
+at translate, and the in-process path of a mode.returns run still builds.
+Today that is pp > 1 and cudagraph=False (the sweeps'
 --enforce-eager is a different switch, not proven equal to cudagraph_mode
 NONE). quant adds no server flag: v4sweep.py launched the GLM fp8 checkpoints
 with no --quantization and the server read the method from the checkpoint
@@ -117,7 +118,6 @@ FIELDS = {
     "cudagraph":      (only(True),                         lambda v: {} if v else
                        {"compilation_config": {"cudagraph_mode": "NONE"}}),
     "serving_style":  (only("aggregated"),                 aggregated_only),
-    "driver":         (lambda v: [],                       nothing),  # how a grid is driven
 }
 SCALARS = (str, int, float, bool)
 
@@ -154,9 +154,6 @@ class VllmAdapter(EngineAdapter):
         if engine.layers is not None:
             raise UnsupportedField("vllm", f"layers={engine.layers}",
                                    "slice runs load a truncated checkpoint dir as engine.model")
-        if self.grid_over_http(cfg) and cfg.mode.returns != "none":
-            raise UnsupportedField("vllm", f"driver=http with mode.returns={cfg.mode.returns}",
-                                   "the completions stream carries no token ids or logits")
         argv, kwargs, unsupported = [], dict(KWARGS), []
         for name, (to_argv, to_kwargs) in FIELDS.items():
             value = getattr(engine, name)
@@ -166,6 +163,9 @@ class VllmAdapter(EngineAdapter):
             else:
                 argv += part
             kwargs.update(to_kwargs(value))
+        if unsupported and cfg.mode.grid is not None and self.needs_server(cfg):
+            raise ConfigError(f"vllm: {', '.join(unsupported)} has no server flag and a timing "
+                              "grid runs over HTTP; only a mode.returns run builds vLLM in-process")
         extra = engine.extra.get("vllm", {})
         extra_argv, extra_kwargs = extra_fragments(extra, kwargs)
         kwargs.update(extra_kwargs)
@@ -190,16 +190,14 @@ class VllmAdapter(EngineAdapter):
             timeout_s=cfg.mode.timeout,
         )
 
-    def grid_over_http(self, cfg):
-        return cfg.mode.grid is not None and cfg.engine.driver == "http"
-
     def needs_server(self, cfg):
-        """A serve run, or a grid run with engine.driver=http; an in-process
-        grid run builds vllm.LLM itself."""
-        return cfg.mode.grid is None or self.grid_over_http(cfg)
+        """A serve run, or a grid run that only times. A grid run with
+        mode.returns builds vllm.LLM itself: only that path gives token ids,
+        text or logits (tests/parity/slope_gate.json passed timing over HTTP)."""
+        return cfg.mode.grid is None or cfg.mode.returns == "none"
 
     def driver(self, spec, handle, trace=None):
-        """InProcessDriver when nothing was launched (an in-process grid run),
+        """InProcessDriver when nothing was launched (a grid run with mode.returns),
         else the launched server with the model it was started on: its
         /v1/chat/completions for chat requests, /v1/completions otherwise,
         sending the server's api key when it was started with one."""

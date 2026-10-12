@@ -68,13 +68,14 @@ class KwargsMatchVminFit(unittest.TestCase):
     def test_env_override(self):
         for name in sorted(GOLDEN):
             with self.subTest(name=name):
-                self.assertEqual(spec_for(name, env=ENV_OVERRIDE).engine_kwargs,
+                self.assertEqual(spec_for(name, env=ENV_OVERRIDE,
+                                          sets=["mode.returns=text"]).engine_kwargs,
                                  GOLDEN[name]["vmin_fit_env_override"])
 
     def test_nograph(self):
         for name in sorted(GOLDEN):
             with self.subTest(name=name):
-                spec = spec_for(name, sets=["engine.cudagraph=false"])
+                spec = spec_for(name, sets=["engine.cudagraph=false", "mode.returns=text"])
                 self.assertEqual(spec.engine_kwargs, GOLDEN[name]["vmin_fit_nograph"])
                 self.assertIn("cudagraph=False", spec.server_unsupported)
 
@@ -92,7 +93,7 @@ class ServerArgv(unittest.TestCase):
         self.assertEqual((spec.health_path, spec.port), ("/health", 8000))
 
     def test_fields_without_a_flag_block_the_server_only(self):
-        blocked = spec_for("glm53", sets=["engine.pp=2"])
+        blocked = spec_for("glm53", sets=["engine.pp=2", "mode.returns=text"])
         self.assertEqual(blocked.server_unsupported, ("pp=2",))
         self.assertEqual(blocked.server_argv, ())
         self.assertEqual(blocked.engine_kwargs["pipeline_parallel_size"], 2)
@@ -176,21 +177,34 @@ class Extra(unittest.TestCase):
 
 
 class GridDriver(unittest.TestCase):
-    """engine.driver picks how a grid run reaches vLLM; in-process stays the default."""
+    """mode.returns picks how a grid run reaches vLLM: a timing grid over HTTP,
+    a grid that returns text or logits in-process."""
 
     def cfg(self, *sets):
         (cfg,) = loader.load(RUNS / "llama.yaml", [*PINNED, *sets], env={})
         return cfg
 
-    def test_default_grid_is_in_process(self):
-        cfg = self.cfg()
+    def test_a_returns_grid_is_in_process(self):
         adapter = vllm_adapter.ADAPTER
-        self.assertFalse(adapter.needs_server(cfg))
-        self.assertIsInstance(adapter.driver(adapter.translate(cfg), launcher.NoServer(Path("r"))),
-                              InProcessDriver)
+        for returns in ("text", "logits"):
+            with self.subTest(returns=returns):
+                cfg = self.cfg(f"mode.returns={returns}")
+                self.assertFalse(adapter.needs_server(cfg))
+                driver = adapter.driver(adapter.translate(cfg), launcher.NoServer(Path("r")))
+                self.assertIsInstance(driver, InProcessDriver)
 
-    def test_http_grid_launches_the_server(self):
-        cfg = self.cfg("engine.driver=http")
+    def test_settings_without_a_server_flag_need_returns(self):
+        adapter = vllm_adapter.ADAPTER
+        for setting, field in (("engine.pp=2", "pp=2"), ("engine.cudagraph=false", "cudagraph=False")):
+            with self.subTest(setting=setting):
+                with self.assertRaisesRegex(ConfigError, f"{field} has no server flag and a "
+                                            "timing grid runs over HTTP"):
+                    adapter.translate(self.cfg(setting))
+                spec = adapter.translate(self.cfg(setting, "mode.returns=text"))
+                self.assertEqual(spec.server_unsupported, (field,))
+
+    def test_a_timing_grid_launches_the_server(self):
+        cfg = self.cfg()
         adapter = vllm_adapter.ADAPTER
         spec = adapter.translate(cfg)
         self.assertTrue(adapter.needs_server(cfg))
@@ -201,7 +215,7 @@ class GridDriver(unittest.TestCase):
         self.assertEqual(driver.url, "http://127.0.0.1:8000/v1/completions")
 
     def test_the_driver_sends_the_servers_api_key(self):
-        cfg = self.cfg("engine.driver=http")
+        cfg = self.cfg()
         handle = launcher.NoServer(Path("r"), endpoint="http://127.0.0.1:8000")
         keyed = dataclasses.replace(cfg, engine=dataclasses.replace(
             cfg.engine, extra={"vllm": {"api_key": "sk-1"}}))
@@ -211,7 +225,7 @@ class GridDriver(unittest.TestCase):
                          {"plain": "test", "keyed": "sk-1"})
 
     def test_chat_requests_go_to_chat_completions(self):
-        spec = vllm_adapter.ADAPTER.translate(self.cfg("engine.driver=http"))
+        spec = vllm_adapter.ADAPTER.translate(self.cfg())
         handle = launcher.NoServer(Path("r"), endpoint="http://127.0.0.1:8000")
         chat = mock.Mock(**{"requests.return_value": [Request([], 3, messages=[{"role": "user"}])]})
         ids = mock.Mock(**{"requests.return_value": [Request([1, 2], 2, messages=[{"role": "user"}])]})
@@ -220,11 +234,6 @@ class GridDriver(unittest.TestCase):
         self.assertEqual(urls, {"chat": "http://127.0.0.1:8000/v1/chat/completions",
                                 "ids": "http://127.0.0.1:8000/v1/completions",
                                 "none": "http://127.0.0.1:8000/v1/completions"})
-
-    def test_http_grid_returns_no_text_or_logits(self):
-        for returns in ("text", "logits"):
-            with self.subTest(returns=returns), self.assertRaises(base.UnsupportedField):
-                spec_for("llama", sets=["engine.driver=http", f"mode.returns={returns}"])
 
 
 def quettaserve_spec(name, cell, link="nvlink", sets=()):
