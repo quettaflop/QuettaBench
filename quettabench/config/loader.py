@@ -38,7 +38,7 @@ RUN_KEYS = ("model", "engine", "workload", "mode", "hardware", "matrix")
 HARDWARE_FILE_KEYS = ("world", "timing_steps", "max_seq_headroom", "collective", "provision")
 GRIDS_KEYS = ("grids", "step_points")
 RATE_ARRIVALS = ("poisson", "ramp", "burst")
-# run_name names results/<run_name>/: one plain name of at most 200 chars (so clear_run_dir's sibling name fits in 255), no trailing '.'.
+# run_name is one plain dir name of at most 200 chars (clear_run_dir's sibling name must fit in 255), no trailing '.'.
 RUN_NAME = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._-]{0,198}[A-Za-z0-9_-])?")
 RESERVED_RUN_NAMES = ("probes", "xval", "baselines")
 # path -> (lowest, highest) allowed; None is no bound
@@ -184,7 +184,7 @@ def _force(values, origins, path, value, by, where):
 
 
 def _profile_prefix_caching(values, origins, where):
-    """Sets engine.prefix_caching true (origin "profile") for a serve run on a profile that requires it; a false from the run yaml, env or --set is refused."""
+    """Set engine.prefix_caching true (origin "profile") when the serve profile requires it; an explicit false is refused."""
     source = values["workload.source"]
     if values["mode.grid"] is not None or source not in live.PROFILES:
         return
@@ -335,9 +335,7 @@ def check_run_name(name, where):
 
 
 def load(run_yaml, overrides=(), env=None):
-    """Configs for one run yaml: one, or one per point of its `matrix:`.
-
-    env=None reads os.environ. The configs/ root is the run yaml's grandparent (configs/runs/<name>.yaml)."""
+    """Configs for one run yaml: one, or one per point of its `matrix:`. env=None reads os.environ; the configs/ root is the run yaml's grandparent."""
     run_path = Path(run_yaml)
     configs = run_path.resolve().parents[1]
     raw = _read_yaml(run_path)

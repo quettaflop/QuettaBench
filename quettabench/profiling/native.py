@@ -16,10 +16,10 @@ from quettabench.metrics.core import counter_total, parse_prometheus
 HITS = "vllm:gpu_prefix_cache_hits"
 QUERIES = "vllm:gpu_prefix_cache_queries"
 
-# imported by name when asked for: it needs QuettaSim, which the GPU-free profiler must not
+# Imported on demand: it needs QuettaSim, which the GPU-free profiler must not.
 FRONTEND = "quettabench.profiling.frontend"
 
-# nsys writes <out>.nsys-rep, or <out>.qdrep before 2021.4; the adapters pass out=nsys
+# nsys writes <out>.nsys-rep, or <out>.qdrep before 2021.4.
 TRACE_FILES = {
     "nsys": ("nsys.nsys-rep", "nsys.qdrep", "nsys.rep"),
     "torch": ("torch_trace.json",),
@@ -59,7 +59,7 @@ def collect_armed_traces(results_dir, instrumentation):
             "missing": bool(names) and not found}
 
 
-# first match wins; the kimi_* patterns are QuettaServe kernel symbols
+# First match wins; the kimi_* patterns are QuettaServe kernel symbols.
 KERNEL_FAMILIES = [
     (r"kimi_moe_gemv", "expert MXFP4 GEMV (ours, fused)"),
     (r"Marlin", "expert MXFP4 GEMM (vLLM MARLIN)"),
@@ -99,7 +99,8 @@ def kernel_summary(results_dir, steps, window=None, subtract=None, top=25, gap_u
                    nsys="nsys"):
     """profile.json `kernels` per decode step from the armed nsys trace, exported once to <results_dir>/nsys.sqlite.
 
-    window is an NVTX range (default the whole capture); subtract is a range whose totals come off first. Per device, both the summed duration and the union of intervals are reported."""
+    window is an NVTX range (default the whole capture); subtract is a range whose totals come off first. Per device, both the summed duration and the union of intervals are reported.
+    """
     results_dir = Path(results_dir)
     db = results_dir / "nsys.sqlite"
     if not db.exists():
@@ -107,7 +108,7 @@ def kernel_summary(results_dir, steps, window=None, subtract=None, top=25, gap_u
                     if (results_dir / n).exists()), None)
         if rep is None:
             raise ValueError(f"no armed nsys trace in {results_dir}")
-        # export to a temp file so an interrupted export leaves no db; nsys refuses an existing -o path
+        # A temp file keeps an interrupted export from leaving a db; nsys refuses an existing -o path.
         part = db.with_name("nsys.partial.sqlite")
         part.unlink(missing_ok=True)
         subprocess.run([nsys, "export", "--type", "sqlite", "-o", str(part), str(rep)], check=True)
@@ -221,9 +222,7 @@ def pd_host(endpoint, model, argv=()):
 
 
 def kv_transfer(run_dir):
-    """profile.json `kv_transfer`: the kv_transfer ProbeRows in run_dir/rows.jsonl, each as its key then value columns.
-
-    Read as JSON because the probe module needs torch."""
+    """profile.json `kv_transfer`: the kv_transfer ProbeRows in run_dir/rows.jsonl, read as JSON since the probe module needs torch."""
     path = Path(run_dir) / "rows.jsonl"
     with path.open() as fh:
         rows = [json.loads(line) for line in fh if line.strip()]

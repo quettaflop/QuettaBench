@@ -1,7 +1,6 @@
 """qbench export: results dirs in, QuettaSim's files out; the one route out of QuettaBench.
 
-kernel_tables builds QuettaSim's kernel tables from the probe runs' rows.jsonl into its data root (--kernel-dest), the tree its kernel_composed backend reads.
-The other builders write their fitted constants and grids under --dest; every export writes a manifest of the runs it read.
+kernel_tables builds QuettaSim's kernel tables from the probe runs' rows.jsonl into its data root (--kernel-dest). The other builders write fitted constants and grids under --dest; every export writes a manifest of the runs it read.
 """
 from __future__ import annotations
 
@@ -24,7 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from quettabench.metrics.results import RUN_MARKERS, bench_sha, write_atomic
-from quettabench.probes import serving_decode_grid as _client  # aiohttp is imported lazily there
+from quettabench.probes import serving_decode_grid as _client
 
 TP_DEGREES = (2, 4)
 # The finish time of a run with none, or none that parses: older than any.
@@ -32,14 +31,16 @@ NEVER = datetime.min.replace(tzinfo=timezone.utc)
 
 
 def clearing(path: Path, root: Path) -> bool:
-    """path sits in a .clearing-* dir under root (runner.clear_run_dir cut short)."""
+    """path sits in a .clearing-* dir under root, left by an interrupted runner.clear_run_dir."""
     return any(part.startswith(".clearing-") for part in Path(path).relative_to(root).parts)
 
 
 @functools.cache
 def run_dirs(root: Path) -> dict[Path, str | None]:
-    """{run dir: why export leaves it out, None when kept} for every run dir under root (root included): run.json missing (a run that never finished), unparsable, or a run_status other than ok. A server/ dir under a run dir (a probe's launched server, engine.json there) is part of that run; a .clearing-* dir (runner.clear_run_dir cut short) is none.
-    Cached per root; export() clears it before each builder."""
+    """{run dir: why export leaves it out, or None when kept} for every run dir under root: run.json missing, unparsable, or a run_status other than ok.
+
+    A server/ dir under a run dir is part of that run; a .clearing-* dir is no run. Cached per root; export() clears it before each builder.
+    """
     runs = {}
     dirs = sorted({p.parent for marker in RUN_MARKERS for p in Path(root).rglob(marker)
                    if not clearing(p, root)})
@@ -65,7 +66,7 @@ def skipped_runs(root: Path) -> dict[Path, str]:
 
 
 def owner(path: Path, root: Path, runs: dict[Path, str | None]) -> Path | None:
-    """The run dir path belongs to: path itself when it is a run dir, else its nearest ancestor (up to root) that is one, None when it sits in none (a table without a run.json)."""
+    """The run dir path belongs to: path itself or its nearest run-dir ancestor up to root, else None."""
     for d in (path, *path.parents):
         if d in runs:
             return d
@@ -75,7 +76,7 @@ def owner(path: Path, root: Path, runs: dict[Path, str | None]) -> Path | None:
 
 
 def files(root: Path, pattern: str, recursive: bool = True) -> list[Path]:
-    """Paths under root matching pattern, sorted, without those in a .clearing-* dir or whose run dir (owner) export leaves out."""
+    """Paths under root matching pattern, sorted, without those in a .clearing-* dir or a run dir export leaves out."""
     root = Path(root)
     runs = run_dirs(root)
     hits = root.rglob(pattern) if recursive else root.glob(pattern)
@@ -83,7 +84,7 @@ def files(root: Path, pattern: str, recursive: bool = True) -> list[Path]:
 
 
 def finished(run_dir: Path | None) -> datetime:
-    """run_dir/run.json's provenance.pulled (a remote run, on this machine's clock) or else provenance.finished as a UTC instant, NEVER for no run dir or no time that parses."""
+    """provenance.pulled (a remote run, on this machine's clock) or else provenance.finished as a UTC instant; NEVER when neither parses."""
     try:
         provenance = json.loads((Path(run_dir) / "run.json").read_text())["provenance"]
         when = provenance["pulled"] if "pulled" in provenance else provenance["finished"]
@@ -93,8 +94,7 @@ def finished(run_dir: Path | None) -> datetime:
 
 
 def find(results_dirs: Iterable[Path], name: str) -> Path | None:
-    """The file called `name` whose ok run finished last (provenance.finished), over every results dir; a file in no run dir counts as finished never.
-    A tie goes to the earlier results dir, then the first path."""
+    """The file called `name` whose ok run finished last, over every results dir; ties go to the earlier results dir, then the first path."""
     best = None
     for rank, root in enumerate(map(Path, results_dirs)):
         runs = run_dirs(root)
@@ -106,7 +106,7 @@ def find(results_dirs: Iterable[Path], name: str) -> Path | None:
 
 
 def stage_split_legs(results_dirs: Iterable[Path], gpu: str) -> list[tuple[int, Path, Path]]:
-    """(tp, tp1 csv, tpN csv) for every tp degree whose two stage-split legs are present, each leg the one find picks (its run finished last)."""
+    """(tp, tp1 csv, tpN csv) for every tp degree with both stage-split legs, each the last-finished one."""
     tp1 = find(results_dirs, f"serving_stage_split_{gpu}.csv")
     legs = []
     for tp in TP_DEGREES:
@@ -127,7 +127,7 @@ REDUCE = {"gemm": "min", "moe": "min", "elementwise": "median", "flash_attn": "m
 # The key a collectives row replaces a dest row on.
 COLLECTIVE_KEY = ("op", "world", "bytes")
 GEOMETRY = ("n_heads", "n_kv_heads", "head_dim")
-# (probe, kind) -> the columns a CSV row is keyed on: flash_attn and cross_attn replace every row of a head config, the others one row.
+# (probe, kind) -> key columns of a CSV row; flash_attn and cross_attn replace every row of a head config.
 ROW_KEYS = {
     ("flash_attn", "flash_attn"): GEOMETRY,
     ("flash_attn", "fa3_prefill"): GEOMETRY,
@@ -196,8 +196,10 @@ def _sidecar(rel: Path, by_probe: dict[str, list[Source]], runs: set[Path]) -> d
 
 
 def _keep_sidecar(meta: dict, table: Path, kept: bool) -> dict:
-    """meta over the sidecar dest has beside table: its other fields stay, a field meta leaves null keeps its value and meta's notes join its notes.
-    When its rows were kept, measured spans both, tool names both, and a mode other than meta's makes mode unknown."""
+    """meta merged over the sidecar dest has beside table: a null field in meta keeps the old value and notes join.
+
+    When its rows were kept, measured spans both, tool names both, and a different mode makes mode unknown.
+    """
     path = table.with_name(table.name + ".meta.json")
     try:
         prior = json.loads(path.read_text()) if path.is_file() else {}
@@ -224,7 +226,7 @@ class Rows:
     cells: list[dict]
 
 
-Source = tuple[datetime, "Path | Rows", Path, bool]  # (finished, dest table or a run's rows, run dir, --append)
+Source = tuple[datetime, "Path | Rows", Path, bool]  # (finished, dest table or rows, run dir, --append)
 
 
 class Lost(SystemExit):
@@ -269,7 +271,7 @@ def found(results_dirs: Iterable[Path]) -> dict[Path, dict[str, list[Source]]]:
 
 
 def _runs_used(probe: str, rel: Path, sources: list[Source]) -> list[Source]:
-    """The runs whose rows a probe's table is built from: all of them for a keyed table (from the last run without --append on, for gemm and moe), else the run that finished last."""
+    """The runs a probe's table is built from: every run for a keyed table (from the last one without --append, for gemm and moe), else the last to finish."""
     kind = rel.parts[-2]
     if (probe, kind) in JSON_UNION and rel.suffix == ".json":
         return sources
@@ -305,7 +307,7 @@ def _write_csv(out: Path, fields: list[str], rows: Iterable[dict], like: Path | 
 
 def _read_csv(rel: Path, table: Path | Rows, run: Path,
               key: tuple[str, ...] = ()) -> tuple[list[str], list[dict]]:
-    """table's header and rows as csv reads them (a run's cells as strings); stops the export on a row with a missing or extra cell or a key that is empty or does not parse."""
+    """table's header and rows as csv reads them; stops the export on a row with a missing or extra cell or an empty or unparsable key."""
     if isinstance(table, Rows):
         fields = list(dict.fromkeys(c for cells in table.cells for c in cells))
         rows = [{c: "" if cells.get(c) is None else str(cells[c]) for c in fields} for cells in table.cells]
@@ -337,7 +339,10 @@ def _read_json(rel: Path, table: Path | Rows, run: Path) -> object:
 
 def _union_csv(rel: Path, sources: list[Source], key: tuple[str, ...], out: Path,
                old: Source | None = None) -> list[Path]:
-    """Rows of the dest table old, then of every source, oldest first; a source's rows replace the earlier rows on each key it holds. Within a run's table the last row on a key wins; old keeps its repeated rows on a key (QuettaSim's loaders reduce them) unless the table's old upsert held its rows in a dict (SORTED). Returns the run dirs with a row kept."""
+    """Rows of the dest table old, then of every source oldest first, each source replacing earlier rows on the keys it holds. Returns the run dirs with a row kept.
+
+    Within a run the last row on a key wins; old keeps repeated keys (QuettaSim's loaders reduce them) unless its table is in SORTED.
+    """
     order = next((cols for k, cols in SORTED.items() if ROW_KEYS[k] == key), None)
     fields: list[str] = []
     kept: list[tuple[dict, Path]] = []
@@ -390,7 +395,10 @@ def _json_style(table: Path | Rows) -> tuple[int | None, str]:
 
 def _merge_collectives(rel: Path, collective: Source | None, vllm: Source | None, out: Path,
                        old: Source | None = None) -> list[Path]:
-    """The dest table old's rows, then the collective run's, each replacing the earlier rows on its COLLECTIVE_KEY, then vllm_allreduce's all_reduce rows, which replace every earlier all_reduce row of their world. Beside a vllm_allreduce run the collective run's all_reduce rows are left out. The header is old's and the runs' columns; the collective run's rows fill an empty dtype_bytes (2) and path (nccl)."""
+    """Collectives table: old's rows, then the collective run's replacing on COLLECTIVE_KEY, then vllm_allreduce's all_reduce rows replacing every earlier all_reduce row of their world.
+
+    Beside a vllm_allreduce run the collective run's all_reduce rows are left out. Collective rows fill an empty dtype_bytes (2) and path (nccl).
+    """
     sources = [(s, _read_csv(rel, s[1], s[2], COLLECTIVE_KEY)) for s in (old, collective, vllm) if s]
     fields: list[str] = []
     for _, (head, _) in sources:
@@ -431,7 +439,7 @@ def _check(rel: Path, by_probe: dict[str, list[Source]]) -> None:
 
 def _lost(rel: Path, old: Source, out: Path, key: tuple[str, ...], newer: set[tuple],
           rows: list[dict] | None = None) -> None:
-    """Stop (Lost) when out lacks a column of the dest table old, or drops one of its rows (rows, else all of old's): each must be in out, cell for cell, unless a run re-measured its key (newer)."""
+    """Stop (Lost) when out lacks a column of old or drops one of its rows, cell for cell, unless a newer run re-measured that key."""
     head, olds = _read_csv(rel, old[1], old[1], key)
     fields, kept = _read_csv(rel, out, out, key)
     stop = "; give --replace-tables to replace each table that stops this way"
@@ -455,7 +463,7 @@ def _lost(rel: Path, old: Source, out: Path, key: tuple[str, ...], newer: set[tu
 
 def _write(rel: Path, by_probe: dict[str, list[Source]], out: Path,
            old: Source | None = None) -> list[Path]:
-    """Build one dest file (_check passed) over the dest table old, when there is one; returns the run dirs (and old's path) whose rows it holds."""
+    """Build one dest file over the dest table old, if any; returns the run dirs (and old's path) whose rows it holds."""
     used = {probe: _runs_used(probe, rel, sources) for probe, sources in by_probe.items()}
     probes = sorted(used)
     olds = [old] if old else []
@@ -489,7 +497,10 @@ def _write(rel: Path, by_probe: dict[str, list[Source]], out: Path,
 
 def run_kernel_tables(results_dirs: Iterable[Path], dest: Path,
         replace: bool = False) -> tuple[list[Path], dict[str, list[str]]]:
-    """Build every table and its sidecar in a temp dir under dest, over the tables dest holds (or, given replace, without the ones that would stop with Lost), then replace the dest files, so a stop leaves the tables in dest as they were (and no dest when this run made it). Returns the files written and, for the manifest, {<dir>/<kind>/<file>: the run dirs with rows in it, in finished order}."""
+    """Build every table and sidecar in a temp dir under dest, then replace the dest files, so a stop leaves dest as it was. With replace, tables that would stop with Lost are rebuilt without dest's rows.
+
+    Returns the files written and {<dir>/<kind>/<file>: run dirs with rows in it, in finished order} for the manifest.
+    """
     tables = sorted(found(results_dirs).items())
     for rel, by_probe in tables:
         _check(rel, by_probe)
@@ -545,11 +556,9 @@ def _span_new_rate(path: Path) -> dict:
     rows = list(csv.DictReader(path.open()))
     X = [(1.0, float(r["new"]), float(r["cached"])) for r in rows]
     y = [float(r["prefill_span_ms"]) for r in rows]
-    # normal equations (3x3), no numpy dependency
     n = len(X)
     xtx = [[sum(X[k][i] * X[k][j] for k in range(n)) for j in range(3)] for i in range(3)]
     xty = [sum(X[k][i] * y[k] for k in range(n)) for i in range(3)]
-    # gaussian elimination
     m = [xtx[i] + [xty[i]] for i in range(3)]
     for col in range(3):
         piv = max(range(col, 3), key=lambda r: abs(m[r][col]))
@@ -565,8 +574,7 @@ def _span_new_rate(path: Path) -> dict:
 
 def build_tpn(n: int, tpn_csv: Path, out_json: Path, tp1_csv: Path, gpu: str = "H100",
               host: str = "h100") -> None:
-    """The like-for-like stage-split estimator at tp degree n: comm_total = prefill_span.new(tpN) - span.new(tp1)/N, the total per-new-token cost above the 1/N GEMM share, read per config through the deployment key prefill_tp_comm_ms_per_token.
-    Each GPU uses its own tp1 leg: a tp1 leg never transfers across GPUs."""
+    """Like-for-like stage-split estimate at tp n: comm_total = prefill_span.new(tpN) - span.new(tp1)/N, the per-new-token cost above the 1/N GEMM share, pinned per config as prefill_tp_comm_ms_per_token. Each GPU uses its own tp1 leg."""
     for p in (tp1_csv, tpn_csv):
         if not p.exists():
             raise SystemExit(f"missing {p} -- pull both stage-split legs first")
@@ -581,14 +589,14 @@ def build_tpn(n: int, tpn_csv: Path, out_json: Path, tp1_csv: Path, gpu: str = "
         "tp1_fit": {k: round(v, 6) if isinstance(v, float) else v for k, v in tp1.items()},
         f"tp{n}_fit": {k: round(v, 6) if isinstance(v, float) else v for k, v in tpn.items()},
         "constants": {"prefill_tp_comm_ms_per_token_total": comm},
-        "fallback_it_replaces_ms_per_token": None,  # filled below for context
+        "fallback_it_replaces_ms_per_token": None,
         "_notes": (f"TOTAL tp{n} comm per new token (NOT per-extra-rank). Pinned in the "
                    f"deployment JSON key prefill_tp_comm_ms_per_token of the {gpu}x{n} config; "
                    "every config without the pin keeps PREFILL_TP_COMM_MS_PER_TOKEN*(tp-1). "
                    "Regenerate: just export. Sources: "
                    f"serving_stage_split.py --tensor-parallel-size {{1,{n}}} on {host}."),
     }
-    try:  # informational only; QuettaSim main no longer carries the constant
+    try:  # informational; QuettaSim may not have the constant
         import simulator.ttft_queue_sim as _sim
         payload["fallback_it_replaces_ms_per_token"] = _sim.PREFILL_TP_COMM_MS_PER_TOKEN * (n - 1)
     except ImportError:
@@ -603,7 +611,7 @@ def build_tpn(n: int, tpn_csv: Path, out_json: Path, tp1_csv: Path, gpu: str = "
 
 
 def build_tp2(tp1_csv: Path, tp2_csv: Path, out_json: Path) -> None:
-    """The original G3 artifact: H100 tp1 vs tp2, comm = span.new(tp2) - span.new(tp1)/2."""
+    """H100 tp1 vs tp2: comm = span.new(tp2) - span.new(tp1)/2."""
     tp1 = _span_new_rate(tp1_csv)
     tp2 = _span_new_rate(tp2_csv)
     comm = tp2["new_ms_per_tok"] - tp1["new_ms_per_tok"] / 2.0
@@ -655,12 +663,12 @@ TRACES = [
     "vllm_engine_step_trace_terminal_c80_t16_benchmark_serving_wall.jsonl",
 ]
 
-# Pre-registered thresholds; SCHED_PRIOR is an eligibility gate only, never in the output arithmetic.
+# Fixed before measuring; SCHED_PRIOR only gates eligibility and never enters the output.
 SCHED_PRIOR_MS = 5.7
 FULL_BATCH_FRAC = 0.9
 WARMUP_STEP_ID = 5
-BW_DOMINANCE = 2.0          # bw_roofline_ms >= BW_DOMINANCE * SCHED_PRIOR_MS
-WALL_TRIM = (0.5, 2.0)      # vs per-trace median of the candidate set
+BW_DOMINANCE = 2.0  # bw_roofline_ms >= BW_DOMINANCE * SCHED_PRIOR_MS
+WALL_TRIM = (0.5, 2.0)  # vs per-trace median of the candidate set
 PREFILL_MIN_TOKENS = 1024
 UTIL_FLOPS_MIN_N = 5
 
@@ -678,10 +686,9 @@ def load_trace(path: Path) -> list[dict]:
 
 
 def reconstruct_contexts(steps: list[dict]) -> list[dict | None]:
-    """Per decode-only step: total context tokens across the decode batch.
+    """Per decode-only step, {"ctx_total", "batch"}: context tokens across the decode batch, or None for a mixed step or one with an unknown prompt.
 
-    prompt_tokens[id] from engine_cache_truth.requests[*].prompt_tokens (first sighting wins); generated[id] = # prior steps where id appeared in decode_request_ids.
-    Returns one entry per step: None for non-decode-only steps or steps with an unknown-prompt request; else {"ctx_total": int, "batch": int}.
+    Context is the first-seen prompt_tokens plus the steps the request has already decoded.
     """
     prompt_tokens: dict[str, int] = {}
     generated: dict[str, int] = {}
@@ -705,13 +712,13 @@ def reconstruct_contexts(steps: list[dict]) -> list[dict | None]:
         )
         if is_decode_only:
             if any(r not in prompt_tokens for r in decode_ids):
-                out.append(None)  # unknown-context request -> step excluded
+                out.append(None)
             else:
                 ctx = sum(prompt_tokens[r] + generated.get(r, 0) for r in decode_ids)
                 out.append({"ctx_total": ctx, "batch": len(decode_ids)})
         else:
             out.append(None)
-        for r in decode_ids:  # this step generates 1 token per decode request
+        for r in decode_ids:
             generated[r] = generated.get(r, 0) + 1
     return out
 
@@ -742,8 +749,8 @@ def build_roofline_utils(gpu: str, params_path: Path, trace_paths: dict[str, Pat
     peak_bw = float(params["peak_bw_bytes_per_s"])
 
     per_trace: dict[str, dict] = {}
-    bw_pool: list[tuple[float, float]] = []      # (bw_roofline_ms, ratio_wall)
-    bw_pool_net: list[float] = []                # ratio vs (wall - SCHED_PRIOR)
+    bw_pool: list[tuple[float, float]] = []  # (bw_roofline_ms, ratio_wall)
+    bw_pool_net: list[float] = []  # ratio vs (wall - SCHED_PRIOR)
     flops_pool: list[float] = []
     flops_pool_engine: list[float] = []
     sched_pool: list[float] = []
@@ -755,7 +762,6 @@ def build_roofline_utils(gpu: str, params_path: Path, trace_paths: dict[str, Pat
         key = name.split("_benchmark")[0].replace("vllm_engine_step_trace_", "")
         tr: dict = {"steps": len(steps)}
 
-        # util_bw candidates (rules 1-3), then trim (rule 4)
         max_batch = max((c["batch"] for c in ctxs if c), default=0)
         candidates = []
         excluded_unknown_ctx = 0
@@ -915,8 +921,8 @@ def read_run(path: Path) -> tuple[dict, dict[tuple[int, int], list[dict]]]:
     return meta, cells
 
 
-_LAG_UPGRADE_SPREAD = 0.005      # the cross-pass reproducibility standard (<=0.5%)
-_LAG_UPGRADE_HEADROOM = 1.5      # latest-pass p99 loop lag must be <= 1.5x the flag limit
+_LAG_UPGRADE_SPREAD = 0.005  # cross-pass reproducibility bound
+_LAG_UPGRADE_HEADROOM = 1.5  # adopted pass's p99 loop lag <= 1.5x the flag limit
 LAG_UPGRADE_FIELD = "lag_reproducibility_upgrade"
 
 
@@ -924,16 +930,16 @@ def build_decode_grid(inputs: list[Path], snap_tolerance: float = 0.02,
           lag_upgrade: bool = False) -> list[dict]:
     """Merge runs (latest wins per cell) and summarize.
 
-    ``snap_tolerance``: the lattice's ``prompt = T - osl/2`` design targets an effective context == nominal T at the steady-window middle, and the measured effectives land within ~1.5% of nominal -- but as raw floats they are UNIQUE per (B, T) cell, which makes every ``load_grid`` t-axis column single-B (ragged), so the consumer's bilinear corners mix measured cells with analytic fills almost everywhere, diluting the measurement. The builder therefore SNAPS ``context_len`` to the cell's nominal T when the measured effective is within ``snap_tolerance`` of it (the by-construction case; rows align into a proper B x T grid) and keeps the measured effective in the ``effective_context_len`` diagnostic column.
-    A deviation beyond the tolerance means the steady window was asymmetric/disturbed: the cell keeps its measured effective AND is flagged ``check``.
+    snap_tolerance: measured effective contexts land within ~1.5% of nominal T but are unique floats per cell, which would make every load_grid t-axis column ragged. Within the tolerance context_len snaps to T and the measured value goes to effective_context_len; beyond it the cell is flagged check.
 
-    ``lag_upgrade`` (default off): the p99-loop-lag ``check`` flag exists to catch client-side measurement distortion, which cross-topology reproducibility rules out. ``load_grid`` drops non-``ok`` rows, so a marginally-over-limit lag flag (e.g. 2.01 vs the 2.0 ms limit on a host whose CPUs also run the tensor-parallel server) silently replaces a reproducible MEASURED cell with the analytic fill the grid exists to correct. With ``lag_upgrade=True`` a flagged cell is upgraded to ``ok`` iff ALL deterministic criteria hold:
-      * the cell was measured in >= 2 input passes (independent client topologies);
-      * EVERY pass is hygiene-clean (no empty-stream drops, in-window deltas >= min_samples, positive steady window) -- the only flag reason anywhere is loop lag;
-      * the final (latest-wins) row's flag is lag-only, with the snap check passing;
-      * cross-pass decode_step_ms spread <= 0.5% of the adopted (latest) value;
-      * the adopted pass's p99 loop lag is <= 1.5x the flag limit (a lag-disturbed run cannot be upgraded by an agreeing pair -- it must be re-measured clean).
-    Upgraded rows carry the evidence (pass count, spread, per-pass lags) in the ``lag_reproducibility_upgrade`` diagnostic column."""
+    lag_upgrade (default off): load_grid drops non-ok rows, so a marginal loop-lag flag (2.01 vs a 2.0 ms limit) replaces a reproducible measured cell with the analytic fill. A lag-only flagged cell becomes ok when all hold:
+      * measured in >= 2 input passes (independent client topologies);
+      * every pass is otherwise hygiene-clean (no empty-stream drops, enough in-window samples, positive steady window);
+      * the latest row's flag is lag-only and its snap check passes;
+      * cross-pass decode_step_ms spread <= 0.5% of the adopted value;
+      * the adopted pass's p99 loop lag <= 1.5x the flag limit.
+    Upgraded rows carry the evidence in lag_reproducibility_upgrade.
+    """
     sig = inspect.signature(summarize_cell)
     min_samples = sig.parameters["min_samples"].default
     lag_limit_ms = sig.parameters["lag_limit_ms"].default
@@ -1036,7 +1042,7 @@ BUILDERS = {
 
 
 def source_runs(results_dirs: list[Path]) -> list[dict]:
-    """Every exported run.json under the results dirs: its run dir (the run id), run name, status and start, so an exported table names the runs behind it. A run dir skipped_runs leaves out is printed instead."""
+    """Every exported run.json under the results dirs (run dir, name, status, start), so a table names its runs; skipped runs are printed instead."""
     runs = []
     for root in results_dirs:
         skipped = skipped_runs(root)
@@ -1063,7 +1069,8 @@ def export(results_dirs: Iterable[Path], dest: Path | None = None, only: Iterabl
            kernel_dest: Path | None = None, replace_tables: bool = False) -> list[Path]:
     """Run the builders (all, or the named ones) over the results dirs; return the files written.
 
-    kernel_tables writes under kernel_dest (QuettaSim's data root) and runs only when it is given; the other builders write under dest and run only when it is given; kernel_tables merges into the tables kernel_dest holds unless replace_tables. A builder named in only without its dest stops the export. dest gets manifest.json, kernel_dest kernel_data/qbench_manifest.json when kernel_tables found a table (not at QuettaSim's data root): where the inputs came from, the runs recorded there (run.json), which bench commit, when, and for kernel_dest per kernel table the run dirs whose rows it holds, the bench commit and when, kept for the tables this export did not write; a table that kept dest rows names the runs the old manifest recorded for it first, else "adopted from dest". The old kernel manifest's other keys stay. dest's manifest reads the runs after its builders; kernel_dest's reads them, and the old kernel manifest, before kernel_tables builds, so one that does not parse, or is no object with a kernel_tables object, stops the export with kernel_dest as it was.
+    kernel_tables writes under kernel_dest (QuettaSim's data root) and merges into its tables unless replace_tables; the other builders write under dest. Each runs only when its dest is given, and naming one without its dest stops the export.
+    dest gets manifest.json, and kernel_dest gets kernel_data/qbench_manifest.json when kernel_tables found a table: inputs, runs, bench commit and time, and per kernel table the run dirs behind it. Tables this export did not write keep their entries; a table that kept dest rows names the old manifest's runs first, else "adopted from dest". A kernel manifest that does not parse, or lacks a kernel_tables object, stops the export with kernel_dest as it was.
     """
     results_dirs = [Path(d) for d in results_dirs]
     names = list(only) if only else list(BUILDERS)

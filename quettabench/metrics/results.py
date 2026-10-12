@@ -1,6 +1,6 @@
-"""The one results writer: RunWriter owns results/<run>/, appending requests.jsonl (and a probe run's rows.jsonl, one ProbeRow per line) as rows finish, flushed, and writing run.json once at the end: {schema_version, provenance, config, origins, summary, steps, run_status}.
-A grid run's rows carry `cell` and `batch_wall_s`, and steps is step_fit.fit_run over them; run_status is ok, partial, aborted or failed with a reason.
-Secrets (redact) are written as REDACTED in the provenance's launch env and the config.
+"""The one results writer: RunWriter owns results/<run>/, appending requests.jsonl (and a probe run's rows.jsonl) as rows finish and writing run.json once at the end: {schema_version, provenance, config, origins, summary, steps, run_status}.
+
+A grid run's rows carry `cell` and `batch_wall_s`, and steps is step_fit.fit_run over them. Secrets are written as REDACTED in the provenance's launch env and the config.
 """
 
 import dataclasses
@@ -60,8 +60,10 @@ def _secret_header(text):
 
 
 def redact_argv(argv, command=False):
-    """argv with the value of every secret-named item replaced by REDACTED, in the `--api-key X`, `password X`, `--api-key=X`, `NAME=X` (docker -e), `Authorization: Bearer X` (an HTTP header), `--header=Name: X`, `A=1,NAME=X` and `scheme://user:X@host` forms; an item starting with '-' after a secret name is the next flag, kept. In a command line (command) only a flag, bearer or authorization hides the next item, so a bare word like "pass" in free text hides nothing. An item holding whitespace (`sh -c "...
-    --api-key X"`, `HF_TOKEN=X vllm serve`) is a command line, redacted as one, unless it is a secret --flag=value; a JSON object or list item is redacted as JSON. Items need not be strings; a dict or list item (a header pair) goes through redact."""
+    """argv with every secret-named item's value replaced by REDACTED, across the flag, NAME=X, header, comma-list and URL forms; an item starting with '-' after a secret name is the next flag and is kept.
+
+    In a command line only a flag, bearer or authorization hides the next item, so a bare "pass" in free text hides nothing. An item holding whitespace is redacted as a command line unless it is a secret --flag=value, and a JSON item as JSON.
+    """
     out, hide = [], False
     for arg in argv:
         if isinstance(arg, (dict, list, tuple)):
@@ -104,7 +106,7 @@ def redact_argv(argv, command=False):
 
 
 def _redact_command(text):
-    """A command line held as one string, redacted as its argv (shlex, with ; & | and the like their own tokens, else split on spaces); text unchanged when it holds no secret. A secret NAME=value word loses its whole value, quoted parts and all."""
+    """A one-string command line redacted as its shlex argv; a secret NAME=value word loses its whole value, quoted parts included."""
     words = SHELL_ASSIGN.sub(lambda m: f"{m[1]}{m[2]}=REDACTED" if secret(m[2]) else m[0], text)
     lexer = shlex.shlex(words, posix=True, punctuation_chars=True)
     lexer.whitespace_split, lexer.commenters = True, ""
@@ -119,8 +121,10 @@ def _redact_command(text):
 
 
 def redact(obj):
-    """obj with every secret replaced by REDACTED: the one rule for results/.
-    In a mapping (an env, engine kwargs, a config) the value of every secret-named key, whole when it is a list or mapping; in a list (an argv) the value of every secret-named flag or NAME=; a mapping value that is a command line in one string (holds a flag, as probe_args does, or a secret NAME=value), one HTTP header, or JSON in one string likewise; and the password of a URL in any string. run.json's provenance and config, the probe argv and the launcher's engine.json all go through it."""
+    """obj with every secret replaced by REDACTED; the one rule for everything under results/.
+
+    Mapping values under secret names go whole, lists are redacted as argv, and strings holding a command line, an HTTP header, JSON or a URL password are redacted in place.
+    """
     if isinstance(obj, dict):
         out = {}
         for k, v in obj.items():
@@ -141,8 +145,7 @@ def redact(obj):
 
 
 def exit_status(exc):
-    """(status, reason) run.json records for a run that ended by raising exc:
-    aborted on Ctrl-C, ok on a clean SystemExit, failed otherwise."""
+    """(status, reason) for a run that raised exc: aborted on Ctrl-C, ok on a clean SystemExit, failed otherwise."""
     if isinstance(exc, SystemExit) and exc.code in (None, 0):
         return "ok", None
     status = "aborted" if isinstance(exc, KeyboardInterrupt) else "failed"
@@ -150,14 +153,14 @@ def exit_status(exc):
 
 
 def write_atomic(path, text):
-    """Write path through <path>.tmp and os.replace, so a reader polling for it (the profiler waits on run.json) sees the old file or the whole new one."""
+    """Write via <path>.tmp and os.replace, so a poller (the profiler waits on run.json) sees the old file or the whole new one."""
     tmp = Path(f"{path}.tmp")
     tmp.write_text(text)
     os.replace(tmp, path)
 
 
 def stamp_pulled(path):
-    """Set run.json's provenance.pulled from this machine's clock (UTC) on a run pulled from another host, its finished left as that host wrote it."""
+    """Stamp provenance.pulled in UTC on a run pulled from another host."""
     doc = json.loads(Path(path).read_text())
     if not isinstance(doc, dict) or not isinstance(doc.setdefault("provenance", {}), dict):
         raise TypeError("run.json or its provenance is not an object")
@@ -166,7 +169,7 @@ def stamp_pulled(path):
 
 
 def bench_sha(repo=REPO):
-    """This checkout's commit, else QBENCH_SHA (set in the image), else empty (no git, no repo, an rsync copy); never a crash."""
+    """This checkout's commit, else QBENCH_SHA (set in the image), else empty; never raises."""
     try:
         sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True,
                              check=False).stdout.strip()
@@ -236,7 +239,7 @@ def jsonl_row(r, **extra):
 
 
 def measured_row(row, **extra):
-    """A driver's dict row as a jsonl line: success and error first, as a RequestResult row has them, then the row's own keys, then extra."""
+    """A driver's dict row as a jsonl line, success and error first like a RequestResult row."""
     return {"success": True, "error": None, **row, **extra}
 
 
@@ -262,7 +265,7 @@ def provenance(cfg, handle=None, driver=None, launch_env=None):
 class RunWriter:
     """results/<run>/requests.jsonl as rows finish, run.json at finish().
 
-    results_dir None writes nothing: the run still goes through one writer whether or not the caller asked for files. exclusive (a probe run) makes the dir itself and raises FileExistsError when it is already there.
+    results_dir None writes nothing. exclusive (a probe run) creates the dir and raises FileExistsError if it exists.
     """
 
     def __init__(self, results_dir, cfg, *, handle=None, driver=None, launch_env=None,
@@ -281,7 +284,7 @@ class RunWriter:
             self._fh = (self.dir / "requests.jsonl").open("a")
 
     def discard(self):
-        """Close requests.jsonl and remove it and the run dir while they are empty: for a run this process turns out not to record."""
+        """Remove requests.jsonl and the run dir while empty, for a run this process does not record."""
         self._close_probe_rows()
         if self._fh is not None:
             self._fh.close()
@@ -303,7 +306,7 @@ class RunWriter:
             self.finish(None, status=status, reason=reason)
 
     def append(self, result, **extra):
-        """Write one row now and flush it to disk. result is a RequestResult, or a dict row from a driver that measured the cell itself."""
+        """Write and flush one row; result is a RequestResult or a driver's dict row."""
         self.rows += 1
         row = measured_row(result, **extra) if isinstance(result, dict) else jsonl_row(result, **extra)
         if self._fh is not None:
@@ -311,7 +314,7 @@ class RunWriter:
             self._fh.flush()
 
     def probe_row(self, row):
-        """Append one ProbeRow to rows.jsonl and flush it, so a crash keeps every row already measured."""
+        """Append and flush one ProbeRow, so a crash keeps every row measured."""
         line = json.dumps(dataclasses.asdict(row)) + "\n"
         if self.dir is not None:
             if self._probe_fh is None:
@@ -440,7 +443,7 @@ def grid_event_line(run, event):
 
 
 def legacy_grid_lines(run):
-    """Every line a grid run record has reached so far: META trace, one META per key, CAPACITY, WARM_OK, one line per event, DONE."""
+    """Every line a grid run record has reached so far, META through DONE."""
     lines = []
     t = run.get("trace")
     if t is not None:
@@ -460,7 +463,7 @@ def legacy_grid_lines(run):
 
 
 def print_legacy_grid_lines(run, shown=0):
-    """Print, flushed, the lines of legacy_grid_lines(run) past the first `shown`; returns the new count."""
+    """Print the lines of legacy_grid_lines(run) past the first `shown`; returns the new count."""
     lines = legacy_grid_lines(run)
     for line in lines[shown:]:
         print(line, flush=True)

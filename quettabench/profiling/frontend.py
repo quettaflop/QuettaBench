@@ -145,7 +145,7 @@ def frontend_probe(a):
 
     Each value is measured latency minus the compute-only prediction."""
     gpu = load_kernel_gpu(Path(a.device_yaml))
-    # strip the host terms the yaml already carries, or the residual would count them twice
+    # Strip the host terms the yaml already carries, or the residual counts them twice.
     gpu = dataclasses.replace(gpu, frontend=FrontendParams(),
                               kernel_ttft_overhead_ms=0.0, kernel_step_overhead_ms=0.0,
                               kernel_step_overlap_per_ms=0.0,
@@ -188,7 +188,7 @@ def frontend_probe(a):
             _stream_once(a.base_url, a.model, _prompt(0, reuse=prompt))
             for _ in range(_SAMPLES)])
         ttft, ptok = st.median(tt), int(st.median(ptoks))
-        # vLLM re-prefills the last block of a full hit
+        # vLLM re-prefills the last block of a full hit.
         compute_hit = cost.prefill_step_ms([max(1, int(model.cache_block_size))])
         Xc.append(float(ptok))
         y_hit.append(ttft - compute_hit)
@@ -247,11 +247,10 @@ class Prompter:
     """Random-word prompts of a target token length, checked with the model tokenizer."""
 
     def __init__(self, tokenizer_name: str, seed: int = 1234):
-        # optional dependency, imported only when needed
-        from transformers import AutoTokenizer
+        from transformers import AutoTokenizer  # imported here: optional dependency
         self.tok = AutoTokenizer.from_pretrained(tokenizer_name)
         self.rng = random.Random(seed)
-        # single-token alphabetic words, ~1 token each
+        # Single-token alphabetic words.
         words = []
         for i in range(1000, min(len(self.tok), 60000)):
             s = self.tok.decode([i])
@@ -273,7 +272,6 @@ class Prompter:
         n = max(8, target_tokens - 24)
         text = f"probe {tag} " + " ".join(self.rng.choice(self.words) for _ in range(n))
         got = self.count([{"role": "user", "content": text}])
-        # trim until the prompt fits the target
         while got > target_tokens and len(text) > 64:
             cut = int(len(text) * (1 - (got - target_tokens) / got * 0.9)) - 8
             text = text[:max(64, cut)]
@@ -392,7 +390,7 @@ def pd_host_probe(a) -> list[dict]:
         new_p = total - cached_p
         prefill_ms = prox["prefill_s"] * 1e3
         d_first = (prox["first_token_at"] - prox["decode_start"]) * 1e3
-        # D holds the previous turn only in the warm phases
+        # D holds the previous turn only in the warm phases.
         cached_d = total if phase == "cold" else int(prox.get("_cached_d", 0))
         pulled = max(0, total - (cached_d if phase != "cold" else 0))
         sp = sim.prefill_ms(new_p, cached_p)
@@ -410,7 +408,7 @@ def pd_host_probe(a) -> list[dict]:
               f"(step {sd:5.1f} + pull {spull:5.1f}, resid {r['d_resid_ms']:8.1f})", flush=True)
         return r
 
-    # unscored warmup: NIXL handshake and cudagraph paths
+    # Unscored warmup: NIXL handshake and cudagraph paths.
     chat_stream(a.proxy_url, a.model, pr.make(512, "warmup0"), "probe-warmup")
     time.sleep(1.0)
 
@@ -432,7 +430,7 @@ def pd_host_probe(a) -> list[dict]:
             rows.append(score("warm", 1, c, px[-1]))
 
     if a.turns > 0:
-        # one growing session: each turn extends the previous context with fresh words
+        # One growing session: each turn extends the previous context with fresh words.
         ctx = pr.make(a.turn_new, "T0")
         prev_total = 0
         for t in range(a.turns):

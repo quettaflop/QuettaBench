@@ -28,7 +28,7 @@ def _fit(rows):
     y = np.array([r["total_ms"] for r in rows], dtype=float)
     A = np.stack([np.ones_like(x), x], axis=1)
     (b0, b1), *_ = np.linalg.lstsq(A, y, rcond=None)
-    bw = 1.0 / (b1 / 1e3) if b1 > 0 else float("inf")     # bytes/s
+    bw = 1.0 / (b1 / 1e3) if b1 > 0 else float("inf")  # bytes/s
     return b0, bw
 
 
@@ -70,20 +70,19 @@ def main(argv=None) -> bool:
     torch.cuda.set_device(local)
     dev = torch.device("cuda", local)
     signal.signal(signal.SIGTERM, _on_sigterm)
-    # a peer that never joins fails the run after five minutes
     dist.init_process_group("gloo", rank=rank, world_size=world, timeout=timedelta(minutes=5))
 
-    # only hosts with nixl can import it
+    # Only hosts with nixl can import it.
     from nixl._api import nixl_agent, nixl_agent_config
     os.environ.setdefault("UCX_RCACHE_MAX_UNRELEASED", "1024")
     agent = nixl_agent(f"{'P' if rank == 0 else 'D'}{rank}",
                        nixl_agent_config(backends=["UCX"]))
 
-    # twice the largest request so `scattered` never degenerates into `contig`
+    # Twice the largest request, so `scattered` never degenerates into `contig`.
     max_blocks = 2 * (-(-max(a.tokens) // a.block_size))
     out_rows: list[dict] = []
     for heads in a.kv_heads_per_rank:
-        # FlashAttention HND layout: a block's K and V are adjacent, one descriptor per (layer, block)
+        # FlashAttention HND layout: a block's K and V are adjacent, one descriptor per (layer, block).
         page_bytes = 2 * a.block_size * heads * a.head_dim * 2
         pool = [torch.empty(max_blocks * page_bytes, dtype=torch.uint8, device=dev)
                 for _ in range(a.layers)]
@@ -129,7 +128,7 @@ def main(argv=None) -> bool:
                     return np.sort(perm[side * nb:(side + 1) * nb])
                 run = int(layout[4:])
                 n_runs = -(-nb // run)
-                # a gap of one run between runs so they never touch
+                # A one-run gap keeps runs from touching.
                 starts = (np.arange(n_runs) * 2 * run + side * run) % (max_blocks - run)
                 ids = (starts[:, None] + np.arange(run)[None, :]).flatten()[:nb]
                 return np.sort(ids)

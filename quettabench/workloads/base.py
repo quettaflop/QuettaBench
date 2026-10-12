@@ -149,7 +149,7 @@ def uniform_len_bounds(input_len, range_ratio):
 
 
 def load_tokenizer(name):
-    from transformers import AutoTokenizer  # optional dependency, only random-token traces need it
+    from transformers import AutoTokenizer  # only random-token traces need it
     return AutoTokenizer.from_pretrained(name)
 
 

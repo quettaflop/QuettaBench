@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""TP all-reduce through vLLM's own GroupCoordinator (custom all-reduce for small payloads, NCCL for large), next to plain NCCL, under torchrun.
+"""TP all-reduce through vLLM's GroupCoordinator (custom all-reduce for small payloads, NCCL for large), next to plain NCCL, under torchrun.
+
 Rank 0 emits the vLLM path as all_reduce rows of collectives/{gpu}_tp{N}.csv, which kernel_tables merges over the collective probe's, and both paths as collectives/{gpu}_tp{N}_nccl_vs_vllm.csv.
 """
 from __future__ import annotations
@@ -13,7 +14,7 @@ import torch.distributed as dist
 from quettabench.probes.base import ProbeRow, add_output_args, emit, run_recorded
 
 _ITERS, _WARMUP = 50, 10
-# Full logical buffer sizes (bytes): decode payloads (batch x hidden x 2B, a few KB..MB) up to prefill chunks (8192 x 4096 x 2B = 64 MB).
+# Full logical buffer bytes: decode payloads (batch x hidden x 2B) up to prefill chunks (8192 x 4096 x 2B = 64 MB).
 BYTES_AXIS = [4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576, 2097152,
               4194304, 8388608, 16777216, 33554432, 67108864]
 
@@ -28,7 +29,7 @@ def _time(call, iters=_ITERS, warmup=_WARMUP) -> float:
         call()
     e.record()
     torch.cuda.synchronize()
-    return s.elapsed_time(e) / iters * 1000.0   # us per call
+    return s.elapsed_time(e) / iters * 1000.0  # us per call
 
 
 def main(argv=None):
@@ -40,10 +41,10 @@ def main(argv=None):
     a = ap.parse_args(argv)
     rank, world, local = int(os.environ["RANK"]), int(os.environ["WORLD_SIZE"]), int(os.environ["LOCAL_RANK"])
     torch.cuda.set_device(local)
-    # Imported after set_device, the order a vLLM worker uses before it builds its communicator.
+    # Imported after set_device, the order a vLLM worker uses.
     from vllm.config import ParallelConfig, VllmConfig, set_current_vllm_config
     from vllm.distributed import get_tp_group, init_distributed_environment, initialize_model_parallel
-    # The device communicator reads parallel_config (custom-all-reduce enablement) from the current vLLM config, exactly as an engine worker would.
+    # The communicator reads custom-all-reduce enablement from the current vLLM config, as a worker does.
     vcfg = VllmConfig(parallel_config=ParallelConfig(
         tensor_parallel_size=world,
         disable_custom_all_reduce=a.disable_custom_allreduce))
@@ -79,7 +80,7 @@ def main(argv=None):
                           "amortized_wallclock"))
     dist.barrier()
     dist.destroy_process_group()
-    return rank == 0  # run_recorded: only rank 0 records the run
+    return rank == 0  # only rank 0 records the run
 
 
 if __name__ == "__main__":

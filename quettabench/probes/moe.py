@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Grouped-MoE expert-kernel grid (vLLM fused_experts over tokens x (E, top_k, intermediate, hidden)) -> moe/{gpu}.csv rows, plus the routing kernels' affine fits -> moe/{gpu}_routing.json entries.
-The roofline has no launch cost, so it under-prices a grouped kernel exactly when each expert gets ~1 token; this grid replaces it. Use --graph for graphed decode (graph/), the eager default (eager/) includes dispatch.
+
+The roofline has no launch cost, so it under-prices a grouped kernel when each expert gets about one token. Use --graph for graphed decode (graph/); the eager default (eager/) includes dispatch.
 --routing instead dumps one MoE block's input, output and routing from a transformers model to results/probes/<gpu>/moe_routing/<run-id>/<model>_layer<L>.safetensors, for an engine-side diff.
 """
 from __future__ import annotations
@@ -15,9 +16,8 @@ import torch
 from quettabench.probes._timing import graph_time_us
 from quettabench.probes.base import ProbeRow, add_output_args, emit, out_root, run_recorded
 
-# Per-expert geometry of every MoE model in engine/device_spec/models/. (n_experts, top_k, intermediate_per_expert, hidden). `intermediate` is sharded by tp at sweep time.
-#
-# gpt-oss is swept for its SHAPE coverage, but the composition deliberately will NOT price MXFP4-expert models off this bf16 grid: only the weight-read term scales with expert dtype, and a measured latency cannot be decomposed after the fact. Those models keep the analytic roofline until an MXFP4 grid is swept.
+# (n_experts, top_k, intermediate_per_expert, hidden); intermediate is sharded by tp at sweep time.
+# gpt-oss is swept for shape coverage only: MXFP4 experts are not priced off a bf16 grid, since a measured latency cannot be split into its weight-read term.
 GEOMETRIES: dict[str, tuple[int, int, int, int]] = {
     "qwen3-30b-a3b": (128, 8, 768, 2048),
     "qwen3-235b-a22b": (128, 8, 1536, 4096),
@@ -25,26 +25,20 @@ GEOMETRIES: dict[str, tuple[int, int, int, int]] = {
     "gpt-oss-20b": (32, 4, 2880, 2880),
     "gpt-oss-120b": (128, 4, 2880, 2880),
 }
-# Dense at the small end: that is the decode regime where the roofline fails and where every agentic / low-concurrency workload lives.
+# Dense at the small end, the decode regime where the roofline fails.
 TOKENS = [1, 2, 4, 8, 16, 24, 32, 48, 64, 96, 128, 256, 512, 1024, 2048]
 REPS, WARMUP = 30, 10
 DT = torch.bfloat16
 DT_BYTES = 2
-# --dtype fp8: measure vLLM's FP8 grouped-expert path instead of the bf16 one.
-# Block-scaled (128x128 weight blocks), matching a `quant_method: fp8` checkpoint's expert tensors (Qwen3-235B-A22B-FP8). Set by main().
+# Block-scaled like a `quant_method: fp8` checkpoint's experts.
 _FP8 = False
 FP8_BLOCK = [128, 128]
-# Element counts for the routing affine fits (bytes = elements * 2 * (r + w)).
 ROUTE_ELEMS = [2**e for e in range(12, 26)]
-# The columns a moe/{gpu}.csv row is keyed on.
 KEY = ("tokens", "n_experts", "top_k", "intermediate", "hidden")
 
 
 def _fused_experts():
-    """vLLM's grouped MoE entry point, across the versions that moved it.
-
-    Returns (fused_experts, fused_topk). Raising here is correct: a torch re-implementation would measure a different kernel than the one vLLM runs, which is the entire thing this probe exists to capture.
-    """
+    """Return vLLM's (fused_experts, fused_topk); no torch fallback, since that would time a different kernel."""
     paths = [
         "vllm.model_executor.layers.fused_moe.fused_moe",
         "vllm.model_executor.layers.fused_moe",
@@ -66,19 +60,19 @@ def _fused_experts():
     )
 
 
-_GRAPH = False  # set by --graph: CUDA-graph-replay timing (graphed-decode-faithful)
-# --backend flashinfer: measure FlashInfer's CUTLASS grouped-expert kernel instead of the Triton fused_experts. vLLM >= 0.28 serves unquantized bf16 MoE through it ("Using FlashInfer CUTLASS Unquantized MoE backend" in the server log), and the two differ a lot: on RTXPRO6000/Qwen3-235B CUTLASS is ~2x SLOWER at batch 1 and several times FASTER at prefill chunk sizes, so a Triton grid misprices both ends.
+_GRAPH = False
+# vLLM >= 0.28 serves unquantized bf16 MoE through FlashInfer CUTLASS, which on RTXPRO6000/Qwen3-235B is ~2x slower than Triton at batch 1 and several times faster at prefill chunks.
 _BACKEND = "triton"
 
 
 def _flashinfer_moe():
-    """flashinfer is imported here: only --backend flashinfer needs it."""
+    # Imported here: only --backend flashinfer needs it.
     from flashinfer.fused_moe import cutlass_fused_moe
     return cutlass_fused_moe
 
 
 def _time(fn) -> float:
-    """min-of-REPS CUDA-event time (us). MIN, not mean: it matches GemmTable's min-on-load reduce and the warm, back-to-back kernels of a real decode step."""
+    """Min-of-REPS CUDA-event time in us; min matches GemmTable's reduce and warm back-to-back decode kernels."""
     if _GRAPH:
         return graph_time_us(fn)
     for _ in range(WARMUP):
@@ -97,10 +91,7 @@ def _time(fn) -> float:
 
 
 def _fp8_quant_config(e, inter, hidden, dev):
-    """vLLM's FusedMoEQuantConfig for block-scaled FP8 experts.
-
-    Scales are positive and O(1e-2) -- the range a real per-block weight scale takes. Magnitude cannot change kernel time, but a zero/NaN scale can trip a different code path, so they are not left as raw randn. vllm is imported here: only --dtype fp8 needs it.
-    """
+    """vLLM's FusedMoEQuantConfig for block-scaled FP8 experts; scales are positive O(1e-2) since a zero or NaN scale can take another code path; vllm is imported here, only for fp8."""
     from vllm.model_executor.layers.fused_moe.config import (
         fp8_w8a8_moe_quant_config,
     )
@@ -114,7 +105,6 @@ def _fp8_quant_config(e, inter, hidden, dev):
 
 
 def sweep_expert_kernel(name, e, k, inter, hidden, tokens_axis, dev, max_mem_gb):
-    """One geometry's (tokens -> us) curve for the grouped expert kernel."""
     fused_experts, fused_topk = _fused_experts()
     w_bytes = 1 if _FP8 else DT_BYTES
     w_gb = (e * 2 * inter * hidden + e * hidden * inter) * w_bytes / 1e9
@@ -133,9 +123,9 @@ def sweep_expert_kernel(name, e, k, inter, hidden, tokens_axis, dev, max_mem_gb)
     for m in tokens_axis:
         try:
             x = torch.randn(m, hidden, device=dev, dtype=DT)
-            # Real router logits -> real top-k -> realistic (imbalanced) expert occupancy, so moe_align_block_size padding is representative.
+            # Real top-k gives imbalanced expert occupancy, so moe_align_block_size padding is representative.
             gate = torch.randn(m, e, device=dev, dtype=DT)
-            # fused_topk returns (tw, tid) through vllm ~0.10 and (tw, tid, token_expert_indices) from ~0.11 on.
+            # vLLM ~0.11 added a third return value.
             tw, tid, *_rest = fused_topk(x, gate, k, True)
             if _BACKEND == "flashinfer":
                 if _FP8:
@@ -170,8 +160,7 @@ def sweep_expert_kernel(name, e, k, inter, hidden, tokens_axis, dev, max_mem_gb)
 
 
 def fit_affine(points) -> tuple[float, float] | None:
-    """Least-squares (floor_us, eff_bw_gb_s) for latency = floor + bytes/eff_bw.
-    Same model as kernel_composed.ElementwiseTable, so the output drops in."""
+    """Least-squares (floor_us, eff_bw_gb_s) for latency = floor + bytes/eff_bw, the ElementwiseTable model."""
     pts = [(b, t) for b, t in points if b > 0 and t > 0]
     if len(pts) < 3:
         return None
@@ -183,20 +172,15 @@ def fit_affine(points) -> tuple[float, float] | None:
     den = n * sxx - sx * sx
     if den == 0:
         return None
-    slope = (n * sxy - sx * sy) / den          # us per byte
+    slope = (n * sxy - sx * sy) / den  # us per byte
     floor = (sy - slope * sx) / n
     if slope <= 0:
         return None
-    return max(0.0, floor), 1e3 / slope        # us/byte -> GB/s
+    return max(0.0, floor), 1e3 / slope
 
 
 def sweep_routing(dev, e_default=128, k_default=8):
-    """Affine fits for moe_topk / moe_permute + the moe_align launch floor.
-
-    Byte counts MUST match kernel_composed/elementwise.py::_IO:
-      moe_topk    (1, 0) -> elements * dtype * 1
-      moe_permute (1, 1) -> elements * dtype * 2
-    """
+    """Affine fits for moe_topk and moe_permute plus the moe_align launch floor; byte counts must match kernel_composed/elementwise.py::_IO."""
     out: dict[str, dict] = {}
 
     topk_pts, perm_pts = [], []
@@ -223,7 +207,7 @@ def sweep_routing(dev, e_default=128, k_default=8):
             out[key] = {"floor_us": round(fit[0], 4), "eff_bw_gb_s": round(fit[1], 1),
                         "n_points": len(pts)}
 
-    # moe_align_block_size: launch-bound, no meaningful byte model -> report the median as a flat per-MoE-layer constant for the device YAML.
+    # moe_align_block_size is launch-bound, so its median is a flat per-layer constant.
     aligns = []
     try:
         # Imported here: the module moves between vLLM versions, and a miss only skips this fit.
@@ -244,7 +228,7 @@ def sweep_routing(dev, e_default=128, k_default=8):
 # --routing: 16 fixed prompt ids (below Kimi-K3's 163840 vocab; no tokenizer).
 PROMPT_IDS = [1, 4321, 100, 65535, 2048, 777, 31415, 9,
               128000, 42, 5, 99991, 1234, 60000, 8, 163839]
-# (submodule, "in" or "out", dump name): the stages the routing dump hooks.
+# (submodule, "in" or "out", dump name)
 STAGES = [
     ("routed_expert_down_proj", "out", "latent"),
     ("routed_expert_norm", "in", "routed"),
@@ -272,7 +256,7 @@ def routing_parser() -> argparse.ArgumentParser:
 
 def routing_model(args):
     """The model on the visible GPUs in args.dtype, cut to args.layers; MXFP4 experts are not kept packed, so a checkpoint must fit decompressed to bf16."""
-    from transformers import AutoConfig, AutoModelForCausalLM  # only --routing needs transformers
+    from transformers import AutoConfig, AutoModelForCausalLM  # imported here: only --routing needs it
     config = AutoConfig.from_pretrained(args.model, trust_remote_code=True)
     if args.layers:
         config.num_hidden_layers = args.layers
@@ -290,7 +274,7 @@ def routing_model(args):
 
 
 def routing_tensors(args) -> dict:
-    """{name: tensor} of the block's input, output, routing and stages. The block is the layer's block_sparse_moe, else its mlp; a router returning (topk_idx, topk_weight) is dumped as those two, one returning logits as router_logits."""
+    """{name: tensor} of the MoE block's input, output, routing and stages; a router returning a tuple is dumped as topk_idx/topk_weight, else router_logits."""
     torch.manual_seed(33377335)
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False
@@ -340,7 +324,7 @@ def routing_tensors(args) -> dict:
 
 def routing_main(argv) -> None:
     args = routing_parser().parse_args(argv)
-    from safetensors.torch import save_file  # only --routing needs safetensors
+    from safetensors.torch import save_file  # imported here: only --routing needs it
     tensors = routing_tensors(args)
     out = out_root(args, "moe_routing") / f"{Path(args.model).name}_layer{args.layer}.safetensors"
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -394,7 +378,7 @@ def main(argv=None) -> None:
     _FP8 = (a.dtype == "fp8")
     _BACKEND = a.backend
     if _FP8:
-        # fused_experts' FP8 path builds a CustomOp internally, which needs a live vLLM config (same reason as gemm's Fp8Op); only --dtype fp8 imports it.
+        # The FP8 path builds a CustomOp, which needs a live vLLM config; imported only for fp8.
         from vllm.config import VllmConfig, set_current_vllm_config
         set_current_vllm_config(VllmConfig()).__enter__()
 
@@ -426,14 +410,13 @@ def main(argv=None) -> None:
             if inter % tp:
                 continue
             shard = inter // tp
-            if (e, k, shard, hidden) in seen:      # tp shards can collide across models
+            if (e, k, shard, hidden) in seen:  # tp shards can collide across models
                 continue
             seen.add((e, k, shard, hidden))
             rows += sweep_expert_kernel(f"{key}/tp{tp}", e, k, shard, hidden,
                                         tokens_axis, dev, a.max_mem_gb)
 
-    # Default eager: the grouped kernel's LAUNCH cost is the term the roofline misses -- but that is only faithful for EAGER execution. vLLM CUDA-graphs MoE decode, so --graph (dispatch-free, graph/) is the decode-faithful method;
-    # H200 GT showed the eager grid overprices graphed decode 2.3x.
+    # On H200 the eager grid overpriced graphed decode 2.3x; use --graph for decode.
     timing = "graph_replay" if _GRAPH else "eager"
     table = f"moe/{a.gpu_label}{'' if a.dtype == 'bf16' else '_' + a.dtype}.csv"
     for r in rows:
@@ -442,7 +425,7 @@ def main(argv=None) -> None:
     print(f"[moe] {len(rows)} rows of {table}{', --append' if a.append else ''}", flush=True)
 
     if not a.skip_routing and a.dtype == "bf16":
-        # Routing (topk / permute / align) is dtype-agnostic -- it moves indices and bf16 hidden states either way -- so an fp8 run must not rewrite the fit.
+        # Routing moves indices and bf16 hidden states either way, so an fp8 run must not rewrite the fit.
         routing = sweep_routing(dev)
         for name, value in routing.items():
             emit(ProbeRow("moe", f"moe/{a.gpu_label}_routing.json", {"entry": name}, {"value": value}, timing))

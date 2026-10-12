@@ -1,7 +1,6 @@
 """crossval <ours> <theirs>: pair two measured runs cell by cell and decide, per row, a ratio or a withhold.
 
-Each side is a results/<run>/ dir, an old baselines/*.json, or an engine bench log.
-Prints the table and any agreement rows, writes the report json, and exits 1 on a FIDELITY or BAND FAIL.
+Each side is a results/<run>/ dir, an old baselines/*.json, or an engine bench log. Prints the table and any agreement rows, writes the report json, and exits 1 on a FIDELITY or BAND FAIL.
 """
 
 import argparse
@@ -114,7 +113,8 @@ def _batch_bench_points(text, notes):
 def bench_log_points(path):
     """((ctx, bs, tp) -> (ms, group, kv), method, notes) from a bench log.
 
-    LOOP lines and batch_bench summaries are method "loop" and a LOOP line wins on the same cell. Criterion groups synchronize every step (method "criterion"), so ratios against them are withheld; bare group names are tp 1."""
+    LOOP lines and batch_bench summaries are method "loop", a LOOP line winning on the same cell. Criterion groups sync every step (method "criterion"), so ratios against them are withheld; bare group names are tp 1.
+    """
     text = Path(path).read_text()
     notes = []
     bench = _batch_bench_points(text, notes)
@@ -131,7 +131,7 @@ def bench_log_points(path):
         tp = int(tp_suffix) if tp_suffix else 1
         ms = float(m.group("mid")) * MS[m.group("unit")]
         prev = by_key.get((ctx, bs, tp))
-        # ties go to the later entry so an appended log supersedes stale runs
+        # The later entry wins, so an appended log supersedes stale runs.
         if prev is None or pref[base] <= pref.get(prev[1].partition("_tp")[0], 99):
             by_key[(ctx, bs, tp)] = (ms, group, None)
     return by_key, "criterion", notes
@@ -217,9 +217,7 @@ def read_rows(results_dir):
 
 
 def read_run(results_dir):
-    """A Side from run.json and requests.jsonl.
-
-    Measured cells take group, kv and method from the BenchDriver rows; header facts come from summary.grid.meta."""
+    """A Side from run.json and requests.jsonl; measured cells take group, kv and method from the BenchDriver rows, header facts from summary.grid.meta."""
     d = Path(results_dir)
     run = json.loads((d / "run.json").read_text())
     prov, cfg = run["provenance"], run["config"]
@@ -267,9 +265,9 @@ def read_run(results_dir):
         notes)
 
 
-# reference top-2 gap at or below which an argmax flip counts as a near tie: one bf16 step for logits in [16, 32)
+# Reference top-2 gap at or below which an argmax flip is a near tie: one bf16 step for logits in [16, 32).
 NEAR_TIE_GAP = 0.125
-AGREE_MIN = 4        # leading tokens counted as "agrees" in the greedy summary
+AGREE_MIN = 4  # leading tokens that count as agreeing
 
 
 def returned(rows, name):
@@ -407,9 +405,9 @@ def render_agreement(rows):
     return lines
 
 
-STALE_DAYS = 14        # a vLLM capture older than this draws a warning
+STALE_DAYS = 14  # older vLLM captures draw a warning
 LOW_R2 = 0.999
-# methods that time steady-state marginal decode; criterion groups do not
+# Methods that time steady-state marginal decode; criterion groups do not.
 MARGINAL = ("loop", "slope")
 KV_SHORT = {"float16": "fp16", "bfloat16": "bf16", "half": "fp16"}
 
@@ -420,15 +418,15 @@ class Report:
     theirs: Side
     age_days: float
     nccl_mismatch: bool
-    serving: tuple          # (ours, theirs) serving style
-    quant: tuple            # (ours, theirs) quantization
+    serving: tuple  # (ours, theirs)
+    quant: tuple  # (ours, theirs)
     serving_mismatch: bool
     quant_mismatch: bool
-    method_matched: bool    # after allow_method_mismatch
+    method_matched: bool  # after allow_method_mismatch
     workload_mismatch: bool
     comm_bound_bs: int | None
     tps_without_theirs: list
-    rows: list              # paired cells; ratio None when withheld
+    rows: list  # ratio None when withheld
     ours_only: list
     theirs_only: list
     agreement: list = field(default_factory=list)
@@ -455,13 +453,13 @@ def pair_row(a, b, report):
     """One paired cell: ours row a against theirs row b."""
     bs = a["bs"]
     ms_a = a["ms_at_eval"] or a["ms_per_step"]
-    # prefer the KV-position-normalized number so both columns are at the same resident KV
+    # The KV-position-normalized number puts both columns at the same resident KV.
     ms_b = b["ms_at_eval"] or b["ms_per_step"]
     r2 = b["r2"] if b["r2"] is not None else float("nan")
     flags, withheld = [], []
     if r2 < LOW_R2:
         flags.append("LOW R2")
-    # pre-normalization baseline: ms is the raw slope at the fit centroid, not eval_pos
+    # Older baselines: ms is the raw slope at the fit centroid, not eval_pos.
     if not b["ms_at_eval"]:
         flags.append("RAW")
     if a["kv"] and _short(a["kv"]) != _short(b["kv"]):

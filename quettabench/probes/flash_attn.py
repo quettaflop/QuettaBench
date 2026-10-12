@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""FA attention grids for one head config on vLLM's flash_attn_varlen_func: decode (kv_len x batch) -> flash_attn/{gpu}.csv rows, prefill (seq) -> fa3_prefill/{gpu}.csv rows, latency x --layers (all-layers convention).
+"""FA attention grids for one head config on vLLM's flash_attn_varlen_func: decode (kv_len x batch) -> flash_attn/{gpu}.csv rows, prefill (seq) -> fa3_prefill/{gpu}.csv rows, latency x --layers.
+
 Decode is NCU (--ncu), graph replay (--graph) or eager; prefill is always eager, as serving runs it.
 """
 from __future__ import annotations
@@ -18,14 +19,14 @@ KV_AXIS = [128, 256, 512, 1024, 2048, 4096, 8192, 16384]
 BATCH_AXIS = [1, 2, 4, 8, 16, 32, 40, 64, 80, 120, 160, 200, 256, 320]
 SEQ_AXIS = [64, 128, 256, 512, 1024, 2048, 4096, 8192]
 REPS, WARMUP = 30, 5
-# NCU is ~100-1000x slower per kernel -> curated (kv,batch)/seq grids; the loader interpolates.
+# NCU is 100-1000x slower per kernel, hence curated grids; the loader interpolates.
 KV_NCU = [512, 2048, 8192, 16384]
 BATCH_NCU = [1, 8, 32, 128, 320]
-NCU_REPS = 5   # op invocations profiled per point; min = warm steady state
+NCU_REPS = 5  # invocations per point; the min is warm steady state
 
 
 def _ncu_us(inner: str, ncu_bin: str) -> float | None:
-    """Per-call pure-kernel us via NCU (sums the flash sub-kernels, drops torch setup)."""
+    """Per-call kernel us via NCU, summing the flash kernels and dropping torch setup."""
     return ncu_op_us(inner, ncu_bin, NCU_REPS)
 
 
@@ -54,17 +55,16 @@ def time_call(fn) -> float:
         fn()
         e.record()
         torch.cuda.synchronize()
-        times.append(s.elapsed_time(e) * 1000.0)  # ms -> us
+        times.append(s.elapsed_time(e) * 1000.0)
     return st.median(times)
 
 
 class FlashAttnProbe(Probe):
-    """The decode grid (kv_len x batch, NCU, graph replay or eager) of flash_attn/{gpu}.csv, then the prefill grid (seq, always eager) of fa3_prefill/{gpu}.csv, for one head config."""
+    """Decode grid (kv_len x batch) of flash_attn/{gpu}.csv, then prefill grid (seq, always eager) of fa3_prefill/{gpu}.csv, for one head config."""
 
     def __init__(self, a):
         self.a = a
         self.dev, self.dt = torch.device("cuda"), torch.bfloat16
-        # Decode is CUDA-graphed in serving (graph/); prefill is eager, dispatch real (eager/).
         self.decode_timing = "ncu" if a.ncu else "graph_replay" if a.graph else "eager"
 
     def grid(self):
@@ -77,7 +77,7 @@ class FlashAttnProbe(Probe):
             for b in batch_axis:
                 if 2 * b * kv * a.n_kv_heads * a.head_dim * 2 / 1e9 <= a.max_mem_gb:
                     yield "decode", kv, b
-        # Prefill is EAGER in serving (dynamic shapes, not CUDA-graphed) so dispatch overhead is real -> always cuda_event, never NCU (which would drop it).
+        # Prefill is not CUDA-graphed in serving, so its dispatch overhead is real and NCU would drop it.
         for seq in SEQ_AXIS:
             yield "prefill", seq, None
 
@@ -155,11 +155,11 @@ def main(argv=None):
                     help="CUDA-graph-replay DECODE timing (graphed-decode-faithful, "
                          "no NCU needed) -> graph/flash_attn/; prefill stays eager")
     a = ap.parse_args(argv)
-    if a.fa_version == 0:   # auto: FA3 is Hopper-only (sm90+); Ampere/older need FA2
+    if a.fa_version == 0:  # auto: FA3 needs sm90+
         a.fa_version = 3 if torch.cuda.get_device_capability()[0] >= 9 else 2
         print(f"[flash] auto fa_version={a.fa_version} for {torch.cuda.get_device_name(0)}", flush=True)
 
-    # This run emits the rows of the head config it measured; kernel_tables unions every ok run's rows on (n_heads, n_kv_heads, head_dim), the run that finished last winning a head config (the loader selects by those columns).
+    # kernel_tables keeps the last-finished run per (n_heads, n_kv_heads, head_dim).
     n = FlashAttnProbe(a).run()
     print(f"{n} rows of flash_attn/{a.gpu_label}.csv and fa3_prefill/{a.gpu_label}.csv")
 

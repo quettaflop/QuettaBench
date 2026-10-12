@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Gated-DeltaNet (Qwen3.5) kernel grid on vLLM's vendored FLA ops: prefill chunk_gated_delta_rule over seq -> gdn/{gpu}_{geom}_prefill.csv (always eager), decode fused_recurrent_gated_delta_rule over batch -> gdn/{gpu}_{geom}_decode.csv (NCU with --ncu, else eager).
-Rows hold per-call median us and us x n_linear (all-GDN-layers convention).
+
+Rows hold per-call median us and us x n_linear (all GDN layers).
 """
 from __future__ import annotations
 
@@ -19,16 +20,16 @@ from vllm.model_executor.layers.fla.ops import (
 from quettabench.probes._timing import ncu_op_us
 from quettabench.probes.base import Probe, ProbeRow, add_output_args, run_recorded
 
-# chunk_gated_delta_rule's solve_tril merge kernel autotunes on a fresh host (no Triton disk cache) and needs a scratch allocator; vLLM sets one at model init, a bare probe must too. Without this the prefill loop crashes ("no allocator was set") on fresh H100/3090 and writes 0 prefill rows.
+# solve_tril autotunes on a host with no Triton cache and needs a scratch allocator, which vLLM sets at model init; without it prefill fails with "no allocator was set".
 triton.set_allocator(lambda size, alignment, stream: torch.empty(size, dtype=torch.int8, device="cuda"))
 
 REPS, WARMUP = 30, 5
-# cap at 80: the generic fused_recurrent decode proxy hits an illegal-memory bug at B>=120 (ssm_state_indices path) that corrupts the CUDA context and would kill the prefill loop too. The faithful fused_sigmoid_gating_delta_rule_update decode (which lifts this cap) is a follow-up -> then re-profile decode via gdn-ncu.
+# Capped at 80: the fused_recurrent decode proxy hits an illegal-memory bug at B>=120 that corrupts the CUDA context.
 BATCH_FULL = [1, 2, 4, 8, 16, 32, 40, 64, 80]
 SEQ_FULL   = [64, 128, 256, 512, 1024, 2048, 4096, 8192]
 BATCH_SMOKE = [1, 32, 256]
 SEQ_SMOKE   = [128, 2048]
-# NCU is slow -> curated grids; the loader interpolates. Decode capped at 80 (the fused_recurrent proxy hits a synthetic-input bug at B>=120 -- same limit as the cuda_event grid). NCU_REPS invocations profiled per point; min = warm steady state.
+# NCU is slow, so a curated grid; the loader interpolates.
 BATCH_NCU = [1, 8, 32, 80]
 NCU_REPS = 5
 
@@ -59,7 +60,7 @@ def time_call(fn) -> float:
         fn()
         e.record()
         torch.cuda.synchronize()
-        ts.append(s.elapsed_time(e) * 1000.0)  # ms -> us
+        ts.append(s.elapsed_time(e) * 1000.0)
     return st.median(ts)
 
 
@@ -67,13 +68,13 @@ def mk(B, T, H, K, V, dev, dt):
     q = torch.randn(B, T, H, K, device=dev, dtype=dt)
     k = torch.randn(B, T, H, K, device=dev, dtype=dt)
     v = torch.randn(B, T, H, V, device=dev, dtype=dt)
-    g = -torch.rand(B, T, H, device=dev, dtype=torch.float32)   # log-space forget gate (<=0)
-    beta = torch.rand(B, T, H, device=dev, dtype=dt)            # betas in (0,1)
+    g = -torch.rand(B, T, H, device=dev, dtype=torch.float32)  # log-space forget gate, <= 0
+    beta = torch.rand(B, T, H, device=dev, dtype=dt)
     return q, k, v, g, beta
 
 
 class GdnProbe(Probe):
-    """The prefill grid (seq, always eager) of gdn/{gpu}_{geom}_prefill.csv, then the decode grid (batch, NCU or eager) of ..._decode.csv. A phase stops at its first failure: the decode proxy's illegal-memory bug corrupts the CUDA context."""
+    """Prefill grid over seq, then decode grid over batch; a phase stops at its first failure since the decode bug corrupts the CUDA context."""
 
     def __init__(self, a):
         self.a = a
@@ -84,13 +85,12 @@ class GdnProbe(Probe):
 
     def grid(self):
         a = self.a
-        # PREFILL grid FIRST: chunk_gated_delta_rule, B=1, T=seq (eager in serving -> always cuda_event). Deliberately before decode: the fragile fused_recurrent decode proxy hits an illegal-memory bug (B=16 on 3090, B>=120 on A100/H100) that corrupts the CUDA context; running prefill first saves the floor grid regardless of where decode dies.
+        # Prefill first: the decode proxy's illegal-memory bug (B=16 on 3090, B>=120 on A100/H100) would lose it.
         for T in SEQ_SMOKE if a.mode == "smoke" else SEQ_FULL:
             if self.failed:
                 break
             yield "prefill", T
         self.failed = False
-        # DECODE grid: fused recurrent, T=1, initial recurrent state [B,H,V,K]
         for B in BATCH_NCU if a.ncu else (BATCH_SMOKE if a.mode == "smoke" else BATCH_FULL):
             if self.failed:
                 break
@@ -114,7 +114,7 @@ class GdnProbe(Probe):
             return ProbeRow("gdn", f"gdn/{self.base}_prefill.csv", {"seq_len": n},
                             {"us_per_call": round(us, 3), "us_x_nlinear": round(us * a.n_linear, 3)}, "eager")
         print(f"  {'ncu ' if a.ncu else ''}decode B={n:4d}: {us:8.2f} us/call  x{a.n_linear}L={us*a.n_linear:9.1f} us", flush=True)
-        # Decode is CUDA-graphed in serving -> NCU (--ncu) is faithful.
+        # Decode is CUDA-graphed in serving, so NCU timing is faithful.
         return ProbeRow("gdn", f"gdn/{self.base}_decode.csv", {"batch": n},
                         {"us_per_call": round(us, 3), "us_x_nlinear": round(us * a.n_linear, 3)},
                         "ncu" if a.ncu else "eager")
@@ -139,7 +139,7 @@ class GdnProbe(Probe):
             return us
         q, k, v, g, beta = mk(B, 1, H, K, V, self.dev, self.dt)
         state = torch.randn(B, H, V, K, device=self.dev, dtype=torch.float32)
-        # NOTE: representative GDN decode-core cost. The faithful serving decode is fused_sigmoid_gating_delta_rule_update (fixed-param, no autotune); the generic recurrent delta-rule is the same math and a valid proxy.
+        # Serving runs fused_sigmoid_gating_delta_rule_update; the generic recurrent rule is the same math.
 
         def call():
             return fused_recurrent_gated_delta_rule(

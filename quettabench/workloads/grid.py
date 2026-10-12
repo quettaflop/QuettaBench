@@ -43,7 +43,7 @@ def corpus_window(ids, n, slot):
 
 
 class GridTrace(Trace):
-    """Cells over maxlen (ctx + max(step_points) + 2 > maxlen) carry no requests. tokenizer is a zero-arg callable, called once at the first corpus cell, because the engine's tokenizer exists only after the model loads."""
+    """Cells over maxlen (ctx + max(step_points) + 2 > maxlen) carry no requests. tokenizer is a zero-arg callable called at the first corpus cell, since the engine's tokenizer exists only after the model loads."""
 
     def __init__(self, cells, step_points, prompt_mode, maxlen,
                  corpus_path=None, tokenizer=None, trace=None, seed=10):

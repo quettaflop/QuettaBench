@@ -1,6 +1,7 @@
 """Kernel timing shared by the probes: CUDA-graph replay, and NCU per-kernel durations.
-Graph replay matches vLLM's graphed decode (no per-launch CPU dispatch) where NCU counters are locked (RmProfilingAdminOnly=1).
-NCU sums the op's kernels per invocation and drops the `at::` tensor-setup kernels."""
+
+Graph replay matches vLLM's graphed decode (no per-launch CPU dispatch) and works where NCU counters are locked (RmProfilingAdminOnly=1). NCU sums the op's kernels per invocation and drops the `at::` tensor-setup kernels.
+"""
 from __future__ import annotations
 
 import csv
@@ -13,15 +14,14 @@ import torch
 
 
 def graph_time_us(fn, *, warmup: int = 10, reps: int = 50, reduce=min) -> float:
-    """Capture ``fn`` into a CUDA graph and time replay (us, ``reduce`` over reps).
+    """Capture fn into a CUDA graph and time replay in us, reduced over reps.
 
-    ``fn`` must be shape-static with all inputs pre-allocated (same contract as vLLM's decode capture). Eager warmup runs first so autotuners (triton fused_moe configs, cuBLAS heuristics) pick their kernels OUTSIDE capture.
-
-    Each capture uses its own private memory pool: the pool is retired when the graph is deleted at the end, so sweeping thousands of cells does not accumulate pools. (Sharing one pool handle across captures looks thriftier but is invalid -- the handle dies with the first graph and the next capture trips a CUDACachingAllocator use_count assert.)
+    fn must be shape-static with inputs pre-allocated. Eager warmup runs first so autotuners pick kernels outside capture.
+    Each capture gets a private memory pool freed with its graph; one shared pool handle dies with the first graph and trips a CUDACachingAllocator use_count assert.
     """
     for _ in range(3):
         fn()
-    # One cudaGraphLaunch costs ~6us; a real decode step launches ONE graph for the whole step, so per-kernel launch is ~0. Amortize by capturing the op `iters` times per graph and dividing -- iters chosen from a quick eager estimate so big ops (where 6us is noise anyway) don't blow pool memory.
+    # One cudaGraphLaunch costs ~6us but a decode step launches one graph for everything, so the op is captured `iters` times per graph and divided; iters comes from an eager estimate so big ops do not exhaust pool memory.
     torch.cuda.synchronize()
     s0, e0 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
     s0.record()
@@ -53,7 +53,7 @@ def graph_time_us(fn, *, warmup: int = 10, reps: int = 50, reduce=min) -> float:
         g.replay()
         e.record()
         torch.cuda.synchronize()
-        ts.append(s.elapsed_time(e) * 1000.0)  # ms -> us
+        ts.append(s.elapsed_time(e) * 1000.0)
     del g
     return reduce(ts) / iters
 
@@ -83,11 +83,11 @@ def ncu_kernel_durations(inner: str, ncu_bin: str) -> list[tuple[str, float]]:
 
 def ncu_op_us(inner: str, ncu_bin: str, reps: int,
               exclude: tuple[str, ...] = ("at::",)) -> float | None:
-    """Pure-kernel us of ONE op call: the snippet calls the op `reps` times; sum the op's kernels (drop `exclude` setup kernels) per invocation, min over the invocations (the warmest = steady state). None if NCU produced no table or the op-kernel count isn't a clean multiple of reps (autotune leak -> tune filter)."""
+    """Kernel us of one op call: the snippet calls the op `reps` times; the op's kernels (minus `exclude`) are summed per invocation and the min taken. None when NCU gave no table or the kernel count is not a multiple of reps (an autotune leak)."""
     durs = [us for kn, us in ncu_kernel_durations(inner, ncu_bin)
             if not any(t in kn for t in exclude)]
     if not durs or reps <= 0 or len(durs) % reps != 0:
         return None
-    n = len(durs) // reps               # op sub-kernels per invocation
+    n = len(durs) // reps  # kernels per invocation
     groups = [sum(durs[i * n:(i + 1) * n]) for i in range(reps)]
     return min(groups)

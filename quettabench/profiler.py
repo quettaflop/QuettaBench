@@ -14,7 +14,7 @@ from quettabench.metrics.results import write_atomic
 from quettabench.profiling import native, wrapped
 
 SOURCES = ("metrics", "energy", "cost", "gsm8k", "frontend", "pd_host", "kv_transfer", "kernels")
-# energy first: it waits for the run to end
+# Energy first: it waits for the run to end.
 ORDER = ("energy", "metrics", "gsm8k", "frontend", "pd_host", "cost", "kv_transfer", "kernels")
 SECTION = {"gsm8k": "accuracy"}
 
@@ -121,7 +121,7 @@ def profile(results_dir, sources, **source_args):
                        if k in source_args})
             out[SECTION.get(source, source)] = run_source(source, results_dir, engine,
                                                           source_args, energy)
-        except Exception as e:  # noqa: BLE001 -- one broken source must not lose the others
+        except Exception as e:  # noqa: BLE001  one broken source must not lose the others
             errors[source] = f"{type(e).__name__}: {e}"
     out["traces"] = native.collect_armed_traces(results_dir, engine.get("instrumentation", "none"))
     out["sources_run"] = sorted(set(out.get("sources_run", [])) | (set(sources) - set(errors)))

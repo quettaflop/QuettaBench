@@ -124,7 +124,6 @@ def _line_request(path, row, index, seed, block_cache):
         req = Request(ids, len(ids), order=index)
         if row.get("output_length"):
             req.output_length = int(row["output_length"])
-        # Reference tokens for acceptance scoring.
         if row.get("output_token_ids"):
             req.output_token_ids = list(row["output_token_ids"])
         return _carry_meta(req, row)
@@ -246,7 +245,7 @@ def est_tokens(text):
 
 
 def load_sharegpt():
-    import datasets as hf_datasets  # optional dependency, only ShareGPT profiles need it
+    import datasets as hf_datasets  # only ShareGPT profiles need it
     return hf_datasets.load_dataset("Aeala/ShareGPT_Vicuna_unfiltered", split="train")
 
 
@@ -262,14 +261,15 @@ def load_chat_tokenizer(name):
     """The model's tokenizer for prompt counts; None without a name, raises if it fails to load."""
     if not name:
         return None
-    from transformers import AutoTokenizer  # optional dependency
+    from transformers import AutoTokenizer  # imported here: optional dependency
     return AutoTokenizer.from_pretrained(name)
 
 
 class ShareGPTTrace(SampledChatTrace):
-    """The first user and assistant pair of ShareGPT conversations; max tokens is the estimated length of the recorded reply.
+    """First user/assistant pair of each ShareGPT conversation; max tokens is the estimated reply length.
 
-    Pairs outside the input and output bounds are skipped, and with max_total_tokens so is a pair whose prompt (counted by tokenizer_name, else estimated), reply and safety margin overflow it. Loads up to 3x num_prompts pairs, shuffles, keeps num_prompts."""
+    Pairs outside the input and output bounds are skipped, and with max_total_tokens so is one whose prompt, reply and margin overflow it. Loads up to 3x num_prompts pairs, shuffles, keeps num_prompts.
+    """
 
     def __init__(self, num_prompts=1000, seed=42, system_prompt="You are a helpful assistant.",
                  max_isl_tokens=8192, max_osl_tokens=2048, min_osl_tokens=50,
@@ -326,24 +326,24 @@ WORKLOADS = Path(__file__).resolve().parents[2] / "configs" / "workloads.yaml"
 @dataclass
 class WorkloadProfile:
     name: str
-    isl_tokens: int   # for random: exact target ISL; for sharegpt: max ISL filter bound
-    osl_tokens: int   # for random: exact target OSL; for sharegpt: max OSL filter bound (also max_tokens)
-    isl_stddev: float        # stddev as fraction of isl (for Gaussian sampling)
+    isl_tokens: int  # random: exact ISL; sharegpt: max ISL
+    osl_tokens: int  # random: exact OSL; sharegpt: max OSL and max_tokens
+    isl_stddev: float  # fraction of isl
     description: str
     dataset: str             # "sharegpt", "test", "random", "jsonl", "sharegpt-multi-turn", "swebench-multi-turn", "terminalbench-multi-turn"
-    file_path: str = ""      # used when the dataset reads a file
+    file_path: str = ""
     system_prompt: str = "You are a helpful assistant."
-    tokenizer_name: str = "" # used when dataset="random"
+    tokenizer_name: str = ""  # dataset="random" only
     mode: str = "single-turn"           # "stress-test" | "single-turn" | "multi-turn"
-    prefix_caching_required: bool = False  # True = server must be launched with --enable-prefix-caching
-    min_turns: int = 1                   # multi-turn: minimum turns per session
-    max_turns: int = 1                   # multi-turn: maximum turns per session
-    num_sessions: int = 200              # multi-turn: number of concurrent sessions
+    prefix_caching_required: bool = False  # server needs --enable-prefix-caching
+    min_turns: int = 1  # multi-turn only
+    max_turns: int = 1  # multi-turn only
+    num_sessions: int = 200  # multi-turn: concurrent sessions
     agent_type: str = ""           # "chat" | "coding" | "terminal"
     turn_style: str = "single-turn"  # "single-turn" | "multi-turn"
     serving_style: str = "not-disaggregated"  # "disaggregated" | "not-disaggregated"
     data_source: str = ""          # "sharegpt" | "swebench" | "terminalbench" | "random" | "test"
-    active: bool = True            # False = legacy/runnable, hidden from default sweeps/profile lists
+    active: bool = True  # False: runnable but hidden from default listings
 
 
 def load_profiles(path=WORKLOADS):
@@ -373,7 +373,6 @@ def active_profiles() -> list[str]:
 
 
 def get_profile(name: str) -> WorkloadProfile:
-    """Look up a profile by name."""
     if name in PROFILES:
         return PROFILES[name]
     raise ValueError(f"Unknown profile '{name}'. Available: {active_profiles()} "

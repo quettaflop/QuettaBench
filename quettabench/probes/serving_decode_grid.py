@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Live-server (batch, context) grid of steady-state mid-stream ITL: launches vLLM, fires B concurrent completion streams per cell and records SSE timestamps to --out-raw.
-`just export --only serving_decode_grid` builds the grid CSV from the raw runs (it imports summarize_cell from here).
+
+`just export --only serving_decode_grid` builds the grid CSV from the raw runs with summarize_cell from here.
 """
 from __future__ import annotations
 
@@ -21,16 +22,16 @@ from pathlib import Path
 
 from quettabench.probes.base import launch_vllm, run_recorded
 
-# aiohttp is needed only at MEASUREMENT time (on the GPU host). The local builder/test import of this module (for summarize_cell / the lattice) must work without it.
+# aiohttp exists only on the GPU host; summarize_cell and the lattice must import without it.
 
 
-# The pre-registered lattice: prompt/osl are the integer fixed point of prompt = T - osl//2, osl = 384 + ceil(B*prompt/CHUNK_BUDGET) from osl0 = 384 (converges in < 10 iterations on every cell).
-CHUNK_BUDGET = 8192          # vLLM --max-num-batched-tokens (the admission ramp rate)
-STEADY_MIN_STEPS = 384       # decode steps shared by ALL requests after the ramp
-KV_POOL_TOKENS_TP4 = 2_116_352   # the live tp4 pool at these engine flags
+# prompt/osl are the integer fixed point of prompt = T - osl//2, osl = 384 + ceil(B*prompt/CHUNK_BUDGET), from osl0 = 384.
+CHUNK_BUDGET = 8192  # vLLM --max-num-batched-tokens, the admission ramp rate
+STEADY_MIN_STEPS = 384  # decode steps all requests share after the ramp
+KV_POOL_TOKENS_TP4 = 2_116_352  # the live tp4 pool at these engine flags
 CAP_FRAC = 0.95
 
-# B -> nominal T: the 26 pre-registered cells, each under B*(T+osl/2) <= 0.95*pool except (160, 12288), kept by name at 95.2%.
+# B -> nominal T: 26 fixed cells, each under B*(T+osl/2) <= 0.95*pool except (160, 12288) at 95.2%.
 LATTICE_TP4: dict[int, tuple[int, ...]] = {
     1:   (512, 2048, 8192, 16384),
     8:   (512, 2048, 8192, 16384),
@@ -46,7 +47,7 @@ T_MENU = (512, 2048, 4096, 6144, 8192, 12288, 16384)
 
 def solve_cell(b: int, t: int, chunk_budget: int = CHUNK_BUDGET,
                steady: int = STEADY_MIN_STEPS) -> tuple[int, int]:
-    """(prompt_tokens, osl) integer fixed point for cell (B, T). Deterministic."""
+    """(prompt_tokens, osl) integer fixed point for cell (B, T)."""
     osl = steady
     for _ in range(50):
         prompt = t - osl // 2
@@ -54,18 +55,18 @@ def solve_cell(b: int, t: int, chunk_budget: int = CHUNK_BUDGET,
         if new_osl == osl:
             return prompt, osl
         osl = new_osl
-    return t - osl // 2, osl  # pragma: no cover (always converges in practice)
+    return t - osl // 2, osl  # pragma: no cover
 
 
 def lattice_cells(lattice: dict[int, tuple[int, ...]] = LATTICE_TP4,
                   pool_tokens: int = KV_POOL_TOKENS_TP4) -> list[dict]:
-    """The pre-registered cell list with solved (prompt, osl) + the cap check."""
+    """The fixed cell list with solved (prompt, osl) and the cap check."""
     cap = CAP_FRAC * pool_tokens
     cells = []
     for b in sorted(lattice):
         for t in lattice[b]:
             prompt, osl = solve_cell(b, t)
-            kv_final = b * (prompt + osl)        # == B*(T + osl/2) up to integer rounding
+            kv_final = b * (prompt + osl)  # B*(T + osl/2) up to rounding
             cells.append({
                 "batch_size": b, "nominal_T": t, "prompt_tokens": prompt, "osl": osl,
                 "kv_final_tokens": kv_final, "kv_frac_of_pool": round(kv_final / pool_tokens, 4),
@@ -75,7 +76,7 @@ def lattice_cells(lattice: dict[int, tuple[int, ...]] = LATTICE_TP4,
 
 
 def build_lattice_for_pool(pool_tokens: int) -> dict[int, tuple[int, ...]]:
-    """Generic lattice for a DIFFERENT pool (the conditional tp2 leg): the same B rows / T menu, keeping per row the directive's base Ts plus the largest menu Ts that satisfy the cap (mirrors how the tp4 rows were derived). Deterministic in pool_tokens."""
+    """Lattice for another pool (the tp2 leg): the same B rows and T menu, keeping per row the base Ts plus the largest menu Ts under the cap, as the tp4 rows were derived."""
     cap = CAP_FRAC * pool_tokens
     out: dict[int, tuple[int, ...]] = {}
     for b in (1, 8, 32, 80, 160, 256, 320):
@@ -89,11 +90,11 @@ def build_lattice_for_pool(pool_tokens: int) -> dict[int, tuple[int, ...]]:
     return out
 
 
-TOKEN_ID_LO, TOKEN_ID_HI = 1000, 30000   # plain-text band of the Llama-3.1 vocab
+TOKEN_ID_LO, TOKEN_ID_HI = 1000, 30000  # plain-text band of the Llama-3.1 vocab
 
 
 def prompt_token_ids(cell_b: int, nominal_t: int, req_idx: int, n_tokens: int) -> list[int]:
-    # str seed: random.Random rejects tuples on Python >= 3.11
+    # random.Random rejects tuple seeds on Python >= 3.11.
     rng = random.Random(f"{cell_b}:{nominal_t}:{req_idx}:serving_decode_grid")
     return [rng.randrange(TOKEN_ID_LO, TOKEN_ID_HI) for _ in range(n_tokens)]
 
@@ -108,7 +109,7 @@ def _p99(vals: list[float]) -> float:
 
 def summarize_cell(records: list[dict], min_samples: int = 64,
                    lag_limit_ms: float = 2.0) -> dict:
-    """Deterministic cell row from raw per-request records (see module docstring)."""
+    """Cell row from raw per-request records."""
     if not records:
         raise ValueError("empty cell")
     b = len(records)
@@ -126,10 +127,10 @@ def summarize_cell(records: list[dict], min_samples: int = 64,
     per_req_p50, per_req_progress, per_req_n = [], [], []
     coalesced = total_deltas = 0
     for ts in ev_walls:
-        # delta k (between event k and k+1) is "in window" iff both endpoints are inside.
+        # Delta k (event k to k+1) is in the window only if both ends are.
         din = [(ts[k + 1] - ts[k]) * 1e3 for k in range(len(ts) - 1)
                if ts[k] >= w_lo and ts[k + 1] <= w_hi]
-        idx_in = [k + 1 for k in range(len(ts)) if w_lo <= ts[k] <= w_hi]  # token index (1-based)
+        idx_in = [k + 1 for k in range(len(ts)) if w_lo <= ts[k] <= w_hi]  # 1-based token index
         per_req_n.append(len(din))
         if din:
             per_req_p50.append(st.median(din))
@@ -149,13 +150,13 @@ def summarize_cell(records: list[dict], min_samples: int = 64,
     progress = st.median(per_req_progress) if per_req_progress else 0.0
     return {
         "batch_size": b,
-        "context_len": int(round(prompt + progress)),       # EFFECTIVE context (the grid axis)
+        "context_len": int(round(prompt + progress)),  # effective context, the grid axis
         "decode_step_ms": round(st.median(per_req_p50), 4) if per_req_p50 else 0.0,
         "validation_status": status,
         "nominal_T": int(records[0].get("nominal_T", 0)),
         "prompt_tokens": prompt,
         "osl": int(records[0]["osl"]),
-        "n_samples": min(per_req_n) if per_req_n else 0,    # MIN in-window deltas per request
+        "n_samples": min(per_req_n) if per_req_n else 0,  # min in-window deltas per request
         "steady_window_s": round(steady_window_s, 3),
         "median_inwindow_progress": round(progress, 1),
         "p99_loop_lag_ms": round(lag_p99, 3),
@@ -172,8 +173,7 @@ SUMMARY_FIELDS = [
 
 
 async def _stream_once(session, url: str, headers: dict, payload: dict) -> list[float]:
-    """POST a streaming completion; perf_counter per SSE content delta (no per-event JSON parse:
-    every completions data chunk is a text delta; the [DONE] sentinel ends the stream)."""
+    """POST a streaming completion and record perf_counter per SSE delta; every completions chunk is a text delta, so none is parsed."""
     ts: list[float] = []
     async with session.post(url, json=payload, headers=headers) as resp:
         if resp.status != 200:
@@ -197,7 +197,7 @@ async def _loop_lag_sampler(stop: asyncio.Event, out: list[float]) -> None:
 
 async def _run_shard(req_specs: list[dict], port: int, api_key: str, model_name: str,
                      eos_mode: str, barrier) -> list[dict]:
-    import aiohttp  # lazy: GPU-host runtime dependency only
+    import aiohttp  # GPU host only
     url = f"http://127.0.0.1:{port}/v1/completions"
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     timeout = aiohttp.ClientTimeout(total=3600, sock_read=600)
@@ -206,11 +206,11 @@ async def _run_shard(req_specs: list[dict], port: int, api_key: str, model_name:
     stop = asyncio.Event()
     out: list[dict] = []
     async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
-        # all shards block here until every process is connected & ready -> simultaneous fire
+        # Every shard waits here until all are connected, so they fire together.
         if barrier is not None:
             await asyncio.get_running_loop().run_in_executor(None, barrier.wait)
-        wall_anchor = time.time() - time.perf_counter()   # per-process wall<->perf_counter map
-        # GC pauses are the dominant client-side lag source at high event rates (measurement hygiene, run 1 -> run 2 fix): freeze startup garbage and disable collection for the duration of the streams; re-enable after gather.
+        wall_anchor = time.time() - time.perf_counter()
+        # GC pauses dominate client-side lag at high event rates, so collection is off while streams run.
         gc.collect()
         gc.freeze()
         gc.disable()
@@ -250,7 +250,7 @@ async def _run_shard(req_specs: list[dict], port: int, api_key: str, model_name:
 def _shard_entry(req_specs, port, api_key, model_name, eos_mode, barrier, shard_id, out_path,
                  rt: bool = False):
     if rt:
-        # SCHED_RR for the SHARD PROCESS ONLY (needs CAP_SYS_NICE / root): the GPU host's own server threads otherwise preempt the client loop for ~2 ms CFS slices, tripping the pre-registered p99 loop-lag flag while leaving the p50 ITL unchanged (run1 1-shard vs run2 8-shard agree <=0.5%). The server keeps its normal policy (separate process).
+        # SCHED_RR for the shard process only (needs CAP_SYS_NICE): the server's threads otherwise preempt the client loop for ~2 ms CFS slices, tripping the p99 loop-lag flag while p50 ITL is unchanged.
         try:
             os.sched_setscheduler(0, os.SCHED_RR, os.sched_param(10))
             print(f"shard {shard_id}: SCHED_RR set", flush=True)
@@ -303,7 +303,7 @@ def launch_server(model, port, gpu_mem, max_model_len, api_key, run_dir, tp,
                   max_num_seqs, max_num_batched_tokens):
     return launch_vllm(run_dir, model, port=port, tp=tp, gpu_util=gpu_mem,
                        max_model_len=max_model_len,
-                       prefix_caching=False,                  # each cell measures uncached prefill
+                       prefix_caching=False,  # each cell measures uncached prefill
                        vllm_flags={"served_model_name": "llama", "host": "127.0.0.1",
                                    "max_num_seqs": max_num_seqs,
                                    "max_num_batched_tokens": max_num_batched_tokens,
@@ -335,7 +335,7 @@ def warmup_and_verify_eos(port: int, api_key: str, model_name: str) -> str:
             continue
         n = [r["n_events"] for r in recs]
         print(f"warmup: eos mode {mode!r} -> events per stream {n} (requested 64)", flush=True)
-        if min(n) >= 61:  # SSE events may coalesce a few tokens; near-full = honored
+        if min(n) >= 61:  # SSE events may coalesce a few tokens
             return mode
     raise SystemExit("neither ignore_eos nor min_tokens produced the requested output length")
 
@@ -410,7 +410,7 @@ def main(argv=None) -> None:
 
         out_raw = Path(a.out_raw)
         out_raw.parent.mkdir(parents=True, exist_ok=True)
-        # The request shards' results go under this run's dir, never a shared tmp.
+        # Shard results go under this run's dir, never a shared tmp.
         tmp_dir = Path(tempfile.mkdtemp(dir=out_raw.parent, prefix="shards-"))
         rows = []
         with gzip.open(out_raw, "at") as raw_f:

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Elementwise kernel affine fits -> elementwise/{gpu}.json entries for kernel_composed's ElementwiseTable: latency_us = floor_us + bytes / eff_bw, bytes = elements x dtype_bytes x (reads + writes).
+
 Each kernel is timed across element counts (eager, or --graph replay) and least-squares fitted; --vllm times vLLM's fused kernels instead of torch-chain proxies.
 """
 from __future__ import annotations
@@ -13,14 +14,14 @@ import torch.nn.functional as F
 from quettabench.probes._timing import graph_median_us
 from quettabench.probes.base import Probe, ProbeRow, add_output_args, run_recorded
 
-# (reads, writes) per kernel -- MUST match kernel_composed/elementwise.py::_IO
+# (reads, writes) per kernel; must match kernel_composed/elementwise.py::_IO.
 IO = {"rmsnorm": (1, 1), "silu_mul": (2, 1), "rotary_emb": (1, 1), "residual_add": (2, 1)}
-# --vllm adds the kernels only vLLM ships fused: fused_add_rms_norm (one kernel for the residual-add + rmsnorm pair -- the composition prefers it when calibrated) and reshape_and_cache_flash (the real KV-cache write, previously priced by roofline).
+# Kernels only vLLM ships fused: fused_add_rms_norm (residual-add plus rmsnorm in one kernel) and reshape_and_cache_flash (the KV-cache write).
 VLLM_IO = {**IO, "fused_add_rmsnorm": (2, 2), "kv_cache_write": (1, 1)}
-ELEMS = [2**e for e in range(18, 30)]   # ~262k .. ~537M elements
+ELEMS = [2**e for e in range(18, 30)]  # 262k to 537M elements
 REPS, WARMUP = 50, 10
 DT_BYTES = 2
-HIDDEN = 4096                            # row width for the 2-D vLLM ops
+HIDDEN = 4096  # row width for the 2-D vLLM ops
 
 
 def time_op(fn) -> float:
@@ -59,7 +60,7 @@ def op_for(kernel, n, dev, dt):
 
 
 def op_for_vllm(kernel, n, dev, dt):
-    """The REAL vLLM kernel for each composition op (vs the torch-chain proxies in ``op_for``, which launch several kernels where vLLM launches one -- the H200 torch-chain fit overpriced fused ops ~2-3 ms/step at 48 layers). ``n`` keeps the same meaning as the composition's ``elements`` for that kernel. vllm is imported here: only --vllm needs it, and the torch-chain default runs without it."""
+    """vLLM's own kernel for each composition op; the torch-chain proxies launch several kernels where vLLM launches one, and on H200 overpriced fused ops by 2-3 ms/step at 48 layers. n means what the composition's elements means for that kernel. vllm is imported here: only --vllm needs it."""
     from vllm import _custom_ops as ops
     if kernel == "rmsnorm":
         t = max(1, n // HIDDEN)
@@ -74,13 +75,13 @@ def op_for_vllm(kernel, n, dev, dt):
         w = torch.ones(HIDDEN, device=dev, dtype=dt)
         return lambda: ops.fused_add_rms_norm(x, r, w, 1e-6)
     if kernel == "silu_mul":
-        # n = OUTPUT elements (composition passes pairs*inter); input is (t, 2H).
+        # n is output elements (composition passes pairs*inter); input is (t, 2H).
         t = max(1, n // HIDDEN)
         x = torch.randn(t, 2 * HIDDEN, device=dev, dtype=dt)
         out = torch.empty(t, HIDDEN, device=dev, dtype=dt)
         return lambda: torch.ops._C.silu_and_mul(out, x)
     if kernel == "rotary_emb":
-        # n = q+k elements (composition passes m*(nq+nkv)*hd); Llama-8B head config.
+        # n is q+k elements (composition passes m*(nq+nkv)*hd); Llama-8B head config.
         nq, nkv, hd = 32, 8, 128
         t = max(1, n // ((nq + nkv) * hd))
         pos = torch.arange(t, dtype=torch.int64, device=dev) % 4096
@@ -93,7 +94,7 @@ def op_for_vllm(kernel, n, dev, dt):
         r = torch.randn(n, device=dev, dtype=dt)
         return lambda: x + r
     if kernel == "kv_cache_write":
-        # n = k+v elements (composition passes tokens*n_kv*hd*2).
+        # n is k+v elements (composition passes tokens*n_kv*hd*2).
         nkv, hd, block = 8, 128, 16
         t = max(1, n // (2 * nkv * hd))
         nblocks = (t + block - 1) // block
@@ -109,26 +110,25 @@ def op_for_vllm(kernel, n, dev, dt):
 
 
 def fit(bytes_list, us_list) -> tuple[float, float]:
-    """Least-squares latency_us = floor + slope*bytes -> (floor_us, eff_bw_gb_s)."""
+    """Least-squares latency_us = floor + slope*bytes; returns (floor_us, eff_bw_gb_s)."""
     nP = len(bytes_list)
     sx = sum(bytes_list)
     sy = sum(us_list)
     sxx = sum(b * b for b in bytes_list)
     sxy = sum(b * u for b, u in zip(bytes_list, us_list))
     denom = nP * sxx - sx * sx
-    slope = (nP * sxy - sx * sy) / denom if denom else 0.0     # us/byte
+    slope = (nP * sxy - sx * sy) / denom if denom else 0.0  # us/byte
     floor = (sy - slope * sx) / nP
-    eff_bw_gb_s = (1e-3 / slope) if slope > 0 else 0.0          # (1/slope) bytes/us -> GB/s
+    eff_bw_gb_s = (1e-3 / slope) if slope > 0 else 0.0
     return round(max(0.0, floor), 3), round(eff_bw_gb_s, 1)
 
 
 class ElementwiseProbe(Probe):
-    """One entry of elementwise/{gpu}.json per kernel: its latency across ELEMS, least-squares fitted to (floor_us, eff_bw_gb_s)."""
+    """One elementwise/{gpu}.json entry per kernel: latency across ELEMS fitted to (floor_us, eff_bw_gb_s)."""
 
     def __init__(self, a):
         self.a = a
         self.dev, self.dt = torch.device("cuda"), torch.bfloat16
-        # graph replay is graphed-decode-faithful (graph/), eager includes dispatch (eager/).
         self.timing = "graph_replay" if a.graph else "eager"
 
     def grid(self):

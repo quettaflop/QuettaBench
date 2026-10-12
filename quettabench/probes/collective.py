@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """NCCL collective microbenchmark under torchrun: every op LLM inference emits (all_reduce, all_gather, reduce_scatter, all_to_all) across message sizes, amortized over back-to-back calls.
+
 Rank 0 emits the curve as collectives/{gpu}_tp{world}.csv ProbeRows and prints the legacy tp_comm: YAML block; run it once per world size.
 """
 from __future__ import annotations
@@ -16,11 +17,11 @@ _ITERS, _WARMUP = 50, 10
 
 
 def _time_op(op: str, n_elems: int, world: int, iters: int, warmup: int) -> float:
-    """AMORTIZED wall-time (seconds) per ``op`` call over an n_elems bf16 buffer.
+    """Amortized wall seconds per op call over an n_elems bf16 buffer.
 
-    Times the whole back-to-back loop and divides by iters, so per-op launch/dispatch overhead pipelines away and we get the MARGINAL cost -- the faithful measure for decode, which replays the all-reduce inside a CUDA graph (no per-launch dispatch).
-    Per-op event timing instead would bake in launch overhead the graphed decode never pays and over-price tp_comm (README: decode is graphed -> measure amortized)."""
-    # Buffers follow the table's convention: n_elems is the FULL LOGICAL BUFFER -- the input for all_reduce/reduce_scatter, the RESULT for all_gather, the total each rank sends for all_to_all -- so every op is comparable at equal bytes.
+    Timing the back-to-back loop lets launch overhead pipeline away, matching graphed decode; per-op event timing would over-price tp_comm.
+    """
+    # n_elems is the full logical buffer (all_reduce/reduce_scatter input, all_gather result, all_to_all total sent), so ops compare at equal bytes.
     full = torch.ones(n_elems, dtype=_DTYPE, device="cuda")
     shard = torch.ones(max(1, n_elems // world), dtype=_DTYPE, device="cuda")
     if op == "all_reduce":
@@ -64,34 +65,34 @@ def main(argv=None):
     world = dist.get_world_size()
     torch.cuda.set_device(rank % torch.cuda.device_count())
 
-    # message-size sweep per op: small end -> latency floor, large end -> bandwidth.
-    sizes = [2 ** k for k in range(10, 28)]   # 1K .. 128M elements
+    # Small sizes give the latency floor, large ones the bandwidth.
+    sizes = [2 ** k for k in range(10, 28)]  # 1K to 128M elements
     ops = [o.strip() for o in a.ops.split(",") if o.strip()]
-    rows: list[tuple[str, int, int, float]] = []   # (op, world, bytes, us)
+    rows: list[tuple[str, int, int, float]] = []  # (op, world, bytes, us)
     lat_us, bw = [], []
     for op in ops:
         for n in sizes:
             try:
                 t = _time_op(op, n, world, _ITERS, _WARMUP)
-            except RuntimeError as e:            # OOM / unsupported shape: record a gap
+            except RuntimeError as e:  # OOM or unsupported shape: leave a gap
                 if rank == 0:
                     print(f"  skip {op} n={n}: {e}")
                 continue
             rows.append((op, world, n * 2, t * 1e6))
             if op == "all_reduce":
                 lat_us.append(t * 1e6)
-                # ring all-reduce moves ~2*(world-1)/world * bytes over the link
-                bytes_moved = 2.0 * (world - 1) / world * n * 2  # bf16 = 2 bytes
+                # Ring all-reduce moves 2*(world-1)/world of the bytes over the link.
+                bytes_moved = 2.0 * (world - 1) / world * n * 2  # bf16
                 bw.append(bytes_moved / t)
     if not lat_us:
         raise SystemExit("all_reduce must be in --ops to derive the legacy scalars")
 
-    # per-token prefill rate: all-reduce a [T x hidden] activation, once per layer.
+    # Per-token prefill rate: all-reduce a [T x hidden] activation once per layer.
     t_pref = _time_op("all_reduce", a.prefill_tokens * a.hidden, world, _ITERS, _WARMUP)
     prefill_ms_per_token = (t_pref / a.prefill_tokens) * a.layers * 1000.0
 
-    latency_us_per_op = round(min(lat_us), 3)       # small-message floor
-    link_bw_bytes_per_s = round(max(bw), 1)         # bandwidth-bound tail
+    latency_us_per_op = round(min(lat_us), 3)  # small-message floor
+    link_bw_bytes_per_s = round(max(bw), 1)  # bandwidth-bound tail
     prefill_ms_per_token = round(prefill_ms_per_token, 6)
 
     if rank == 0:
@@ -103,7 +104,7 @@ def main(argv=None):
             got = sorted({op for op, _, _, _ in rows})
             print(f"{len(rows)} rows of {table}  (world={world}, ops={got})\n")
 
-        # The legacy tp_comm: scalars are tp-invariant, which the grid fixes.
+        # The legacy tp_comm scalars are tp-invariant; the grid is not.
         print(f"[{a.gpu_label}] all-reduce over {world} ranks, hidden={a.hidden} layers={a.layers}\n")
         print(f"# paste into device_spec/{a.gpu_label.lower()}.yaml (collective_probe.py):")
         print("tp_comm:")
@@ -112,7 +113,7 @@ def main(argv=None):
         print(f"  link_bw_bytes_per_s: {link_bw_bytes_per_s:.3e}")
         print("  # source: measured   # <- uncomment to make this device use the grid above")
     dist.destroy_process_group()
-    return rank == 0  # run_recorded: only rank 0 records the run
+    return rank == 0  # only rank 0 records the run
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-"""Aggregates request results into BenchmarkSummary: TTFT, TPOT, ITL and E2EL percentiles over successful requests, failures counted separately, input and output token throughput reported apart."""
+"""Aggregate request results into BenchmarkSummary: TTFT, TPOT, ITL and E2EL percentiles over successful requests, failures counted apart, input and output throughput reported apart."""
 
 import re
 import statistics
@@ -9,14 +9,14 @@ from dataclasses import dataclass, field
 class RequestResult:
     """Per-request benchmark result, shared by every backend."""
     success: bool
-    ttft: float | None = None          # seconds to first token
-    itl: list = field(default_factory=list)  # inter-token latencies (seconds)
-    e2el: float | None = None          # end-to-end latency (seconds)
+    ttft: float | None = None  # seconds
+    itl: list = field(default_factory=list)  # seconds
+    e2el: float | None = None  # seconds
     input_tokens: int = 0
     output_tokens: int = 0
     error: str | None = None
     # A timeout means the client cut the stream, so the slowest requests are missing from the latency tail.
-    error_kind: str | None = None      # "timeout" | "http_error" | "client_error"
+    error_kind: str | None = None  # "timeout" | "http_error" | "client_error"
     # Without a usage block the token counts are 0 and throughputs are meaningless.
     usage_reported: bool = False
     # Held out of the summary by --discard-first; still kept in per_request.
@@ -52,8 +52,8 @@ class RequestResult:
     client_queue_wait_s: float | None = None
     client_request_wall_s: float | None = None
 
-    turn_index: int | None = None      # multi-turn: which turn (0-indexed)
-    session_id: int | None = None      # multi-turn: conversation/session id
+    turn_index: int | None = None  # 0-indexed
+    session_id: int | None = None
 
     # Multi-turn cache estimate from per-session prompt-token deltas, not engine-reported prefix-cache hits.
     previous_context_tokens: int | None = None
@@ -74,7 +74,7 @@ class RequestResult:
 
     @property
     def tpot(self) -> float | None:
-        """Mean ITL, excluding the first token; falls back to (e2el - ttft) / (output_tokens - 1) when ITL is missing or covers under 80% of the tokens (multi-token chunks make it inter-chunk)."""
+        """Mean ITL past the first token; falls back to (e2el - ttft) / (output_tokens - 1) when ITL covers under 80% of tokens, since multi-token chunks make it inter-chunk."""
         wall_clock_ok = (
             self.e2el is not None and self.ttft is not None
             and self.output_tokens > 1
@@ -194,7 +194,7 @@ class BenchmarkSummary:
     target_rate: float = 0.0
     sessions_completed: int = 0
     session_throughput: float = 0.0
-    warmup_concurrency: int = 0     # batch width the warmup actually exercised
+    warmup_concurrency: int = 0  # batch width warmup exercised
     num_requests: int = 0
     duration_s: float = 0.0
 
@@ -212,10 +212,10 @@ class BenchmarkSummary:
     usage_reported_requests: int = 0
 
     # Over total wall clock; an open-loop run below saturation measures the offered rate here.
-    request_throughput: float = 0.0     # req/s
-    input_token_throughput: float = 0.0  # input tok/s
-    output_token_throughput: float = 0.0  # output tok/s
-    total_token_throughput: float = 0.0   # (input + output) tok/s
+    request_throughput: float = 0.0  # req/s
+    input_token_throughput: float = 0.0  # tok/s
+    output_token_throughput: float = 0.0  # tok/s
+    total_token_throughput: float = 0.0  # tok/s
 
     # Over busy time (union of in-flight intervals), excluding idle wall clock.
     busy_time_s: float = 0.0
@@ -259,12 +259,12 @@ class BenchmarkSummary:
 
     def to_dict(self) -> dict:
         d = {k: v for k, v in self.__dict__.items() if k != "errors"}
-        d["errors"] = self.errors[:10]  # cap error list in JSON
+        d["errors"] = self.errors[:10]
         return d
 
 
 def _busy_time_and_load(results) -> tuple[float, float, int]:
-    """(busy_time_s, mean_inflight_requests, max_inflight_requests); busy time is the union of the in-flight intervals and mean in-flight is sum(durations) / busy_time. Failed requests count because they occupied the server."""
+    """(busy_time_s, mean_inflight, max_inflight); busy time is the union of in-flight intervals. Failed requests count, since they occupied the server."""
     intervals = [
         (r.semaphore_acquired_at_s, r.completed_at_s)
         for r in results
@@ -301,7 +301,7 @@ def _busy_time_and_load(results) -> tuple[float, float, int]:
 
 
 def _inflight_halves(results) -> tuple[float, float]:
-    """Time-weighted mean in-flight over the first and second half of the run; rising means the queue is growing, falling means the run is drain-dominated."""
+    """Time-weighted mean in-flight over each half of the run; rising means the queue is growing, falling means drain dominates."""
     intervals = [
         (r.semaphore_acquired_at_s, r.completed_at_s)
         for r in results
@@ -334,7 +334,8 @@ PERCENTILE_METHODS = ("nearest", "linear")
 def percentile(values, p: float, method: str) -> float:
     """p-th percentile (0-100) of values.
 
-    "nearest" is sorted[min(n - 1, int(p / 100 * n))] and raises ValueError on no values; "linear" interpolates between ranks at p / 100 * (n - 1) and returns 0.0 on no values. The two disagree on most inputs, so every caller names its method."""
+    "nearest" is sorted[min(n - 1, int(p / 100 * n))] and raises on no values; "linear" interpolates at p / 100 * (n - 1) and returns 0.0 on no values. They disagree on most inputs, so every caller names its method.
+    """
     if method not in PERCENTILE_METHODS:
         raise ValueError(f"unknown percentile method {method!r}; expected one of {PERCENTILE_METHODS}")
     sorted_data = sorted(values)
@@ -360,10 +361,9 @@ def pcts(values, method: str) -> dict:
 
 
 def summarize_serve(records, wall_s: float, method: str) -> dict:
-    """Serving summary of replay records ({ttft_ms, tpot_ms, out_tokens}).
+    """Serving summary of replay records ({ttft_ms, tpot_ms, out_tokens}): n, ttft/tpot percentiles, req/s and output tok/s over wall_s.
 
-    n, ttft/tpot percentiles by method, req/s and output tok/s over wall_s.
-    Records with tpot_ms None (single-token outputs) are left out of tpot; tpot_ms is None when no record has one. Raises on no records.
+    Records with tpot_ms None (single-token outputs) are left out of tpot. Raises on no records.
     """
     if not records:
         raise ValueError("no completed requests")
@@ -381,10 +381,7 @@ def summarize_serve(records, wall_s: float, method: str) -> dict:
 
 
 def sla_verdict(summary: dict, sla_ttft_ms, sla_tpot_ms) -> list[str]:
-    """Names of the p99 bounds summary breaks ("ttft_p99", "tpot_p99"); empty means PASS.
-
-    A bound of None or 0 is not checked; tpot is skipped when the summary has none.
-    """
+    """Names of the p99 bounds summary breaks ("ttft_p99", "tpot_p99"); empty means PASS. A bound of None or 0 is not checked."""
     bound = []
     if sla_ttft_ms and summary["ttft_ms"]["p99"] > sla_ttft_ms:
         bound.append("ttft_p99")
@@ -405,9 +402,10 @@ def acceptance(reference_ids, generated_ids) -> tuple[int, float]:
 
 
 def burst_recovery(records, sla_ttft_ms, window_s: float = 5.0):
-    """(recovery_s, peak_p99) over arrival windows of window_s seconds.
+    """(recovery_s, peak_p99) over arrival buckets of window_s seconds, each bucket's p99 TTFT nearest-rank.
 
-    Records ({arrival_s, ttft_ms}) are bucketed by arrival from the first one, each bucket's p99 TTFT nearest-rank. recovery_s is the time from the worst bucket to the first later one at or under the SLA, None if none is; (None, None) with no records or no SLA."""
+    recovery_s is the time from the worst bucket to the first later one at or under the SLA, else None; (None, None) with no records or no SLA.
+    """
     if not records or sla_ttft_ms is None:
         return None, None
     rs = sorted(records, key=lambda r: r["arrival_s"])
@@ -433,7 +431,7 @@ def aggregate(
     target_rate: float = 0.0,
     warmup_concurrency: int = 0,
 ) -> BenchmarkSummary:
-    """Aggregate RequestResults into a BenchmarkSummary; requests held out by --discard-first are left out of every statistic, busy time included."""
+    """Aggregate RequestResults into a BenchmarkSummary; requests held out by --discard-first are in no statistic, busy time included."""
     excluded = sum(1 for r in results if r.excluded_from_summary)
     results = [r for r in results if not r.excluded_from_summary]
 
@@ -463,7 +461,7 @@ def aggregate(
                 summary.usage_reported_requests += 1
 
             if r.ttft is not None:
-                ttfts.append(r.ttft * 1000)  # ms
+                ttfts.append(r.ttft * 1000)
             if r.tpot is not None:
                 tpots.append(r.tpot * 1000)
             if r.itl:
@@ -552,7 +550,7 @@ def aggregate(
 
 @dataclass
 class TurnSummary:
-    """Per-turn metrics for multi-turn benchmarks."""
+    """Per-turn metrics for a multi-turn run."""
     turn_index: int
     num_requests: int = 0
     successful: int = 0
@@ -589,7 +587,7 @@ class TurnSummary:
 
 
 def aggregate_per_turn(results_by_turn: dict[int, list]) -> list[TurnSummary]:
-    """Aggregate metrics per turn for multi-turn benchmarks."""
+    """Aggregate metrics per turn."""
     summaries = []
     for turn_idx in sorted(results_by_turn.keys()):
         results = results_by_turn[turn_idx]
@@ -714,7 +712,7 @@ def usage_gate(summary, allow_missing: bool) -> tuple[str, str | None]:
 
 
 def transient_gate(num_requests: int, concurrency: int) -> tuple[str, str | None]:
-    """Warn when a closed-loop run has under 4 requests per concurrency slot: it is all startup wave and drain, and --discard-first cannot fix it."""
+    """Warn when a closed-loop run has under 4 requests per slot: it is all startup wave and drain."""
     if concurrency <= 1 or num_requests <= 0:
         return "pass", None
     per_slot = num_requests / concurrency
@@ -738,7 +736,6 @@ def first_error(results) -> str:
 
 
 def print_multi_turn_summary(turn_summaries: list, overall: BenchmarkSummary) -> None:
-    """Print per-turn metrics table for multi-turn benchmarks."""
     print_summary(overall)
     print(f"{'=' * 98}")
     print(" Per-Turn Breakdown (prefix cache effect visible in TTFT trend)")
@@ -757,7 +754,6 @@ def print_multi_turn_summary(turn_summaries: list, overall: BenchmarkSummary) ->
 
 
 def print_summary(s: BenchmarkSummary) -> None:
-    """Print a formatted benchmark summary to stdout."""
     print(f"\n{'=' * 52}")
     print(f" Benchmark Results: {s.profile} | concurrency={s.concurrency}")
     print(f"{'=' * 52}")

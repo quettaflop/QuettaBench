@@ -66,7 +66,7 @@ class EngineCfg:
     prefix_caching: bool = False
     serving_style: str = "aggregated"
     cudagraph: bool = True            # false: --enforce-eager
-    port: int = 8000                  # server port
+    port: int = 8000
     instrumentation: str = "none"     # armed at launch: none | nsys | torch
     image: str | None = None          # the server's docker image; required by hardware.launcher=docker
     extra: Mapping[str, Any] = field(default_factory=dict)  # quettaserve bench block lives here
@@ -223,8 +223,10 @@ def dict_field(path):
 
 # Serving-topology and expert-parallel rules: the loader refuses a Config that breaks them.
 def parse_serving_style(spec):
-    """Serving topology for a run, recorded so aggregated and disaggregated numbers are never mixed in one table. 'aggregated' (default) is one server over tp*pp GPUs. 'disagg:<P>p<D>d' splits prefill and decode onto disjoint GPU pools with a KV-transfer connector between them (vLLM PD). 'ep<N>dp<M>' is wide expert parallelism (N-way experts across M data-parallel replicas). 'afd:<A>a<F>f' puts attention and FFN/MoE layers on disjoint pools of A and F GPUs (attention-FFN disaggregation).
-    Returns {mode, ...degrees}; raises ValueError on a malformed spec so a fat-fingered topology fails at parse rather than silently running aggregated."""
+    """Parse a serving topology into {mode, ...degrees}, recorded so aggregated and disaggregated numbers never share a table; raises ValueError on a malformed spec.
+
+    'aggregated' (default) is one server over tp*pp GPUs; 'disagg:<P>p<D>d' splits prefill and decode onto disjoint pools with a KV connector (vLLM PD); 'ep<N>dp<M>' is N-way experts across M data-parallel replicas; 'afd:<A>a<F>f' puts attention and FFN/MoE layers on disjoint pools of A and F GPUs.
+    """
     if spec in (None, "", "aggregated"):
         return {"mode": "aggregated"}
     m = re.fullmatch(r"disagg:(\d+)p(\d+)d", spec)
@@ -260,11 +262,11 @@ def device_count(engine):
 
 
 def check_ep_legal(ep, num_experts):
-    """Expert parallelism must evenly divide the model's expert count, else a rank ends up with a ragged expert shard the engine cannot place. Raises on an illegal degree rather than letting the engine fail deep in load."""
+    """Raise unless the ep degree divides the model's expert count, rather than let the engine fail deep in load."""
     if num_experts % ep != 0:
         raise ValueError(f"ep={ep} does not divide {num_experts} experts")
 
 
 def serving_style_compatible(a, b):
-    """Two rows compare only when their serving topology matches; a disagg number against an aggregated one is a category error the table must refuse, the same way an NCCL or KV mismatch withholds a ratio."""
+    """Two rows compare only when their serving topology matches."""
     return parse_serving_style(a)["mode"] == parse_serving_style(b)["mode"]

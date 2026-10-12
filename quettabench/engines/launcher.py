@@ -1,6 +1,6 @@
-"""Launcher: start an engine server from a LaunchSpec, locally in its own process group or detached in docker, wait for its health check, write results/<run>/engine.json, and stop it with every child.
+"""Start an engine server from a LaunchSpec, locally in its own process group or detached in docker, wait for its health check, write results/<run>/engine.json, and stop it with every child.
 
-A container is not --rm, so a crashed engine's log stays readable; the docker path has not run against a real daemon.
+A container is not --rm, so a crashed engine's log stays readable. The docker path has not run against a real daemon.
 """
 
 import glob
@@ -22,7 +22,7 @@ from quettabench.metrics.results import redact, secret
 
 REPO = Path(__file__).resolve().parents[2]
 
-# Engine endpoints are local or on cluster-private addresses; an http_proxy in the environment would send those requests through the proxy, which answers 403.
+# Engine endpoints are local or cluster-private; an http_proxy would route them through the proxy, which answers 403.
 _DIRECT = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
@@ -35,17 +35,16 @@ def urlopen(url, **kwargs):
 class Handle:
     adapter: str
     endpoint: str
-    pid: int              # the server, or for docker the `docker logs -f` stream
+    pid: int  # the server, or for docker the `docker logs -f` stream
     results_dir: Path
     proc: subprocess.Popen
     gpu: str = ""
-    container: str = ""   # docker: the container name
+    container: str = ""
     container_id: str = ""
     backend: str = "cuda"
 
     def stop(self, grace_s=30):
-        """SIGTERM the process group; SIGKILL whatever is left after grace_s.
-        A container gets `docker stop`; its log stream then ends (killed if it has not after grace_s + 10 s) and the container is removed."""
+        """SIGTERM the process group and SIGKILL what is left after grace_s; a container gets `docker stop`, then its log stream is ended and the container removed."""
         if self.container:
             subprocess.run(["docker", "stop", "-t", str(grace_s), self.container],
                            capture_output=True, check=False)
@@ -59,7 +58,7 @@ class Handle:
         deadline = time.monotonic() + grace_s
         if self._signal_group(signal.SIGTERM):
             while time.monotonic() < deadline and self._signal_group(0):
-                self.proc.poll()  # reap the leader so its zombie does not count
+                self.proc.poll()  # a zombie leader would still count
                 time.sleep(0.1)
             self._signal_group(signal.SIGKILL)
         self.proc.wait()
@@ -75,7 +74,7 @@ class Handle:
 
 @dataclass
 class NoServer:
-    """The handle of a run whose driver starts the engine itself (in-process vLLM, the cargo bench): the results dir, no endpoint, nothing to stop."""
+    """Handle for a driver that starts the engine itself (in-process vLLM, the cargo bench): no endpoint, nothing to stop."""
     results_dir: Path
     endpoint: str | None = None
     backend: str = "cuda"
@@ -150,7 +149,7 @@ def tool_lines(argv):
 
 
 def accelerator(backend="cuda"):
-    """(name, total bytes) of device 0: nvidia-smi on cuda, the name only from amd-smi or neuron-ls, nothing on tpu and cpu; ("", None) when the tool is missing, never a crash."""
+    """(name, total bytes) of device 0: nvidia-smi on cuda, the name only from amd-smi or neuron-ls; ("", None) when unavailable, never raises."""
     if backend in IDENTITY:
         argv, prefix = IDENTITY[backend]
         names = [line[len(prefix):].strip() for line in tool_lines(argv) if line.startswith(prefix)]
@@ -186,7 +185,7 @@ def remove(container):
 
 
 def container_name(run_name):
-    """qbench-<run_name>-<pid>-<6 random hex>, every character docker refuses in a name made -: two runs of one yaml, from two checkouts or one after a crash that left its container, never take the same name."""
+    """qbench-<run_name>-<pid>-<6 random hex> with characters docker refuses replaced by -, so two runs of one yaml never collide."""
     safe = re.sub(r"[^a-zA-Z0-9_.-]", "-", run_name)
     return f"qbench-{safe}-{os.getpid()}-{os.urandom(3).hex()}"
 
@@ -194,8 +193,8 @@ def container_name(run_name):
 def docker_argv(spec, cfg, gpus, results_dir):
     """`docker run -d` of spec.server_argv in spec.image on the given GPUs.
 
-    The flags: detached, --pull=never (provision never pulls, and a missing image fails here instead of downloading), --init (so the engine is not PID 1 and reaps its workers), the backend's device_flags, --ipc=host, --shm-size, the port published (unless the backend runs with --net=host), and the repo, the HF cache (hardware.hf_home, when set) and the model dir (when it is an absolute path no other mount covers; provision puts weights under <cache_root>/models/) mounted read-only at their host paths so model paths resolve unchanged inside; the run's results dir is mounted read-write at its absolute host path, so instrumentation output (nsys) lands there and outlives the container.
-    --entrypoint is the argv's first word, so the image's own ENTRYPOINT does not prefix the command. env is spec.env, the non-empty collective pins and HF_HOME; a secret-named one (docker_secrets) is passed as `-e NAME` alone, so docker takes its value from the env start() gives docker run.
+    --pull=never makes a missing image fail here instead of downloading; --init keeps the engine off PID 1 so its workers are reaped. The repo, HF cache and model dir mount read-only at their host paths so model paths resolve unchanged; the results dir mounts read-write so nsys output outlives the container.
+    --entrypoint is the argv's first word, so the image's ENTRYPOINT does not prefix it. A secret-named env var is passed as `-e NAME` alone, so docker reads its value from the env start() gives docker run.
     """
     hw, run_dir = cfg.hardware, Path(results_dir).resolve()
     if not spec.image:
@@ -220,7 +219,7 @@ def docker_argv(spec, cfg, gpus, results_dir):
 
 
 def docker_secrets(spec):
-    """The secret-named env of a docker launch (VLLM_API_KEY): docker_argv names them only, and start() hands their values to docker run's env."""
+    """The secret-named env of a docker launch (VLLM_API_KEY), passed by name only."""
     return {k: v for k, v in spec.env.items() if secret(k)}
 
 

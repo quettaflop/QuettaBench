@@ -26,7 +26,8 @@ class TurnPacing:
 class SessionTrace(RealTrace):
     """A RealTrace whose requests are turns; sessions() groups them by session_id in first-appearance order, each ordered by turn.
 
-    replies maps a session id to its assistant placeholder dicts, which later turns' messages share; empty when recorded replies are kept."""
+    replies maps a session id to the assistant placeholder dicts later turns share; empty when recorded replies are kept.
+    """
 
     pacing = TurnPacing()
     replies: Mapping = MappingProxyType({})
@@ -126,7 +127,8 @@ class LoadedSessionTrace(SessionTrace):
 class ShareGPTSessionTrace(LoadedSessionTrace):
     """ShareGPT conversations as growing-history turns, loading up to 3x num_sessions.
 
-    Pairs stop at the first reply outside the output length bounds and turns at the first that overflows max_isl_tokens; conversations under min_turns are skipped, longer ones cut at max_turns."""
+    Pairs stop at the first reply outside the output bounds and turns at the first that overflows max_isl_tokens; conversations under min_turns are skipped, longer ones cut at max_turns.
+    """
 
     def __init__(self, min_turns=3, max_turns=10, num_sessions=200, seed=42,
                  system_prompt="You are a helpful assistant.", max_isl_tokens=8192,
@@ -175,7 +177,8 @@ class ShareGPTSessionTrace(LoadedSessionTrace):
 class TrajectorySessionTrace(LoadedSessionTrace):
     """Agent trajectories, one session per JSONL line: {"session_id", "turns": [{"messages", "osl_tokens"}, ...]}.
 
-    Sessions under min_turns are skipped, longer ones cut at max_turns; a session stops at the first turn whose estimated prompt exceeds max_isl_tokens less its output and the safety margin."""
+    Sessions under min_turns are skipped, longer ones cut at max_turns; a session stops at the first turn whose estimated prompt exceeds max_isl_tokens less its output and the margin.
+    """
 
     def __init__(self, path, min_turns=3, max_turns=30, num_sessions=100, seed=42,
                  max_isl_tokens=131072, max_osl_tokens=2000, context_safety_margin_tokens=0,
