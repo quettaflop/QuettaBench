@@ -90,7 +90,7 @@ class EngineCfg:
     image: str | None = None  # the server's docker image; required by hardware.launcher=docker
     extra: Mapping[str, Any] = field(default_factory=dict)  # quettaserve bench block lives here
     # Facts the capacity gate needs (grid CAPACITY line).
-    kv_bytes: int | None = None  # per token; None allowed only for dense
+    kv_bytes_per_token: int | None = None  # per token; None allowed only for dense
     weights_gib: float | None = None
     attention: str = "dense"
     num_experts: int | None = None

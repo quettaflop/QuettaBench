@@ -907,7 +907,7 @@ class FitRunTest(unittest.TestCase):
     def test_entry_matches_the_direct_fit(self):
         walls = [0.28, 1.01, 1.73]
         rows = batch(4096, 2, 400, 9.0, phase="warm", attempt=None) + attempt_rows(4096, 2, walls, 0)
-        (entry,) = fit_run(rows, eval_pos=50, kv_bytes=131072, weights_gib=15.0)
+        (entry,) = fit_run(rows, eval_pos=50, kv_bytes_per_token=131072, weights_gib=15.0)
         slope, inter, r2 = fit(STEPS, walls)
         kv_gib = 4096 * 2 * 131072 / GIB
         attn = kv_gib / (kv_gib + 15.0)

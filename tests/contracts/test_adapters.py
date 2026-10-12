@@ -46,8 +46,8 @@ RUNS = REPO / "configs" / "runs"
 PINNED = ["engine.model=<MODEL>", "allow_unverified=true", "hardware.backend=cpu", "hardware.link_profile=nvlink"]
 
 
-# The loader refuses qwen without kv_bytes; it is not a launch field, so any value unblocks the snapshot.
-UNBLOCK = {"qwen": ["engine.kv_bytes=1"]}
+# The loader refuses qwen without kv_bytes_per_token; it is not a launch field, so any value unblocks the snapshot.
+UNBLOCK = {"qwen": ["engine.kv_bytes_per_token=1"]}
 
 
 def engine_spec_for(name, env=None, sets=()):

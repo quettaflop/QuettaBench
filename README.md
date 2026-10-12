@@ -157,7 +157,7 @@ A floor run is trusted once it is deterministic: the same run compared twice giv
 
 ### Model notes
 
-llama is verified. deepseek, qwen, qwen3, glm53 and glm53flash are bring-up (`verified: false`, run with `--allow-unverified`) until a clean golden run. MLA and hybrid stacks must set `kv_bytes`; the dense per-head formula overestimates their KV (the loader refuses them without it). So `configs/runs/qwen.yaml` does not load until `kv_bytes` is set in `configs/models/qwen35_9b.yaml`: qwen is hybrid attention, and the loader refuses rather than fall back to the dense formula. deepseek needs the DeepSeek vLLM fork, the tp-sliced fp4 checkpoint (ds-0731-tp8-fp4), and its KV differs by design (engine bf16 latent vs `fp8_ds_mla`), so its ratios are withheld. glm53 and glm53flash have no engine bench yet: vLLM side only. `comm_bound_bs` is set only after a measured grid, never copied across models.
+llama is verified. deepseek, qwen, qwen3, glm53 and glm53flash are bring-up (`verified: false`, run with `--allow-unverified`) until a clean golden run. MLA and hybrid stacks must set `kv_bytes_per_token`; the dense per-head formula overestimates their KV (the loader refuses them without it). So `configs/runs/qwen.yaml` does not load until `kv_bytes_per_token` is set in `configs/models/qwen35_9b.yaml`: qwen is hybrid attention, and the loader refuses rather than fall back to the dense formula. deepseek needs the DeepSeek vLLM fork, the tp-sliced fp4 checkpoint (ds-0731-tp8-fp4), and its KV differs by design (engine bf16 latent vs `fp8_ds_mla`), so its ratios are withheld. glm53 and glm53flash have no engine bench yet: vLLM side only. `comm_bound_bs` is set only after a measured grid, never copied across models.
 
 ## Layout
 

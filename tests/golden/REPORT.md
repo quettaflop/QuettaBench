@@ -135,3 +135,9 @@ Run `python3 -m pytest tests/golden -q`. `QBENCH_GOLDEN_REGEN=1` rewrites the fi
 2026-10-12: `baseline_llama.json` changed by rename only: the key `kv_dtype` is `kv_cache_dtype`; no value changed.
 
 2026-10-12: `config_workloads.json` changed by rename only: the captured engine key `kv_dtype` is `kv_cache_dtype`; no value changed.
+
+2026-10-12: `config_workloads.json` changed by rename only: the captured engine key `kv_bytes` is `kv_bytes_per_token`; no value changed.
+
+2026-10-12: `config_failures.json` changed by rename only: the failure case `mla_without_kv_bytes` is `mla_without_kv_bytes_per_token` and its message says `kv_bytes_per_token`; no value changed.
+
+2026-10-12: `engine_args.json` changed by rename only: the key `kv_bytes` is `kv_bytes_per_token`; no value changed.

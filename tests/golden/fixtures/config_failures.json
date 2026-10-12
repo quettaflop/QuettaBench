@@ -19,7 +19,7 @@
   "message": "unknown link profile 'infiniband'; use pcie or nvlink",
   "type": "ValueError"
  },
- "mla_without_kv_bytes": {
+ "mla_without_kv_bytes_per_token": {
   "capacity": [
    "CAPACITY mode=FULL tp=1 dtype=bfloat16 kv_bytes_per_token=3747840 free_gib=28 kv_tokens=8079"
   ],

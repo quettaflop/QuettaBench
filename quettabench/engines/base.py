@@ -49,7 +49,7 @@ class LaunchSpec:
 
 
 # EngineCfg fields that describe the model or pick the adapter.
-FACTS = frozenset({"name", "model_name", "kv_bytes", "weights_gib", "attention", "num_experts", "verified"})
+FACTS = frozenset({"name", "model_name", "kv_bytes_per_token", "weights_gib", "attention", "num_experts", "verified"})
 
 
 class EngineAdapter(ABC):

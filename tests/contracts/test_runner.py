@@ -32,7 +32,7 @@ def setUpModule():
 
 
 RUNS = sorted((REPO / "configs" / "runs").glob("*.yaml"))
-REFUSED = {"qwen": "attention=hybrid needs kv_bytes"}
+REFUSED = {"qwen": "attention=hybrid needs kv_bytes_per_token"}
 
 
 def qbench(*argv):

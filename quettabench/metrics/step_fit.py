@@ -26,7 +26,7 @@ def _get(row, name):
     return row.get(name) if isinstance(row, dict) else getattr(row, name, None)
 
 
-def fit_run(rows, eval_pos, kv_bytes, weights_gib):
+def fit_run(rows, eval_pos, kv_bytes_per_token, weights_gib):
     """Rows are fit per attempt; the highest r2 wins."""
     cells = {}
     for row in rows:
@@ -41,12 +41,12 @@ def fit_run(rows, eval_pos, kv_bytes, weights_gib):
             walls = cells.setdefault(key, {}).setdefault(cell["attempt"], {})
             walls.setdefault(cell["step_point"], _get(row, "batch_wall_s"))
     return [
-        cell if cell.get("measured") else _fit_cell(key, cell, eval_pos, kv_bytes, weights_gib)
+        cell if cell.get("measured") else _fit_cell(key, cell, eval_pos, kv_bytes_per_token, weights_gib)
         for key, cell in cells.items()
     ]
 
 
-def _fit_cell(key, attempts, eval_pos, kv_bytes, weights_gib):
+def _fit_cell(key, attempts, eval_pos, kv_bytes_per_token, weights_gib):
     ctx, bs, tp = key
     best = None
     for walls in attempts.values():
@@ -56,7 +56,7 @@ def _fit_cell(key, attempts, eval_pos, kv_bytes, weights_gib):
             best = (r2, slope, inter, xs, ys)
     r2, slope, inter, xs, ys = best
     mean_steps = sum(xs) / len(xs)
-    kv_gib = ctx * bs * kv_bytes / GIB
+    kv_gib = ctx * bs * kv_bytes_per_token / GIB
     attn = kv_gib / (kv_gib + weights_gib)
     ms = slope * 1e3
     return {

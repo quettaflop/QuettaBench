@@ -60,7 +60,7 @@ def mla_run_yaml():
         configs = Path(td, "configs")
         shutil.copytree(REPO / "configs", configs)
         (configs / "models" / "mla_probe.yaml").write_text(yaml.safe_dump(MLA_MODEL))
-        run = configs / "runs" / "mla_no_kv_bytes.yaml"
+        run = configs / "runs" / "mla_no_kv_bytes_per_token.yaml"
         run.write_text(yaml.safe_dump(MLA_RUN))
         yield run
 
@@ -89,11 +89,11 @@ def check_record(case, cfg, old, env):
     )
     case.assertEqual((e.tp, e.pp), (int(wl.get("tp", 1)), int(env.get("QBENCH_PP", wl.get("pp", 1)))))
     case.assertEqual(
-        (e.ep, e.kv_cache_dtype, e.kv_bytes, e.quant, e.verified),
+        (e.ep, e.kv_cache_dtype, e.kv_bytes_per_token, e.quant, e.verified),
         (
             bool(wl.get("expert_parallel")),
             wl.get("kv_cache_dtype") or "auto",
-            wl.get("kv_bytes"),
+            wl.get("kv_bytes_per_token"),
             wl.get("quant"),
             wl["verified"],
         ),
@@ -164,7 +164,7 @@ class ConfigResolutionGolden(unittest.TestCase):
         check_json(self, "config_workloads", record)
 
     def test_qwen_needs_the_dense_override(self):
-        with self.assertRaisesRegex(loader.ConfigError, "attention=hybrid needs kv_bytes"):
+        with self.assertRaisesRegex(loader.ConfigError, "attention=hybrid needs kv_bytes_per_token"):
             loader.load(RUNS / "qwen.yaml", ["allow_unverified=true"], env={})
 
 
@@ -200,13 +200,13 @@ class ParseTimeFailuresGolden(unittest.TestCase):
         )
         with mla_run_yaml() as run_yaml:
             refused = run_grid_cli(["run", str(run_yaml), "--set", "engine.model=<MODEL>"], {}, model_config=MLA_CONFIG)
-            self.assertIn("attention=mla needs kv_bytes", refused["exit"])
+            self.assertIn("attention=mla needs kv_bytes_per_token", refused["exit"])
             mla = run_grid_cli(
                 ["run", str(run_yaml), "--set", "engine.model=<MODEL>", "--set", "engine.attention=dense"],
                 {},
                 model_config=MLA_CONFIG,
             )
-        failures["mla_without_kv_bytes"] = {
+        failures["mla_without_kv_bytes_per_token"] = {
             "exit": mla["exit"],
             "capacity": [line for line in mla["stdout"] if line.startswith("CAPACITY")],
         }

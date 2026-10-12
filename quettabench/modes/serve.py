@@ -473,10 +473,10 @@ def model_dir(model):
         ) from None
 
 
-def kv_bytes_per_token(engine):
-    """Hybrid and MLA stacks must set kv_bytes."""
-    if engine.kv_bytes:
-        return int(engine.kv_bytes)
+def resolve_kv_bytes_per_token(engine):
+    """Hybrid and MLA stacks must set kv_bytes_per_token."""
+    if engine.kv_bytes_per_token:
+        return int(engine.kv_bytes_per_token)
     with open(os.path.join(model_dir(engine.model), "config.json")) as f:
         cfg = json.load(f)
     cfg = cfg.get("text_config", cfg)
@@ -514,10 +514,10 @@ def meta(cfg, gpu, version, eval_pos, steps):
     return out
 
 
-def capacity(engine, gpu_bytes, kv_b):
+def capacity(engine, gpu_bytes, kv_bytes_per_token):
     gpu_gib = gpu_bytes / GIB
     free_gib = engine.tp * (gpu_gib * engine.gpu_util) - engine.weights_gib - engine.tp * RESERVE_GIB
-    return free_gib, int(free_gib * GIB / kv_b) if free_gib > 0 else 0
+    return free_gib, int(free_gib * GIB / kv_bytes_per_token) if free_gib > 0 else 0
 
 
 def measure_cell(driver, writer, mode, steps, prompts, cell):
@@ -576,10 +576,10 @@ def score_grid(trace, driver, cfg, writer):
 
 
 def run_bench(driver, cfg, writer):
-    """A KV SKIP needs engine.kv_bytes, engine.weights_gib and device memory."""
+    """A KV SKIP needs engine.kv_bytes_per_token, engine.weights_gib and device memory."""
     engine, hw, grid = cfg.engine, cfg.hardware, cfg.grid
-    device = driver.device() if engine.kv_bytes and engine.weights_gib is not None else None
-    cap = capacity(engine, device[1], engine.kv_bytes)[1] if device and device[1] else 0
+    device = driver.device() if engine.kv_bytes_per_token and engine.weights_gib is not None else None
+    cap = capacity(engine, device[1], engine.kv_bytes_per_token)[1] if device and device[1] else 0
     over = set(grid.cells_over_maxlen)
     record, kept = {"bench_log": str(driver.log_path), "events": []}, []
     for ctx, bs, spec in driver.cells:
@@ -620,14 +620,14 @@ def run_grid(trace, driver, cfg, writer):
         }
     shown = print_grid_tag_lines(run)
 
-    kv_b = kv_bytes_per_token(engine)
+    kv_bytes_per_token = resolve_kv_bytes_per_token(engine)
     # amd-smi, neuron-ls and tpu report no memory size, so those grids skip the KV SKIP.
-    free_gib, cap = capacity(engine, gpu_bytes, kv_b) if gpu_bytes else (None, 0)
+    free_gib, cap = capacity(engine, gpu_bytes, kv_bytes_per_token) if gpu_bytes else (None, 0)
     run["capacity"] = {
         "mode": graph_mode(engine),
         "tp": engine.tp,
         "dtype": engine.dtype,
-        "kv_bytes": kv_b,
+        "kv_bytes_per_token": kv_bytes_per_token,
         "free_gib": free_gib,
         "kv_tokens": cap,
     }
@@ -655,12 +655,12 @@ def run_grid(trace, driver, cfg, writer):
                 shown = print_grid_tag_lines(run, shown)
             cell_rows = measure_cell(driver, writer, mode, steps, prompts, {"ctx": ctx, "bs": bs, "tp": engine.tp})
             rows += cell_rows
-            (step,) = fit_run(cell_rows, eval_pos, kv_b, engine.weights_gib)
+            (step,) = fit_run(cell_rows, eval_pos, kv_bytes_per_token, engine.weights_gib)
             run["events"].append({"event": "result", "ctx": ctx, "bs": bs, "step": step})
         shown = print_grid_tag_lines(run, shown)
     run["done"] = True
     print_grid_tag_lines(run, shown)
-    return run, fit_run(rows, eval_pos, kv_b, engine.weights_gib), rows
+    return run, fit_run(rows, eval_pos, kv_bytes_per_token, engine.weights_gib), rows
 
 
 class SessionDispatcher:

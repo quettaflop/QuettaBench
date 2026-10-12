@@ -518,14 +518,14 @@ class ModelConfig(unittest.TestCase):
             (repo / "refs" / "main").write_text("abc123")
             (snap / "config.json").write_text(json.dumps(DENSE_CONFIG))
             with mock.patch("huggingface_hub.constants.HF_HUB_CACHE", cache):
-                self.assertEqual(serve.kv_bytes_per_token(EngineCfg(model="org/toy")), 131072)
+                self.assertEqual(serve.resolve_kv_bytes_per_token(EngineCfg(model="org/toy")), 131072)
                 with self.assertRaisesRegex(ConfigError, "huggingface-cli download org/missing"):
-                    serve.kv_bytes_per_token(EngineCfg(model="org/missing"))
+                    serve.resolve_kv_bytes_per_token(EngineCfg(model="org/missing"))
 
     def test_a_local_dir_reads_its_config(self):
         with tempfile.TemporaryDirectory() as model:
             Path(model, "config.json").write_text(json.dumps(DENSE_CONFIG))
-            self.assertEqual(serve.kv_bytes_per_token(EngineCfg(model=model)), 131072)
+            self.assertEqual(serve.resolve_kv_bytes_per_token(EngineCfg(model=model)), 131072)
 
 
 class GridRunOverHttp(unittest.TestCase):

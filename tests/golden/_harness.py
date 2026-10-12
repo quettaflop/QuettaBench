@@ -44,7 +44,7 @@ ENV_OVERRIDE = {
 
 RUNS = REPO / "configs" / "runs"
 
-# The loader refuses hybrid attention without kv_bytes, so the qwen golden run says dense.
+# The loader refuses hybrid attention without kv_bytes_per_token, so the qwen golden run says dense.
 AS_VMIN_FIT = {"qwen": ["engine.attention=dense"]}
 
 # The one cell the fake clock makes noisy, to produce a RESULT line with r2 < 0.999.

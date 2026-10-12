@@ -100,7 +100,7 @@ class ProvisionPlanGolden(unittest.TestCase):
     def test_a_refused_run_yaml_is_missing(self):
         record = run_dry_provision(["qwen"], [])
         self.assertEqual(record["rc"], 1)
-        self.assertIn("attention=hybrid needs kv_bytes", record["stderr"][0])
+        self.assertIn("attention=hybrid needs kv_bytes_per_token", record["stderr"][0])
         self.assertTrue(record["stderr"][0].startswith("[provision] MISSING: "))
 
     def test_a_matrix_run_yaml_is_missing(self):

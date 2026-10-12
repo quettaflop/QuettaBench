@@ -80,7 +80,7 @@ def _linfit(xs: list[float], ys: list[float]) -> tuple[float, float]:
     return (sy - slope * sx) / n, slope
 
 
-def _conc_sweep(a, cost, model):
+def _concurrency_sweep(a, cost, model):
     """Herds of unique ~512-token prompts."""
 
     def herd(c: int) -> list[tuple[float, float, int]]:
@@ -90,7 +90,7 @@ def _conc_sweep(a, cost, model):
 
     print("# concurrent herd sweep (512-token prompts; warmup herd per point)", flush=True)
     herd(max(_CONC_SWEEP))
-    conc_rows = []
+    concurrency_rows = []
     for c in _CONC_SWEEP:
         herd(c)
         res = herd(c)
@@ -99,20 +99,20 @@ def _conc_sweep(a, cost, model):
         turn = Turn(cache_hit_tokens=0.0, new_prefill_tokens=float(ptok), osl_tokens=8)
         pred_ttfts, _ = predict_cell(cost, [turn], c)
         pred = pred_ttfts[0] if pred_ttfts else 0.0
-        conc_rows.append((c, meas, pred, meas - pred))
+        concurrency_rows.append((c, meas, pred, meas - pred))
         print(
             f"  c={c:3d}  measured={meas:8.1f}ms  sim(frontend-off)={pred:8.1f}ms  resid={meas - pred:7.1f}ms",
             flush=True,
         )
-    base_resid = max(1e-6, conc_rows[0][3])
-    mult_pts = [(c, max(1.0, round(resid / base_resid, 2))) for c, _m, _p, resid in conc_rows]
-    if a.only_conc:
+    base_resid = max(1e-6, concurrency_rows[0][3])
+    mult_pts = [(c, max(1.0, round(resid / base_resid, 2))) for c, _m, _p, resid in concurrency_rows]
+    if a.only_concurrency:
         print(f"\n  mult_curve: {[[c, m] for c, m in mult_pts]}  # measured resid ratio; lanes flat")
         print(
             f"  # measured (c, median ttft ms, sim frontend-off ms): "
-            f"{[(c, round(m, 1), round(p, 1)) for c, m, p, _ in conc_rows]}"
+            f"{[(c, round(m, 1), round(p, 1)) for c, m, p, _ in concurrency_rows]}"
         )
-    return mult_pts, conc_rows
+    return mult_pts, concurrency_rows
 
 
 _SEED = [0]
@@ -138,9 +138,11 @@ def frontend_parser():
     )
     ap.add_argument("--base-url", default="http://localhost:8000/v1")
     ap.add_argument("--tp", type=int, default=1)
-    ap.add_argument("--skip-conc", action="store_true", help="skip the concurrent herd sweep (parts 1-2 only)")
+    ap.add_argument("--skip-concurrency", action="store_true", help="skip the concurrent herd sweep (parts 1-2 only)")
     ap.add_argument(
-        "--only-conc", action="store_true", help="run only the concurrent herd sweep (parts 1-2 already collected)"
+        "--only-concurrency",
+        action="store_true",
+        help="run only the concurrent herd sweep (parts 1-2 already collected)",
     )
     ap.add_argument("--out", default=None, help="write frontend_probe()'s dict here as JSON")
     return ap
@@ -164,11 +166,11 @@ def frontend_probe(a):
 
     _stream_once(a.base_url, a.model, _prompt(64))
 
-    if a.only_conc:
-        mult_pts, conc_rows = _conc_sweep(a, cost, model)
+    if a.only_concurrency:
+        mult_pts, concurrency_rows = _concurrency_sweep(a, cost, model)
         return {
             "frontend": {"mult_curve": [[c, m] for c, m in mult_pts]},
-            "conc": [[c, m, p] for c, m, p, _ in conc_rows],
+            "concurrency": [[c, m, p] for c, m, p, _ in concurrency_rows],
         }
 
     X, y_ttft, step_resid = [], [], []
@@ -208,10 +210,10 @@ def frontend_probe(a):
     _c0, slope_c = _linfit(Xc, y_hit)
     rate_c = max(0.0, slope_c)
 
-    if a.skip_conc:
-        mult_pts, conc_rows = [(1, 1.0)], []
+    if a.skip_concurrency:
+        mult_pts, concurrency_rows = [(1, 1.0)], []
     else:
-        mult_pts, conc_rows = _conc_sweep(a, cost, model)
+        mult_pts, concurrency_rows = _concurrency_sweep(a, cost, model)
 
     print(f"\n[{a.gpu_label} / {a.model} / tp{a.tp}] live-server frontend probe\n")
     print(f"# paste into device_spec/{a.gpu_label.lower()}.yaml (quettabench.profiling.client_side):")
@@ -223,7 +225,7 @@ def frontend_probe(a):
     print("  lanes_curve: []   # not separable from mult in this probe; leave flat")
     print(
         f"  # measured (c, median ttft ms, sim frontend-off ms): "
-        f"{[(c, round(m, 1), round(p, 1)) for c, m, p, _ in conc_rows]}"
+        f"{[(c, round(m, 1), round(p, 1)) for c, m, p, _ in concurrency_rows]}"
     )
     print("serving:")
     print(
@@ -233,7 +235,7 @@ def frontend_probe(a):
     print("  max_concurrent_prefills: 2")
     print(f"  kernel_ttft_overhead_ms: {round(floor, 2)}   # per-request first-token host floor")
     print(f"  kernel_step_overhead_ms: {round(step_over, 3)}   # per-step host floor (whole step)")
-    print("  kernel_step_overlap_per_ms: 0.0   # measure with a high-conc TPOT sweep before setting")
+    print("  kernel_step_overlap_per_ms: 0.0   # measure with a high-concurrency TPOT sweep before setting")
     return {
         "frontend": {
             "floor_ms": round(floor, 2),
@@ -250,7 +252,7 @@ def frontend_probe(a):
             "kernel_step_overhead_ms": round(step_over, 3),
             "kernel_step_overlap_per_ms": 0.0,
         },
-        "conc": [[c, m, p] for c, m, p, _ in conc_rows],
+        "concurrency": [[c, m, p] for c, m, p, _ in concurrency_rows],
     }
 
 
@@ -434,7 +436,7 @@ def pd_proxy_overhead_probe(a) -> list[dict]:
     log = Path(a.proxy_log)
     rows: list[dict] = []
 
-    def score(phase: str, conc: int, client: dict, prox: dict) -> dict:
+    def score(phase: str, concurrency: int, client: dict, prox: dict) -> dict:
         pu = prox["prefill_usage"]
         total = int(pu["prompt_tokens"])
         cached_p = int(pu.get("cached_tokens") or 0)
@@ -450,7 +452,7 @@ def pd_proxy_overhead_probe(a) -> list[dict]:
         r = {
             "gpu": a.gpu_label,
             "phase": phase,
-            "conc": conc,
+            "conc": concurrency,
             "tokens_total": total,
             "tokens_new_p": new_p,
             "tokens_cached_d": cached_d if phase != "cold" else 0,
@@ -464,7 +466,7 @@ def pd_proxy_overhead_probe(a) -> list[dict]:
             "client_ttft_ms": round(client["client_ttft_ms"], 1),
         }
         print(
-            f"  {phase:5s} c{conc:<3} total={total:>7} new_p={new_p:>7} | P {prefill_ms:8.1f} ms "
+            f"  {phase:5s} c{concurrency:<3} total={total:>7} new_p={new_p:>7} | P {prefill_ms:8.1f} ms "
             f"(sim {sp:7.1f}, resid {r['p_resid_ms']:8.1f}) | D-first {d_first:8.1f} ms "
             f"(step {sd:5.1f} + pull {spull:5.1f}, resid {r['d_resid_ms']:8.1f})",
             flush=True,

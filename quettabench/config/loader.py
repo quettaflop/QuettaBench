@@ -32,7 +32,7 @@ MODEL_KEYS = {
     "weights_gib": "engine.weights_gib",
     "max_model_len": "engine.max_model_len",
     "kv_cache_dtype": "engine.kv_cache_dtype",
-    "kv_bytes": "engine.kv_bytes",
+    "kv_bytes_per_token": "engine.kv_bytes_per_token",
     "quant": "engine.quant",
     "ep": "engine.ep",
     "attention": "engine.attention",
@@ -243,9 +243,9 @@ def _validate(values, origins, allow_unverified, where):
         raise ConfigError(f"{where}: engine.name=quettaserve runs on CUDA only; hardware.backend={backend}")
     if values["mode.mode"] == "probe" and not values["mode.probe"]:
         raise ConfigError(f"{where}: mode=probe needs mode.probe, a quettabench.probes module")
-    if values["engine.attention"] in ("mla", "hybrid") and values["engine.kv_bytes"] is None:
+    if values["engine.attention"] in ("mla", "hybrid") and values["engine.kv_bytes_per_token"] is None:
         raise ConfigError(
-            f"{where}: attention={values['engine.attention']} needs kv_bytes; "
+            f"{where}: attention={values['engine.attention']} needs kv_bytes_per_token; "
             "the dense per-head formula overestimates its KV"
         )
     profile = values["mode.serve_profile"]

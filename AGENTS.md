@@ -38,7 +38,7 @@ One line each; everything else follows section 2 "Target layout".
 - `configs/hardware/` holds the NCCL link profiles and `configs/workloads.yaml` the named workload profiles, beside section 2's models, grids and runs.
 - `InProcessDriver` stays though the parity gate passed (`tests/parity/slope_gate.json`): grid timing runs over HTTP, and in-process is kept only for `mode.return_outputs` text or logits runs, the only path that returns token ids, text or logits.
 - `engines/drivers.py` also holds the transformers FIDELITY reference adapter (`engine.name: reference`) beside `ReferenceDriver`; `engines/__init__.py` imports the adapters so they register.
-- `modes/serve.py` `model_dir` resolves engine.model through the local HF cache for the grid's KV formula: config resolution inside the procedure, kept there because only a grid run with no `engine.kv_bytes` needs it.
+- `modes/serve.py` `model_dir` resolves engine.model through the local HF cache for the grid's KV formula: config resolution inside the procedure, kept there because only a grid run with no `engine.kv_bytes_per_token` needs it.
 - `EngineAdapter` has no `profiler_hook`: the profiler attaches through `engine.json` and nothing would call one.
 - `modes/serve.py` is about 880 lines, not under 400: the replay, the session dispatch and the grid cells all live in serve, as section 2 assigns them.
 - `probes/_timing.py` holds the CUDA-graph and NCU timing, not `probes/base.py`: it imports torch, and the runner imports `base.py` on CPU.

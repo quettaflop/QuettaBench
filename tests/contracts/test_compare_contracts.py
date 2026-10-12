@@ -217,19 +217,19 @@ class CompareScripts(unittest.TestCase):
             sys.path.pop(0)
 
     def test_glm53_workload_contract(self):
-        # GLM-5.3 is MLA + DSA, so kv_bytes uses the latent formula.
+        # GLM-5.3 is MLA + DSA, so kv_bytes_per_token uses the latent formula.
         e = _config("glm53").engine
         layers, kv_lora_rank, rope, bf16 = 78, 512, 64, 2
-        self.assertEqual(e.kv_bytes, layers * (kv_lora_rank + rope) * bf16)
+        self.assertEqual(e.kv_bytes_per_token, layers * (kv_lora_rank + rope) * bf16)
         self.assertEqual((e.quant, e.tp * e.pp, e.ep), ("fp8", 8, True))
         self.assertFalse(e.verified, "bring-up gate: runs need ALLOW_UNVERIFIED=1")
         check_ep_legal(e.tp, 256)
 
     def test_glm53flash_workload_contract(self):
-        # Hybrid: only the 11 sparse-MLA layers hold per-token KV, so kv_bytes is mandatory.
+        # Hybrid: only the 11 sparse-MLA layers hold per-token KV, so kv_bytes_per_token is mandatory.
         e = _config("glm53flash").engine
         mla_layers, kv_lora_rank, rope, bf16 = 11, 512, 0, 2
-        self.assertEqual(e.kv_bytes, mla_layers * (kv_lora_rank + rope) * bf16)
+        self.assertEqual(e.kv_bytes_per_token, mla_layers * (kv_lora_rank + rope) * bf16)
         self.assertEqual((e.quant, e.tp, e.ep), ("fp8", 4, True))
         self.assertFalse(e.verified, "bring-up gate: runs need ALLOW_UNVERIFIED=1")
         check_ep_legal(e.tp, 288)
@@ -758,7 +758,7 @@ class ConfigTree(unittest.TestCase):
         e = _config("qwen3").engine
         # Hybrid stack: KV lives only in the 16 full-attention layers.
         self.assertEqual(
-            (e.tp, e.kv_bytes, e.dtype, e.ep, e.verified), (4, 16 * 2 * 4 * 256 * 2, "bfloat16", False, False)
+            (e.tp, e.kv_bytes_per_token, e.dtype, e.ep, e.verified), (4, 16 * 2 * 4 * 256 * 2, "bfloat16", False, False)
         )
 
     def test_pcie_pins_the_collective(self):

@@ -167,11 +167,13 @@ class LoaderRules(unittest.TestCase):
         cfg = self.one(model={"verified": False}, overrides=["allow_unverified=true"])
         self.assertFalse(cfg.engine.verified)
 
-    def test_mla_and_hybrid_need_kv_bytes(self):
+    def test_mla_and_hybrid_need_kv_bytes_per_token(self):
         for attention in ("mla", "hybrid"):
-            with self.subTest(attention), self.assertRaisesRegex(ConfigError, "needs kv_bytes"):
+            with self.subTest(attention), self.assertRaisesRegex(ConfigError, "needs kv_bytes_per_token"):
                 self.load(model={"attention": attention})
-        self.assertEqual(self.one(model={"attention": "mla", "kv_bytes": 24768}).engine.kv_bytes, 24768)
+        self.assertEqual(
+            self.one(model={"attention": "mla", "kv_bytes_per_token": 24768}).engine.kv_bytes_per_token, 24768
+        )
 
     def test_bad_enum_value(self):
         with self.assertRaisesRegex(ConfigError, "unknown prompt_mode 'random'; use distinct, clone, corpus or trace"):

@@ -799,7 +799,7 @@ def build_roofline_utils(gpu: str, params_path: Path, trace_paths: dict[str, Pat
     params = json.loads(params_path.read_text())
     n_params = float(params["n_params"])
     bpp = float(params["bytes_per_param"])
-    kv_bpt = float(params["kv_bytes_per_token"])
+    kv_bytes_per_token = float(params["kv_bytes_per_token"])
     peak_flops = float(params["peak_flops_per_s"])
     peak_bw = float(params["peak_bw_bytes_per_s"])
 
@@ -834,7 +834,9 @@ def build_roofline_utils(gpu: str, params_path: Path, trace_paths: dict[str, Pat
                 continue
             if _i(s.get("step_id")) <= WARMUP_STEP_ID:
                 continue
-            bw_ms = (bpp * n_params + c["ctx_total"] * kv_bpt + c["batch"] * kv_bpt) / peak_bw * 1e3
+            bw_ms = (
+                (bpp * n_params + c["ctx_total"] * kv_bytes_per_token + c["batch"] * kv_bytes_per_token) / peak_bw * 1e3
+            )
             if bw_ms < BW_DOMINANCE * SCHED_PRIOR_MS:
                 continue
             wall = _f(s.get("engine_step_wall_ms"))

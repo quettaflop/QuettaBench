@@ -480,7 +480,7 @@
  "qwen": {
   "diff_vmin_fit_vs_trace_serve": null,
   "trace_serve": {
-   "exit": "trace_serve: <REPO>/configs/runs/qwen.yaml [qwen]: attention=hybrid needs kv_bytes; the dense per-head formula overestimates its KV"
+   "exit": "trace_serve: <REPO>/configs/runs/qwen.yaml [qwen]: attention=hybrid needs kv_bytes_per_token; the dense per-head formula overestimates its KV"
   },
   "vmin_fit": {
    "disable_log_stats": true,
