@@ -1,4 +1,4 @@
-"""qbench export: results dirs in, QuettaSim's files out; the one route out of QuettaBench."""
+"""qbench export: results dirs in, QuettaSim's files out."""
 
 from __future__ import annotations
 
@@ -24,18 +24,17 @@ from quettabench.metrics.core import SUMMARY_FIELDS, summarize_cell
 from quettabench.metrics.results import RUN_MARKERS, bench_sha, write_atomic
 
 TP_DEGREES = (2, 4)
-# The finish time of a run with none, or none that parses: older than any.
+# Older than any finish time.
 NEVER = datetime.min.replace(tzinfo=timezone.utc)
 
 
 def clearing(path: Path, root: Path) -> bool:
-    """path sits in a .clearing-* dir under root, left by an interrupted runner.clear_run_dir."""
     return any(part.startswith(".clearing-") for part in Path(path).relative_to(root).parts)
 
 
 @functools.cache
 def run_dirs(root: Path) -> dict[Path, str | None]:
-    """{run dir: why export leaves it out, or None when kept} for every run dir under root; cached per root."""
+    """Cached per root."""
     runs = {}
     dirs = sorted({p.parent for marker in RUN_MARKERS for p in Path(root).rglob(marker) if not clearing(p, root)})
     for run_dir in dirs:
@@ -55,12 +54,10 @@ def run_dirs(root: Path) -> dict[Path, str | None]:
 
 
 def skipped_runs(root: Path) -> dict[Path, str]:
-    """{run dir: why} for every run dir under root that export leaves out."""
     return {d: why for d, why in run_dirs(Path(root)).items() if why}
 
 
 def owner(path: Path, root: Path, runs: dict[Path, str | None]) -> Path | None:
-    """The run dir path belongs to: path itself or its nearest run-dir ancestor up to root, else None."""
     for d in (path, *path.parents):
         if d in runs:
             return d
@@ -70,7 +67,6 @@ def owner(path: Path, root: Path, runs: dict[Path, str | None]) -> Path | None:
 
 
 def files(root: Path, pattern: str, recursive: bool = True) -> list[Path]:
-    """Paths under root matching pattern, sorted, without those in a .clearing-* dir or a run dir export leaves out."""
     root = Path(root)
     runs = run_dirs(root)
     hits = root.rglob(pattern) if recursive else root.glob(pattern)
@@ -78,7 +74,7 @@ def files(root: Path, pattern: str, recursive: bool = True) -> list[Path]:
 
 
 def finished(run_dir: Path | None) -> datetime:
-    """provenance.pulled (a remote run, on this machine's clock) or else provenance.finished as a UTC instant; NEVER when neither parses."""
+    """NEVER when neither parses."""
     try:
         provenance = json.loads((Path(run_dir) / "run.json").read_text())["provenance"]
         when = provenance["pulled"] if "pulled" in provenance else provenance["finished"]
@@ -88,7 +84,7 @@ def finished(run_dir: Path | None) -> datetime:
 
 
 def find(results_dirs: Iterable[Path], name: str) -> Path | None:
-    """The file called `name` whose ok run finished last, over every results dir; ties go to the earlier results dir, then the first path."""
+    """Ties go to the earlier results dir, then the first path."""
     best = None
     for rank, root in enumerate(map(Path, results_dirs)):
         runs = run_dirs(root)
@@ -100,7 +96,6 @@ def find(results_dirs: Iterable[Path], name: str) -> Path | None:
 
 
 def stage_split_gpus(results_dirs: Iterable[Path]) -> list[str]:
-    """The <gpu> labels with a tp1 stage-split leg (serving_stage_split_<gpu>.csv) in any results dir."""
     gpus = set()
     for root in map(Path, results_dirs):
         for path in files(root, "serving_stage_split_*.csv"):
@@ -111,7 +106,6 @@ def stage_split_gpus(results_dirs: Iterable[Path]) -> list[str]:
 
 
 def leg_model(csv: Path) -> str | None:
-    """The --model the stage-split probe ran with, from the run.json beside its csv."""
     path = csv.parent / "run.json"
     if not path.is_file():
         return None
@@ -124,7 +118,6 @@ def leg_model(csv: Path) -> str | None:
 
 
 def stage_split_legs(results_dirs: Iterable[Path], gpu: str) -> list[tuple[int, Path, Path]]:
-    """(tp, tp1 csv, tpN csv) for every tp degree with both stage-split legs, each the last-finished one."""
     tp1 = find(results_dirs, f"serving_stage_split_{gpu}.csv")
     legs = []
     for tp in TP_DEGREES:
@@ -156,7 +149,7 @@ REDUCE = {
 # The key a collectives row replaces a dest row on.
 COLLECTIVE_KEY = ("op", "world", "bytes")
 GEOMETRY = ("n_heads", "n_kv_heads", "head_dim")
-# (probe, kind) -> key columns of a CSV row; flash_attn and cross_attn replace every row of a head config.
+# flash_attn and cross_attn replace every row of a head config.
 ROW_KEYS = {
     ("flash_attn", "flash_attn"): GEOMETRY,
     ("flash_attn", "fa3_prefill"): GEOMETRY,
@@ -192,14 +185,14 @@ SORTED = {
 TOOLS = {"kv_transfer": "quettabench.profiling.kv_transfer"}
 # Probes whose run without --append replaces the whole table.
 RESET_WITHOUT_APPEND = ("gemm", "moe")
-# (probe, kind) whose JSON entries union across runs (gemm's fp8_act_quant).
+# gemm's fp8_act_quant.
 JSON_UNION = {("gemm", "elementwise")}
 # When a dest table finished, as a source: before every run.
 OLDEST = datetime.min.replace(tzinfo=timezone.utc)
 
 
 def _record(run_dir: Path) -> tuple[str | None, list[str], str | None]:
-    """(probe, its args, the day it finished) from run_dir/run.json; probe None for a run that is no probe run."""
+    """probe None for a run that is no probe run."""
     doc = json.loads((run_dir / "run.json").read_text())
     mode = (doc.get("config") or {}).get("mode") or {}
     probe = mode.get("probe") if mode.get("mode") == "probe" else None
@@ -218,7 +211,7 @@ def _gpu(args: list[str]) -> str | None:
 
 
 def _sidecar(rel: Path, by_probe: dict[str, list[Source]], runs: set[Path]) -> dict:
-    """rel's <file>.meta.json over the runs whose rows it holds; runs timed in two modes make mode unknown."""
+    """Runs timed in two modes make mode unknown."""
     probes, modes, gpus, reduces, days = set(), set(), set(), set(), []
     for probe, sources in by_probe.items():
         for _, table, run, _ in (s for s in sources if s[2] in runs):
@@ -246,7 +239,7 @@ def _sidecar(rel: Path, by_probe: dict[str, list[Source]], runs: set[Path]) -> d
 
 
 def _keep_sidecar(meta: dict, table: Path, kept: bool) -> dict:
-    """meta merged over the sidecar dest already has: a null field keeps the old value and notes join."""
+    """A null field keeps the old value and notes join."""
     path = table.with_name(table.name + ".meta.json")
     try:
         prior = json.loads(path.read_text()) if path.is_file() else {}
@@ -273,8 +266,6 @@ def _keep_sidecar(meta: dict, table: Path, kept: bool) -> dict:
 
 @dataclasses.dataclass
 class Rows:
-    """One run's rows of one table from its rows.jsonl: each row's key and value cells, the probe and how the rows were timed."""
-
     probe: str
     timings: set[str]
     cells: list[dict]
@@ -284,11 +275,10 @@ Source = tuple[datetime, "Path | Rows", Path, bool]  # (finished, dest table or 
 
 
 class Lost(SystemExit):
-    """The export would drop a dest row or column; replace (--replace-tables) replaces just the tables that stop with it."""
+    """Replace (--replace-tables) replaces just the tables that stop with it."""
 
 
 def _rows(run: Path) -> list[dict]:
-    """run's rows.jsonl, one ProbeRow dict per line; stops the export on a line that is not one."""
     rows = []
     for n, line in enumerate((run / "rows.jsonl").read_text().splitlines(), 1):
         try:
@@ -302,7 +292,6 @@ def _rows(run: Path) -> list[dict]:
 
 
 def found(results_dirs: Iterable[Path]) -> dict[Path, dict[str, list[Source]]]:
-    """{<dir>/<kind>/<file>: {probe: its ok runs' rows, in finished order}}."""
     tables: dict[Path, dict[str, list[Source]]] = {}
     for root in map(Path, results_dirs):
         for path in files(root, "rows.jsonl"):
@@ -328,7 +317,7 @@ def found(results_dirs: Iterable[Path]) -> dict[Path, dict[str, list[Source]]]:
 
 
 def _runs_used(probe: str, rel: Path, sources: list[Source]) -> list[Source]:
-    """The runs a probe's table is built from: every run for a keyed table (from the last one without --append, for gemm and moe), else the last to finish."""
+    """A keyed table uses every run (from the last without --append for gemm and moe), else the last."""
     kind = rel.parts[-2]
     if (probe, kind) in JSON_UNION and rel.suffix == ".json":
         return sources
@@ -341,7 +330,7 @@ def _runs_used(probe: str, rel: Path, sources: list[Source]) -> list[Source]:
 
 
 def _key(row: dict, key: tuple[str, ...]) -> tuple:
-    """row's key, numbers parsed with int(); an empty op is all_reduce, as QuettaSim's collectives loader reads it."""
+    """An empty op is all_reduce, as QuettaSim's collectives loader reads it."""
     return tuple(
         (row.get("op") or "all_reduce")
         if c == "op"
@@ -355,7 +344,6 @@ def _key(row: dict, key: tuple[str, ...]) -> tuple:
 
 
 def _newline(table: Path | Rows) -> str:
-    """The line ending of table's first line; a run's rows get csv's own."""
     if isinstance(table, Rows):
         return "\r\n"
     with table.open("rb") as f:
@@ -363,7 +351,6 @@ def _newline(table: Path | Rows) -> str:
 
 
 def _write_csv(out: Path, fields: list[str], rows: Iterable[dict], like: Path | Rows) -> None:
-    """rows under fields, with like's line ending."""
     with out.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fields, restval="", lineterminator=_newline(like))
         w.writeheader()
@@ -371,7 +358,7 @@ def _write_csv(out: Path, fields: list[str], rows: Iterable[dict], like: Path | 
 
 
 def _read_csv(rel: Path, table: Path | Rows, run: Path, key: tuple[str, ...] = ()) -> tuple[list[str], list[dict]]:
-    """table's header and rows as csv reads them; stops the export on a row with a missing or extra cell or an empty or unparsable key."""
+    """Stops the export on a bad row or an empty or unparsable key."""
     if isinstance(table, Rows):
         fields = list(dict.fromkeys(c for cells in table.cells for c in cells))
         rows = [{c: "" if cells.get(c) is None else str(cells[c]) for c in fields} for cells in table.cells]
@@ -404,7 +391,7 @@ def _read_json(rel: Path, table: Path | Rows, run: Path) -> object:
 def _union_csv(
     rel: Path, sources: list[Source], key: tuple[str, ...], out: Path, old: Source | None = None
 ) -> list[Path]:
-    """Rows of the dest table, then of every source oldest first, each replacing earlier rows on its keys; returns the run dirs with a row kept."""
+    """Oldest source first; later rows replace earlier ones on their keys."""
     order = next((cols for k, cols in SORTED.items() if ROW_KEYS[k] == key), None)
     fields: list[str] = []
     kept: list[tuple[dict, Path]] = []
@@ -432,7 +419,6 @@ def _union_csv(
 
 
 def _union_json(rel: Path, sources: list[Source], out: Path) -> list[Path]:
-    """Entries of every source in finished order, the later run winning a key."""
     merged: dict[str, tuple[object, Path]] = {}
     sources = sorted(sources, key=lambda s: (s[0], str(s[2])))
     for _, table, run, _ in sources:
@@ -446,7 +432,6 @@ def _union_json(rel: Path, sources: list[Source], out: Path) -> list[Path]:
 
 
 def _json_style(table: Path | Rows) -> tuple[int | None, str]:
-    """(indent, ending) of a dest JSON table, or of the probe's own JSON."""
     if isinstance(table, Rows):
         return JSON_STYLE[table.probe]
     text = table.read_text()
@@ -458,7 +443,7 @@ def _json_style(table: Path | Rows) -> tuple[int | None, str]:
 def _merge_collectives(
     rel: Path, collective: Source | None, vllm: Source | None, out: Path, old: Source | None = None
 ) -> list[Path]:
-    """Collectives table: old's rows, then the collective run's, then vllm_allreduce's all_reduce rows replacing earlier ones of their world."""
+    """vllm_allreduce's all_reduce rows replace earlier ones of their world."""
     sources = [(s, _read_csv(rel, s[1], s[2], COLLECTIVE_KEY)) for s in (old, collective, vllm) if s]
     fields: list[str] = []
     for _, (head, _) in sources:
@@ -495,7 +480,6 @@ def _merge_collectives(
 
 
 def _check(rel: Path, by_probe: dict[str, list[Source]]) -> None:
-    """Stop on a file two probes write that kernel_tables does not merge."""
     probes = sorted(by_probe)
     if len(probes) > 1 and (probes, rel.suffix) not in (
         (["collective", "vllm_allreduce"], ".csv"),
@@ -510,7 +494,7 @@ def _check(rel: Path, by_probe: dict[str, list[Source]]) -> None:
 def _lost(
     rel: Path, old: Source, out: Path, key: tuple[str, ...], newer: set[tuple], rows: list[dict] | None = None
 ) -> None:
-    """Stop (Lost) when out lacks a column of old or drops one of its rows, cell for cell, unless a newer run re-measured that key."""
+    """Unless a newer run re-measured that key."""
     head, olds = _read_csv(rel, old[1], old[1], key)
     fields, kept = _read_csv(rel, out, out, key)
     stop = "; give --replace-tables to replace each table that stops this way"
@@ -533,7 +517,6 @@ def _lost(
 
 
 def _write(rel: Path, by_probe: dict[str, list[Source]], out: Path, old: Source | None = None) -> list[Path]:
-    """Build one dest file over the dest table old, if any; returns the run dirs (and old's path) whose rows it holds."""
     used = {probe: _runs_used(probe, rel, sources) for probe, sources in by_probe.items()}
     probes = sorted(used)
     olds = [old] if old else []
@@ -569,7 +552,6 @@ def _write(rel: Path, by_probe: dict[str, list[Source]], out: Path, old: Source 
 def run_kernel_tables(
     results_dirs: Iterable[Path], dest: Path, replace: bool = False
 ) -> tuple[list[Path], dict[str, list[str]]]:
-    """Build every kernel table in a temp dir under dest, then replace the dest files; returns the files written and the run dirs behind each table."""
     tables = sorted(found(results_dirs).items())
     for rel, by_probe in tables:
         _check(rel, by_probe)
@@ -621,7 +603,7 @@ NCCL_PHYSICS_BAND_MS_PER_1K = (1.0, 3.0)  # external-lit all-reduce band, hidden
 
 
 def _span_new_rate(path: Path) -> dict:
-    """OLS prefill_span_ms ~ floor + a·new + b·cached over the stage-split rows."""
+    """OLS prefill_span_ms ~ floor + a*new + b*cached."""
     rows = list(csv.DictReader(path.open()))
     X = [(1.0, float(r["new"]), float(r["cached"])) for r in rows]
     y = [float(r["prefill_span_ms"]) for r in rows]
@@ -641,7 +623,7 @@ def _span_new_rate(path: Path) -> dict:
 
 
 def build_tpn(n: int, tpn_csv: Path, out_json: Path, tp1_csv: Path, gpu: str) -> None:
-    """Stage-split estimate at tp n: comm_total = span.new(tpN) - span.new(tp1)/N per new token, written for the <gpu>x<n> config."""
+    """comm_total = span.new(tpN) - span.new(tp1)/N per new token."""
     for p in (tp1_csv, tpn_csv):
         if not p.exists():
             raise SystemExit(f"missing {p} -- pull both stage-split legs first")
@@ -687,7 +669,7 @@ def build_tpn(n: int, tpn_csv: Path, out_json: Path, tp1_csv: Path, gpu: str) ->
 
 
 def build_tp2(tp1_csv: Path, tp2_csv: Path, out_json: Path, gpu: str) -> None:
-    """tp1 vs tp2: comm = span.new(tp2) - span.new(tp1)/2, checked against the NCCL physics band."""
+    """comm = span.new(tp2) - span.new(tp1)/2, checked against the NCCL physics band."""
     tp1 = _span_new_rate(tp1_csv)
     tp2 = _span_new_rate(tp2_csv)
     comm = tp2["new_ms_per_tok"] - tp1["new_ms_per_tok"] / 2.0
@@ -718,11 +700,10 @@ def build_tp2(tp1_csv: Path, tp2_csv: Path, out_json: Path, gpu: str) -> None:
 
 
 def run_tp_comm(results_dirs: Iterable[Path], dest: Path) -> list[Path]:
-    """Write dest/kernels/prefill_tp_comm_<gpu>[x<tp>].json for every gpu/tp whose legs exist."""
     written = []
     for gpu in stage_split_gpus(results_dirs):
         for tp, tp1_csv, tpn_csv in stage_split_legs(results_dirs, gpu):
-            if tp == 2:  # QuettaSim reads the tp2 file without a tp suffix
+            if tp == 2:  # QuettaSim reads the tp2 file without a tp suffix.
                 out_json = Path(dest) / "kernels" / f"prefill_tp_comm_{gpu}.json"
                 build_tp2(tp1_csv, tpn_csv, out_json, gpu)
             else:
@@ -739,7 +720,7 @@ TRACES = [
     "vllm_engine_step_trace_terminal_c80_t16_benchmark_serving_wall.jsonl",
 ]
 
-# Fixed before measuring; SCHED_PRIOR only gates eligibility and never enters the output.
+# SCHED_PRIOR only gates eligibility; it never enters the output.
 SCHED_PRIOR_MS = 5.7  # scheduler ms per step the net-of-scheduler diagnostic subtracts
 FULL_BATCH_FRAC = 0.9  # a decode step counts only at >= 90% of max_batch
 WARMUP_STEP_ID = 5  # steps up to this id are warmup
@@ -762,7 +743,7 @@ def load_trace(path: Path) -> list[dict]:
 
 
 def reconstruct_contexts(steps: list[dict]) -> list[dict | None]:
-    """Per decode-only step, {"ctx_total", "batch"}: context tokens across the decode batch, or None for a mixed step or unknown prompt."""
+    """None for a mixed step or unknown prompt."""
     prompt_tokens: dict[str, int] = {}
     generated: dict[str, int] = {}
     out: list[dict | None] = []
@@ -797,7 +778,6 @@ def reconstruct_contexts(steps: list[dict]) -> list[dict | None]:
 
 
 def quartile_medians(pairs: list[tuple[float, float]]) -> list[dict]:
-    """pairs = (bw_roofline_ms, ratio); medians per byte-scale quartile."""
     if not pairs:
         return []
     pairs = sorted(pairs)
@@ -962,7 +942,6 @@ def build_roofline_utils(gpu: str, params_path: Path, trace_paths: dict[str, Pat
 
 
 def run_roofline_utils(results_dirs: Iterable[Path], dest: Path) -> list[Path]:
-    """Write dest/kernels/roofline_utils_<gpu>.json for every gpu with its params and all traces."""
     written = []
     params = {}
     for root in map(Path, results_dirs):
@@ -984,7 +963,6 @@ OUT_FIELDS = SUMMARY_FIELDS + ["effective_context_len", "source_file"]
 
 
 def read_run(path: Path) -> tuple[dict, dict[tuple[int, int], list[dict]]]:
-    """One raw JSONL.gz -> (meta, {(B, nominal_T): [request records]})."""
     meta: dict = {}
     cells: dict[tuple[int, int], list[dict]] = {}
     opener = gzip.open if path.suffix == ".gz" else open
@@ -1008,7 +986,7 @@ LAG_UPGRADE_FIELD = "lag_reproducibility_upgrade"
 
 
 def build_decode_grid(inputs: list[Path], snap_tolerance: float = 0.02, lag_upgrade: bool = False) -> list[dict]:
-    """Merge decode-grid runs (latest wins per cell) and summarize one row per cell; lag_upgrade lets a reproducible lag-only flag pass as ok."""
+    """lag_upgrade lets a reproducible lag-only flag pass as ok."""
     sig = inspect.signature(summarize_cell)
     min_samples = sig.parameters["min_samples"].default
     lag_limit_ms = sig.parameters["lag_limit_ms"].default
@@ -1032,7 +1010,7 @@ def build_decode_grid(inputs: list[Path], snap_tolerance: float = 0.02, lag_upgr
         eff = row["context_len"]
         nominal = row["nominal_T"]
         row["effective_context_len"] = eff
-        # Snap context_len to nominal T so load_grid's t-axis is not ragged; beyond the tolerance the cell is flagged check.
+        # Snap to nominal T so load_grid's t-axis is not ragged; beyond tolerance the cell is flagged check.
         snap_ok = nominal > 0 and abs(eff - nominal) / nominal <= snap_tolerance
         if snap_ok:
             row["context_len"] = nominal
@@ -1042,7 +1020,7 @@ def build_decode_grid(inputs: list[Path], snap_tolerance: float = 0.02, lag_upgr
                 f"cell {key}: effective context {eff} deviates >{snap_tolerance:.0%} "
                 f"from nominal {nominal} -> kept + check"
             )
-        # A lag-only flag becomes ok when >= 2 clean passes agree on decode_step_ms and the adopted pass's lag is near the limit.
+        # Lag-only flag becomes ok when >= 2 clean passes agree and lag is near the limit.
         if (
             lag_upgrade
             and row["validation_status"] == "check"
@@ -1094,7 +1072,6 @@ def write_grid(rows: list[dict], out: Path, lag_upgrade: bool = False) -> None:
 
 
 def run_serving_decode_grid(results_dirs: Iterable[Path], dest: Path, lag_upgrade: bool = False) -> list[Path]:
-    """Write dest/results/serving_decode_grid_<tag>_<date>.csv, one per tag found."""
     runs: dict[str, list[tuple[str, Path]]] = {}
     for root in results_dirs:
         for path in files(root, "serving_decode_grid_*.jsonl*"):
@@ -1120,7 +1097,7 @@ BUILDERS = {
 
 
 def source_runs(results_dirs: list[Path]) -> list[dict]:
-    """Every exported run.json under the results dirs (run dir, name, status, start), so a table names its runs; skipped runs are printed instead."""
+    """Skipped runs are printed instead."""
     runs = []
     for root in results_dirs:
         skipped = skipped_runs(root)
@@ -1155,7 +1132,6 @@ def export(
     kernel_dest: Path | None = None,
     replace_tables: bool = False,
 ) -> list[Path]:
-    """Run the builders (all, or the named ones) over the results dirs; return the files written."""
     results_dirs = [Path(d) for d in results_dirs]
     names = list(only) if only else list(BUILDERS)
     unknown = [n for n in names if n not in BUILDERS]

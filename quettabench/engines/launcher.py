@@ -1,4 +1,4 @@
-"""Start an engine server from a LaunchSpec, locally or in docker, wait for its health check, and stop it with every child."""
+"""Start an engine server from a LaunchSpec, locally or in docker; stop it with its children."""
 
 import glob
 import json
@@ -19,12 +19,11 @@ from quettabench.metrics.results import redact, secret
 
 REPO = Path(__file__).resolve().parents[2]
 
-# Engine endpoints are local or cluster-private; an http_proxy would route them through the proxy, which answers 403.
+# http_proxy would route local or cluster-private endpoints through a proxy that answers 403.
 _DIRECT = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 def urlopen(url, **kwargs):
-    """urllib.request.urlopen(url, **kwargs) without any proxy."""
     return _DIRECT.open(url, **kwargs)
 
 
@@ -32,7 +31,7 @@ def urlopen(url, **kwargs):
 class Handle:
     adapter: str
     endpoint: str
-    pid: int  # the server, or for docker the `docker logs -f` stream
+    pid: int
     results_dir: Path
     proc: subprocess.Popen
     gpu: str = ""
@@ -41,7 +40,7 @@ class Handle:
     backend: str = "cuda"
 
     def stop(self, grace_s=30):
-        """SIGTERM the process group and SIGKILL what is left after grace_s; a container gets `docker stop` and is removed."""
+        """SIGKILL what is left after grace_s; a container gets `docker stop` and removal."""
         if self.container:
             subprocess.run(["docker", "stop", "-t", str(grace_s), self.container], capture_output=True, check=False)
             try:
@@ -54,13 +53,12 @@ class Handle:
         deadline = time.monotonic() + grace_s
         if self._signal_group(signal.SIGTERM):
             while time.monotonic() < deadline and self._signal_group(0):
-                self.proc.poll()  # a zombie leader would still count
+                self.proc.poll()  # A zombie leader would still count.
                 time.sleep(0.1)
             self._signal_group(signal.SIGKILL)
         self.proc.wait()
 
     def _signal_group(self, sig):
-        """Send sig to the group; False once no member is left."""
         try:
             os.killpg(self.pid, sig)
         except ProcessLookupError:
@@ -70,7 +68,7 @@ class Handle:
 
 @dataclass
 class NoServer:
-    """Handle for a driver that starts the engine itself (in-process vLLM, the cargo bench): no endpoint, nothing to stop."""
+    """Handle for a driver that starts the engine itself: nothing to stop."""
 
     results_dir: Path
     endpoint: str | None = None
@@ -81,12 +79,12 @@ class NoServer:
 
 
 def visible_env(backend, devices):
-    """The env that limits a vLLM server to devices, and the inherited names to unset."""
+    """The env that limits a server to devices, and the inherited names to unset."""
     if backend == "rocm":
-        # vLLM reads CUDA_VISIBLE_DEVICES on ROCm and refuses a HIP value that differs
+        # vLLM reads CUDA_VISIBLE_DEVICES on ROCm and refuses a differing HIP value.
         return {"HIP_VISIBLE_DEVICES": devices, "CUDA_VISIBLE_DEVICES": devices}, ()
     if backend == "tpu":
-        # One process per chip group, the way tpu-inference's external-LB example pins its chips
+        # One process per chip group, like tpu-inference's external-LB example.
         chips = len(devices.split(","))
         return {
             "TPU_VISIBLE_CHIPS": devices,
@@ -94,13 +92,13 @@ def visible_env(backend, devices):
             "TPU_PROCESS_BOUNDS": "1,1,1",
         }, ()
     if backend == "neuron":
-        # vllm-neuron picks cores from NEURON_VISIBLE_DEVICES and refuses NEURON_RT_VISIBLE_CORES
+        # vllm-neuron picks cores from NEURON_VISIBLE_DEVICES and refuses NEURON_RT_VISIBLE_CORES.
         return {"NEURON_VISIBLE_DEVICES": devices}, ("NEURON_RT_VISIBLE_CORES",)
     return {"CUDA_VISIBLE_DEVICES": devices}, ()
 
 
 def device_flags(backend, gpus):
-    """docker run flags that give the container the accelerator, from each vendor's vLLM container docs."""
+    """From each vendor's vLLM container docs."""
     if backend == "rocm":
         # vLLM's ROCm install guide (v0.30.0)
         return [
@@ -126,7 +124,7 @@ def device_flags(backend, gpus):
 
 
 def idle_gpus(n, backend):
-    """On cuda the first n GPUs using under 1000 MiB; other backends have no busy check and take 0..n-1."""
+    """Other backends have no busy check and take 0..n-1."""
     if backend != "cuda":
         return ",".join(str(i) for i in range(n))
     rows = subprocess.run(
@@ -162,7 +160,7 @@ def tool_lines(argv):
 
 
 def accelerator(backend="cuda"):
-    """(name, total bytes) of device 0: nvidia-smi on cuda, the name only from amd-smi or neuron-ls; ("", None) when unavailable, never raises."""
+    """("", None) when unavailable; never raises."""
     if backend in IDENTITY:
         argv, prefix = IDENTITY[backend]
         names = [line[len(prefix) :].strip() for line in tool_lines(argv) if line.startswith(prefix)]
@@ -177,7 +175,6 @@ def accelerator(backend="cuda"):
 
 
 def wait_healthy(proc, url, timeout_s, poll_s):
-    """Poll url until it answers 200; fail fast if the server exits first."""
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         if proc.poll() is not None:
@@ -193,18 +190,16 @@ def wait_healthy(proc, url, timeout_s, poll_s):
 
 
 def remove(container):
-    """`docker rm -f`: the container is gone whatever state it was in."""
     subprocess.run(["docker", "rm", "-f", container], capture_output=True, check=False)
 
 
 def container_name(run_name):
-    """qbench-<run_name>-<pid>-<6 random hex> with characters docker refuses replaced by -, so two runs of one yaml never collide."""
+    """Random suffix so two runs of one yaml never collide."""
     safe = re.sub(r"[^a-zA-Z0-9_.-]", "-", run_name)
     return f"qbench-{safe}-{os.getpid()}-{os.urandom(3).hex()}"
 
 
 def docker_argv(spec, cfg, gpus, results_dir):
-    """`docker run -d` of spec.server_argv in spec.image on the given GPUs."""
     hw, run_dir = cfg.hardware, Path(results_dir).resolve()
     if not spec.image:
         raise ConfigError(f"{cfg.run_name}: hardware.launcher=docker needs engine.image")
@@ -224,8 +219,8 @@ def docker_argv(spec, cfg, gpus, results_dir):
         "docker",
         "run",
         "-d",
-        "--pull=never",  # a missing image fails here instead of downloading
-        "--init",  # reaps the engine's workers
+        "--pull=never",  # A missing image fails here instead of downloading.
+        "--init",
         "--name",
         container_name(cfg.run_name),
         *devices,
@@ -234,9 +229,9 @@ def docker_argv(spec, cfg, gpus, results_dir):
         *ports,
         *(a for path in [*mounts, REPO] for a in ("-v", f"{path}:{path}:ro")),
         "-v",
-        f"{run_dir}:{run_dir}",  # read-write so nsys output outlives the container
+        f"{run_dir}:{run_dir}",  # Read-write so nsys output outlives the container.
         *(a for k, v in env.items() for a in ("-e", k if k in hidden else f"{k}={v}")),
-        "--entrypoint",  # the argv's first word, so the image ENTRYPOINT does not prefix it
+        "--entrypoint",  # The argv's first word, so the image ENTRYPOINT does not prefix it.
         spec.server_argv[0],
         spec.image,
         *spec.server_argv[1:],
@@ -244,12 +239,10 @@ def docker_argv(spec, cfg, gpus, results_dir):
 
 
 def docker_secrets(spec):
-    """The secret-named env of a docker launch (VLLM_API_KEY), passed by name only."""
     return {k: v for k, v in spec.env.items() if secret(k)}
 
 
 def start(spec, results_dir, *, backend="local", cfg=None, gpus="", timeout_s=1800, poll_s=1.0):
-    """Launch spec.server_argv, wait for health, write engine.json; return a Handle."""
     if not spec.server_argv:
         raise ValueError(f"{spec.adapter}: the spec has no server to launch")
     results_dir = Path(results_dir)
@@ -263,7 +256,6 @@ def start(spec, results_dir, *, backend="local", cfg=None, gpus="", timeout_s=18
             argv, capture_output=True, text=True, check=False, env=env_map.with_env(secrets) if secrets else None
         )
         if run.returncode != 0:
-            # The name is this run's own (container_name), so whatever docker left under it is logged and removed.
             with (results_dir / "server.log").open("w") as log:
                 log.write(run.stderr)
                 log.flush()

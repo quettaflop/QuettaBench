@@ -1,4 +1,4 @@
-"""QuettaServe adapter: the cargo bench argv and per-cell env, one bench run per grid cell, since the engine cannot listen yet."""
+"""QuettaServe adapter: one cargo bench run per grid cell; the engine cannot listen yet."""
 
 from pathlib import Path
 
@@ -12,7 +12,6 @@ from quettabench.engines.base import (
 )
 from quettabench.engines.drivers import BenchDriver
 
-# The line that marks a finished cell, per bench test.
 OK_BY_TEST = {
     "decode_loop": r"^LOOP ",
     "batch_bench": r"^\[batch_bench\] .*layers=all",
@@ -20,14 +19,14 @@ OK_BY_TEST = {
 
 
 def moe_rule(p, extra, world):
-    """The moe bench needs <P>_CFG and must not see an inherited <P>_LAYERS; engine.layers sets it on purpose (translate)."""
+    """The moe bench needs <P>_CFG and must not see an inherited <P>_LAYERS."""
     if not extra.get("qs_cfg"):
         raise ConfigError(f"quettaserve moe: set engine.extra.qs_cfg ({p}_CFG)")
     return {f"{p}_CFG": extra["qs_cfg"]}, (f"{p}_LAYERS",), ""
 
 
 def gdn_rule(p, extra, world):
-    """Exact kernels need a vLLM GDN cubin dir; custom all-reduce at world >= 2; eager under exact kernels, CUDA graphs under rust."""
+    """Exact kernels need a vLLM GDN cubin dir; eager under exact, CUDA graphs under rust."""
     gdn_dir = extra.get("gdn_dir")
     kernels = extra.get("qs_kernels") or ("exact" if gdn_dir else "rust")
     env = {"QS_KERNELS": kernels}
@@ -120,11 +119,9 @@ class QuettaServeAdapter(EngineAdapter):
         )
 
     def needs_server(self, cfg):
-        """QuettaServe cannot listen yet: the bench is its own process per cell."""
         return False
 
     def driver(self, spec, handle, trace=None):
-        """Bench rows logged to <results_dir>/bench.log."""
         return BenchDriver(Path(handle.results_dir) / "bench.log", spec.cells)
 
 

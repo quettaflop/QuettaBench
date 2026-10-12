@@ -1,4 +1,4 @@
-"""Engine adapters: importing the package registers every one of them."""
+"""Importing the package registers every adapter."""
 
 from quettabench.engines import (  # noqa: F401  (registers the adapters)
     drivers,

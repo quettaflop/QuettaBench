@@ -1,4 +1,4 @@
-"""vLLM adapter: one field table gives the `vllm serve` argv and the in-process vllm.LLM kwargs."""
+"""vLLM adapter: one field table gives the `vllm serve` argv and in-process kwargs."""
 
 from pathlib import Path
 
@@ -21,7 +21,7 @@ SERVER_ENV = {
     "VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS": "1",  # sizes KV after graph capture
 }
 KWARGS = {"disable_log_stats": True, "trust_remote_code": True}
-# extra.vllm.api_key goes in this env var: vLLM's startup log would print --api-key
+# extra.vllm.api_key goes in this env var: the startup log would print --api-key.
 API_KEY_ENV = "VLLM_API_KEY"
 
 
@@ -86,7 +86,7 @@ SCALARS = (str, int, float, bool)
 
 
 def extra_fragments(extra, taken):
-    """argv and kwargs for engine.extra.vllm: {kwarg_name: scalar}, appended last; api_key is left to the env (API_KEY_ENV)."""
+    """api_key is left to the env (API_KEY_ENV)."""
     if not isinstance(extra, dict):
         raise UnsupportedField("vllm", "extra.vllm", "expected a mapping of flag: value")
     argv, kwargs = [], {}
@@ -147,11 +147,11 @@ class VllmAdapter(EngineAdapter):
         )
 
     def needs_server(self, cfg):
-        """A serve run, or a grid run that only times; a grid run with mode.returns builds vllm.LLM itself."""
+        """A grid run with mode.returns builds vllm.LLM itself."""
         return cfg.mode.grid is None or cfg.mode.returns == "none"
 
     def driver(self, spec, handle, trace=None):
-        """InProcessDriver when nothing was launched, else the launched server, via chat completions for chat requests and completions otherwise."""
+        """InProcessDriver when nothing was launched."""
         if handle.endpoint is None:
             return InProcessDriver(spec)
         endpoint = "chat" if chat_requests(trace) else "completions"
@@ -167,7 +167,6 @@ class VllmAdapter(EngineAdapter):
 
 
 def chat_requests(trace):
-    """Whether trace is chat: multi-turn sessions or requests that carry messages and no token ids."""
     if trace is None or isinstance(trace, GridTrace):
         return False
     if isinstance(trace, SessionTrace):
