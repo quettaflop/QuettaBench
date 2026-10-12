@@ -4,6 +4,8 @@ Run `python3 -m pytest tests/golden -q`. `QBENCH_GOLDEN_REGEN=1` rewrites the fi
 
 ## Fixture changes
 
+2026-10-12: `aggregate_summary.json` gains `itl_coalesced_frac`, 0.0 here. Every other value is as before.
+
 2026-10-12: `aggregate_summary.json` gains `steady_median_ttft_ms` and `steady_p99_ttft_ms`, null here because the fixture is not a closed-loop run. Every other value is as before.
 
 2026-10-11: `config_failures.json` and `config_trace_serve_style_error.json` hold `use aggregated, disagg:<P>p<D>d, afd:<A>a<F>f, or ep<N>dp<M>` as the serving-style refusal, because `parse_serving_style` accepts `afd:<A>a<F>f` and its message lists it. Every spec is refused as before; only the text changed.

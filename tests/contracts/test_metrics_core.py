@@ -1,5 +1,7 @@
 """metrics/core.py and step_fit.py on hand-computed cases."""
 
+import contextlib
+import io
 import json
 import tempfile
 import types
@@ -8,6 +10,7 @@ from pathlib import Path
 
 from quettabench.config.schema import Config, EngineCfg, HardwareCfg, ModeCfg, WorkloadCfg
 from quettabench.metrics.core import (
+    ITL_COALESCED_MS,
     RequestResult,
     _busy_time_and_load,
     aggregate,
@@ -19,6 +22,7 @@ from quettabench.metrics.core import (
     parse_prometheus,
     pcts,
     percentile,
+    print_summary,
     sla_verdict,
     spec_counts,
     steady_ttfts,
@@ -375,6 +379,33 @@ class TestSteadyTtft(unittest.TestCase):
     def test_open_loop_has_none(self):
         s = aggregate(self._wave(8, 2), duration_s=8.0, concurrency=2, load_mode="open-loop")
         self.assertIsNone(s.steady_median_ttft_ms)
+
+
+class TestCoalescedItl(unittest.TestCase):
+    @staticmethod
+    def _run(gaps_ms):
+        r = _req(0, 1, output_tokens=len(gaps_ms) + 1)
+        r.itl = [g / 1000 for g in gaps_ms]
+        return aggregate([r], duration_s=1.0, concurrency=1)
+
+    def test_fraction_counts_gaps_under_the_threshold(self):
+        s = self._run([10.0] * 6 + [0.0, 0.01, ITL_COALESCED_MS / 2, ITL_COALESCED_MS * 2])
+        self.assertAlmostEqual(s.itl_coalesced_frac, 0.3)
+
+    def test_no_itl_is_zero(self):
+        self.assertEqual(aggregate([_req(0, 1, output_tokens=1)], duration_s=1.0).itl_coalesced_frac, 0.0)
+
+    def _printed(self, gaps_ms):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            print_summary(self._run(gaps_ms))
+        return buf.getvalue()
+
+    def test_warns_above_one_percent(self):
+        self.assertIn("inter-token gaps are under", self._printed([10.0] * 90 + [0.0] * 10))
+
+    def test_quiet_at_the_old_client_rate(self):
+        self.assertNotIn("inter-token gaps are under", self._printed([10.0] * 2000 + [0.0]))
 
 
 class TestFailureTaxonomy(unittest.TestCase):

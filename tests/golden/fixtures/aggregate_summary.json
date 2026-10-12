@@ -30,6 +30,7 @@
   "failed_requests": 2,
   "failed_with_partial_ttft": 1,
   "input_token_throughput": 204.66666666666666,
+  "itl_coalesced_frac": 0.0,
   "load_mode": "closed",
   "max_inflight_requests": 2,
   "mean_e2el_ms": 180.33333333333334,

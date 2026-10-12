@@ -4,6 +4,11 @@ import re
 import statistics
 from dataclasses import dataclass, field
 
+# Under this a gap is two tokens stamped by one event-loop wakeup, not a decode step.
+ITL_COALESCED_MS = 0.05
+# Above this share of gaps the client, not the server, shaped the ITL tail.
+ITL_COALESCED_WARN_FRAC = 0.01
+
 
 @dataclass
 class RequestResult:
@@ -231,6 +236,7 @@ class BenchmarkSummary:
     median_itl_ms: float = 0.0
     p90_itl_ms: float = 0.0
     p99_itl_ms: float = 0.0
+    itl_coalesced_frac: float = 0.0
 
     mean_e2el_ms: float = 0.0
     median_e2el_ms: float = 0.0
@@ -520,6 +526,7 @@ def aggregate(
         summary.median_itl_ms = statistics.median(itls)
         summary.p90_itl_ms = percentile(itls, 90, "linear")
         summary.p99_itl_ms = percentile(itls, 99, "linear")
+        summary.itl_coalesced_frac = sum(t < ITL_COALESCED_MS for t in itls) / len(itls)
 
     if e2els:
         summary.mean_e2el_ms = statistics.mean(e2els)
@@ -845,6 +852,10 @@ def print_summary(s: BenchmarkSummary) -> None:
         f" E2EL  mean/p50/p90/p99:   {s.mean_e2el_ms:.1f} / {s.median_e2el_ms:.1f} / {s.p90_e2el_ms:.1f} / {s.p99_e2el_ms:.1f} ms"
     )
     print(f"{'=' * 52}\n")
+    if s.itl_coalesced_frac > ITL_COALESCED_WARN_FRAC:
+        print(f" WARNING: {s.itl_coalesced_frac:.1%} of inter-token gaps are under {ITL_COALESCED_MS} ms.")
+        print("          The client event loop fell behind and stamped several tokens together,")
+        print("          so ITL and TPOT are distorted. Lower the concurrency or add client processes.\n")
     if s.timeout_requests:
         pct = 100.0 * s.timeout_requests / s.num_requests if s.num_requests else 0.0
         print(f" WARNING: {s.timeout_requests} request(s) ({pct:.1f}%) hit the client timeout and were cut off.")
