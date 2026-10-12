@@ -7,8 +7,8 @@ profile name: r2). Override with AWS_PROFILE, R2_ENDPOINT, R2_BUCKET.
 The GCS pulls and the raw-capture builders stay separate scripts:
     python3 data/download_agent_trajectories.py
     python3 data/download_coding_prompts.py
-    python3 data/build_chat_trajectories.py
-    python3 data/build_claweval_trajectories.py --traces DIR
+    python3 data/build_trajectories.py chat --tokenizer DIR
+    python3 data/build_trajectories.py claweval --traces DIR
 """
 
 import os

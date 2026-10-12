@@ -94,7 +94,7 @@ One line each; everything else follows section 2 "Target layout".
 - `profiling/kv_transfer.py` stays its own module: it is a torchrun target (`-m quettabench.profiling.kv_transfer`) and the tool name in the kernel manifest.
 - `tests/` has `golden/` and `contracts/` only: the probe contracts and GPU smoke tests live in `contracts/` (owner decision 2026-10-12), and `tests/parity/` waits for the GPU parity gate.
 - `analysis/` has no synthetic-sampler studies or `build_trace_distributions`: `analysis/synthetic/` was deleted by owner decision (2026-10-12, "scrap synthetic").
-- `data/` keeps `download_agent_trajectories.py`, `download_coding_prompts.py`, `build_chat_trajectories.py` and `build_claweval_trajectories.py` apart: section 2's `fetch.py` and `build_trajectories.py` merges are not done.
+- `data/` keeps `download_agent_trajectories.py` and `download_coding_prompts.py` apart: section 2's `fetch.py` merge is not done.
 - `legacy/trace_serve.py` is gone; `modes/serve.py` replaced it.
 - `scripts/crossval/baselines/` (the compat baselines dir) and `tools/pre_commit/` (the commit-message and em-dash hooks) sit outside section 2's tree.
 
