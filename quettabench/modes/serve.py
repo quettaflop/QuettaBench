@@ -1,6 +1,4 @@
-"""Send a Trace's requests through a Driver and collect one RequestResult row per request.
-Closed loop holds mode.concurrency slots, open loop fires at arrival; run_grid times a GridTrace cell by cell.
-"""
+"""Send a Trace's requests through a Driver and collect one RequestResult row per request."""
 
 import asyncio
 import dataclasses
@@ -109,7 +107,7 @@ def sampling(mode, request) -> dict:
 
 
 def arrival_offsets(trace, workload) -> list:
-    """Submission offsets for a single-turn trace. An injected schedule is stamped on arrival_ts first so it joins the workload hash; "trace" keeps the trace's own times, rebased to the first."""
+    """Submission offsets for a single-turn trace; an injected schedule is stamped on arrival_ts so it joins the workload hash."""
     reqs = trace.requests()
     injected = parse_arrival(workload.arrival, len(reqs), workload.seed)
     if injected is None:
@@ -205,7 +203,7 @@ def server_counters(driver):
 
 
 async def measure(trace, driver, mode, emit, workload, request_id):
-    """Warm, reset, dispatch: (results, results_by_turn | None, [(request, result)], duration, server SPECSUM | None). Spec counters are read around dispatch only, so warmup is not in the window."""
+    """Warm, reset, dispatch: (results, results_by_turn | None, [(request, result)], duration, server SPECSUM | None)."""
     multi = isinstance(trace, SessionTrace)
     offsets = None if multi else arrival_offsets(trace, workload)
     sessions = None
@@ -232,7 +230,7 @@ async def measure(trace, driver, mode, emit, workload, request_id):
 
 
 def serve_records(pairs, open_loop):
-    """Serving records from the successful counted rows: TTFT (whole latency when no token came), wall-clock TPOT, output tokens, and the burst bucket time (the slot grant under a closed loop)."""
+    """Serving records from the successful counted rows: TTFT, wall-clock TPOT, output tokens and the burst bucket time."""
     out = []
     for _, r in pairs:
         if not r.success or r.excluded_from_summary:
@@ -264,7 +262,7 @@ def spec_section(pairs):
 
 
 def server_spec_section(before, after):
-    """SPECSUM from the server's counter deltas as vllm bench serve defines them: accept_rate = accepted / draft tokens, accept_len = 1 + accepted / drafts. None without both scrapes or a draft in the window."""
+    """SPECSUM from the server's counter deltas as vllm bench serve defines them; None without both scrapes or a draft in the window."""
     if before is None or after is None:
         return None
     d = {key: int(after[key] - before[key]) for key in after}
@@ -311,7 +309,7 @@ def crossval_sections(pairs, duration, mode, server_spec=None):
 
 
 def goodput_search(start=1.0, max_iters=6, tol=0.1):
-    """Generator bisection over speed: send() whether the last probe met the SLA. Doubles to the first FAIL, halves to the first PASS, then bisects within tol; at most max_iters probes."""
+    """Generator bisection over speed: send() whether the last probe met the SLA; at most max_iters probes."""
     lo = hi = None
     speed = start
     for _ in range(max_iters):
@@ -331,7 +329,7 @@ def goodput_search(start=1.0, max_iters=6, tol=0.1):
 
 
 def sweep(trace, driver, mode, writer, workload, request_id):
-    """--goodput-sweep: one measure() per probe speed (warmup on the first only), stopping at the first probe that breaks workload identity. Returns the last measure() result and the goodput section."""
+    """--goodput-sweep: one measure() per probe speed, stopping at the first probe that breaks workload identity."""
     gen, probes, best, fail_bound = goodput_search(start=workload.speed), [], None, []
     speed = next(gen)
     while True:
@@ -588,10 +586,7 @@ def score_grid(trace, driver, cfg, writer):
 
 
 def run_bench(driver, cfg, writer):
-    """driver.cells past the SKIP rules, measured in one driver.run call.
-
-    A KV SKIP needs engine.kv_bytes, engine.weights_gib and driver.device()'s memory; a cell needs ctx + timing_steps + headroom tokens per sequence. steps passes the measured rows through.
-    """
+    """driver.cells past the SKIP rules, measured in one driver.run call; a KV SKIP needs engine.kv_bytes, engine.weights_gib and device memory."""
     engine, hw, grid = cfg.engine, cfg.hardware, cfg.grid
     device = driver.device() if engine.kv_bytes and engine.weights_gib is not None else None
     cap = capacity(engine, device[1], engine.kv_bytes)[1] if device and device[1] else 0
@@ -679,7 +674,7 @@ def run_grid(trace, driver, cfg, writer):
 
 
 class SessionDispatcher:
-    """One multi-turn replay. send is the driver call with sampling bound; request_id(session, turn, index) names a request or returns None; emit takes every result as it finishes."""
+    """One multi-turn replay; send is the driver call, request_id names a request or returns None, emit takes each finished result."""
 
     def __init__(self, trace, mode, workload, send, request_id, emit):
         self.trace, self.mode, self.workload = trace, mode, workload

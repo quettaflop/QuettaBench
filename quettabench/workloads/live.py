@@ -1,7 +1,4 @@
-"""Recorded traces (replay JSONL, Mooncake), the real-text profile sources and the workload profile registry over configs/workloads.yaml.
-
-Mooncake hash_ids name 512-token prefix blocks; each id expands to the same seeded block, so requests sharing a hash id share those tokens.
-"""
+"""Recorded traces (replay JSONL, Mooncake), the real-text profile sources and the workload profile registry over configs/workloads.yaml."""
 
 import dataclasses
 import json
@@ -78,7 +75,7 @@ def fill_tail(record_index, length, seed):
 
 
 def mooncake_prompt_ids(record, seed=42, block_cache=None):
-    """Exactly input_length ids: hash blocks in order, tail filled per request, truncated when the blocks overrun; no hash_ids gives synth_ids(input_length, line index)."""
+    """Exactly input_length ids: hash blocks in order, tail filled per request; no hash_ids gives synth_ids(input_length, line index)."""
     if not record.hash_ids:
         return synth_ids(record.input_length, record.index)
     tokens = []

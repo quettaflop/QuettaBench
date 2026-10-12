@@ -27,7 +27,7 @@ def moe_rule(p, extra, world):
 
 
 def gdn_rule(p, extra, world):
-    """Exact kernels only with a vLLM GDN cubin dir (the loader panics without it), custom all-reduce at world >= 2, eager mode under exact kernels, CUDA graphs under rust kernels."""
+    """Exact kernels need a vLLM GDN cubin dir; custom all-reduce at world >= 2; eager under exact kernels, CUDA graphs under rust."""
     gdn_dir = extra.get("gdn_dir")
     kernels = extra.get("qs_kernels") or ("exact" if gdn_dir else "rust")
     env = {"QS_KERNELS": kernels}

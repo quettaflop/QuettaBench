@@ -1,6 +1,4 @@
-"""One idempotent provisioning pass for a GPU box: cache dirs, vLLM python, NCCL, QuettaServe checkout, binary, checkpoint and weights.
-Anything unresolved prints `MISSING: <what>` and the pass exits 1.
-"""
+"""One idempotent provisioning pass for a GPU box; anything unresolved prints `MISSING: <what>` and exits 1."""
 
 import argparse
 import os

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tokenizes an agent-bench JSONL trace into replay requests: prompt_text becomes prompt_token_ids and reasoning_text + content_text becomes output_token_ids. Needs the serving model's tokenizer."""
+"""Tokenizes an agent-bench JSONL trace into replay requests; needs the serving model's tokenizer."""
 
 import argparse
 import json

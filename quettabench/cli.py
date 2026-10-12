@@ -1,6 +1,4 @@
-"""qbench: the one command line. `run` is parsed here; profile, xval and export pass the rest of argv to that module's main(argv).
-
-Config errors exit 1 with a one-line message."""
+"""qbench: the one command line; `run` is parsed here, the other commands get the rest of argv."""
 
 import argparse
 import importlib

@@ -1,6 +1,4 @@
-"""Start an engine server from a LaunchSpec, locally or detached in docker, wait for its health check, and stop it with every child.
-The docker path has not run against a real daemon.
-"""
+"""Start an engine server from a LaunchSpec, locally or in docker, wait for its health check, and stop it with every child."""
 
 import glob
 import json
@@ -43,7 +41,7 @@ class Handle:
     backend: str = "cuda"
 
     def stop(self, grace_s=30):
-        """SIGTERM the process group and SIGKILL what is left after grace_s; a container gets `docker stop`, then its log stream is ended and the container removed."""
+        """SIGTERM the process group and SIGKILL what is left after grace_s; a container gets `docker stop` and is removed."""
         if self.container:
             subprocess.run(["docker", "stop", "-t", str(grace_s), self.container], capture_output=True, check=False)
             try:
@@ -251,7 +249,7 @@ def docker_secrets(spec):
 
 
 def start(spec, results_dir, *, backend="local", cfg=None, gpus="", timeout_s=1800, poll_s=1.0):
-    """Launch spec.server_argv, wait for health, write engine.json; return a Handle. backend docker runs it in a container built by docker_argv(spec, cfg, gpus, results_dir)."""
+    """Launch spec.server_argv, wait for health, write engine.json; return a Handle."""
     if not spec.server_argv:
         raise ValueError(f"{spec.adapter}: the spec has no server to launch")
     results_dir = Path(results_dir)

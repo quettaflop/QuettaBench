@@ -82,7 +82,7 @@ async def _stream_chat(
     min_tokens: int = 0,
     capture_text: bool = False,
 ) -> RequestResult:
-    """Stream one chat completion; every chunk carrying content, reasoning or tool_calls is one token. On failure the partial timings are kept, so a truncated tail still shows."""
+    """Stream one chat completion, counting each chunk with content, reasoning or tool_calls as a token; partial timings survive a failure."""
     headers = _headers(api_key, extra_headers, request_id)
     payload = _payload(model, {"messages": messages}, max_tokens, temperature, ignore_eos, request_id, seed, min_tokens)
 
@@ -347,10 +347,7 @@ class GridBatchFailed(RuntimeError):
 
 
 class HttpDriver(Driver):
-    """OpenAI-compatible streaming client bound to one launched server.
-
-    backend_name is serve.py's --backend and picks the cache-reset endpoint; timeout is in seconds for every request and the reset. run() with a cell is a grid batch.
-    """
+    """OpenAI-compatible streaming client bound to one launched server."""
 
     def __init__(
         self, endpoint, backend_name="vllm", *, url=None, model=None, api_key="test", timeout=60, accelerator="cuda"
@@ -443,7 +440,7 @@ class HttpDriver(Driver):
         yield from asyncio.run(all_of_them())
 
     def timed_batch(self, requests, cell_key=None):
-        """(seconds, results) of every request sent at once, greedy and ignoring EOS so each decodes exactly max_tokens. A new cell_key resets the prefix cache first."""
+        """(seconds, results) of every request sent at once, greedy and ignoring EOS; a new cell_key resets the prefix cache first."""
 
         async def go():
             async with self.session(len(requests)):
@@ -471,7 +468,7 @@ class HttpDriver(Driver):
         self.timed_batch([Request(distinct_ids(256), 256, output_length=20)])
 
     def grid_batch(self, requests, cell):
-        """The batch at cell["step_point"] tokens; every row carries the batch wall as e2el and no TTFT. Raises when a request fails or its usage count is not the step point, since the wall would then not be a bs-wide batch."""
+        """The batch at cell["step_point"] tokens, every row carrying the batch wall as e2el; raises if a request fails or its token count is off."""
         n = cell["step_point"]
         wall, results = self.timed_batch(requests, (cell["ctx"], cell["bs"]))
         for res in results:
@@ -497,10 +494,7 @@ class HttpDriver(Driver):
             )
 
     async def reset(self, session=None, url=None, api_key=None, timeout=None) -> str:
-        """Reset the server's prefix cache and return a status string; arguments left out come from the bound server.
-
-        Raises PrefixCacheResetError when that fails, since continuing would let one cell read another's cache.
-        """
+        """Reset the server's prefix cache and return a status string; raises PrefixCacheResetError on failure."""
         session = self._http if session is None else session
         url = self.url if url is None else url
         api_key = self.api_key if api_key is None else api_key
@@ -541,7 +535,7 @@ class BenchFailed(RuntimeError):
 
 
 class BenchDriver(Driver):
-    """The bench cell loop: per cell write the `>>>` header, run bench_argv under the cell's env, tee into the log and check the exit code and pass pattern. Rows come from crossval.bench_log_points, the same reader crossval uses."""
+    """The bench cell loop: run bench_argv per cell under the cell's env, tee into the log and check the exit code and pass pattern."""
 
     measures_steps = True  # rows are ms per step already
 
@@ -619,7 +613,7 @@ class BenchDriver(Driver):
 
 
 class InProcessDriver(Driver):
-    """vLLM in this process, built from spec.engine_kwargs and spec.env on first use; only for mode.returns, since only this path returns token ids, text or logits."""
+    """vLLM in this process, only for mode.returns, since only this path returns token ids, text or logits."""
 
     def __init__(self, spec):
         self.spec = spec
@@ -669,7 +663,7 @@ class InProcessDriver(Driver):
         return self.llm().generate([{"prompt_token_ids": ids} for ids in prompts], params, use_tqdm=False)
 
     def run(self, requests, *, cell, returns="none", concurrency=None, **kwargs):
-        """The batch as one generate() at cell["step_point"] tokens; every row gets the batch wall as e2el and no TTFT. returns="logits" scores instead and times nothing."""
+        """The batch as one generate() at cell["step_point"] tokens; returns="logits" scores instead and times nothing."""
         if returns == "logits":
             outs = self.score([r.prompt_token_ids for r in requests])
             for r, out in zip(requests, outs):
@@ -713,7 +707,7 @@ def truncated_config(model, layers):
 
 
 def prompt_logprob_summary(ids, prompt_logprobs):
-    """{argmax, top2_gap, logprob} from vLLM's prompt_logprobs, entry i scoring ids[i + 1] like the reference: rank-1 token, rank 1 minus rank 2 logprob, and the true token's logprob."""
+    """{argmax, top2_gap, logprob} from vLLM's prompt_logprobs, entry i scoring ids[i + 1]."""
     out = {"argmax": [], "top2_gap": [], "logprob": []}
     for pos in range(1, len(ids)):
         entry = prompt_logprobs[pos]

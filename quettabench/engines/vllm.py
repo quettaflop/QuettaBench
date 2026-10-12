@@ -1,7 +1,4 @@
-"""vLLM adapter: one field table gives the `vllm serve` argv and the in-process vllm.LLM kwargs.
-
-quant adds no server flag, since the server reads it from the checkpoint; a slice run is engine.model naming a truncated checkpoint dir.
-"""
+"""vLLM adapter: one field table gives the `vllm serve` argv and the in-process vllm.LLM kwargs."""
 
 from pathlib import Path
 
@@ -150,11 +147,11 @@ class VllmAdapter(EngineAdapter):
         )
 
     def needs_server(self, cfg):
-        """A serve run, or a grid run that only times. A grid run with mode.returns builds vllm.LLM itself: only that path gives token ids, text or logits (tests/parity/slope_gate.json passed timing over HTTP)."""
+        """A serve run, or a grid run that only times; a grid run with mode.returns builds vllm.LLM itself."""
         return cfg.mode.grid is None or cfg.mode.returns == "none"
 
     def driver(self, spec, handle, trace=None):
-        """InProcessDriver when nothing was launched (a grid run with mode.returns), else the launched server with the model it was started on: its /v1/chat/completions for chat requests, /v1/completions otherwise, sending the server's api key when it was started with one."""
+        """InProcessDriver when nothing was launched, else the launched server, via chat completions for chat requests and completions otherwise."""
         if handle.endpoint is None:
             return InProcessDriver(spec)
         endpoint = "chat" if chat_requests(trace) else "completions"
@@ -170,7 +167,7 @@ class VllmAdapter(EngineAdapter):
 
 
 def chat_requests(trace):
-    """Whether trace is chat: multi-turn sessions, whose turns carry the whole conversation and take the engine's reply text, or requests that carry messages and no token ids. The completions body would send only the last user message of such a request."""
+    """Whether trace is chat: multi-turn sessions or requests that carry messages and no token ids."""
     if trace is None or isinstance(trace, GridTrace):
         return False
     if isinstance(trace, SessionTrace):

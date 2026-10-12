@@ -1,4 +1,4 @@
-"""Aggregate request results into BenchmarkSummary: TTFT, TPOT, ITL and E2EL percentiles over successful requests, failures counted apart, input and output throughput reported apart."""
+"""Aggregate request results into BenchmarkSummary: TTFT, TPOT, ITL and E2EL percentiles, failures counted apart."""
 
 import re
 import statistics
@@ -75,7 +75,7 @@ class RequestResult:
 
     @property
     def tpot(self) -> float | None:
-        """Mean ITL past the first token; falls back to (e2el - ttft) / (output_tokens - 1) when ITL covers under 80% of tokens, since multi-token chunks make it inter-chunk."""
+        """Mean ITL past the first token; falls back to (e2el - ttft) / (output_tokens - 1) when ITL covers under 80% of tokens."""
         wall_clock_ok = self.e2el is not None and self.ttft is not None and self.output_tokens > 1
         if self.itl:
             incomplete = self.output_tokens > 1 and len(self.itl) < 0.8 * (self.output_tokens - 1)
@@ -128,7 +128,7 @@ def annotate_multi_turn_cache_estimate(
     previous_output_tokens: int = 0,
     reply_in_cache: bool = False,
 ) -> RequestResult:
-    """Attach the cache estimate to a multi-turn result; with reply_in_cache the previous turn's output counts as reusable prefix, otherwise the prefix stops at the previous prompt."""
+    """Attach the cache estimate to a multi-turn result; with reply_in_cache the previous output counts as reusable prefix."""
     result.session_id = session_id
     result.turn_index = turn_index
     result.previous_context_tokens = max(0, int(previous_context_tokens or 0))
@@ -318,10 +318,7 @@ PERCENTILE_METHODS = ("nearest", "linear")
 
 
 def percentile(values, p: float, method: str) -> float:
-    """p-th percentile (0-100) of values.
-
-    "nearest" is sorted[min(n - 1, int(p / 100 * n))] and raises on no values; "linear" interpolates at p / 100 * (n - 1) and returns 0.0 on no values. They disagree on most inputs, so every caller names its method.
-    """
+    """p-th percentile (0-100) of values; "nearest" raises on no values, "linear" returns 0.0, and the two disagree on most inputs."""
     if method not in PERCENTILE_METHODS:
         raise ValueError(f"unknown percentile method {method!r}; expected one of {PERCENTILE_METHODS}")
     sorted_data = sorted(values)
@@ -347,10 +344,7 @@ def pcts(values, method: str) -> dict:
 
 
 def summarize_serve(records, wall_s: float, method: str) -> dict:
-    """Serving summary of replay records ({ttft_ms, tpot_ms, out_tokens}): n, ttft/tpot percentiles, req/s and output tok/s over wall_s.
-
-    Records with tpot_ms None (single-token outputs) are left out of tpot. Raises on no records.
-    """
+    """Serving summary of replay records: n, ttft/tpot percentiles, req/s and output tok/s over wall_s; raises on no records."""
     if not records:
         raise ValueError("no completed requests")
     ttft = [r["ttft_ms"] for r in records]
@@ -388,10 +382,7 @@ def acceptance(reference_ids, generated_ids) -> tuple[int, float]:
 
 
 def burst_recovery(records, sla_ttft_ms, window_s: float = 5.0):
-    """(recovery_s, peak_p99) over arrival buckets of window_s seconds, each bucket's p99 TTFT nearest-rank.
-
-    recovery_s is the time from the worst bucket to the first later one at or under the SLA, else None; (None, None) with no records or no SLA.
-    """
+    """(recovery_s, peak_p99) over arrival buckets of window_s seconds; recovery_s is the time from the worst bucket back under the SLA, else None."""
     if not records or sla_ttft_ms is None:
         return None, None
     rs = sorted(records, key=lambda r: r["arrival_s"])
@@ -886,7 +877,7 @@ LABEL = re.compile(r'([a-zA-Z_][a-zA-Z0-9_]*)="((?:[^"\\]|\\.)*)"')
 
 
 def parse_prometheus(text):
-    """{name: value} for unlabeled samples, {(name, ((label, value), ...)): value} for labeled ones with labels sorted; comments, blank lines and lines that do not parse are skipped."""
+    """{name: value} for unlabeled samples and {(name, labels): value} for labeled ones; unparsable lines are skipped."""
     out = {}
     for line in text.splitlines():
         line = line.strip()

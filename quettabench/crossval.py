@@ -1,7 +1,4 @@
-"""crossval <ours> <theirs>: pair two measured runs cell by cell and decide, per row, a ratio or a withhold.
-
-Each side is a results/<run>/ dir, an old baselines/*.json, or an engine bench log. Prints the table and any agreement rows, writes the report json, and exits 1 on a FIDELITY or BAND FAIL.
-"""
+"""crossval <ours> <theirs>: pair two measured runs cell by cell and decide, per row, a ratio or a withhold."""
 
 import argparse
 import calendar
@@ -138,10 +135,7 @@ def _batch_bench_points(text, notes):
 
 
 def bench_log_points(path):
-    """((ctx, bs, tp) -> (ms, group, kv), method, notes) from a bench log.
-
-    LOOP lines and batch_bench summaries are method "loop", a LOOP line winning on the same cell. Criterion groups sync every step (method "criterion"), so ratios against them are withheld; bare group names are tp 1.
-    """
+    """((ctx, bs, tp) -> (ms, group, kv), method, notes) from a bench log; criterion groups sync every step, so their ratios are withheld."""
     text = Path(path).read_text()
     notes = []
     bench = _batch_bench_points(text, notes)

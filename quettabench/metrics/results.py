@@ -123,10 +123,7 @@ def _redact_command(text):
 
 
 def redact(obj):
-    """obj with every secret replaced by REDACTED; the one rule for everything under results/.
-
-    Mapping values under secret names go whole, lists are redacted as argv, and strings holding a command line, an HTTP header, JSON or a URL password are redacted in place.
-    """
+    """obj with every secret replaced by REDACTED; the one rule for everything under results/."""
     if isinstance(obj, dict):
         out = {}
         for k, v in obj.items():
@@ -284,10 +281,7 @@ def provenance(cfg, handle=None, driver=None, launch_env=None):
 
 
 class RunWriter:
-    """results/<run>/requests.jsonl as rows finish, run.json at finish().
-
-    results_dir None writes nothing. exclusive (a probe run) creates the dir and raises FileExistsError if it exists.
-    """
+    """results/<run>/requests.jsonl as rows finish, run.json at finish(); results_dir None writes nothing."""
 
     def __init__(self, results_dir, cfg, *, handle=None, driver=None, launch_env=None, exclusive=False):
         self.dir = Path(results_dir) if results_dir else None

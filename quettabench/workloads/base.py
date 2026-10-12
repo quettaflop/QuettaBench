@@ -50,7 +50,7 @@ def messages_digest(messages):
 
 
 def request_digest(r):
-    """sha256 of one request's deterministic inputs (seed, order, arrival, prompt, requested output), never generated tokens or timings; a chat request without token ids adds its messages digest."""
+    """sha256 of one request's deterministic inputs (seed, order, arrival, prompt, requested output), never generated tokens or timings."""
     messages = r.messages if isinstance(r, Request) else r.get("messages")
     if isinstance(r, Request):
         r = r.to_dict()
@@ -71,7 +71,7 @@ def request_digest(r):
 
 
 def workload_hash(reqs):
-    """First 16 hex of a sha256 over the request count and sorted per-request digests; independent of order, changed by a dropped or altered request. Takes Requests or dicts."""
+    """First 16 hex of a sha256 over the request count and sorted per-request digests; independent of order."""
     digs = sorted(request_digest(r) for r in reqs)
     h = hashlib.sha256()
     h.update(str(len(digs)).encode())
@@ -104,7 +104,7 @@ class Trace(ABC):
 
 
 class DrawnTrace(Trace):
-    """A trace drawn one request at a time from a source that wraps around; draw() takes `warmup` draws, rewinds if the source replays a file in order, then takes `num_requests` draws numbered from zero."""
+    """A trace drawn one request at a time from a source that wraps around; draw() takes `warmup` draws, then `num_requests` draws."""
 
     rewinds = False
 

@@ -1,6 +1,4 @@
-"""qbench export: results dirs in, QuettaSim's files out; the one route out of QuettaBench.
-kernel_tables writes the kernel tables under --kernel-dest; the other builders write under --dest.
-"""
+"""qbench export: results dirs in, QuettaSim's files out; the one route out of QuettaBench."""
 
 from __future__ import annotations
 
@@ -37,10 +35,7 @@ def clearing(path: Path, root: Path) -> bool:
 
 @functools.cache
 def run_dirs(root: Path) -> dict[Path, str | None]:
-    """{run dir: why export leaves it out, or None when kept} for every run dir under root: run.json missing, unparsable, or a run_status other than ok.
-
-    A server/ dir under a run dir is part of that run; a .clearing-* dir is no run. Cached per root; export() clears it before each builder.
-    """
+    """{run dir: why export leaves it out, or None when kept} for every run dir under root; cached per root."""
     runs = {}
     dirs = sorted({p.parent for marker in RUN_MARKERS for p in Path(root).rglob(marker) if not clearing(p, root)})
     for run_dir in dirs:
@@ -251,10 +246,7 @@ def _sidecar(rel: Path, by_probe: dict[str, list[Source]], runs: set[Path]) -> d
 
 
 def _keep_sidecar(meta: dict, table: Path, kept: bool) -> dict:
-    """meta merged over the sidecar dest has beside table: a null field in meta keeps the old value and notes join.
-
-    When its rows were kept, measured spans both, tool names both, and a different mode makes mode unknown.
-    """
+    """meta merged over the sidecar dest already has: a null field keeps the old value and notes join."""
     path = table.with_name(table.name + ".meta.json")
     try:
         prior = json.loads(path.read_text()) if path.is_file() else {}
@@ -412,10 +404,7 @@ def _read_json(rel: Path, table: Path | Rows, run: Path) -> object:
 def _union_csv(
     rel: Path, sources: list[Source], key: tuple[str, ...], out: Path, old: Source | None = None
 ) -> list[Path]:
-    """Rows of the dest table old, then of every source oldest first, each source replacing earlier rows on the keys it holds. Returns the run dirs with a row kept.
-
-    Within a run the last row on a key wins; old keeps repeated keys (QuettaSim's loaders reduce them) unless its table is in SORTED.
-    """
+    """Rows of the dest table, then of every source oldest first, each replacing earlier rows on its keys; returns the run dirs with a row kept."""
     order = next((cols for k, cols in SORTED.items() if ROW_KEYS[k] == key), None)
     fields: list[str] = []
     kept: list[tuple[dict, Path]] = []
@@ -773,10 +762,7 @@ def load_trace(path: Path) -> list[dict]:
 
 
 def reconstruct_contexts(steps: list[dict]) -> list[dict | None]:
-    """Per decode-only step, {"ctx_total", "batch"}: context tokens across the decode batch, or None for a mixed step or one with an unknown prompt.
-
-    Context is the first-seen prompt_tokens plus the steps the request has already decoded.
-    """
+    """Per decode-only step, {"ctx_total", "batch"}: context tokens across the decode batch, or None for a mixed step or unknown prompt."""
     prompt_tokens: dict[str, int] = {}
     generated: dict[str, int] = {}
     out: list[dict | None] = []
@@ -1169,9 +1155,7 @@ def export(
     kernel_dest: Path | None = None,
     replace_tables: bool = False,
 ) -> list[Path]:
-    """Run the builders (all, or the named ones) over the results dirs; return the files written.
-    kernel_tables writes under kernel_dest and the others under dest; each writes a manifest of the runs it read.
-    """
+    """Run the builders (all, or the named ones) over the results dirs; return the files written."""
     results_dirs = [Path(d) for d in results_dirs]
     names = list(only) if only else list(BUILDERS)
     unknown = [n for n in names if n not in BUILDERS]

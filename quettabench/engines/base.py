@@ -27,10 +27,7 @@ class UnsupportedField(ValueError):
 
 @dataclass(frozen=True)
 class LaunchSpec:
-    """Everything needed to start and drive one engine, as plain data.
-
-    server_argv is empty when the adapter has no server. env is added to the child's inherited environment; env_drop names inherited variables to remove.
-    """
+    """Everything needed to start and drive one engine, as plain data."""
 
     adapter: str
     server_argv: tuple = ()
@@ -66,7 +63,7 @@ class EngineAdapter(ABC):
     benchmarked = True  # False: a scoring side only (reference), not offered as an engine
 
     def refuse_unsupported(self, cfg):
-        """UnsupportedField for an engine field the run, env or --set moves off its default when this adapter is not in its supports: no silent drop. A model yaml value describes the checkpoint and is not refused."""
+        """UnsupportedField for an engine field the run, env or --set moves off its default when this adapter does not support it."""
         defaults = EngineCfg()
         for f in fields(EngineCfg):
             value = getattr(cfg.engine, f.name)

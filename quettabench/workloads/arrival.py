@@ -1,4 +1,4 @@
-"""Arrival schedules: parse_arrival turns a spec (trace, steady, poisson:<r>, ramp:<a>:<b>, burst:<n>x<size>@<gap>) into offsets in seconds from the start of the run."""
+"""Arrival schedules: parse_arrival turns a spec (trace, steady, poisson:<r>, ramp:<a>:<b>, burst:<n>x<size>@<gap>) into offsets in seconds."""
 
 import math
 import random

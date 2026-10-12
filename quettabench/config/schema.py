@@ -242,9 +242,7 @@ def dict_field(path):
 
 # Serving-topology and expert-parallel rules: the loader refuses a Config that breaks them.
 def parse_serving_style(spec):
-    """Parse a serving topology into {mode, ...degrees}; raises ValueError on a malformed spec.
-    'aggregated', 'disagg:<P>p<D>d', 'ep<N>dp<M>' or 'afd:<A>a<F>f'.
-    """
+    """Parse 'aggregated', 'disagg:<P>p<D>d', 'ep<N>dp<M>' or 'afd:<A>a<F>f' into {mode, ...degrees}; ValueError if malformed."""
     if spec in (None, "", "aggregated"):
         return {"mode": "aggregated"}
     m = re.fullmatch(r"disagg:(\d+)p(\d+)d", spec)

@@ -71,9 +71,7 @@ ENV_MAP = {
 
 
 def read_env(env=None, only=None):
-    """{Config path: value} for every mapped var that is set and non-empty.
-
-    env=None reads os.environ; only limits the read to those var names. The first var in ENV_MAP order wins a shared field, except the CLASHES pairs, which raise ConfigError when their values differ."""
+    """{Config path: value} for every mapped var that is set and non-empty; clashing vars with different values raise ConfigError."""
     if env is None:
         env = os.environ
     out = {}

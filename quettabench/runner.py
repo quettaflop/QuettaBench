@@ -99,7 +99,7 @@ def session_trace(profile, num_sessions, seed, **trace_kw):
 
 
 def build_trace(cfg, tokenizer=None):
-    """The run's Trace: a GridTrace for mode.grid, else workload.source as a profile name (single-turn or sessions) or a replay JSONL path. tokenizer is called lazily by corpus grids."""
+    """The run's Trace: a GridTrace for mode.grid, else workload.source as a profile name or a replay JSONL path."""
     w = cfg.workload
     if cfg.mode.grid is not None:
         return GridTrace.from_config(cfg, tokenizer=tokenizer)
@@ -200,7 +200,7 @@ def check_probe(cfg):
 
 
 def run_probe(cfg, out):
-    """The probe's main with its own flags and --out set to the run dir, on the run's GPUs, exported before the probe is imported; its rows go to the run dir's rows.jsonl."""
+    """The probe's main with its flags and --out set to the run dir, on the run's GPUs; its rows go to rows.jsonl."""
     check_probe(cfg)
     argv = [*shlex.split(cfg.mode.probe_args), "--out", str(out)]
     writer = RunWriter(out, cfg)
@@ -230,7 +230,7 @@ def in_process(cfg, adapter, spec):
 
 
 def refuse_mixed_in_process(cfgs):
-    """In-process points, probes included, must agree on CUDA_VISIBLE_DEVICES and collective pins, since CUDA reads the first point's for the whole process; with more than one point they must name their GPUs."""
+    """In-process points must agree on CUDA_VISIBLE_DEVICES and collective pins, since CUDA reads the first point's for the whole process."""
     seen, unnamed, points = set(), False, 0
     for cfg in cfgs:
         adapter = None if cfg.mode.mode == "probe" else base.get(cfg.engine.name)
@@ -257,7 +257,7 @@ def refuse_mixed_in_process(cfgs):
 
 
 def run_one(cfg, out, exported=None):
-    """One Config through launch, drive, serve and stop. exported collects env names in-process points put into this process; a later point's child gets them unset unless it pins them."""
+    """One Config through launch, drive, serve and stop; exported collects env names in-process points put into this process."""
     exported = set() if exported is None else exported
     if cfg.mode.mode == "probe":
         return run_probe(cfg, out)
@@ -311,10 +311,7 @@ def run_failed(out):
 
 
 def clear_run_dir(out, overwrite, results_dir):
-    """Refuse a run dir that already holds files, since requests.jsonl appends; with overwrite, or a failed run.json, empty it.
-
-    Only a real dir directly under results_dir holding a run marker is emptied: renamed to a hidden sibling, then removed.
-    """
+    """Refuse a run dir that already holds files since requests.jsonl appends; with overwrite, or a failed run.json, empty it."""
     if out.is_symlink():
         raise ConfigError(f"{out} is a symlink; qbench empties only a run dir it made")
     if not out.is_dir() or not any(out.iterdir()):

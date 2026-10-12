@@ -14,7 +14,7 @@ from .live import RealTrace, Request, est_tokens, load_sharegpt
 
 @dataclass(frozen=True)
 class TurnPacing:
-    """per-session runs a session's turns back to back; interleaved waits at a barrier after every turn index. Tool and human waits follow each turn, plus recorded gaps when use_recorded_waits; use_recorded_arrivals starts each session at its recorded arrival."""
+    """per-session runs a session's turns back to back; interleaved waits at a barrier after every turn index."""
 
     pacing: str = "per-session"
     tool_wait_ms: float = 0.0
@@ -24,10 +24,7 @@ class TurnPacing:
 
 
 class SessionTrace(RealTrace):
-    """A RealTrace whose requests are turns; sessions() groups them by session_id in first-appearance order, each ordered by turn.
-
-    replies maps a session id to the assistant placeholder dicts later turns share; empty when recorded replies are kept.
-    """
+    """A RealTrace whose requests are turns; sessions() groups them by session_id, each ordered by turn."""
 
     pacing = TurnPacing()
     replies: Mapping = MappingProxyType({})
@@ -82,7 +79,7 @@ class MultiTurnSession:
 
 
 class LoadedSessionTrace(SessionTrace):
-    """Sessions shuffled with the seed and cut to num_sessions, turns up to max_turn_index, turn 0 carrying the recorded arrival. max_turns is the longest session before the cut; warmup draws cycle the sessions turn-major."""
+    """Sessions shuffled with the seed and cut to num_sessions and max_turn_index, turn 0 carrying the recorded arrival."""
 
     def __init__(
         self,
@@ -136,10 +133,7 @@ class LoadedSessionTrace(SessionTrace):
 
 
 class ShareGPTSessionTrace(LoadedSessionTrace):
-    """ShareGPT conversations as growing-history turns, loading up to 3x num_sessions.
-
-    Pairs stop at the first reply outside the output bounds and turns at the first that overflows max_isl_tokens; conversations under min_turns are skipped, longer ones cut at max_turns.
-    """
+    """ShareGPT conversations as growing-history turns, loading up to 3x num_sessions."""
 
     def __init__(
         self,
@@ -193,10 +187,7 @@ class ShareGPTSessionTrace(LoadedSessionTrace):
 
 
 class TrajectorySessionTrace(LoadedSessionTrace):
-    """Agent trajectories, one session per JSONL line: {"session_id", "turns": [{"messages", "osl_tokens"}, ...]}.
-
-    Sessions under min_turns are skipped, longer ones cut at max_turns; a session stops at the first turn whose estimated prompt exceeds max_isl_tokens less its output and the margin.
-    """
+    """Agent trajectories, one session per JSONL line: {"session_id", "turns": [{"messages", "osl_tokens"}, ...]}."""
 
     def __init__(
         self,
