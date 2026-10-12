@@ -5,6 +5,7 @@ import contextlib
 import csv
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -255,3 +256,17 @@ def test_files_and_find_skip_a_clearing_dir(tmp_path: Path) -> None:
     _inputs.run_dirs.cache_clear()
     assert _inputs.files(results, "*.csv") == []
     assert _inputs.find([results], "serving_stage_split_H100.csv") is None
+
+
+def test_a_pulled_run_is_ordered_by_its_pulled_time(tmp_path: Path) -> None:
+    """A remote run's finished is on the remote clock; its pulled, on this
+    one, orders it when present."""
+    results = tmp_path / "results"
+    local = stage_split_run(results, "20261001", "2026-10-05T00:00:00+00:00", "ok", 1.0)
+    pulled = stage_split_run(results, "20261002", "2099-01-01T00:00:00+00:00", "ok", 2.0)
+    doc = json.loads((pulled / "run.json").read_text())
+    doc["provenance"]["pulled"] = "2026-10-04T00:00:00+00:00"
+    (pulled / "run.json").write_text(json.dumps(doc))
+    _inputs.run_dirs.cache_clear()
+    assert _inputs.finished(pulled) == datetime(2026, 10, 4, tzinfo=timezone.utc)
+    assert _inputs.find([results], "serving_stage_split_H100.csv") == local / "serving_stage_split_H100.csv"

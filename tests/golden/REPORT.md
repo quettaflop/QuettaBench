@@ -630,3 +630,15 @@ stopped export removes the `--kernel-dest` it made; no
 and unparsable `probe_args` stop the export naming the run instead of
 raising a traceback; `_inputs.files` and `find` skip paths under a
 `.clearing-*` dir, as `run_dirs` does.
+
+2026-10-12: no fixture changed. This supersedes the 2026-10-11 entry's
+last clause: a pulled remote run's `provenance.finished` is no longer
+rewritten (and no `remote_finished` is added); `remote_probe` stamps
+`provenance.pulled` from the local clock through `metrics/results.py`
+`stamp_pulled`, and export orders a run by `pulled` when present, else
+`finished`. A pulled `run.json` that does not parse or whose provenance
+is not an object is warned about, naming the run, and the remote dir is
+still removed; before, it raised and the remote dir was kept. Every
+probe parser takes no abbreviated flag (`add_output_args`, and
+`serving_stage_split` and `serving_decode_grid` themselves), and
+`remote_probe` refuses `--gpu-label` and `--gpu` among the probe args.

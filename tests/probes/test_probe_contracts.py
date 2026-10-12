@@ -258,19 +258,36 @@ def test_a_failed_pull_names_the_probe_exit_code(tmp_path, monkeypatch):
         remote(["gemm", "A100"], host, tmp_path, monkeypatch)
 
 
-def test_the_pulled_run_finishes_on_the_local_clock(tmp_path, monkeypatch):
-    """The remote clock may be skewed: the pulled run.json's finished is set
-    here after the pull, the remote one kept as remote_finished."""
-    class Pulls(FakeHost):
-        def pulled(self, local):
-            run = local / "gemm" / "20261011T120000.123456Z"
-            run.mkdir(parents=True)
-            (run / "run.json").write_text(json.dumps({"provenance": {"finished": "2099-01-01"}}))
-    remote(["gemm", "A100"], Pulls(), tmp_path, monkeypatch)
+class Pulls(FakeHost):
+    """A pull that brings back the run with run.json text record."""
+
+    def __init__(self, record, **kw):
+        super().__init__(**kw)
+        self.record = record
+
+    def pulled(self, local):
+        run = local / "gemm" / "20261011T120000.123456Z"
+        run.mkdir(parents=True)
+        (run / "run.json").write_text(self.record)
+
+
+def test_the_pulled_run_is_stamped_on_the_local_clock(tmp_path, monkeypatch):
+    """The remote clock may be skewed: the pulled run.json keeps the remote
+    finished and gets pulled from this machine's clock."""
+    remote(["gemm", "A100"], Pulls(json.dumps({"provenance": {"finished": "2099-01-01"}})),
+           tmp_path, monkeypatch)
     doc = json.loads((tmp_path / "results/probes/A100/gemm/20261011T120000.123456Z/run.json")
                      .read_text())
-    assert doc["provenance"]["remote_finished"] == "2099-01-01"
-    assert datetime.fromisoformat(doc["provenance"]["finished"]) < datetime(2099, 1, 1, tzinfo=timezone.utc)
+    assert doc["provenance"]["finished"] == "2099-01-01" and "remote_finished" not in doc["provenance"]
+    assert datetime.fromisoformat(doc["provenance"]["pulled"]) < datetime(2099, 1, 1, tzinfo=timezone.utc)
+
+
+@pytest.mark.parametrize("record", ["{", '{"provenance": null}'])
+def test_a_bad_pulled_run_json_warns_and_the_remote_dir_still_goes(record, tmp_path, monkeypatch, capsys):
+    host = Pulls(record, probe_rc=2)
+    assert remote(["gemm", "A100"], host, tmp_path, monkeypatch) == 2
+    assert "20261011T120000.123456Z" in capsys.readouterr().err
+    assert host.calls[-1] == [*SSH, f"rm -rf {host.rdir}"]
 
 
 def test_probe_args_pass_through_intact(tmp_path, monkeypatch):
@@ -312,6 +329,8 @@ def test_an_odd_mktemp_answer_is_never_removed(rdir, tmp_path, monkeypatch):
                                   ["gemm", "A100", "--host=-oProxyCommand=x"],
                                   ["gemm", "A100", "--probe-args=--out /x"],
                                   ["gemm", "A100", "--probe-args=--run-id=1"],
+                                  ["gemm", "A100", "--probe-args=--gpu-label H100"],
+                                  ["--", "gemm", "A100", "--gpu=H100"],
                                   ["--", "gemm", "A100", "--out-dir", "/x"]])
 def test_remote_probe_refuses_odd_names(argv, tmp_path, monkeypatch):
     host = FakeHost()

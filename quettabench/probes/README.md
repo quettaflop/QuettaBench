@@ -121,8 +121,12 @@ Set `REMOTE_HOST`, `GPU_ID` and `PYTHON_BIN`; `remote-probe` (`probes/base.py`
 the probes package into it, runs the probe on `GPU_ID` (`NPROC=2 GPU_IDS=0,1` for the
 torchrun probes, `NCU_BIN` for `--ncu`) with `--run-id` from the local clock, and always
 rsyncs the run back into `results/probes/<gpu>/<probe>/<run-id>/`, a failed run's too,
-never overwriting a local file. It exits with the remote run's exit code and removes that
-remote dir alone once the pull succeeds; a failed pull keeps it and prints where. No
+never overwriting a local file. The pulled `run.json` keeps the remote `provenance.finished`
+and gets `provenance.pulled` from the local clock, which export orders runs by; a `run.json`
+that cannot be stamped is warned about and left. It exits with the remote run's exit code
+and removes that remote dir alone once the pull succeeds; a failed pull keeps it and prints
+where. `--gpu-label`, `--gpu`, `--out`, `--out-dir` and `--run-id` are refused among the
+probe args, since remote-probe sets them. No
 earlier run goes up, since a run writes only its own rows. Pick a **free** GPU
 (`just gpu-info`) on shared hosts.
 ```

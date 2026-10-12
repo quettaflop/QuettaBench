@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import contextlib
 import dataclasses
-import json
 import re
 import shlex
 import subprocess
@@ -16,7 +15,7 @@ from pathlib import Path
 
 from quettabench.config import env_map
 from quettabench.config.schema import Config, EngineCfg, HardwareCfg, ModeCfg, WorkloadCfg
-from quettabench.metrics.results import RunWriter, exit_status, redact, write_atomic
+from quettabench.metrics.results import RunWriter, exit_status, redact, stamp_pulled
 
 DEFAULT_OUT = Path("results") / "probes"
 # A run id: the run's start in UTC to the microsecond, so a probe's run dirs sort by start.
@@ -39,7 +38,9 @@ def run_config(cfg: Config):
 def add_output_args(ap: argparse.ArgumentParser) -> None:
     """Add --gpu-label, --out and --run-id; --out defaults to
     results/probes/<gpu-label>, and each probe writes under its own
-    <out>/<probe>/<run-id>/ (out_root)."""
+    <out>/<probe>/<run-id>/ (out_root). The parser takes flags only as
+    written, so export reads probe_args as the probe did."""
+    ap.allow_abbrev = False
     ap.add_argument("--gpu-label", "--gpu", required=True, help="GPU name the tables are keyed by, e.g. A100/H100")
     ap.add_argument("--out", "--out-dir", dest="out_dir", default=None,
                     help="parent of the probe's own <probe>/ dir (default: results/probes/<gpu-label>)")
@@ -152,7 +153,7 @@ REMOTE_DIR = re.compile(r"/tmp/qbench-probes\.[A-Za-z0-9]{6,}")
 NAME = re.compile(r"[a-z][a-z0-9_]*")
 GPU = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 # Flags remote_probe sets itself; a probe arg naming one is refused.
-OWN_FLAGS = ("--out", "--out-dir", "--run-id")
+OWN_FLAGS = ("--out", "--out-dir", "--run-id", "--gpu-label", "--gpu")
 
 
 def _remote_args(argv):
@@ -183,24 +184,24 @@ def _remote_python(py):
 
 
 def _finish_here(run_dir: Path) -> None:
-    """Set the pulled run's provenance.finished from this machine's clock,
-    the remote one kept as remote_finished, so export orders runs on one clock."""
+    """Stamp the pulled run's provenance.pulled from this machine's clock, so
+    export orders runs on one clock; a run.json that cannot be stamped is
+    warned about and left as pulled."""
     path = run_dir / "run.json"
     if not path.is_file():
         return
-    doc = json.loads(path.read_text())
-    provenance = doc.setdefault("provenance", {})
-    provenance["remote_finished"] = provenance.get("finished")
-    provenance["finished"] = datetime.now(timezone.utc).isoformat()
-    write_atomic(path, json.dumps(doc, indent=2) + "\n")
+    try:
+        stamp_pulled(path)
+    except (ValueError, TypeError, OSError) as e:
+        print(f"{run_dir}: run.json not stamped pulled ({type(e).__name__}: {e})", file=sys.stderr)
 
 
 def remote_probe(argv=None, run=subprocess.run, now=None) -> int:
     """Run a probe on a remote host in its own `mktemp -d` dir: ship SHIPPED,
     run it with --run-id from this machine's clock, always pull its out/
     (made up front, so a probe that wrote nothing pulls nothing) into
-    results/probes/<gpu>/ (never overwriting a local file), record the
-    finish on this machine's clock, then remove that dir alone. Returns the
+    results/probes/<gpu>/ (never overwriting a local file), stamp its
+    run.json's provenance.pulled on this machine's clock, then remove that dir alone. Returns the
     remote run's exit code; a failed or interrupted pull keeps the remote
     dir and says where it is."""
     a = _remote_args(argv)

@@ -361,3 +361,23 @@ def test_append_cannot_be_abbreviated(name, capsys):
     with pytest.raises(SystemExit) as stop:
         import_without_torch(name).main(["--gpu-label", "H100", "--app"])
     assert stop.value.code == 2 and "unrecognized" in capsys.readouterr().err
+
+
+def test_probe_flags_cannot_be_abbreviated():
+    """add_output_args makes every probe parser take flags only as written,
+    so --gpu-l or --ru never stand for --gpu-label or --run-id."""
+    ap = argparse.ArgumentParser()
+    probes_base.add_output_args(ap)
+    for argv in (["--gpu-l", "H100"], ["--gpu", "H100", "--ru", "x"]):
+        with contextlib.redirect_stderr(io.StringIO()), pytest.raises(SystemExit):
+            ap.parse_args(argv)
+    assert ap.parse_args(["--gpu", "H100"]).gpu_label == "H100"
+
+
+@pytest.mark.parametrize("name,out", [("serving_stage_split", ["--out", "x.csv"]),
+                                      ("serving_decode_grid", ["--out-raw", "r", "--out-summary", "s"])])
+def test_probes_without_output_args_take_no_abbreviation_either(name, out, capsys):
+    probe = importlib.import_module(f"quettabench.probes.{name}")
+    with pytest.raises(SystemExit) as stop:
+        probe.main(["--mod", "/w", "--no-launch", *out])
+    assert stop.value.code == 2 and "unrecognized" in capsys.readouterr().err

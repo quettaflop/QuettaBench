@@ -81,10 +81,12 @@ def quettasim_symbol_gone(symbol: str) -> None:
 
 
 def finished(run_dir: Path | None) -> datetime:
-    """run_dir/run.json's provenance.finished as a UTC instant, NEVER for no
-    run dir or no time that parses."""
+    """run_dir/run.json's provenance.pulled (a remote run, on this machine's
+    clock) or else provenance.finished as a UTC instant, NEVER for no run dir
+    or no time that parses."""
     try:
-        when = json.loads((Path(run_dir) / "run.json").read_text())["provenance"]["finished"]
+        provenance = json.loads((Path(run_dir) / "run.json").read_text())["provenance"]
+        when = provenance["pulled"] if "pulled" in provenance else provenance["finished"]
         return datetime.fromisoformat(when).astimezone(timezone.utc)
     except (OSError, ValueError, KeyError, TypeError):
         return NEVER

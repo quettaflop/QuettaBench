@@ -154,6 +154,16 @@ def write_atomic(path, text):
     os.replace(tmp, path)
 
 
+def stamp_pulled(path):
+    """Set run.json's provenance.pulled from this machine's clock (UTC) on a run
+    pulled from another host, its finished left as that host wrote it."""
+    doc = json.loads(Path(path).read_text())
+    if not isinstance(doc, dict) or not isinstance(doc.setdefault("provenance", {}), dict):
+        raise TypeError("run.json or its provenance is not an object")
+    doc["provenance"]["pulled"] = _now()
+    write_atomic(path, json.dumps(doc, indent=2) + "\n")
+
+
 def bench_sha(repo=REPO, short=False):
     """This checkout's commit; empty when there is no git or no repo (an rsync
     copy), never a crash. Old baselines recorded the short form."""

@@ -392,7 +392,7 @@ def warmup_and_verify_eos(port: int, api_key: str, model_name: str) -> str:
 # Driver
 # ------------------------------------------------------------------------------------------------
 def main(argv=None) -> None:
-    ap = argparse.ArgumentParser(description=__doc__,
+    ap = argparse.ArgumentParser(description=__doc__, allow_abbrev=False,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--model", default=None,
                     help="model dir (Llama-3.1-8B-Instruct); needed unless --no-launch")

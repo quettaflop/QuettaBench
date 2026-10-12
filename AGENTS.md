@@ -90,7 +90,8 @@ Every writer and every process starter, exactly:
   and `rsync`; on `REMOTE_HOST`, makes its own `mktemp -d
   /tmp/qbench-probes.XXXXXX`, writes the shipped package and `out/` there,
   runs the probe, and removes that dir once its run is pulled; locally, adds
-  the pulled run under `results/probes/<gpu>/`.
+  the pulled run under `results/probes/<gpu>/` and stamps its `run.json`
+  `provenance.pulled` through `metrics/results.py` `stamp_pulled`.
 - `profiler.py`: `profile.json` (and the nsys export) in the run dir.
 - `profiling/kv_transfer.py`: its CSV under `--out-dir`, run under its own
   torchrun ranks.
