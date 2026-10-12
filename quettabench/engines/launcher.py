@@ -1,6 +1,5 @@
-"""Start an engine server from a LaunchSpec, locally in its own process group or detached in docker, wait for its health check, write results/<run>/engine.json, and stop it with every child.
-
-A container is not --rm, so a crashed engine's log stays readable. The docker path has not run against a real daemon.
+"""Start an engine server from a LaunchSpec, locally or detached in docker, wait for its health check, and stop it with every child.
+The docker path has not run against a real daemon.
 """
 
 import glob
@@ -207,11 +206,7 @@ def container_name(run_name):
 
 
 def docker_argv(spec, cfg, gpus, results_dir):
-    """`docker run -d` of spec.server_argv in spec.image on the given GPUs.
-
-    --pull=never makes a missing image fail here instead of downloading; --init keeps the engine off PID 1 so its workers are reaped. The repo, HF cache and model dir mount read-only at their host paths so model paths resolve unchanged; the results dir mounts read-write so nsys output outlives the container.
-    --entrypoint is the argv's first word, so the image's ENTRYPOINT does not prefix it. A secret-named env var is passed as `-e NAME` alone, so docker reads its value from the env start() gives docker run.
-    """
+    """`docker run -d` of spec.server_argv in spec.image on the given GPUs."""
     hw, run_dir = cfg.hardware, Path(results_dir).resolve()
     if not spec.image:
         raise ConfigError(f"{cfg.run_name}: hardware.launcher=docker needs engine.image")
@@ -231,8 +226,8 @@ def docker_argv(spec, cfg, gpus, results_dir):
         "docker",
         "run",
         "-d",
-        "--pull=never",
-        "--init",
+        "--pull=never",  # a missing image fails here instead of downloading
+        "--init",  # reaps the engine's workers
         "--name",
         container_name(cfg.run_name),
         *devices,
@@ -241,9 +236,9 @@ def docker_argv(spec, cfg, gpus, results_dir):
         *ports,
         *(a for path in [*mounts, REPO] for a in ("-v", f"{path}:{path}:ro")),
         "-v",
-        f"{run_dir}:{run_dir}",
+        f"{run_dir}:{run_dir}",  # read-write so nsys output outlives the container
         *(a for k, v in env.items() for a in ("-e", k if k in hidden else f"{k}={v}")),
-        "--entrypoint",
+        "--entrypoint",  # the argv's first word, so the image ENTRYPOINT does not prefix it
         spec.server_argv[0],
         spec.image,
         *spec.server_argv[1:],

@@ -1,7 +1,4 @@
-"""How work reaches an engine: HttpDriver streams OpenAI requests at a launched server, InProcessDriver builds vLLM here for mode.returns runs, BenchDriver runs the QuettaServe bench per cell, ReferenceDriver scores with transformers.
-
-HttpDriver records its first-token rule on every result as ttft_rule: chat counts the first chunk carrying content, reasoning or tool_calls, completions the first non-empty text. vllm, torch and transformers exist only on GPU boxes, so they are imported inside the methods that use them.
-"""
+"""Drivers that deliver a Trace's requests to an engine."""
 
 import asyncio
 import contextlib
@@ -138,7 +135,7 @@ async def _stream_chat(
                     continue
 
                 delta = choices[0].get("delta", {})
-                # Reasoning models stream reasoning_content or reasoning with content=None, and tool calls arrive under tool_calls; skipping them would fold whole reasoning phases into one ITL gap.
+                # Reasoning and tool-call deltas carry content=None; skipping them would fold a whole reasoning phase into one ITL gap.
                 has_payload = (
                     delta.get("content") is not None
                     or delta.get("reasoning_content") is not None
@@ -359,7 +356,7 @@ class HttpDriver(Driver):
         self, endpoint, backend_name="vllm", *, url=None, model=None, api_key="test", timeout=60, accelerator="cuda"
     ):
         self.endpoint, self.backend_name, self.accelerator = endpoint, backend_name, accelerator
-        self._stream, self.ttft_rule = ENDPOINTS[endpoint]
+        self._stream, self.ttft_rule = ENDPOINTS[endpoint]  # which chunk counts as the first token, recorded per result
         self.url, self.model, self.api_key, self.timeout = url, model, api_key, timeout
         self._http = None
         self._cell = None  # last grid batch; a new one resets the cache

@@ -1,8 +1,4 @@
-"""qbench run: a run yaml to results/<run>/, one Config per matrix point.
-
-Each point gets its LaunchSpec, GPUs and collective pins in the child env, a launched server unless the adapter drives the engine itself (a grid run with mode.returns, cargo bench), then modes/serve.py runs the Trace through the driver into a RunWriter; the server is always stopped. mode: probe runs quettabench.probes.<name> into the run dir instead.
---dry-run prints each Config with its origins and LaunchSpec (and the docker command), secrets redacted, and starts nothing. hardware.launcher=docker needs a launched server, so a grid run with mode.returns cannot use it.
-"""
+"""qbench run: a run yaml to results/<run>/, one Config per matrix point."""
 
 import ast
 import dataclasses
