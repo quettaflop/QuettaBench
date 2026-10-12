@@ -83,6 +83,12 @@ in one results layer, `results/<run>/`, and leaves the repo by
 
 One line each; everything else follows section 2 "Target layout".
 
+- The doors are `run | profile | crossval | export` plus `provision`; section 2 names the third `xval`.
+- The justfile also carries the kernel probe recipes, `probe`, `remote-probe`, `serving-profile`, `profile-gpu`, `gpu-info`, `hooks` and the `mirror-*` R2 recipes, beyond section 2's nine.
+- `runner.py` is about 280 lines, not under 100: it also runs probe-mode runs, matrix sweeps, the in-process env pins and the run dir rules.
+- `configs/hardware/` holds the NCCL link profiles and `configs/workloads.yaml` the named workload profiles, beside section 2's models, grids and runs.
+- `workloads/profiles.py` reads `configs/workloads.yaml`, and `workloads/__init__.py` holds `build(cfg)`, which picks the Trace a Config names.
+- `engines/reference.py` is the transformers FIDELITY reference adapter (`engine.name: reference`); `engines/__init__.py` imports the adapters so they register.
 - `modes/serve.py` is about 820 lines, not under 400: the replay, the session dispatch and the grid cells all live in serve, as section 2 assigns them.
 - `probes/_timing.py` holds the CUDA-graph and NCU timing, not `probes/base.py`: it imports torch, and the runner imports `base.py` on CPU.
 - `probes/moe_routing.py` (`just moe-routing`, slice verification), `serving_decode_grid.py` and `serving_stage_split.py` (read by the export builders) are probes beyond section 2's list.
@@ -90,6 +96,9 @@ One line each; everything else follows section 2 "Target layout".
 - `profiling/kv_transfer.py` stays its own module: it is a torchrun target (`-m quettabench.profiling.kv_transfer`) and the tool name in the kernel manifest.
 - `tests/` has `golden/` and `contracts/` only: the probe contracts and GPU smoke tests live in `contracts/` (owner decision 2026-10-12), and `tests/parity/` waits for the GPU parity gate.
 - `analysis/` has no synthetic-sampler studies or `build_trace_distributions`: `analysis/synthetic/` was deleted by owner decision (2026-10-12, "scrap synthetic").
+- `data/` keeps `download_agent_trajectories.py`, `download_coding_prompts.py`, `build_chat_trajectories.py` and `build_claweval_trajectories.py` apart: section 2's `fetch.py` and `build_trajectories.py` merges are not done.
+- `legacy/trace_serve.py` is gone; `modes/serve.py` replaced it.
+- `scripts/crossval/baselines/` (the compat baselines dir) and `tools/pre_commit/` (the commit-message and em-dash hooks) sit outside section 2's tree.
 
 ## Who writes, who starts a process
 
