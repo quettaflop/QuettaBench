@@ -1,34 +1,99 @@
-"""Kernel timing shared by the probes: CUDA-graph replay and NCU durations."""
+"""Probe device layer (backend, sync, names, event timing), CUDA-graph replay and NCU durations."""
 
 from __future__ import annotations
 
 import csv
+import importlib.util
 import io
 import statistics as st
 import subprocess
 import sys
+import time
 
 import torch
+
+
+def backend() -> str:
+    """cuda, rocm, cpu, or tpu / neuron when their torch plugin is installed (probes refuse those)."""
+    if torch.cuda.is_available():
+        return "rocm" if torch.version.hip else "cuda"
+    for name, module in (("tpu", "torch_xla"), ("neuron", "torch_neuronx")):
+        if importlib.util.find_spec(module):
+            return name
+    return "cpu"
+
+
+def device() -> str:
+    """ROCm builds of torch use the cuda device type."""
+    return "cuda" if torch.cuda.is_available() else "cpu"
+
+
+def device_name() -> str:
+    return torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu"
+
+
+def device_capability() -> tuple[int, int]:
+    return torch.cuda.get_device_capability()
+
+
+def device_count() -> int:
+    return torch.cuda.device_count()
+
+
+def set_device(index: int) -> None:
+    if torch.cuda.is_available():
+        torch.cuda.set_device(index)
+
+
+def sync() -> None:
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+
+
+def empty_cache() -> None:
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+def time_once_ms(fn) -> float:
+    """One synced call; the caller runs any barrier first."""
+    if not torch.cuda.is_available():
+        t0 = time.perf_counter()
+        fn()
+        return (time.perf_counter() - t0) * 1000.0
+    s, e = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+    s.record()
+    fn()
+    e.record()
+    torch.cuda.synchronize()
+    return s.elapsed_time(e)
 
 
 def event_time_us(fn, warmup: int, reps: int, reduce) -> float:
     """Warmup calls, then reduce over reps timed calls."""
     for _ in range(warmup):
         fn()
-    torch.cuda.synchronize()
-    ts = []
-    for _ in range(reps):
-        s, e = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
-        s.record()
-        fn()
-        e.record()
-        torch.cuda.synchronize()
-        ts.append(s.elapsed_time(e) * 1000.0)
-    return reduce(ts)
+    sync()
+    return reduce([time_once_ms(fn) * 1000.0 for _ in range(reps)])
+
+
+def loop_time_us(call, iters: int, warmup: int) -> float:
+    """Per-call time of back-to-back calls timed as one span."""
+    for _ in range(warmup):
+        call()
+    sync()
+
+    def span():
+        for _ in range(iters):
+            call()
+
+    return time_once_ms(span) / iters * 1000.0
 
 
 def graph_time_us(fn, *, warmup: int = 10, reps: int = 50, reduce=min) -> float:
-    """fn must be shape-static with inputs pre-allocated."""
+    """fn must be shape-static with inputs pre-allocated; without a GPU it is eager timing."""
+    if not torch.cuda.is_available():
+        return event_time_us(fn, warmup, reps, reduce)
     for _ in range(3):
         fn()
     # Capture iters ops per graph to amortize the ~6us launch.

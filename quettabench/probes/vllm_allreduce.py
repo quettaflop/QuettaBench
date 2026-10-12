@@ -9,6 +9,7 @@ import os
 import torch
 import torch.distributed as dist
 
+from quettabench.probes import _timing
 from quettabench.probes.base import ProbeRow, add_output_args, emit, run_recorded
 
 _ITERS, _WARMUP = 50, 10
@@ -33,16 +34,7 @@ BYTES_AXIS = [
 
 
 def _time(call, iters=_ITERS, warmup=_WARMUP) -> float:
-    for _ in range(warmup):
-        call()
-    torch.cuda.synchronize()
-    s, e = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
-    s.record()
-    for _ in range(iters):
-        call()
-    e.record()
-    torch.cuda.synchronize()
-    return s.elapsed_time(e) / iters * 1000.0
+    return _timing.loop_time_us(call, iters, warmup)
 
 
 def main(argv=None):
@@ -56,7 +48,7 @@ def main(argv=None):
     )
     a = ap.parse_args(argv)
     rank, world, local = int(os.environ["RANK"]), int(os.environ["WORLD_SIZE"]), int(os.environ["LOCAL_RANK"])
-    torch.cuda.set_device(local)
+    _timing.set_device(local)
     # Imported after set_device, the order a vLLM worker uses.
     from vllm.config import ParallelConfig, VllmConfig, set_current_vllm_config
     from vllm.distributed import get_tp_group, init_distributed_environment, initialize_model_parallel
@@ -79,7 +71,7 @@ def main(argv=None):
         )
     rows = []
     for nbytes in BYTES_AXIS:
-        x = torch.ones(nbytes // 2, dtype=torch.bfloat16, device="cuda")
+        x = torch.ones(nbytes // 2, dtype=torch.bfloat16, device=_timing.device())
         us_vllm = _time(lambda: tp.all_reduce(x))
         us_nccl = _time(lambda: dist.all_reduce(x))
         rows.append((nbytes, us_vllm, us_nccl))

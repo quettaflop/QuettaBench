@@ -9,7 +9,7 @@ import os
 import torch
 
 from quettabench.probes import _timing
-from quettabench.probes._timing import graph_time_us
+from quettabench.probes._timing import event_time_us, graph_time_us
 from quettabench.probes.base import Probe, ProbeRow, add_output_args, emit, run_recorded
 
 M_AXIS = [1, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
@@ -65,9 +65,9 @@ GEMM_KERNELS = ("gemm", "nvjet", "cutlass", "xmma", "wgmma")
 def ncu_gemm_min_us(m, n, k, ncu_bin, reps=NCU_REPS) -> float | None:
     """min over `reps` warm launches."""
     inner = (
-        f"import torch;a=torch.randn({m},{k},device='cuda',dtype=torch.bfloat16);"
-        f"b=torch.randn({k},{n},device='cuda',dtype=torch.bfloat16);"
-        f"[torch.matmul(a,b) for _ in range({reps})];torch.cuda.synchronize()"
+        f"import torch;from quettabench.probes import _timing;a=torch.randn({m},{k},device='{_timing.device()}',dtype=torch.bfloat16);"
+        f"b=torch.randn({k},{n},device='{_timing.device()}',dtype=torch.bfloat16);"
+        f"[torch.matmul(a,b) for _ in range({reps})];_timing.sync()"
     )
     durs = [
         us
@@ -101,18 +101,7 @@ class Fp8Op:
     def _time(self, run, graph: bool) -> float:
         if graph:
             return graph_time_us(run)
-        for _ in range(WARMUP):
-            run()
-        torch.cuda.synchronize()
-        ts = []
-        for _ in range(REPS):
-            s, e = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
-            s.record()
-            run()
-            e.record()
-            torch.cuda.synchronize()
-            ts.append(s.elapsed_time(e) * 1000.0)
-        return min(ts)
+        return event_time_us(run, WARMUP, REPS, min)
 
     # No torch._scaled_mm fallback: per-tensor scaling is faster than the checkpoint's per-block kernel.
     def gemm_us(self, m, n, k, dev, graph: bool = False) -> float:
@@ -133,7 +122,7 @@ class Fp8Op:
             )
         finally:
             del x, w, ws
-            torch.cuda.empty_cache()
+            _timing.empty_cache()
 
     def quant_fit(self) -> tuple[float, float] | None:
         """bytes = m*k*(2 read + 1 write), as in the elementwise table."""
@@ -165,28 +154,18 @@ def time_matmul(m, n, k, dev, dt, graph: bool = False) -> float:
     if graph:
         us = graph_time_us(lambda: torch.matmul(a, b))
         del a, b
-        torch.cuda.empty_cache()
+        _timing.empty_cache()
         return us
-    for _ in range(WARMUP):
-        torch.matmul(a, b)
-    torch.cuda.synchronize()
-    ts = []
-    for _ in range(REPS):
-        s, e = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
-        s.record()
-        torch.matmul(a, b)
-        e.record()
-        torch.cuda.synchronize()
-        ts.append(s.elapsed_time(e) * 1000.0)
+    us = event_time_us(lambda: torch.matmul(a, b), WARMUP, REPS, min)  # The table min-reduces too.
     del a, b
-    torch.cuda.empty_cache()
-    return min(ts)  # The table min-reduces too.
+    _timing.empty_cache()
+    return us
 
 
 class GemmProbe(Probe):
     def __init__(self, a, fp8_op):
         self.a, self.fp8_op = a, fp8_op
-        self.dev, self.dt = torch.device("cuda"), torch.bfloat16
+        self.dev, self.dt = torch.device(_timing.device()), torch.bfloat16
         self.dtype_bytes = 1 if a.dtype == "fp8" else 2
         self.timing = "ncu" if a.ncu else "graph_replay" if a.graph else "eager"
         # GemmTable keys on (M,N,K) only: mixing precisions in one file would collapse cells.
@@ -197,7 +176,7 @@ class GemmProbe(Probe):
         a = self.a
         if a.ncu:
             print(
-                f"[gemm/ncu] {torch.cuda.get_device_name(0)} | {a.ncu_bin} | {len(NCU_NK)} (N,K) x {len(NCU_M)} M",
+                f"[gemm/ncu] {_timing.device_name()} | {a.ncu_bin} | {len(NCU_NK)} (N,K) x {len(NCU_M)} M",
                 flush=True,
             )
             cells = [(n, k, m) for (n, k) in NCU_NK for m in NCU_M]
@@ -219,7 +198,7 @@ class GemmProbe(Probe):
                         pairs.add((v, h))  # lm_head
             m_axis = [int(x) for x in a.m_axis.split(",")] if a.m_axis else M_AXIS
             print(
-                f"[gemm] {torch.cuda.get_device_name(0)} | dtype={a.dtype} | {len(pairs)} (N,K) x {len(m_axis)} M",
+                f"[gemm] {_timing.device_name()} | dtype={a.dtype} | {len(pairs)} (N,K) x {len(m_axis)} M",
                 flush=True,
             )
             cells = [(n, k, m) for (n, k) in sorted(pairs) for m in m_axis]

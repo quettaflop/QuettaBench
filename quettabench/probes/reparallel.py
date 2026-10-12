@@ -10,6 +10,7 @@ import numpy as np
 import torch
 import torch.distributed as dist
 
+from quettabench.probes import _timing
 from quettabench.probes.base import ProbeRow, add_output_args, emit, run_recorded
 
 KEY = ("gpu", "world", "tp_from", "tp_to", "total_weight_gb")
@@ -55,15 +56,10 @@ def _emit(table: str, rows: list[dict]) -> None:
 def _time_ms(fn, iters: int) -> float:
     samples = []
     for it in range(iters + 1):
-        start = torch.cuda.Event(enable_timing=True)
-        end = torch.cuda.Event(enable_timing=True)
         dist.barrier()
-        start.record()
-        fn()
-        end.record()
-        torch.cuda.synchronize()
+        ms = _timing.time_once_ms(fn)
         if it > 0:
-            samples.append(start.elapsed_time(end))
+            samples.append(ms)
     return float(np.median(samples))
 
 
@@ -130,7 +126,7 @@ def main(argv=None) -> bool:
     rank = int(os.environ["RANK"])
     world = int(os.environ["WORLD_SIZE"])
     local = int(os.environ["LOCAL_RANK"])
-    torch.cuda.set_device(local)
+    _timing.set_device(local)
     dist.init_process_group("nccl", rank=rank, world_size=world)
 
     # Creating a group is collective, so each is made once.
@@ -206,7 +202,7 @@ def _measure_tp(a, rank: int, world: int, _get_groups) -> list[dict]:
             if q < p:
                 k = p // q
                 moved = (k - 1) * in_bytes
-                src = torch.empty(in_bytes // 4, dtype=torch.float32, device="cuda")
+                src = torch.empty(in_bytes // 4, dtype=torch.float32, device=_timing.device())
                 dst = [torch.empty_like(src) for _ in range(k)]
 
                 def _do() -> None:
@@ -217,8 +213,8 @@ def _measure_tp(a, rank: int, world: int, _get_groups) -> list[dict]:
                 k = q // p
                 moved = 0
                 keep = in_bytes // k
-                src = torch.empty(in_bytes // 4, dtype=torch.float32, device="cuda")
-                dst_buf = torch.empty(keep // 4, dtype=torch.float32, device="cuda")
+                src = torch.empty(in_bytes // 4, dtype=torch.float32, device=_timing.device())
+                dst_buf = torch.empty(keep // 4, dtype=torch.float32, device=_timing.device())
 
                 def _do() -> None:
                     dst_buf.copy_(src[: keep // 4])
@@ -249,7 +245,7 @@ def _measure_tp(a, rank: int, world: int, _get_groups) -> list[dict]:
             del src
             if q < p:
                 del dst
-            torch.cuda.empty_cache()
+            _timing.empty_cache()
     return out_rows
 
 
@@ -263,7 +259,7 @@ def _measure_dp(a, rank: int, world: int) -> list[dict]:
         for wgb in a.weights_gb:
             nbytes = int(wgb * 1e9 / tp)
             nbytes -= nbytes % 4
-            buf = torch.empty(nbytes // 4, dtype=torch.float32, device="cuda")
+            buf = torch.empty(nbytes // 4, dtype=torch.float32, device=_timing.device())
 
             def _do() -> None:
                 if rank % 2 == 0:
@@ -294,7 +290,7 @@ def _measure_dp(a, rank: int, world: int) -> list[dict]:
                     flush=True,
                 )
             del buf
-            torch.cuda.empty_cache()
+            _timing.empty_cache()
     return out_rows
 
 
@@ -308,7 +304,7 @@ def _measure_ep(a, rank: int, world: int) -> list[dict]:
         chunk = int(wgb * 1e9 / ep) // ep
         chunk -= chunk % 4
         per_gpu = chunk * ep
-        src = torch.empty(per_gpu // 4, dtype=torch.float32, device="cuda")
+        src = torch.empty(per_gpu // 4, dtype=torch.float32, device=_timing.device())
         dst = torch.empty_like(src)
 
         def _do() -> None:
@@ -337,7 +333,7 @@ def _measure_ep(a, rank: int, world: int) -> list[dict]:
                 flush=True,
             )
         del src, dst
-        torch.cuda.empty_cache()
+        _timing.empty_cache()
     return out_rows
 
 
@@ -353,7 +349,7 @@ def _measure_pp(a, rank: int, world: int, _get_groups) -> list[dict]:
         for wgb in a.weights_gb:
             in_bytes = int(wgb * 1e9 / p)
             in_bytes -= in_bytes % 4
-            src = torch.empty(in_bytes // 4, dtype=torch.float32, device="cuda")
+            src = torch.empty(in_bytes // 4, dtype=torch.float32, device=_timing.device())
             dst = [torch.empty_like(src) for _ in range(k)]
 
             def _do() -> None:
@@ -383,7 +379,7 @@ def _measure_pp(a, rank: int, world: int, _get_groups) -> list[dict]:
                     flush=True,
                 )
             del src, dst
-            torch.cuda.empty_cache()
+            _timing.empty_cache()
     return out_rows
 
 
@@ -397,7 +393,7 @@ def _measure_kv(a, rank: int, world: int, _get_groups) -> list[dict]:
     for tokens in a.kv_tokens:
         nbytes = tokens * per_tok
         nbytes -= nbytes % 4
-        src = torch.empty(nbytes // 4, dtype=torch.float32, device="cuda")
+        src = torch.empty(nbytes // 4, dtype=torch.float32, device=_timing.device())
         dst = [torch.empty_like(src) for _ in range(k)]
 
         def _do() -> None:
@@ -426,7 +422,7 @@ def _measure_kv(a, rank: int, world: int, _get_groups) -> list[dict]:
                 flush=True,
             )
         del src, dst
-        torch.cuda.empty_cache()
+        _timing.empty_cache()
     return out_rows
 
 
@@ -447,7 +443,7 @@ def _measure_cross_node(a, rank: int, world: int) -> list[dict]:
         for wgb in a.weights_gb:
             nbytes = int(wgb * 1e9)
             nbytes -= nbytes % 4
-            buf = torch.empty(nbytes // 4, dtype=torch.float32, device="cuda") if active else None
+            buf = torch.empty(nbytes // 4, dtype=torch.float32, device=_timing.device()) if active else None
 
             def _do() -> None:
                 if not active:
@@ -483,14 +479,14 @@ def _measure_cross_node(a, rank: int, world: int) -> list[dict]:
             )
             if buf is not None:
                 del buf
-            torch.cuda.empty_cache()
+            _timing.empty_cache()
 
     groups = [dist.new_group([i, gpn + i]) for i in range(gpn)]
     my_group = groups[local] if node < 2 else None
     for wgb in a.weights_gb:
         nbytes = int(wgb * 1e9)
         nbytes -= nbytes % 4
-        src = torch.empty(nbytes // 4, dtype=torch.float32, device="cuda")
+        src = torch.empty(nbytes // 4, dtype=torch.float32, device=_timing.device())
         dst = [torch.empty_like(src) for _ in range(2)]
 
         def _do() -> None:
@@ -520,7 +516,7 @@ def _measure_cross_node(a, rank: int, world: int) -> list[dict]:
             }
         )
         del src, dst
-        torch.cuda.empty_cache()
+        _timing.empty_cache()
     return out_rows
 
 
@@ -620,11 +616,11 @@ def _measure_plan(a, rank: int, world: int) -> list[dict]:
             unit_bytes = int(wgb * 1e9 / n_cells)
             unit_bytes -= unit_bytes % 4
             recv_bufs = [
-                (peer, torch.empty(ln * unit_bytes // 4, dtype=torch.float32, device="cuda"))
+                (peer, torch.empty(ln * unit_bytes // 4, dtype=torch.float32, device=_timing.device()))
                 for peer, ln in my_recv_runs
             ]
             send_bufs = [
-                (peer, torch.ones(ln * unit_bytes // 4, dtype=torch.float32, device="cuda"))
+                (peer, torch.ones(ln * unit_bytes // 4, dtype=torch.float32, device=_timing.device()))
                 for peer, ln in my_send_runs
             ]
 
@@ -636,7 +632,9 @@ def _measure_plan(a, rank: int, world: int) -> list[dict]:
                         w.wait()
 
             comm_ms = _time_ms(_do, a.iters)
-            local = torch.tensor([float(len(my_fetch) * unit_bytes), float(inter_units * unit_bytes)], device="cuda")
+            local = torch.tensor(
+                [float(len(my_fetch) * unit_bytes), float(inter_units * unit_bytes)], device=_timing.device()
+            )
             dist.all_reduce(local, op=dist.ReduceOp.MAX)
             moved = float(local[0].item())
             inter = float(local[1].item())
@@ -663,7 +661,7 @@ def _measure_plan(a, rank: int, world: int) -> list[dict]:
                     flush=True,
                 )
             del recv_bufs, send_bufs
-            torch.cuda.empty_cache()
+            _timing.empty_cache()
     return out_rows
 
 

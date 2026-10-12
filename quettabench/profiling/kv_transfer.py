@@ -13,6 +13,7 @@ import numpy as np
 import torch
 import torch.distributed as dist
 
+from quettabench.probes import _timing
 from quettabench.probes.base import ProbeRow, add_output_args, emit, run_recorded
 
 KEY = ("gpu", "kv_heads_per_rank", "head_dim", "block_size", "layers", "layout", "tokens")
@@ -82,8 +83,8 @@ def main(argv=None) -> bool:
     world = int(os.environ["WORLD_SIZE"])
     local = int(os.environ["LOCAL_RANK"])
     assert world == 2, "run with --nproc_per_node=2 (rank 0 = P, rank 1 = D)"
-    torch.cuda.set_device(local)
-    dev = torch.device("cuda", local)
+    _timing.set_device(local)
+    dev = torch.device(_timing.device(), local)
     signal.signal(signal.SIGTERM, _on_sigterm)
     dist.init_process_group("gloo", rank=rank, world_size=world, timeout=timedelta(minutes=5))
 
@@ -103,7 +104,7 @@ def main(argv=None) -> bool:
         if rank == 0:
             for t in pool:
                 t.fill_(1)
-        torch.cuda.synchronize()
+        _timing.sync()
         dev_id = local
         caches = [(t.data_ptr(), t.numel(), dev_id, "") for t in pool]
         reg = agent.register_memory(agent.get_reg_descs(caches, "VRAM"))
@@ -197,7 +198,7 @@ def main(argv=None) -> bool:
         dist.barrier()
         agent.deregister_memory(reg)
         del pool
-        torch.cuda.empty_cache()
+        _timing.empty_cache()
         dist.barrier()
 
     sent = [out_rows]

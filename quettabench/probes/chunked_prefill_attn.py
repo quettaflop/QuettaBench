@@ -10,6 +10,7 @@ import statistics as st
 import torch
 from vllm.vllm_flash_attn.flash_attn_interface import flash_attn_varlen_func
 
+from quettabench.probes import _timing
 from quettabench.probes._timing import event_time_us
 from quettabench.probes.base import Probe, ProbeRow, add_output_args, run_recorded
 
@@ -24,7 +25,7 @@ time_call = functools.partial(event_time_us, warmup=WARMUP, reps=REPS, reduce=st
 class CrossAttnProbe(Probe):
     def __init__(self, a):
         self.a = a
-        self.dev, self.dt = torch.device("cuda"), torch.bfloat16
+        self.dev, self.dt = torch.device(_timing.device()), torch.bfloat16
 
     def grid(self):
         q_axis = [int(x) for x in self.a.q_axis.split(",")]
@@ -96,9 +97,9 @@ def main(argv=None):
     ap.add_argument("--ctx-axis", default=",".join(map(str, CTX_AXIS)))
     a = ap.parse_args(argv)
     if a.fa_version == 0:
-        a.fa_version = 3 if torch.cuda.get_device_capability()[0] >= 9 else 2
+        a.fa_version = 3 if _timing.device_capability()[0] >= 9 else 2
     print(
-        f"[cross] {torch.cuda.get_device_name(0)} heads={a.n_heads}/{a.n_kv_heads}/{a.head_dim} fa{a.fa_version}",
+        f"[cross] {_timing.device_name()} heads={a.n_heads}/{a.n_kv_heads}/{a.head_dim} fa{a.fa_version}",
         flush=True,
     )
     # This head config's rows only; kernel_tables unions every ok run on the head config.

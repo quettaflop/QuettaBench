@@ -9,7 +9,8 @@ import statistics as st
 import torch
 import torch.nn.functional as F
 
-from quettabench.probes._timing import graph_median_us
+from quettabench.probes import _timing
+from quettabench.probes._timing import event_time_us, graph_median_us
 from quettabench.probes.base import Probe, ProbeRow, add_output_args, run_recorded
 
 # (reads, writes) per kernel; must match kernel_composed/elementwise.py::_IO.
@@ -23,18 +24,7 @@ HIDDEN = 4096  # row width for the 2-D vLLM ops
 
 
 def time_op(fn) -> float:
-    for _ in range(WARMUP):
-        fn()
-    torch.cuda.synchronize()
-    ts = []
-    for _ in range(REPS):
-        s, e = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
-        s.record()
-        fn()
-        e.record()
-        torch.cuda.synchronize()
-        ts.append(s.elapsed_time(e) * 1000.0)
-    return st.median(ts)
+    return event_time_us(fn, WARMUP, REPS, st.median)
 
 
 def op_for(kernel, n, dev, dt):
@@ -125,7 +115,7 @@ def fit(bytes_list, us_list) -> tuple[float, float]:
 class ElementwiseProbe(Probe):
     def __init__(self, a):
         self.a = a
-        self.dev, self.dt = torch.device("cuda"), torch.bfloat16
+        self.dev, self.dt = torch.device(_timing.device()), torch.bfloat16
         self.timing = "graph_replay" if a.graph else "eager"
 
     def grid(self):
@@ -174,7 +164,7 @@ def main(argv=None):
     )
     a = ap.parse_args(argv)
     tag = ("/graph" if a.graph else "") + ("/vllm" if a.vllm else "")
-    print(f"[elem{tag}] {torch.cuda.get_device_name(0)}", flush=True)
+    print(f"[elem{tag}] {_timing.device_name()}", flush=True)
     n = ElementwiseProbe(a).run()
     print(f"[elem] {n} entries of elementwise/{a.gpu_label}.json", flush=True)
 

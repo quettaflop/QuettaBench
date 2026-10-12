@@ -10,6 +10,7 @@ from pathlib import Path
 
 import torch
 
+from quettabench.probes import _timing
 from quettabench.probes._timing import event_time_us, graph_time_us
 from quettabench.probes.base import ProbeRow, add_output_args, emit, out_root, run_recorded
 
@@ -154,7 +155,7 @@ def sweep_expert_kernel(name, e, k, inter, hidden, tokens_axis, dev, max_mem_gb)
         )
         print(f"  {name:16s} E={e:4d} k={k} inter={inter:6d} h={hidden:5d} tok={m:5d}: {us:9.2f} us", flush=True)
     del w1, w2
-    torch.cuda.empty_cache()
+    _timing.empty_cache()
     return rows
 
 
@@ -402,11 +403,11 @@ def main(argv=None) -> None:
 
         set_current_vllm_config(VllmConfig()).__enter__()
 
-    dev = torch.device("cuda")
+    dev = torch.device(_timing.device())
     tokens_axis = [int(x) for x in a.tokens.split(",")] if a.tokens else TOKENS
     tps = [int(x) for x in a.tp.split(",")]
     print(
-        f"[moe] {torch.cuda.get_device_name(0)} | dtype={a.dtype} "
+        f"[moe] {_timing.device_name()} | dtype={a.dtype} "
         f"| geometries={a.geometries} | tp={tps} | {len(tokens_axis)} token points",
         flush=True,
     )

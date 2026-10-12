@@ -16,11 +16,12 @@ from vllm.model_executor.layers.fla.ops import (
     fused_recurrent_gated_delta_rule,
 )
 
+from quettabench.probes import _timing
 from quettabench.probes._timing import event_time_us, ncu_min_op_us
 from quettabench.probes.base import Probe, ProbeRow, add_output_args, run_recorded
 
 # solve_tril needs a scratch allocator (vLLM sets one at model init), else prefill fails.
-triton.set_allocator(lambda size, alignment, stream: torch.empty(size, dtype=torch.int8, device="cuda"))
+triton.set_allocator(lambda size, alignment, stream: torch.empty(size, dtype=torch.int8, device=_timing.device()))
 
 REPS, WARMUP = 30, 5
 # Capped at 80: the decode proxy hits an illegal-memory bug at B>=120 that corrupts CUDA.
@@ -35,16 +36,16 @@ NCU_REPS = 5  # Launches per NCU capture; the min over per-invocation sums is ke
 
 def _ncu_decode_inner(B, H, K, V) -> str:
     return (
-        "import torch;"
+        "import torch;from quettabench.probes import _timing;"
         "from vllm.model_executor.layers.fla.ops import fused_recurrent_gated_delta_rule as R;"
-        "d=torch.device('cuda');t=torch.bfloat16;"
+        f"d=torch.device('{_timing.device()}');t=torch.bfloat16;"
         f"B,H,K,V={B},{H},{K},{V};s=1.0/(K**0.5);"
         "q=torch.randn(B,1,H,K,device=d,dtype=t);k=torch.randn(B,1,H,K,device=d,dtype=t);"
         "v=torch.randn(B,1,H,V,device=d,dtype=t);"
         "g=-torch.rand(B,1,H,device=d,dtype=torch.float32);beta=torch.rand(B,1,H,device=d,dtype=t);"
         "st=torch.randn(B,H,V,K,device=d,dtype=torch.float32);"
         "f=lambda:R(q,k,v,g,beta,scale=s,initial_state=st,inplace_final_state=False,use_qk_l2norm_in_kernel=True);"
-        f"[f() for _ in range({NCU_REPS})];torch.cuda.synchronize()"
+        f"[f() for _ in range({NCU_REPS})];_timing.sync()"
     )
 
 
@@ -65,7 +66,7 @@ class GdnProbe(Probe):
 
     def __init__(self, a):
         self.a = a
-        self.dev, self.dt = torch.device("cuda"), torch.bfloat16
+        self.dev, self.dt = torch.device(_timing.device()), torch.bfloat16
         self.scale = 1.0 / (a.key_dim**0.5)
         self.base = f"{a.gpu_label}_{a.gdn_geometry}"
         self.failed = False
@@ -170,7 +171,7 @@ def main(argv=None):
     ap.add_argument("--ncu-bin", default=os.environ.get("NCU_BIN", "ncu"))
     a = ap.parse_args(argv)
     print(
-        f"[gdn{'/ncu' if a.ncu else ''}] dev={torch.cuda.get_device_name(0)} H={a.value_heads} K={a.key_dim} V={a.value_dim} gdn_layers={a.gdn_layers}",
+        f"[gdn{'/ncu' if a.ncu else ''}] dev={_timing.device_name()} H={a.value_heads} K={a.key_dim} V={a.value_dim} gdn_layers={a.gdn_layers}",
         flush=True,
     )
     n = GdnProbe(a).run()

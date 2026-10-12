@@ -8,6 +8,7 @@ import argparse
 import torch
 import torch.distributed as dist
 
+from quettabench.probes import _timing
 from quettabench.probes.base import ProbeRow, add_output_args, emit, run_recorded
 
 _DTYPE = torch.bfloat16
@@ -17,8 +18,8 @@ _ITERS, _WARMUP = 50, 10
 def _time_op(op: str, n_elems: int, world: int, iters: int, warmup: int) -> float:
     """Back-to-back loop, like graphed decode."""
     # n_elems is the full logical buffer, so ops compare at equal bytes.
-    full = torch.ones(n_elems, dtype=_DTYPE, device="cuda")
-    shard = torch.ones(max(1, n_elems // world), dtype=_DTYPE, device="cuda")
+    full = torch.ones(n_elems, dtype=_DTYPE, device=_timing.device())
+    shard = torch.ones(max(1, n_elems // world), dtype=_DTYPE, device=_timing.device())
     if op == "all_reduce":
         call = lambda: dist.all_reduce(full)  # noqa: E731
     elif op == "all_gather":
@@ -31,17 +32,7 @@ def _time_op(op: str, n_elems: int, world: int, iters: int, warmup: int) -> floa
     else:
         raise ValueError(f"unknown op {op!r}")
 
-    for _ in range(warmup):
-        call()
-    torch.cuda.synchronize()
-    start = torch.cuda.Event(enable_timing=True)
-    end = torch.cuda.Event(enable_timing=True)
-    start.record()
-    for _ in range(iters):
-        call()
-    end.record()
-    torch.cuda.synchronize()
-    return (start.elapsed_time(end) / iters) / 1000.0
+    return _timing.loop_time_us(call, iters, warmup) / 1e6
 
 
 def main(argv=None):
@@ -60,7 +51,7 @@ def main(argv=None):
     dist.init_process_group(backend="nccl")
     rank = dist.get_rank()
     world = dist.get_world_size()
-    torch.cuda.set_device(rank % torch.cuda.device_count())
+    _timing.set_device(rank % _timing.device_count())
 
     # Small sizes give the latency floor, large ones the bandwidth.
     sizes = [2**k for k in range(10, 28)]  # 1K to 128M elements

@@ -11,6 +11,7 @@ import statistics as st
 import torch
 from vllm.vllm_flash_attn.flash_attn_interface import flash_attn_varlen_func
 
+from quettabench.probes import _timing
 from quettabench.probes._timing import event_time_us, graph_median_us, ncu_min_op_us
 from quettabench.probes.base import Probe, ProbeRow, add_output_args, run_recorded
 
@@ -31,15 +32,15 @@ def _ncu_us(inner: str, ncu_bin: str) -> float | None:
 
 def _decode_inner(b, nh, nkv, hd, kv, fav) -> str:
     return (
-        "import torch;"
+        "import torch;from quettabench.probes import _timing;"
         "from vllm.vllm_flash_attn.flash_attn_interface import flash_attn_varlen_func;"
-        "d=torch.device('cuda');t=torch.bfloat16;"
+        f"d=torch.device('{_timing.device()}');t=torch.bfloat16;"
         f"q=torch.randn({b},{nh},{hd},device=d,dtype=t);"
         f"k=torch.randn({b * kv},{nkv},{hd},device=d,dtype=t);v=torch.randn_like(k);"
         f"cq=torch.arange(0,{b + 1},dtype=torch.int32,device=d);"
         f"ck=torch.arange(0,{(b + 1) * kv},{kv},dtype=torch.int32,device=d);"
         f"f=lambda:flash_attn_varlen_func(q,k,v,1,cq,{kv},cu_seqlens_k=ck,causal=True,fa_version={fav});"
-        f"[f() for _ in range({NCU_REPS})];torch.cuda.synchronize()"
+        f"[f() for _ in range({NCU_REPS})];_timing.sync()"
     )
 
 
@@ -51,7 +52,7 @@ class FlashAttnProbe(Probe):
 
     def __init__(self, a):
         self.a = a
-        self.dev, self.dt = torch.device("cuda"), torch.bfloat16
+        self.dev, self.dt = torch.device(_timing.device()), torch.bfloat16
         self.decode_timing = "ncu" if a.ncu else "graph_replay" if a.graph else "eager"
 
     def grid(self):
@@ -91,7 +92,7 @@ class FlashAttnProbe(Probe):
             else:
                 us = time_call(fn)
             del q, k, v
-            torch.cuda.empty_cache()
+            _timing.empty_cache()
         print(f"{'ncu ' if a.ncu else ''}decode kv={kv} b={b}: {us:.1f}us/call", flush=True)
         return ProbeRow(
             "flash_attn",
@@ -120,7 +121,7 @@ class FlashAttnProbe(Probe):
             lambda: flash_attn_varlen_func(q, k, v, seq, cu, seq, cu_seqlens_k=cu, causal=True, fa_version=a.fa_version)
         )
         del q, k, v
-        torch.cuda.empty_cache()
+        _timing.empty_cache()
         print(f"prefill seq={seq}: {us:.1f}us/call", flush=True)
         return ProbeRow(
             "flash_attn",
@@ -175,8 +176,8 @@ def main(argv=None):
     )
     a = ap.parse_args(argv)
     if a.fa_version == 0:  # auto: FA3 needs sm90+.
-        a.fa_version = 3 if torch.cuda.get_device_capability()[0] >= 9 else 2
-        print(f"[flash] auto fa_version={a.fa_version} for {torch.cuda.get_device_name(0)}", flush=True)
+        a.fa_version = 3 if _timing.device_capability()[0] >= 9 else 2
+        print(f"[flash] auto fa_version={a.fa_version} for {_timing.device_name()}", flush=True)
 
     # kernel_tables keeps the last-finished run per (n_heads, n_kv_heads, head_dim).
     n = FlashAttnProbe(a).run()

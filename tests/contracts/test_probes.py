@@ -425,6 +425,8 @@ def import_without_torch(name):
     fake.nn = types.ModuleType("torch.nn")
     fake.nn.functional = types.ModuleType("torch.nn.functional")
     fake.bfloat16 = "bfloat16"
+    fake.cuda = types.SimpleNamespace(is_available=lambda: True)
+    fake.version = types.SimpleNamespace(hip=None)
     with mock.patch.dict(sys.modules, {"torch": fake, "torch.nn": fake.nn, "torch.nn.functional": fake.nn.functional}):
         sys.modules.pop(f"quettabench.probes.{name}", None)
         return importlib.import_module(f"quettabench.probes.{name}")
@@ -482,11 +484,52 @@ def test_event_time_us_warms_up_then_reduces_over_reps():
         def elapsed_time(self, other):
             return next(elapsed_ms)
 
-    timing.torch.cuda = types.SimpleNamespace(Event=Event, synchronize=lambda: None)
+    timing.torch.cuda = types.SimpleNamespace(is_available=lambda: True, Event=Event, synchronize=lambda: None)
     calls = []
     assert timing.event_time_us(lambda: calls.append(1), 2, 3, min) == 1000.0
     assert len(calls) == 5
     assert timing.event_time_us(lambda: None, 0, 3, statistics.median) == 3000.0
+
+
+def timing_on(available, hip=None):
+    timing = import_without_torch("_timing")
+    timing.torch.cuda = types.SimpleNamespace(is_available=lambda: available)
+    timing.torch.version = types.SimpleNamespace(hip=hip)
+    return timing
+
+
+@pytest.mark.parametrize("available,hip,want", [(True, None, "cuda"), (True, "6.2", "rocm"), (False, None, "cpu")])
+def test_backend_follows_the_torch_build(available, hip, want):
+    timing = timing_on(available, hip)
+    assert timing.backend() == want
+    assert timing.device() == ("cuda" if available else "cpu")
+
+
+def test_backend_names_a_tpu_or_neuron_plugin():
+    timing = timing_on(False)
+    for module, want in (("torch_xla", "tpu"), ("torch_neuronx", "neuron")):
+        with mock.patch.object(timing.importlib.util, "find_spec", side_effect=lambda m, module=module: m == module):
+            assert timing.backend() == want
+
+
+def test_timing_without_a_gpu_is_wall_clock_and_sync_is_a_no_op():
+    timing = timing_on(False)
+    calls = []
+    assert timing.event_time_us(lambda: calls.append(1), 2, 3, len) == 3
+    assert len(calls) == 5
+    assert timing.graph_time_us(lambda: calls.append(1), warmup=1, reps=2, reduce=len) == 2
+    timing.sync()
+    timing.empty_cache()
+    timing.set_device(0)
+    assert timing.device_name() == "cpu"
+
+
+def test_probe_device_layer_leaves_the_launcher_visible_device_names():
+    from quettabench.engines import launcher
+
+    assert timing_on(True, "6.2").backend() == "rocm"
+    assert launcher.visible_env("cuda", "0,1") == ({"CUDA_VISIBLE_DEVICES": "0,1"}, ())
+    assert launcher.visible_env("rocm", "2")[0] == {"HIP_VISIBLE_DEVICES": "2", "CUDA_VISIBLE_DEVICES": "2"}
 
 
 def test_moe_routing_flag_takes_the_routing_parser(capsys):
