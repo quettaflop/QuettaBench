@@ -276,6 +276,14 @@ class LoaderRules(unittest.TestCase):
                 )
         self.one({"mode": {"grid": "toy", "returns": "text"}}, ["hardware.backend=cuda"])
 
+    def test_quettaserve_is_cuda_only(self):
+        for backend in ("rocm", "tpu", "neuron"):
+            with (
+                self.subTest(backend),
+                self.assertRaisesRegex(ConfigError, f"quettaserve runs on CUDA only.*{backend}"),
+            ):
+                self.load(overrides=["engine.name=quettaserve", f"hardware.backend={backend}", "engine.dtype=bfloat16"])
+
     def test_empty_step_points_are_refused(self):
         self.write("grids.yaml", {**GRIDS, "step_points": []})
         with self.assertRaisesRegex(ConfigError, "step_points needs at least two distinct values"):

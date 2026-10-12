@@ -10,6 +10,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from quettabench.config.schema import OTHER_ACCELERATORS
 from quettabench.metrics.results import write_atomic
 from quettabench.profiling import native, wrapped
 
@@ -108,6 +109,9 @@ def profile(results_dir, sources, **source_args):
     results_dir = Path(results_dir)
     engine = read_json(results_dir / "engine.json") or {}
     out = read_json(results_dir / "profile.json") or {}
+    backend = (((read_json(results_dir / "run.json") or {}).get("config") or {}).get("hardware") or {}).get("backend")
+    if "energy" in sources and backend in OTHER_ACCELERATORS:
+        raise ValueError(f"energy reads nvidia-smi, which needs hardware.backend=cuda; this run's is {backend}")
     errors = {}
     energy = None
     for source in [s for s in ORDER if s in sources]:

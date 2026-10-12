@@ -118,6 +118,14 @@ class Profile(unittest.TestCase):
         self.assertEqual(e["joules_per_token"], e["joules"] / 1_500_000)
         self.assertEqual(e["scope"], "gpu_board")
 
+    def test_energy_is_refused_off_cuda(self):
+        write_run(self.dir, "http://127.0.0.1:9")
+        run = json.loads((self.dir / "run.json").read_text())
+        run["config"]["hardware"]["backend"] = "rocm"
+        (self.dir / "run.json").write_text(json.dumps(run))
+        with self.assertRaisesRegex(ValueError, "needs hardware.backend=cuda; this run's is rocm"):
+            profiler.profile(self.dir, ["energy"], nvidia_smi=FAKE_SMI)
+
     def test_energy_after_the_run_needs_a_fixed_window(self):
         write_run(self.dir, "http://127.0.0.1:9")
         out = profiler.profile(self.dir, ["energy"], nvidia_smi=FAKE_SMI)

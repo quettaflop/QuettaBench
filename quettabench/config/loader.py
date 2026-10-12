@@ -246,6 +246,8 @@ def _validate(values, origins, allow_unverified, where):
         raise ConfigError(f"{where}: TPU has no fp16; set engine.dtype=bfloat16")
     if backend in OTHER_ACCELERATORS and values["engine.instrumentation"] == "nsys":
         raise ConfigError(f"{where}: nsys traces CUDA; hardware.backend={backend} has none")
+    if values["engine.name"] == "quettaserve" and backend in OTHER_ACCELERATORS:
+        raise ConfigError(f"{where}: engine.name=quettaserve runs on CUDA only; hardware.backend={backend}")
     if values["mode.mode"] == "probe" and not values["mode.probe"]:
         raise ConfigError(f"{where}: mode=probe needs mode.probe, a quettabench.probes module")
     if values["engine.attention"] in ("mla", "hybrid") and values["engine.kv_bytes"] is None:
