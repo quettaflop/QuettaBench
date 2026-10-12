@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""FA attention grids on vLLM's flash_attn_varlen_func: decode -> flash_attn/{gpu}.csv rows, prefill -> fa3_prefill/{gpu}.csv rows."""
+"""FA attention on vLLM's flash_attn_varlen_func: decode and prefill CSVs per {gpu}."""
 
 from __future__ import annotations
 
@@ -21,11 +21,11 @@ REPS, WARMUP = 30, 5
 # NCU is 100-1000x slower per kernel, hence curated grids; the loader interpolates.
 KV_NCU = [512, 2048, 8192, 16384]
 BATCH_NCU = [1, 8, 32, 128, 320]
-NCU_REPS = 5  # invocations per point; the min is warm steady state
+NCU_REPS = 5  # Invocations per point; the min is warm steady state.
 
 
 def _ncu_us(inner: str, ncu_bin: str) -> float | None:
-    """Per-call kernel us via NCU, summing the flash kernels and dropping torch setup."""
+    """Sums the flash kernels and drops torch setup."""
     return ncu_op_us(inner, ncu_bin, NCU_REPS)
 
 
@@ -47,7 +47,7 @@ time_call = functools.partial(event_time_us, warmup=WARMUP, reps=REPS, reduce=st
 
 
 class FlashAttnProbe(Probe):
-    """Decode grid (kv_len x batch) of flash_attn/{gpu}.csv, then prefill grid (seq, always eager) of fa3_prefill/{gpu}.csv, for one head config."""
+    """Prefill (always eager) after decode, for one head config."""
 
     def __init__(self, a):
         self.a = a
@@ -174,7 +174,7 @@ def main(argv=None):
         "no NCU needed) -> graph/flash_attn/; prefill stays eager",
     )
     a = ap.parse_args(argv)
-    if a.fa_version == 0:  # auto: FA3 needs sm90+
+    if a.fa_version == 0:  # auto: FA3 needs sm90+.
         a.fa_version = 3 if torch.cuda.get_device_capability()[0] >= 9 else 2
         print(f"[flash] auto fa_version={a.fa_version} for {torch.cuda.get_device_name(0)}", flush=True)
 

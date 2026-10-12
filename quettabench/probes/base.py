@@ -1,4 +1,4 @@
-"""What every kernel probe shares: ProbeRow, the Probe ABC, the output arguments, the run record, launch_vllm and remote_probe."""
+"""Shared by every kernel probe: ProbeRow, Probe ABC, output args, run record, remote_probe."""
 
 from __future__ import annotations
 
@@ -19,19 +19,17 @@ from quettabench.config.schema import Config, EngineCfg, HardwareCfg, ModeCfg, W
 from quettabench.metrics.results import RunWriter, exit_status, redact, stamp_pulled
 
 DEFAULT_OUT = Path("results") / "probes"
-# Run start in UTC to the microsecond, so a probe's run dirs sort by start.
+# UTC to the microsecond, so a probe's run dirs sort by start.
 RUN_ID = re.compile(r"\d{8}T\d{6}\.\d{6}Z")
 # QuettaSim's mode words; export maps each to kernel_data's graph/ or eager/.
 TIMINGS = ("graph_replay", "ncu", "amortized_wallclock", "eager", "host_wallclock")
-# The Config of the `qbench run` (mode: probe) running this probe, if any.
 _RUN_CFG: Config | None = None
-# The writer of the run recording this probe (run_recorded or `qbench run`), if any.
 _WRITER: RunWriter | None = None
 
 
 @dataclasses.dataclass(frozen=True)
 class ProbeRow:
-    """One measured row of a QuettaSim table: table is <kind>/<file>, columns are key then value, timing picks the dir."""
+    """table is <kind>/<file>, columns are key then value, timing picks the dir."""
 
     probe: str
     table: str
@@ -45,7 +43,6 @@ class ProbeRow:
 
 
 def emit(row: ProbeRow) -> None:
-    """Append row to the recording run's rows.jsonl."""
     if _WRITER is None:
         raise RuntimeError(
             f"{row.probe}: no run records its rows; run it as a probe (python -m, just probe) or through qbench run"
@@ -54,7 +51,7 @@ def emit(row: ProbeRow) -> None:
 
 
 class Probe(abc.ABC):
-    """grid() yields points, run_point() times one into a ProbeRow (None to skip), run() emits each row as measured and returns the count."""
+    """run() emits each row as measured and returns the count."""
 
     @abc.abstractmethod
     def grid(self) -> Iterable:
@@ -62,7 +59,7 @@ class Probe(abc.ABC):
 
     @abc.abstractmethod
     def run_point(self, point) -> ProbeRow | None:
-        """One point's row, or None when it is skipped."""
+        """None when skipped."""
 
     def run(self) -> int:
         n = 0
@@ -76,7 +73,6 @@ class Probe(abc.ABC):
 
 @contextlib.contextmanager
 def run_config(cfg: Config, writer: RunWriter | None = None):
-    """Hand the run's Config to launch_vllm, and its writer to emit, for the duration of a probe's main."""
     global _RUN_CFG, _WRITER
     _RUN_CFG, _WRITER = cfg, writer
     try:
@@ -86,7 +82,7 @@ def run_config(cfg: Config, writer: RunWriter | None = None):
 
 
 def add_output_args(ap: argparse.ArgumentParser) -> None:
-    """Add --gpu-label, --out (default results/probes/<gpu-label>) and --run-id; each run records under <out>/<probe>/<run-id>/."""
+    """Each run records under <out>/<probe>/<run-id>/."""
     ap.allow_abbrev = False
     ap.add_argument(
         "--gpu-label",
@@ -110,12 +106,10 @@ def add_output_args(ap: argparse.ArgumentParser) -> None:
 
 
 def run_id(now: datetime) -> str:
-    """The run dir name for a run started at now (RUN_ID)."""
     return now.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
 
 
 def out_root(args: argparse.Namespace, name: str) -> Path:
-    """<out>/<name>/<run-id>/, or <out>/<name>/ with no run id."""
     root = (Path(args.out_dir) if args.out_dir else DEFAULT_OUT / args.gpu_label) / name
     run = getattr(args, "run_id", None)
     if run is None:
@@ -126,7 +120,7 @@ def out_root(args: argparse.Namespace, name: str) -> Path:
 
 
 def record_dir(name: str, argv: list[str], file_flag: str | None = None) -> Path | None:
-    """Where a probe's run.json goes: out_root, or with file_flag that file's dir; None when argv names no output (no --gpu-label, or --out -)."""
+    """None when argv names no output (no --gpu-label, or --out -)."""
     ap = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
     if file_flag:
         ap.add_argument(file_flag, dest="file")
@@ -142,7 +136,7 @@ def record_dir(name: str, argv: list[str], file_flag: str | None = None) -> Path
 
 
 def run_recorded(main, name: str, file_flag: str | None = None, now: datetime | None = None) -> None:
-    """main(argv) with its run recorded through RunWriter in <record_dir>/run.json; an exception marks the run failed (aborted on Ctrl-C) and is re-raised."""
+    """An exception marks the run failed (aborted on Ctrl-C) and is re-raised."""
     global _WRITER
     now = now or datetime.now(timezone.utc)
     argv = sys.argv[1:] if file_flag else ["--run-id", run_id(now), *sys.argv[1:]]
@@ -189,7 +183,7 @@ def launch_vllm(
     vllm_flags: dict | None = None,
     timeout_s: int = 1800,
 ):
-    """Start vLLM as `qbench run` does, via the vllm adapter and launcher.start into run_dir; returns the Handle, which the caller stops."""
+    """Returns the Handle, which the caller stops."""
     # Imported here: remote kernel-probe hosts have no engine stack.
     from quettabench.engines import launcher, vllm
 
@@ -210,7 +204,6 @@ def launch_vllm(
     return launcher.start(spec, run_dir, timeout_s=timeout_s)
 
 
-# What remote_probe ships: the probes and what base.py imports for run.json.
 SHIPPED = (
     "quettabench/__init__.py",
     "quettabench/probes/",
@@ -223,12 +216,11 @@ SHIPPED = (
 REMOTE_DIR = re.compile(r"/tmp/qbench-probes\.[A-Za-z0-9]{6,}")
 NAME = re.compile(r"[a-z][a-z0-9_]*")
 GPU = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
-# Flags remote_probe sets itself; a probe arg naming or abbreviating one is refused.
+# A probe arg naming or abbreviating one is refused.
 OWN_FLAGS = ("--out", "--out-dir", "--run-id", "--gpu-label", "--gpu")
 
 
 def _own_flag(name):
-    """name is one of OWN_FLAGS or, past "--", a prefix an abbreviating parser would expand to one."""
     return name in OWN_FLAGS or (name.startswith("--") and len(name) > 2 and any(f.startswith(name) for f in OWN_FLAGS))
 
 
@@ -254,12 +246,12 @@ def _remote_args(argv):
 
 
 def _remote_python(py):
-    """py quoted for the remote shell, a leading ~/ left for it to expand."""
+    """A leading ~/ is left for the remote shell to expand."""
     return "~/" + shlex.quote(py[2:]) if py.startswith("~/") else shlex.quote(py)
 
 
 def _finish_here(run_dir: Path) -> None:
-    """Stamp provenance.pulled on this machine's clock so export orders runs on one clock; warn and leave the run as pulled when that fails."""
+    """Warn and leave the run as pulled when that fails."""
     path = run_dir / "run.json"
     if not path.is_file():
         return
@@ -270,7 +262,7 @@ def _finish_here(run_dir: Path) -> None:
 
 
 def remote_probe(argv=None, run=subprocess.run, now=None) -> int:
-    """Run a probe in a remote temp dir, pull its out/ into results/probes/<gpu>/ without overwriting, then remove that dir; returns the remote exit code."""
+    """Pulls out/ without overwriting, then removes the remote dir."""
     a = _remote_args(argv)
     ssh = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=30", a.host]
     rsh = "ssh -o BatchMode=yes -o ConnectTimeout=30"

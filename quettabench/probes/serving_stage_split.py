@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Concurrency-1 live-server prefill TTFT split by (new, cached) tokens: client SSE wall, server Prometheus deltas and an nsys device split."""
+"""Concurrency-1 prefill TTFT split by (new, cached) tokens from client, server and nsys."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ import aiohttp
 
 from quettabench.probes.base import launch_vllm, run_recorded
 
-# Words are ~1 Llama token each, so a prompt of N words is ~N tokens.
+# Words are ~1 Llama token each.
 _VOCAB = (
     "the of and to in a is that for it as was with on be at by this had not are but from or "
     "have an they which one you were her all she there would their we him been has when who "
@@ -38,7 +38,7 @@ def fresh_tail(new: int) -> str:
     return " ".join(_TAIL.choice(_VOCAB) for _ in range(int(new * 0.96)))
 
 
-# vLLM v1 exposes per-request timings only as histograms; at concurrency 1 the _sum delta across one request is that request's value.
+# vLLM v1 exposes per-request timings only as histograms; at concurrency 1 the _sum delta is the value.
 _PROM_METRICS = {
     "queue_span_s": "vllm:request_queue_time_seconds",
     # Scheduled to first token: forward wall including Python dispatch.
@@ -50,7 +50,7 @@ _PROM_METRICS = {
 
 
 def _parse_prom_sums(text: str) -> dict:
-    """Return {metric_key: cumulative _sum} from a Prometheus text body; labels are ignored since one model means one line per histogram."""
+    """Labels are ignored: one model means one line per histogram."""
     wanted = {f"{base}_sum": key for key, base in _PROM_METRICS.items()}
     out = {key: None for key in _PROM_METRICS}
     for line in text.splitlines():
@@ -71,7 +71,7 @@ def _parse_prom_sums(text: str) -> dict:
 
 
 async def scrape_metrics(session: aiohttp.ClientSession, base_url: str) -> dict:
-    """Scrape /metrics; a missing metric is None."""
+    """A missing metric is None."""
     try:
         async with session.get(base_url + "/metrics") as resp:
             if resp.status != 200:
@@ -133,7 +133,7 @@ async def measure(session, base_url, model, cached, new, trials):
         await ttft_once(session, chat_url, model, prefix)
 
     samples = []
-    for i in range(trials + 1):  # first trial is warmup
+    for i in range(trials + 1):
         tail = fresh_tail(new)
         content = (prefix + " " + tail) if cached > 0 else tail
         before = await scrape_metrics(session, base_url)
@@ -219,7 +219,7 @@ _WORKER_EXT_HINT = (
 
 
 def emit_nsys_cmd(model, port, gpu_mem, max_model_len, out_sqlite):
-    """Print the LANE B nsys-wrapped server command; the key comes from VLLM_API_KEY so it is never printed."""
+    """The key comes from VLLM_API_KEY, so it is never printed."""
     py = sys.executable
     nsys_cmd = (
         f"nsys profile -t cuda,nvtx,cublas --cuda-graph-trace=node \\\n"
@@ -359,7 +359,7 @@ def main(argv=None):
 
     if a.emit_nsys_cmd:
         emit_nsys_cmd(a.model, a.port, a.gpu_mem, a.max_model_len, out_sqlite="serving_stage_split_nsys")
-        return False  # no measurement, so no run.json
+        return False
 
     news = [int(x) for x in a.news.split(",")]
     cacheds = [int(x) for x in a.cacheds.split(",")]

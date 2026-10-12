@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""TP all-reduce through vLLM's GroupCoordinator next to plain NCCL, under torchrun."""
+"""TP all-reduce through vLLM's GroupCoordinator next to plain NCCL."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import torch.distributed as dist
 from quettabench.probes.base import ProbeRow, add_output_args, emit, run_recorded
 
 _ITERS, _WARMUP = 50, 10
-# Full logical buffer bytes: decode payloads (batch x hidden x 2B) up to prefill chunks (8192 x 4096 x 2B = 64 MB).
+# Decode payloads (batch x hidden x 2B) up to prefill chunks (8192 x 4096 x 2B = 64 MB).
 BYTES_AXIS = [
     4096,
     8192,
@@ -42,7 +42,7 @@ def _time(call, iters=_ITERS, warmup=_WARMUP) -> float:
         call()
     e.record()
     torch.cuda.synchronize()
-    return s.elapsed_time(e) / iters * 1000.0  # us per call
+    return s.elapsed_time(e) / iters * 1000.0
 
 
 def main(argv=None):
@@ -61,7 +61,7 @@ def main(argv=None):
     from vllm.config import ParallelConfig, VllmConfig, set_current_vllm_config
     from vllm.distributed import get_tp_group, init_distributed_environment, initialize_model_parallel
 
-    # The communicator reads custom-all-reduce enablement from the current vLLM config, as a worker does.
+    # Custom all-reduce enablement comes from the current vLLM config, as in a worker.
     vcfg = VllmConfig(
         parallel_config=ParallelConfig(tensor_parallel_size=world, disable_custom_all_reduce=a.disable_custom_allreduce)
     )
@@ -110,7 +110,7 @@ def main(argv=None):
             )
     dist.barrier()
     dist.destroy_process_group()
-    return rank == 0  # only rank 0 records the run
+    return rank == 0
 
 
 if __name__ == "__main__":

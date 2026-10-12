@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Live-server (batch, context) grid of steady-state mid-stream ITL: B concurrent completion streams per cell, SSE timestamps to --out-raw."""
+"""Live-server (batch, context) grid of steady-state mid-stream ITL."""
 
 from __future__ import annotations
 
@@ -25,13 +25,13 @@ from quettabench.probes.base import launch_vllm, run_recorded
 # aiohttp exists only on the GPU host; the lattice must import without it.
 
 
-# prompt/osl are the integer fixed point of prompt = T - osl//2, osl = 384 + ceil(B*prompt/CHUNK_BUDGET), from osl0 = 384.
-CHUNK_BUDGET = 8192  # vLLM --max-num-batched-tokens, the admission ramp rate
-STEADY_MIN_STEPS = 384  # decode steps all requests share after the ramp
-KV_POOL_TOKENS_TP4 = 2_116_352  # the live tp4 pool at these engine flags
-CAP_FRAC = 0.95  # B*(T + osl/2) may fill at most this fraction of the KV pool
+# Fixed point of prompt = T - osl//2, osl = 384 + ceil(B*prompt/CHUNK_BUDGET).
+CHUNK_BUDGET = 8192  # vLLM --max-num-batched-tokens, the admission ramp rate.
+STEADY_MIN_STEPS = 384
+KV_POOL_TOKENS_TP4 = 2_116_352
+CAP_FRAC = 0.95  # B*(T + osl/2) may fill at most this fraction of the KV pool.
 
-# B -> nominal T: 26 fixed cells, each under B*(T+osl/2) <= 0.95*pool except (160, 12288) at 95.2%.
+# B -> nominal T: 26 cells, each under B*(T+osl/2) <= 0.95*pool except (160, 12288).
 LATTICE_TP4: dict[int, tuple[int, ...]] = {
     1: (512, 2048, 8192, 16384),
     8: (512, 2048, 8192, 16384),
@@ -46,7 +46,7 @@ T_MENU = (512, 2048, 4096, 6144, 8192, 12288, 16384)
 
 
 def solve_cell(b: int, t: int, chunk_budget: int = CHUNK_BUDGET, steady: int = STEADY_MIN_STEPS) -> tuple[int, int]:
-    """(prompt_tokens, osl) integer fixed point for cell (B, T)."""
+    """Integer fixed point for cell (B, T)."""
     osl = steady
     for _ in range(50):
         prompt = t - osl // 2
@@ -60,7 +60,6 @@ def solve_cell(b: int, t: int, chunk_budget: int = CHUNK_BUDGET, steady: int = S
 def lattice_cells(
     lattice: dict[int, tuple[int, ...]] = LATTICE_TP4, pool_tokens: int = KV_POOL_TOKENS_TP4
 ) -> list[dict]:
-    """The fixed cell list with solved (prompt, osl) and the cap check."""
     cap = CAP_FRAC * pool_tokens
     cells = []
     for b in sorted(lattice):
@@ -82,7 +81,7 @@ def lattice_cells(
 
 
 def build_lattice_for_pool(pool_tokens: int) -> dict[int, tuple[int, ...]]:
-    """Lattice for another pool (the tp2 leg): the same B rows and T menu, keeping the base Ts plus the largest menu Ts under the cap."""
+    """Same B rows and T menu: the base Ts plus the largest menu Ts under the cap."""
     cap = CAP_FRAC * pool_tokens
     out: dict[int, tuple[int, ...]] = {}
     for b in (1, 8, 32, 80, 160, 256, 320):
@@ -96,7 +95,7 @@ def build_lattice_for_pool(pool_tokens: int) -> dict[int, tuple[int, ...]]:
     return out
 
 
-TOKEN_ID_LO, TOKEN_ID_HI = 1000, 30000  # plain-text band of the Llama-3.1 vocab
+TOKEN_ID_LO, TOKEN_ID_HI = 1000, 30000
 
 
 def prompt_token_ids(cell_b: int, nominal_t: int, req_idx: int, n_tokens: int) -> list[int]:
@@ -113,7 +112,7 @@ def _p99(vals: list[float]) -> float:
 
 
 async def _stream_once(session, url: str, headers: dict, payload: dict) -> list[float]:
-    """POST a streaming completion and record perf_counter per SSE delta; every completions chunk is a text delta, so none is parsed."""
+    """Every completions chunk is a text delta, so none is parsed."""
     ts: list[float] = []
     async with session.post(url, json=payload, headers=headers) as resp:
         if resp.status != 200:
@@ -201,7 +200,7 @@ async def _run_shard(
 
 def _shard_entry(req_specs, port, api_key, model_name, eos_mode, barrier, shard_id, out_path, rt: bool = False):
     if rt:
-        # SCHED_RR (needs CAP_SYS_NICE) keeps the server's threads from preempting the client loop and tripping the p99 loop-lag flag.
+        # SCHED_RR (needs CAP_SYS_NICE) stops server threads preempting the client and tripping the lag flag.
         try:
             os.sched_setscheduler(0, os.SCHED_RR, os.sched_param(10))
             print(f"shard {shard_id}: SCHED_RR set", flush=True)
@@ -224,7 +223,6 @@ def run_cell(
     tmp_dir: Path,
     rt_shards: bool = False,
 ) -> list[dict]:
-    """Fire one (B, T) cell; returns per-request records (wall-anchored)."""
     b = cell["batch_size"]
     specs = [
         {
@@ -274,7 +272,7 @@ def launch_server(model, port, gpu_mem, max_model_len, api_key, run_dir, tp, max
         tp=tp,
         gpu_util=gpu_mem,
         max_model_len=max_model_len,
-        prefix_caching=False,  # each cell measures uncached prefill
+        prefix_caching=False,
         vllm_flags={
             "served_model_name": "llama",
             "host": "127.0.0.1",
@@ -288,7 +286,6 @@ def launch_server(model, port, gpu_mem, max_model_len, api_key, run_dir, tp, max
 
 
 def kv_pool_from_log(log_path: str) -> int | None:
-    """Parse vLLM's own 'GPU KV cache size: N tokens' line (kv_cache_utils)."""
     try:
         for line in Path(log_path).read_text(errors="replace").splitlines():
             if "GPU KV cache size:" in line:
@@ -300,17 +297,17 @@ def kv_pool_from_log(log_path: str) -> int | None:
 
 
 def warmup_and_verify_eos(port: int, api_key: str, model_name: str) -> str:
-    """8 short streams; returns the eos mode that yields the full requested osl."""
+    """Returns the eos mode that yields the full requested osl."""
     for mode in ("ignore_eos", "min_tokens"):
         specs = [{"cell_b": 8, "nominal_T": 1024, "req": i, "prompt_tokens": 1024, "osl": 64} for i in range(8)]
         try:
             recs = asyncio.run(_run_shard(specs, port, api_key, model_name, mode, None))
-        except Exception as e:  # e.g. 400 on an unsupported field
+        except Exception as e:
             print(f"warmup: eos mode {mode!r} failed ({e}); trying fallback", flush=True)
             continue
         n = [r["n_events"] for r in recs]
         print(f"warmup: eos mode {mode!r} -> events per stream {n} (requested 64)", flush=True)
-        if min(n) >= 61:  # SSE events may coalesce a few tokens
+        if min(n) >= 61:
             return mode
     raise SystemExit("neither ignore_eos nor min_tokens produced the requested output length")
 

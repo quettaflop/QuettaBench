@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""NCCL collective microbenchmark under torchrun: every op LLM inference emits across message sizes; run once per world size."""
+"""NCCL collective microbenchmark under torchrun: every op LLM inference emits."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ _ITERS, _WARMUP = 50, 10
 
 
 def _time_op(op: str, n_elems: int, world: int, iters: int, warmup: int) -> float:
-    """Amortized wall seconds per op call over an n_elems bf16 buffer, timed as a back-to-back loop like graphed decode."""
+    """Back-to-back loop, like graphed decode."""
     # n_elems is the full logical buffer, so ops compare at equal bytes.
     full = torch.ones(n_elems, dtype=_DTYPE, device="cuda")
     shard = torch.ones(max(1, n_elems // world), dtype=_DTYPE, device="cuda")
@@ -88,12 +88,12 @@ def main(argv=None):
     t_pref = _time_op("all_reduce", a.prefill_tokens * a.hidden, world, _ITERS, _WARMUP)
     prefill_ms_per_token = (t_pref / a.prefill_tokens) * a.layers * 1000.0
 
-    latency_us_per_op = round(min(lat_us), 3)  # small-message floor
-    link_bw_bytes_per_s = round(max(bw), 1)  # bandwidth-bound tail
+    latency_us_per_op = round(min(lat_us), 3)
+    link_bw_bytes_per_s = round(max(bw), 1)
     prefill_ms_per_token = round(prefill_ms_per_token, 6)
 
     if rank == 0:
-        if a.out_dir != "-":  # --out - prints without writing
+        if a.out_dir != "-":
             table = f"collectives/{a.gpu_label}_tp{world}.csv"
             for op, wd, nbytes, t_us in rows:
                 emit(
@@ -117,7 +117,7 @@ def main(argv=None):
         print(f"  link_bw_bytes_per_s: {link_bw_bytes_per_s:.3e}")
         print("  # source: measured   # <- uncomment to make this device use the grid above")
     dist.destroy_process_group()
-    return rank == 0  # only rank 0 records the run
+    return rank == 0
 
 
 if __name__ == "__main__":

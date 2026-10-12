@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gated-DeltaNet kernel grid on vLLM's FLA ops: prefill -> gdn/{gpu}_{geom}_prefill.csv, decode -> gdn/{gpu}_{geom}_decode.csv."""
+"""Gated-DeltaNet kernel grid on vLLM's FLA ops: prefill and decode CSVs."""
 
 from __future__ import annotations
 
@@ -19,18 +19,18 @@ from vllm.model_executor.layers.fla.ops import (
 from quettabench.probes._timing import event_time_us, ncu_op_us
 from quettabench.probes.base import Probe, ProbeRow, add_output_args, run_recorded
 
-# solve_tril needs a scratch allocator (vLLM sets one at model init), else prefill fails with "no allocator was set".
+# solve_tril needs a scratch allocator (vLLM sets one at model init), else prefill fails.
 triton.set_allocator(lambda size, alignment, stream: torch.empty(size, dtype=torch.int8, device="cuda"))
 
 REPS, WARMUP = 30, 5
-# Capped at 80: the fused_recurrent decode proxy hits an illegal-memory bug at B>=120 that corrupts the CUDA context.
+# Capped at 80: the decode proxy hits an illegal-memory bug at B>=120 that corrupts CUDA.
 BATCH_FULL = [1, 2, 4, 8, 16, 32, 40, 64, 80]
 SEQ_FULL = [64, 128, 256, 512, 1024, 2048, 4096, 8192]
 BATCH_SMOKE = [1, 32, 256]
 SEQ_SMOKE = [128, 2048]
 # NCU is slow, so a curated grid; the loader interpolates.
 BATCH_NCU = [1, 8, 32, 80]
-NCU_REPS = 5  # launches per NCU capture; the min over per-invocation sums is kept
+NCU_REPS = 5  # Launches per NCU capture; the min over per-invocation sums is kept.
 
 
 def _ncu_decode_inner(B, H, K, V) -> str:
@@ -61,7 +61,7 @@ def mk(B, T, H, K, V, dev, dt):
 
 
 class GdnProbe(Probe):
-    """Prefill grid over seq, then decode grid over batch; a phase stops at its first failure since the decode bug corrupts the CUDA context."""
+    """A phase stops at its first failure: the decode bug corrupts the CUDA context."""
 
     def __init__(self, a):
         self.a = a
@@ -138,7 +138,7 @@ class GdnProbe(Probe):
             return us
         q, k, v, g, beta = mk(B, 1, H, K, V, self.dev, self.dt)
         state = torch.randn(B, H, V, K, device=self.dev, dtype=torch.float32)
-        # Serving runs fused_sigmoid_gating_delta_rule_update; the generic recurrent rule is the same math.
+        # Serving runs fused_sigmoid_gating_delta_rule_update; the generic rule is the same math.
 
         def call():
             return fused_recurrent_gated_delta_rule(
@@ -158,9 +158,9 @@ class GdnProbe(Probe):
 
 def main(argv=None):
     ap = argparse.ArgumentParser()
-    ap.add_argument("--hv", type=int, default=32)  # linear_num_value_heads
-    ap.add_argument("--dk", type=int, default=128)  # linear_key_head_dim
-    ap.add_argument("--dv", type=int, default=128)  # linear_value_head_dim
+    ap.add_argument("--hv", type=int, default=32)
+    ap.add_argument("--dk", type=int, default=128)
+    ap.add_argument("--dv", type=int, default=128)
     ap.add_argument("--n-linear", type=int, default=24)
     ap.add_argument("--mode", choices=["smoke", "full"], default="smoke")
     add_output_args(ap)

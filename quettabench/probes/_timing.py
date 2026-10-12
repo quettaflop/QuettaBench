@@ -1,4 +1,4 @@
-"""Kernel timing shared by the probes: CUDA-graph replay, and NCU per-kernel durations."""
+"""Kernel timing shared by the probes: CUDA-graph replay and NCU durations."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import torch
 
 
 def event_time_us(fn, warmup: int, reps: int, reduce) -> float:
-    """Eager CUDA-event time of one fn call in us: warmup calls, then reduce over reps timed calls."""
+    """Warmup calls, then reduce over reps timed calls."""
     for _ in range(warmup):
         fn()
     torch.cuda.synchronize()
@@ -28,7 +28,7 @@ def event_time_us(fn, warmup: int, reps: int, reduce) -> float:
 
 
 def graph_time_us(fn, *, warmup: int = 10, reps: int = 50, reduce=min) -> float:
-    """Capture fn into a CUDA graph and time replay in us, reduced over reps; fn must be shape-static with inputs pre-allocated."""
+    """fn must be shape-static with inputs pre-allocated."""
     for _ in range(3):
         fn()
     # Capture iters ops per graph to amortize the ~6us launch.
@@ -48,7 +48,7 @@ def graph_time_us(fn, *, warmup: int = 10, reps: int = 50, reduce=min) -> float:
             fn()
     torch.cuda.current_stream().wait_stream(side)
 
-    # No shared memory pool: one pool handle dies with the first graph and trips a CUDACachingAllocator use_count assert.
+    # No shared pool: one pool handle dies with the first graph and trips a CUDACachingAllocator assert.
     g = torch.cuda.CUDAGraph()
     with torch.cuda.graph(g):
         for _ in range(iters):
@@ -74,7 +74,6 @@ def graph_median_us(fn, **kw) -> float:
 
 
 def ncu_kernel_durations(inner: str, ncu_bin: str) -> list[tuple[str, float]]:
-    """[(kernel_name, us)] for every profiled kernel launch, in launch order."""
     cmd = [
         ncu_bin,
         "--csv",
@@ -102,10 +101,10 @@ def ncu_kernel_durations(inner: str, ncu_bin: str) -> list[tuple[str, float]]:
 
 
 def ncu_op_us(inner: str, ncu_bin: str, reps: int, exclude: tuple[str, ...] = ("at::",)) -> float | None:
-    """Kernel us of one op call: per-invocation sum of the op's kernels (minus `exclude`), min over reps; None if NCU gave no usable table."""
+    """Per-invocation sum of the op's kernels (minus `exclude`), min over reps."""
     durs = [us for kn, us in ncu_kernel_durations(inner, ncu_bin) if not any(t in kn for t in exclude)]
     if not durs or reps <= 0 or len(durs) % reps != 0:
         return None
-    n = len(durs) // reps  # kernels per invocation
+    n = len(durs) // reps
     groups = [sum(durs[i * n : (i + 1) * n]) for i in range(reps)]
     return min(groups)

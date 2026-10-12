@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cost of switching parallelism in place over NVLink, under torchrun: tp reshard, dp broadcast, ep restage, pp, kv and cross-node modes."""
+"""Cost of switching parallelism in place over NVLink, under torchrun."""
 
 from __future__ import annotations
 
@@ -20,11 +20,10 @@ COLS = KEY + (
     "eff_gbps",
     "pattern",
     "bytes_inter_per_gpu",
-)  # cross-node share of the move
+)
 
 
 def _fit(rows: list[dict]) -> tuple[float, float]:
-    """Least-squares comm_ms = floor + bytes/bw over one (tp_from, tp_to) series."""
     x = np.array([r["bytes_moved_per_gpu"] for r in rows], dtype=float)
     y = np.array([r["comm_ms"] for r in rows], dtype=float)
     keep = x > 0
@@ -33,12 +32,12 @@ def _fit(rows: list[dict]) -> tuple[float, float]:
     x, y = x[keep], y[keep]
     A = np.stack([np.ones_like(x), x], axis=1)
     (b0, b1), *_ = np.linalg.lstsq(A, y, rcond=None)
-    bw = 1.0 / (b1 / 1e3) if b1 > 0 else float("inf")  # bytes/s
+    bw = 1.0 / (b1 / 1e3) if b1 > 0 else float("inf")
     return b0, bw
 
 
 def _emit(table: str, rows: list[dict]) -> None:
-    """Emit rows sorted on KEY; the last row on a KEY wins."""
+    """The last row on a KEY wins."""
     cells = {tuple(str(r[k]) for k in KEY): {k: str(r.get(k, 0)) for k in COLS} for r in rows}
     for k in sorted(cells, key=lambda t: (t[0], int(t[1]), int(t[2]), int(t[3]), float(t[4]))):
         row = cells[k]
@@ -54,7 +53,6 @@ def _emit(table: str, rows: list[dict]) -> None:
 
 
 def _time_ms(fn, iters: int) -> float:
-    """Median ms of fn over iters runs after one warm-up."""
     samples = []
     for it in range(iters + 1):
         start = torch.cuda.Event(enable_timing=True)
@@ -184,11 +182,11 @@ def main(argv=None) -> bool:
         if seen:
             print(f"\n  bw_bytes_per_s (median): {np.median(seen):.3e}")
     dist.destroy_process_group()
-    return rank == 0  # only rank 0 records the run
+    return rank == 0
 
 
 def _measure_tp(a, rank: int, world: int, _get_groups) -> list[dict]:
-    """Fixed-pool TP reshard: all-gather on tp down, discard on tp up."""
+    """All-gather on tp down, discard on tp up."""
     out_rows: list[dict] = []
     for sw in a.switches:
         p, q = (int(x) for x in sw.split(":"))
@@ -256,7 +254,7 @@ def _measure_tp(a, rank: int, world: int, _get_groups) -> list[dict]:
 
 
 def _measure_dp(a, rank: int, world: int) -> list[dict]:
-    """DP replication: a fresh replica pulls its whole W/tp shard by P2P send, all even->odd pairs at once; tp_from/tp_to carry the shard's tp."""
+    """A fresh replica pulls its whole W/tp shard by P2P send, even->odd pairs at once."""
     out_rows: list[dict] = []
     if world < 2:
         return out_rows
@@ -268,7 +266,7 @@ def _measure_dp(a, rank: int, world: int) -> list[dict]:
             buf = torch.empty(nbytes // 4, dtype=torch.float32, device="cuda")
 
             def _do() -> None:
-                if rank % 2 == 0:  # even ranks are the source
+                if rank % 2 == 0:
                     dist.send(buf, dst=peer)
                 else:
                     dist.recv(buf, src=peer)
@@ -301,7 +299,7 @@ def _measure_dp(a, rank: int, world: int) -> list[dict]:
 
 
 def _measure_ep(a, rank: int, world: int) -> list[dict]:
-    """EP expert restage as all_to_all_single over the whole world (ep = world) at GB scale; each GPU moves (ep-1)/ep of its expert bytes."""
+    """all_to_all_single at GB scale; each GPU moves (ep-1)/ep of its expert bytes."""
     out_rows: list[dict] = []
     ep = world
     if ep < 2:
@@ -344,11 +342,11 @@ def _measure_ep(a, rank: int, world: int) -> list[dict]:
 
 
 def _measure_pp(a, rank: int, world: int, _get_groups) -> list[dict]:
-    """Pipeline-stage reshard on pp down: the same all-gather as tp but over whole layers, to confirm the tp grid prices it; switches are read as pp pairs."""
+    """Same all-gather as tp but over whole layers, to confirm the tp grid prices it."""
     out_rows: list[dict] = []
     for sw in a.switches:
         p, q = (int(x) for x in sw.split(":"))
-        if world % p or world % q or q >= p:  # pp up is a free discard
+        if world % p or world % q or q >= p:
             continue
         k = p // q
         my_group = _get_groups(k)[rank // k]
@@ -390,11 +388,11 @@ def _measure_pp(a, rank: int, world: int, _get_groups) -> list[dict]:
 
 
 def _measure_kv(a, rank: int, world: int, _get_groups) -> list[dict]:
-    """In-flight paged-KV reshard on tp down, as an all-gather of a contiguous per-rank KV buffer."""
+    """All-gather of a contiguous per-rank KV buffer."""
     out_rows: list[dict] = []
-    k = 2  # tp4 -> tp2
+    k = 2
     my_group = _get_groups(k)[rank // k]
-    heads_per_rank = 1  # tp4 with 4 kv heads
+    heads_per_rank = 1
     per_tok = 2 * heads_per_rank * a.head_dim * 2 * a.layers
     for tokens in a.kv_tokens:
         nbytes = tokens * per_tok
@@ -433,7 +431,7 @@ def _measure_kv(a, rank: int, world: int, _get_groups) -> list[dict]:
 
 
 def _measure_xnode(a, rank: int, world: int) -> list[dict]:
-    """Cross-node link rates for the reshard model; launch with torchrun --nnodes=2."""
+    """Launch with torchrun --nnodes=2."""
     gpn = int(os.environ.get("LOCAL_WORLD_SIZE", world))
     n_nodes = world // gpn
     out_rows: list[dict] = []
@@ -526,18 +524,18 @@ def _measure_xnode(a, rank: int, world: int) -> list[dict]:
     return out_rows
 
 
-_UNITS = 24  # per axis: LCM of 1, 2, 3, 4, 6, 8
+_UNITS = 24
 
 
 def _pool_cells(tp: int, pp: int, stage: int, t: int) -> set[int]:
-    """Cells of the row-major (layers x width) weight grid held by rank (stage, t): a stage holds a row band, a tp rank a column band."""
+    """A stage holds a row band, a tp rank a column band."""
     rows = range(stage * _UNITS // pp, (stage + 1) * _UNITS // pp)
     cols = range(t * _UNITS // tp, (t + 1) * _UNITS // tp)
     return {r * _UNITS + c for r in rows for c in cols}
 
 
 def _plan_owner_units(spec: str, world: int) -> dict[int, set[int]]:
-    """Map each rank to the weight-grid cells it holds under one plan side; spec is comma-separated pools, each 'tp:dp' or 'tp:pp:dp'."""
+    """spec is comma-separated pools, each 'tp:dp' or 'tp:pp:dp'."""
     owner: dict[int, set[int]] = {}
     r = 0
     for pool in spec.split(","):
@@ -559,7 +557,7 @@ def _plan_owner_units(spec: str, world: int) -> dict[int, set[int]]:
 def _plan_relabel(
     old_own: dict[int, set[int]], new_own: dict[int, set[int]], world: int, gpus_per_node: int | None = None
 ) -> dict[int, int]:
-    """Greedy max-overlap map of physical GPU to new-plan slot, deterministic so every rank agrees without communication."""
+    """Deterministic, so every rank agrees without communication."""
     gpn = gpus_per_node or world
     edges = sorted(
         ((len(old_own[p] & new_own[s]), p, s) for p in range(world) for s in range(world) if p // gpn == s // gpn),
@@ -576,7 +574,7 @@ def _plan_relabel(
 
 
 def _coalesce_runs(unit_peer: list[tuple[int, int]]) -> list[tuple[int, int]]:
-    """Merge sorted (unit, peer) pairs into (peer, run_length) runs; recv and send sides use it alike so messages pair one-to-one."""
+    """Recv and send sides use it alike so messages pair one-to-one."""
     runs: list[tuple[int, int]] = []
     last_u = None
     for u, p in unit_peer:
@@ -589,7 +587,7 @@ def _coalesce_runs(unit_peer: list[tuple[int, int]]) -> list[tuple[int, int]]:
 
 
 def _measure_plan(a, rank: int, world: int) -> list[dict]:
-    """Whole PD-plan reshard: lay out the old plan, relabel GPUs to the new plan, then time P2P moves of exactly the byte ranges each GPU lacks."""
+    """Relabel GPUs, then time P2P moves of the byte ranges each GPU lacks."""
     out_rows: list[dict] = []
     gpn = int(os.environ.get("LOCAL_WORLD_SIZE", world))
     n_cells = _UNITS * _UNITS
@@ -609,7 +607,7 @@ def _measure_plan(a, rank: int, world: int) -> list[dict]:
             return min(same) if same else min(holders[u])
 
         src_of = {u: _src_for(u, rank) for u in range(n_cells)}
-        # A real reshard moves contiguous ranges, so adjacent units with one peer become one message.
+        # A real reshard moves contiguous ranges: adjacent units with one peer become one message.
         my_recv_runs = _coalesce_runs([(u, src_of[u]) for u in my_fetch])
         my_send_runs = []
         for r in range(world):
@@ -640,7 +638,7 @@ def _measure_plan(a, rank: int, world: int) -> list[dict]:
             comm_ms = _time_ms(_do, a.iters)
             local = torch.tensor([float(len(my_fetch) * unit_bytes), float(inter_units * unit_bytes)], device="cuda")
             dist.all_reduce(local, op=dist.ReduceOp.MAX)
-            moved = float(local[0].item())  # bottleneck GPU
+            moved = float(local[0].item())
             inter = float(local[1].item())
             eff = moved / (comm_ms / 1e3) / 1e9 if (moved and comm_ms > 0) else 0.0
             out_rows.append(

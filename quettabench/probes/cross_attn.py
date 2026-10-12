@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Chunked-prefill attention (q_len new tokens over cached tokens) -> fa3_cross/{gpu}.csv rows, per layer, eager."""
+"""Chunked-prefill attention (q_len new over cached tokens) -> fa3_cross/{gpu}.csv."""
 
 from __future__ import annotations
 
@@ -22,8 +22,6 @@ time_call = functools.partial(event_time_us, warmup=WARMUP, reps=REPS, reduce=st
 
 
 class CrossAttnProbe(Probe):
-    """One head config's (q_len x resident) grid, a row per point."""
-
     def __init__(self, a):
         self.a = a
         self.dev, self.dt = torch.device("cuda"), torch.bfloat16

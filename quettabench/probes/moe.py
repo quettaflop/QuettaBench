@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Grouped-MoE expert-kernel grid (vLLM fused_experts) -> moe/{gpu}.csv rows and routing-kernel fits -> moe/{gpu}_routing.json."""
+"""Grouped-MoE expert grid (vLLM fused_experts) and routing fits per {gpu}."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import torch
 from quettabench.probes._timing import event_time_us, graph_time_us
 from quettabench.probes.base import ProbeRow, add_output_args, emit, out_root, run_recorded
 
-# (n_experts, top_k, intermediate_per_expert, hidden), intermediate sharded by tp at sweep time; gpt-oss is shape coverage only, MXFP4 is not priced off a bf16 grid.
+# (n_experts, top_k, intermediate_per_expert, hidden); intermediate is sharded by tp at sweep time.
 GEOMETRIES: dict[str, tuple[int, int, int, int]] = {
     "qwen3-30b-a3b": (128, 8, 768, 2048),
     "qwen3-235b-a22b": (128, 8, 1536, 4096),
@@ -34,7 +34,7 @@ KEY = ("tokens", "n_experts", "top_k", "intermediate", "hidden")
 
 
 def _fused_experts():
-    """Return vLLM's (fused_experts, fused_topk); no torch fallback, since that would time a different kernel."""
+    """No torch fallback: it would time a different kernel."""
     paths = [
         "vllm.model_executor.layers.fused_moe.fused_moe",
         "vllm.model_executor.layers.fused_moe",
@@ -57,7 +57,7 @@ def _fused_experts():
 
 
 _GRAPH = False
-# Triton default: FlashInfer CUTLASS is ~2x slower at batch 1 but several times faster at prefill chunks.
+# Triton default: FlashInfer CUTLASS is ~2x slower at batch 1, faster at prefill chunks.
 _BACKEND = "triton"
 
 
@@ -69,14 +69,14 @@ def _flashinfer_moe():
 
 
 def _time(fn) -> float:
-    """Min-of-REPS CUDA-event time in us; min matches GemmTable's reduce and warm back-to-back decode kernels."""
+    """Min matches GemmTable's reduce and warm back-to-back decode kernels."""
     if _GRAPH:
         return graph_time_us(fn)
     return event_time_us(fn, WARMUP, REPS, min)
 
 
 def _fp8_quant_config(e, inter, hidden, dev):
-    """vLLM's FusedMoEQuantConfig for block-scaled FP8 experts; vllm is imported here, only for fp8."""
+    """Block-scaled FP8 experts; vllm is imported here, only for fp8."""
     from vllm.model_executor.layers.fused_moe.config import (
         fp8_w8a8_moe_quant_config,
     )
@@ -159,7 +159,7 @@ def sweep_expert_kernel(name, e, k, inter, hidden, tokens_axis, dev, max_mem_gb)
 
 
 def fit_affine(points) -> tuple[float, float] | None:
-    """Least-squares (floor_us, eff_bw_gb_s) for latency = floor + bytes/eff_bw, the ElementwiseTable model."""
+    """The ElementwiseTable model."""
     pts = [(b, t) for b, t in points if b > 0 and t > 0]
     if len(pts) < 3:
         return None
@@ -171,7 +171,7 @@ def fit_affine(points) -> tuple[float, float] | None:
     den = n * sxx - sx * sx
     if den == 0:
         return None
-    slope = (n * sxy - sx * sy) / den  # us per byte
+    slope = (n * sxy - sx * sy) / den
     floor = (sy - slope * sx) / n
     if slope <= 0:
         return None
@@ -179,7 +179,7 @@ def fit_affine(points) -> tuple[float, float] | None:
 
 
 def sweep_routing(dev, e_default=128, k_default=8):
-    """Affine fits for moe_topk and moe_permute plus the moe_align launch floor; byte counts must match kernel_composed/elementwise.py::_IO."""
+    """Byte counts must match kernel_composed/elementwise.py::_IO."""
     out: dict[str, dict] = {}
 
     topk_pts, perm_pts = [], []
@@ -223,9 +223,8 @@ def sweep_routing(dev, e_default=128, k_default=8):
     return out
 
 
-# --routing: 16 fixed prompt ids (below Kimi-K3's 163840 vocab; no tokenizer).
+# --routing: 16 fixed prompt ids (below the 163840 vocab; no tokenizer).
 PROMPT_IDS = [1, 4321, 100, 65535, 2048, 777, 31415, 9, 128000, 42, 5, 99991, 1234, 60000, 8, 163839]
-# (submodule, "in" or "out", dump name)
 STAGES = [
     ("routed_expert_down_proj", "out", "latent"),
     ("routed_expert_norm", "in", "routed"),
@@ -253,7 +252,7 @@ def routing_parser() -> argparse.ArgumentParser:
 
 
 def routing_model(args):
-    """The model on the visible GPUs in args.dtype, cut to args.layers; MXFP4 experts are not kept packed, so a checkpoint must fit decompressed to bf16."""
+    """MXFP4 experts are not kept packed: a checkpoint must fit decompressed to bf16."""
     from transformers import AutoConfig, AutoModelForCausalLM  # imported here: only --routing needs it
 
     config = AutoConfig.from_pretrained(args.model, trust_remote_code=True)
@@ -273,7 +272,7 @@ def routing_model(args):
 
 
 def routing_tensors(args) -> dict:
-    """{name: tensor} of the MoE block's input, output, routing and stages; a router returning a tuple is dumped as topk_idx/topk_weight, else router_logits."""
+    """A tuple-returning router is dumped as topk_idx/topk_weight, else router_logits."""
     torch.manual_seed(33377335)
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False
@@ -450,7 +449,7 @@ def main(argv=None) -> None:
     print(f"[moe] {len(rows)} rows of {table}{', --append' if a.append else ''}", flush=True)
 
     if not a.skip_routing and a.dtype == "bf16":
-        # Routing moves indices and bf16 hidden states either way, so an fp8 run must not rewrite the fit.
+        # Routing moves indices and bf16 hidden states either way: an fp8 run must not rewrite the fit.
         routing = sweep_routing(dev)
         for name, value in routing.items():
             emit(ProbeRow("moe", f"moe/{a.gpu_label}_routing.json", {"entry": name}, {"value": value}, timing))

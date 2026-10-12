@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Elementwise kernel affine fits -> elementwise/{gpu}.json: latency_us = floor_us + bytes / eff_bw."""
+"""Elementwise kernel affine fits -> elementwise/{gpu}.json: us = floor_us + bytes / eff_bw."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from quettabench.probes.base import Probe, ProbeRow, add_output_args, run_record
 
 # (reads, writes) per kernel; must match kernel_composed/elementwise.py::_IO.
 IO = {"rmsnorm": (1, 1), "silu_mul": (2, 1), "rotary_emb": (1, 1), "residual_add": (2, 1)}
-# Kernels only vLLM ships fused: fused_add_rms_norm and reshape_and_cache_flash (the KV-cache write).
+# Only vLLM ships these fused: fused_add_rms_norm and reshape_and_cache_flash.
 VLLM_IO = {**IO, "fused_add_rmsnorm": (2, 2), "kv_cache_write": (1, 1)}
 ELEMS = [2**e for e in range(18, 30)]  # 262k to 537M elements
 REPS, WARMUP = 50, 10
@@ -33,7 +33,7 @@ def time_op(fn) -> float:
         fn()
         e.record()
         torch.cuda.synchronize()
-        ts.append(s.elapsed_time(e) * 1000.0)  # us
+        ts.append(s.elapsed_time(e) * 1000.0)
     return st.median(ts)
 
 
@@ -58,7 +58,7 @@ def op_for(kernel, n, dev, dt):
 
 
 def op_for_vllm(kernel, n, dev, dt):
-    """vLLM's own kernel for each composition op; vllm is imported here, only --vllm needs it."""
+    """vllm is imported here: only --vllm needs it."""
     from vllm import _custom_ops as ops
 
     if kernel == "rmsnorm":
@@ -109,7 +109,7 @@ def op_for_vllm(kernel, n, dev, dt):
 
 
 def fit(bytes_list, us_list) -> tuple[float, float]:
-    """Least-squares latency_us = floor + slope*bytes; returns (floor_us, eff_bw_gb_s)."""
+    """Returns (floor_us, eff_bw_gb_s)."""
     nP = len(bytes_list)
     sx = sum(bytes_list)
     sy = sum(us_list)
@@ -123,8 +123,6 @@ def fit(bytes_list, us_list) -> tuple[float, float]:
 
 
 class ElementwiseProbe(Probe):
-    """One elementwise/{gpu}.json entry per kernel: latency across ELEMS fitted to (floor_us, eff_bw_gb_s)."""
-
     def __init__(self, a):
         self.a = a
         self.dev, self.dt = torch.device("cuda"), torch.bfloat16
