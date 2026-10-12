@@ -21,6 +21,7 @@ from unittest import mock
 
 from quettabench.config import loader
 from quettabench.config.schema import ConfigError, check_ep_legal
+from quettabench.workloads.live import RealTrace
 
 REPO = Path(__file__).resolve().parents[1]
 CROSSVAL = REPO / "scripts" / "crossval"
@@ -49,6 +50,11 @@ def _config(name, *sets, env=None):
     (cfg,) = loader.load(REPO / "configs" / "runs" / f"{name}.yaml",
                          ["allow_unverified=true", *sets], env=env or {})
     return cfg
+
+
+def load_trace(path):
+    """A replay JSONL read the way serve reads it, as plain request dicts."""
+    return [r.to_dict() for r in RealTrace.from_jsonl(path).requests()]
 
 
 class CrossvalScripts(unittest.TestCase):
@@ -202,29 +208,25 @@ class CrossvalScripts(unittest.TestCase):
         # Injected schedules must be deterministic, must match their spec, and
         # must change the workload hash (arrival_ts is a hash input), so a
         # trace-paced and an injected run can never be conflated.
-        sys.path.insert(0, str(REPO))
-        try:
-            from analysis.synthetic import synth_bench
-            from quettabench.workloads import arrival
-            importlib.reload(arrival)
-            importlib.reload(synth_bench)
-            self.assertIsNone(arrival.parse_arrival("trace", 8))
-            p = arrival.parse_arrival("poisson:2.0", 8)
-            self.assertEqual(p, arrival.parse_arrival("poisson:2.0", 8))
-            self.assertEqual(sorted(p), p)
-            b = arrival.parse_arrival("burst:2x4@5.0", 8)
-            self.assertEqual(b, [0.0] * 4 + [5.0] * 4)
-            with self.assertRaises(ValueError):
-                arrival.parse_arrival("burst:1x4@5.0", 8)  # spec too small
-            r = arrival.parse_arrival("ramp:0.5:4.0", 8)
-            self.assertEqual(len(r), 8)
-            reqs = synth_bench.synth_requests(4, 64, seed=1)
-            h0 = synth_bench.workload_hash(reqs)
-            for req, t in zip(reqs, b[4:]):  # the non-zero burst; t=0 equals the default
-                req["arrival_ts"] = round(t, 6)
-            self.assertNotEqual(h0, synth_bench.workload_hash(reqs))
-        finally:
-            sys.path.pop(0)
+        from quettabench.workloads import arrival
+        from quettabench.workloads.base import workload_hash
+        from quettabench.workloads.grid import synth_requests
+        importlib.reload(arrival)
+        self.assertIsNone(arrival.parse_arrival("trace", 8))
+        p = arrival.parse_arrival("poisson:2.0", 8)
+        self.assertEqual(p, arrival.parse_arrival("poisson:2.0", 8))
+        self.assertEqual(sorted(p), p)
+        b = arrival.parse_arrival("burst:2x4@5.0", 8)
+        self.assertEqual(b, [0.0] * 4 + [5.0] * 4)
+        with self.assertRaises(ValueError):
+            arrival.parse_arrival("burst:1x4@5.0", 8)  # spec too small
+        r = arrival.parse_arrival("ramp:0.5:4.0", 8)
+        self.assertEqual(len(r), 8)
+        reqs = synth_requests(4, 64, seed=1)
+        h0 = workload_hash(reqs)
+        for req, t in zip(reqs, b[4:]):  # the non-zero burst; t=0 equals the default
+            req["arrival_ts"] = round(t, 6)
+        self.assertNotEqual(h0, workload_hash(reqs))
 
     def test_energy_integration(self):
         from quettabench.profiling.wrapped import integrate_power
@@ -756,59 +758,48 @@ class TableParity(unittest.TestCase):
         self.assertFalse((CROSSVAL / "routing_corpus.txt").exists())
         self.assertIn("XVAL_CORPUS", (QB / "modes" / "serve.py").read_text())
 
+
     def test_hash_canonicalization(self):
         # The gate hashes the completed set, not the completion order: a true
         # random shuffle of the done-list must not move the hash, while touching
         # one prompt token or one arrival must. Without order-invariance the
         # gate would void every run whose scheduler finished out of order.
         import random
-        sys.path.insert(0, str(REPO))
-        try:
-            from analysis.synthetic import agentic, synth_bench
-            importlib.reload(synth_bench)
-            reqs = agentic.agentic_requests("deep_research", 24, seed=5)
-            h = synth_bench.workload_hash(reqs)
-            shuffled = list(reqs)
-            random.Random(7).shuffle(shuffled)
-            self.assertNotEqual([r["order"] for r in shuffled], [r["order"] for r in reqs])
-            self.assertEqual(h, synth_bench.workload_hash(shuffled))
-            prompt_mut = [dict(r) for r in reqs]
-            ids = list(prompt_mut[3]["prompt_token_ids"])
-            ids[0] += 1
-            prompt_mut[3]["prompt_token_ids"] = ids
-            self.assertNotEqual(h, synth_bench.workload_hash(prompt_mut))
-            arrival_mut = [dict(r) for r in reqs]
-            arrival_mut[3]["arrival_ts"] = arrival_mut[3]["arrival_ts"] + 0.5
-            self.assertNotEqual(h, synth_bench.workload_hash(arrival_mut))
-        finally:
-            sys.path.pop(0)
+
+        from quettabench.workloads.base import workload_hash
+        from quettabench.workloads.grid import synth_requests
+        reqs = synth_requests(24, 64, seed=5)
+        for i, r in enumerate(reqs):
+            r["arrival_ts"] = round(0.25 * i, 6)
+        h = workload_hash(reqs)
+        shuffled = list(reqs)
+        random.Random(7).shuffle(shuffled)
+        self.assertNotEqual([r["order"] for r in shuffled], [r["order"] for r in reqs])
+        self.assertEqual(h, workload_hash(shuffled))
+        prompt_mut = [dict(r) for r in reqs]
+        ids = list(prompt_mut[3]["prompt_token_ids"])
+        ids[0] += 1
+        prompt_mut[3]["prompt_token_ids"] = ids
+        self.assertNotEqual(h, workload_hash(prompt_mut))
+        arrival_mut = [dict(r) for r in reqs]
+        arrival_mut[3]["arrival_ts"] = arrival_mut[3]["arrival_ts"] + 0.5
+        self.assertNotEqual(h, workload_hash(arrival_mut))
 
     def test_workload_identity_hash(self):
         # The gate: same requests -> same hash regardless of order; a dropped or
         # altered request changes it. This is what proves systems saw equal work.
-        sys.path.insert(0, str(REPO))
-        try:
-            from analysis.synthetic import synth_bench
-            importlib.reload(synth_bench)
-            reqs = synth_bench.swebench_requests(12, seed=2)
-            h = synth_bench.workload_hash(reqs)
-            self.assertEqual(h, synth_bench.workload_hash(list(reversed(reqs))),
-                             "hash must be order-independent")
-            self.assertNotEqual(h, synth_bench.workload_hash(reqs[:-1]),
-                                "dropping a request must change the hash")
-            altered = [dict(r) for r in reqs]
-            altered[0] = {**altered[0], "output_length": altered[0]["output_length"] + 1}
-            self.assertNotEqual(h, synth_bench.workload_hash(altered),
-                                "changing requested output must change the hash")
-            out = subprocess.run(
-                [sys.executable, "-m", "analysis.synthetic.synth_bench", "hash", "/dev/stdin"],
-                input="".join(json.dumps(r) + "\n" for r in reqs),
-                capture_output=True, text=True, cwd=REPO,
-            )
-            self.assertEqual(out.stdout.strip(), h, out.stderr)
-        finally:
-            sys.path.pop(0)
-
+        from quettabench.workloads.base import workload_hash
+        from quettabench.workloads.grid import synth_requests
+        reqs = synth_requests(12, 64, seed=2)
+        for i, r in enumerate(reqs):
+            r["output_length"] = 128 + i
+        h = workload_hash(reqs)
+        self.assertEqual(h, workload_hash(list(reversed(reqs))), "hash must be order-independent")
+        self.assertNotEqual(h, workload_hash(reqs[:-1]), "dropping a request must change the hash")
+        altered = [dict(r) for r in reqs]
+        altered[0] = {**altered[0], "output_length": altered[0]["output_length"] + 1}
+        self.assertNotEqual(h, workload_hash(altered),
+                            "changing requested output must change the hash")
     def test_chat_requests_hash_their_messages(self):
         from quettabench.workloads.base import Request, workload_hash
         def chat(text, reply="r"):
@@ -820,58 +811,6 @@ class TableParity(unittest.TestCase):
         ids = [Request([1, 2, 3], 3, output_length=8)]
         with_messages = [Request([1, 2, 3], 3, output_length=8, messages=chat("a")[0].messages)]
         self.assertEqual(workload_hash(ids), workload_hash(with_messages))
-
-    def test_seed_deterministic_and_labeled(self):
-        # Same seed + profile is byte-identical, labeled SYNTHETIC, carries the
-        # seed; a different seed or arrival time changes the workload hash.
-        def gen(seed):
-            fd, p = tempfile.mkstemp(suffix=".jsonl")
-            os.close(fd)
-            subprocess.run([sys.executable, "-m", "analysis.synthetic.agentic", "gen",
-                            "--profile", "terminal_bench", "--n", "8", "--seed", str(seed),
-                            "--out", p], check=True, capture_output=True, cwd=REPO)
-            return p
-        a, b, c = gen(1), gen(1), gen(2)
-        self.assertEqual(Path(a).read_bytes(), Path(b).read_bytes(),
-                         "same seed must produce a byte-identical trace")
-        rows = [json.loads(line) for line in open(a)]
-        self.assertTrue(all(r["source"] == "SYNTHETIC" for r in rows))
-        self.assertTrue(all(r["seed"] == 1 for r in rows))
-        sys.path.insert(0, str(REPO))
-        try:
-            from analysis.synthetic import synth_bench
-            importlib.reload(synth_bench)
-            self.assertNotEqual(synth_bench.workload_hash(synth_bench.load_trace(a)),
-                                synth_bench.workload_hash(synth_bench.load_trace(c)),
-                                "a different seed must change the hash")
-            reqs = synth_bench.load_trace(a)
-            bumped = [dict(x) for x in reqs]
-            bumped[0]["arrival_ts"] = bumped[0].get("arrival_ts", 0.0) + 1.0
-            self.assertNotEqual(synth_bench.workload_hash(reqs),
-                                synth_bench.workload_hash(bumped),
-                                "arrival time is a hash input")
-        finally:
-            sys.path.pop(0)
-        for p in (a, b, c):
-            os.unlink(p)
-
-    def test_profiles_have_distinct_signatures(self):
-        # Each profile must be a distinct serving signature, not a renamed copy:
-        # distinct burst and gap specs, and a distinct realized arrival spread.
-        sys.path.insert(0, str(REPO))
-        try:
-            from analysis.synthetic import agentic
-            specs = agentic.AGENTIC
-            self.assertGreater(len({s["burst"] for s in specs.values()}), 1)
-            self.assertGreater(len({s["gap"] for s in specs.values()}), 1)
-            def span(rs):
-                return max(r["arrival_ts"] for r in rs) - min(r["arrival_ts"] for r in rs)
-            dr = agentic.agentic_requests("deep_research", 40, seed=1)
-            tb = agentic.agentic_requests("terminal_bench", 40, seed=1)
-            self.assertGreater(span(dr), span(tb),
-                               "deep_research must arrive over a longer span than terminal_bench")
-        finally:
-            sys.path.pop(0)
 
     def test_serving_emits_verdicts(self):
         schema = (QB / "config" / "schema.py").read_text()
@@ -900,88 +839,47 @@ class TableParity(unittest.TestCase):
         # The real-text path: agent-bench turns -> requests carrying output_token_ids
         # (reasoning+content), and load_trace must preserve them or SPECSUM can never
         # fire. encode is stubbed so the test needs no tokenizer or GPU.
-        sys.path.insert(0, str(REPO))
-        try:
-            from analysis.synthetic import synth_bench
-            from quettabench.workloads import tokenize as trace_tokenize
-            importlib.reload(trace_tokenize)
-            importlib.reload(synth_bench)
-            recs = [{"model": "DS", "session_id": "s0", "turns": [
-                {"turn_index": 0, "prompt_text": "ab", "reasoning_text": "c", "content_text": "d"}]}]
-            reqs = trace_tokenize.r2_to_requests(recs, encode=lambda s: [ord(ch) for ch in s])
-            self.assertEqual(reqs[0]["prompt_token_ids"], [97, 98])
-            self.assertEqual(reqs[0]["output_token_ids"], [99, 100])  # reasoning + content
-            self.assertEqual(reqs[0]["output_length"], 2)
-            self.assertEqual(reqs[0]["source"], "DS")
-            with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as fh:
-                for r in reqs:
-                    fh.write(json.dumps(r) + "\n")
-                p = fh.name
-            loaded = synth_bench.load_trace(p)
-            os.unlink(p)
-            self.assertEqual(loaded[0]["output_token_ids"], [99, 100])
-        finally:
-            sys.path.pop(0)
+        from quettabench.workloads import tokenize as trace_tokenize
+        importlib.reload(trace_tokenize)
+        recs = [{"model": "DS", "session_id": "s0", "turns": [
+            {"turn_index": 0, "prompt_text": "ab", "reasoning_text": "c", "content_text": "d"}]}]
+        reqs = trace_tokenize.r2_to_requests(recs, encode=lambda s: [ord(ch) for ch in s])
+        self.assertEqual(reqs[0]["prompt_token_ids"], [97, 98])
+        self.assertEqual(reqs[0]["output_token_ids"], [99, 100])  # reasoning + content
+        self.assertEqual(reqs[0]["output_length"], 2)
+        self.assertEqual(reqs[0]["source"], "DS")
+        with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as fh:
+            for r in reqs:
+                fh.write(json.dumps(r) + "\n")
+            p = fh.name
+        loaded = load_trace(p)
+        os.unlink(p)
+        self.assertEqual(loaded[0]["output_token_ids"], [99, 100])
 
-    def test_agentic_profiles(self):
-        # Every agentic profile is deterministic, multi-turn, session-grouped,
-        # in-range, and round-trips through load_trace.
-        sys.path.insert(0, str(REPO))
-        try:
-            from analysis.synthetic import agentic, synth_bench
-            importlib.reload(synth_bench)
-            for name, spec in agentic.AGENTIC.items():
-                a = agentic.agentic_requests(name, 40, seed=3)
-                b = agentic.agentic_requests(name, 40, seed=3)
-                self.assertEqual([r["prompt_token_ids"] for r in a],
-                                 [r["prompt_token_ids"] for r in b], f"{name} not deterministic")
-                self.assertTrue(any(r["turn"] > 0 for r in a), f"{name} has no multi-turn session")
-                self.assertGreater(len({r["session_id"] for r in a}), 0)
-                for r in a:
-                    self.assertGreaterEqual(r["output_length"], spec["output"][0])
-                    self.assertLessEqual(r["output_length"], spec["output"][1])
-                    if spec["image"]:
-                        self.assertEqual(r.get("image_tokens"), spec["image"])
-                with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as fh:
-                    for r in a:
-                        fh.write(json.dumps(r) + "\n")
-                    p = fh.name
-                loaded = synth_bench.load_trace(p)
-                os.unlink(p)
-                self.assertEqual(loaded[0]["turn"], a[0]["turn"])
-                self.assertEqual(loaded[0].get("session_id"), a[0]["session_id"])
-        finally:
-            sys.path.pop(0)
-
-    def test_synth_bench_distinct_and_trace(self):
+    def test_synth_requests_distinct_and_trace(self):
         # The synthetic runner must produce DISTINCT per-request streams (so MoE
         # routing spreads, unlike clone) and parse the three trace shapes.
-        sys.path.insert(0, str(REPO))
-        try:
-            from analysis.synthetic import synth_bench
-            importlib.reload(synth_bench)
-            reqs = synth_bench.synth_requests(4, 32, seed=3)
-            ids = [tuple(r["prompt_token_ids"]) for r in reqs]
-            self.assertEqual(len(set(ids)), 4, "synth requests must be distinct")
-            self.assertTrue(all(r["prompt_len"] == 32 for r in reqs))
-            import json as _j
-            import os as _os
-            import tempfile
-            tf = tempfile.mktemp()
-            open(tf, "w").write(
-                _j.dumps({"prompt_token_ids": [1, 2, 3, 4, 5]}) + "\n"
-                + _j.dumps({"prompt_len": 40}) + "\n"
-                + _j.dumps({"input_length": 64, "output_length": 128}) + "\n"
-            )
-            tr = synth_bench.load_trace(tf)
-            self.assertEqual([r["prompt_len"] for r in tr], [5, 40, 64])
-            self.assertEqual(tr[2]["output_length"], 128)
-            prompts, cycled = synth_bench.take(tr, 6, 20)
-            self.assertTrue(all(len(p) == 20 for p in prompts))
-            self.assertTrue(cycled)
-            _os.remove(tf)
-        finally:
-            sys.path.pop(0)
+        from quettabench.workloads.grid import synth_requests, take
+        reqs = synth_requests(4, 32, seed=3)
+        ids = [tuple(r["prompt_token_ids"]) for r in reqs]
+        self.assertEqual(len(set(ids)), 4, "synth requests must be distinct")
+        self.assertTrue(all(r["prompt_len"] == 32 for r in reqs))
+        import json as _j
+        import os as _os
+        import tempfile
+        tf = tempfile.mktemp()
+        open(tf, "w").write(
+            _j.dumps({"prompt_token_ids": [1, 2, 3, 4, 5]}) + "\n"
+            + _j.dumps({"prompt_len": 40}) + "\n"
+            + _j.dumps({"input_length": 64, "output_length": 128}) + "\n"
+        )
+        tr = load_trace(tf)
+        self.assertEqual([r["prompt_len"] for r in tr], [5, 40, 64])
+        self.assertEqual(tr[2]["output_length"], 128)
+        prompts, cycled = take(tr, 6, 20)
+        self.assertTrue(all(len(p) == 20 for p in prompts))
+        self.assertTrue(cycled)
+        _os.remove(tf)
 
     def test_grid_knows_synth_and_trace_modes(self):
         src = (QB / "workloads" / "grid.py").read_text() + (QB / "config" / "env_map.py").read_text()
@@ -1046,35 +944,7 @@ class ConfigTree(unittest.TestCase):
 class TraceWorkloads(unittest.TestCase):
     """swebench profile + arrival/session passthrough + serving-summary math."""
 
-    def _sb(self):
-        sys.path.insert(0, str(REPO))
-        try:
-            from analysis.synthetic import synth_bench
-            importlib.reload(synth_bench)
-            return synth_bench
-        finally:
-            sys.path.pop(0)
-
-    def test_swebench_profile_is_deterministic_and_grouped(self):
-        sb = self._sb()
-        a = sb.swebench_requests(24, seed=3, groups=4, prefix_frac=0.5)
-        b = sb.swebench_requests(24, seed=3, groups=4, prefix_frac=0.5)
-        self.assertEqual(a, b)
-        plen = int(4096 * 0.5)
-        # Same session shares the repo-context prefix; different sessions differ.
-        self.assertEqual(a[0]["prompt_token_ids"][:plen], a[4]["prompt_token_ids"][:plen])
-        self.assertNotEqual(a[0]["prompt_token_ids"][:plen], a[1]["prompt_token_ids"][:plen])
-        for r in a:
-            self.assertGreaterEqual(r["prompt_len"], 4096)
-            self.assertLessEqual(r["prompt_len"], 24576)
-            self.assertGreaterEqual(r["output_length"], 128)
-            self.assertLessEqual(r["output_length"], 1024)
-        arrivals = [r["arrival_ts"] for r in a]
-        self.assertEqual(arrivals, sorted(arrivals))
-        self.assertEqual({r["session_id"] for r in a}, {f"g{i}" for i in range(4)})
-
     def test_load_trace_carries_arrivals_and_sessions(self):
-        sb = self._sb()
         with tempfile.TemporaryDirectory() as td:
             p = Path(td) / "t.jsonl"
             p.write_text(
@@ -1083,7 +953,7 @@ class TraceWorkloads(unittest.TestCase):
                 + json.dumps({"prompt_token_ids": [5, 6, 7], "output_length": 2,
                               "arrival_ts": 3.5}) + "\n"
             )
-            reqs = sb.load_trace(str(p))
+            reqs = load_trace(str(p))
         self.assertEqual(reqs[0]["arrival_ts"], 2.0)  # Mooncake ms -> seconds
         self.assertEqual(reqs[0]["session_id"], "s1")
         self.assertEqual(reqs[0]["output_length"], 4)

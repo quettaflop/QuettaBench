@@ -9,7 +9,7 @@ and `qbench provision` for box setup.
 
 ```bash
 pip install -r requirements.txt        # or: pip install -e .  (gives the qbench command)
-python3 data/fetch.py                  # trajectories + distributions from R2 (gitignored)
+python3 data/fetch.py                  # trajectories from R2 (gitignored)
 
 just provision configs/runs/llama.yaml --dry-run \
     --set hardware.provision.py=/venv/bin/python --set llama:hardware.provision.weights=/w/llama
@@ -327,7 +327,7 @@ Canonical data lives on the `agent-bench` R2 bucket:
 
 | prefix | contents |
 |---|---|
-| `data/` | raw trajectory datasets and `data/distributions/` histograms (fetched by `data/fetch.py`) |
+| `data/` | raw trajectory datasets (fetched by `data/fetch.py`) |
 | `results/` | benchmark ground truth (synthetic_distributional, trace_replay, archived) |
 | `json/current/` | dashboard runtime JSONs |
 | `archive/` | pre-2026-05 result snapshots |

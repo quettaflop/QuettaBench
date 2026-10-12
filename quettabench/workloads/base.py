@@ -48,7 +48,7 @@ class Request:
         return self.output_length
 
     def to_dict(self):
-        """The dict synth_bench.load_trace returns: set replay fields only."""
+        """The request as a replay JSONL dict: set fields only."""
         plain = replace(self, messages=None, metadata=None)
         return {k: v for k, v in asdict(plain).items() if v is not None}
 

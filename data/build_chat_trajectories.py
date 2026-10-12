@@ -133,10 +133,9 @@ def build(args: argparse.Namespace) -> int:
         return 1
 
     # Self-check: input_tokens MUST grow across turns, since it is the full replayed
-    # context and build_trajectory_distribution() differences it into new_prefill and
-    # cache_hit_rate. A flat series means the token counter is broken (this caught
+    # context, and a reader differences it into new_prefill and cache_hit_rate. A flat series means the token counter is broken (this caught
     # apply_chat_template(tokenize=True) returning a BatchEncoding, which made every
-    # context measure 2 tokens) and would yield a garbage distribution.
+    # context measure 2 tokens) and would yield garbage deltas.
     grew = flat = 0
     with out_path.open(encoding="utf-8") as fh:
         for line in fh:

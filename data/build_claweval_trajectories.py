@@ -3,17 +3,16 @@
 
 Claw-Eval (github.com/claw-eval/claw-eval) writes one JSONL *event stream* per
 task: a `trace_start` record, then interleaved `message` / `tool_dispatch` /
-`audit_snapshot` records, then `trace_end`. QuettaBench's distribution builder
-instead wants one JSON object per *session* with a flat `turns` list, so the two
+`audit_snapshot` records, then `trace_end`. QuettaBench's trajectory JSONL is
+instead one JSON object per *session* with a flat `turns` list, so the two
 formats do not line up without this step.
 
 What makes these traces worth ingesting: every assistant turn carries a real
 `usage` block from the serving engine, so `total_context_tokens` comes from the
-server tokenizer rather than the coarse word-ratio estimate that
-`build_trace_distributions.message_tokens()` falls back to. That is the same
+server tokenizer rather than a coarse word-ratio estimate. That is the same
 fidelity class as the captured-vLLM sources, not the estimated ones.
 
-Output rows match what `build_trajectory_distribution()` reads:
+Output rows:
 
     {"session_id": ..., "num_turns": N,
      "turns": [{"turn_idx": i, "input_tokens": ctx, "output_tokens": out}, ...]}
@@ -98,7 +97,7 @@ def convert_trace(path: Path) -> dict[str, Any] | None:
         out_tok = usage.get("output_tokens")
         if in_tok is None or out_tok is None:
             # No server-reported usage -> we would have to estimate, which would
-            # silently mix fidelity classes within one distribution. Skip loudly
+            # silently mix fidelity classes within one trajectory set. Skip loudly
             # instead (counted by the caller).
             continue
 
@@ -122,10 +121,7 @@ def convert_trace(path: Path) -> dict[str, Any] | None:
         turns.append(
             {
                 "turn_idx": len(turns),
-                # `input_tokens` is read by build_trajectory_distribution() as the
-                # TOTAL context at this turn, which is exactly OpenAI/vLLM prompt
-                # token semantics. It derives new_prefill and cache_hit_rate from
-                # successive deltas, so do not pre-subtract anything here.
+                # TOTAL context at this turn; readers difference successive turns, so never pre-subtract.
                 "input_tokens": in_tok,
                 "output_tokens": max(1, out_tok),
                 "tool_ms": 0.0,

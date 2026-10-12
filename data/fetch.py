@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pull the large trajectory datasets and workload distributions from R2.
+"""Pull the large trajectory datasets from R2.
 
 They are gitignored. Needs an aws profile with R2 credentials (default
 profile name: r2). Override with AWS_PROFILE, R2_ENDPOINT, R2_BUCKET.
@@ -41,8 +41,6 @@ def aws_s3(*args: str) -> None:
 def main() -> None:
     for name in DATASETS:
         aws_s3("cp", f"s3://{BUCKET}/data/{name}", str(DEST / name))
-    (DEST / "distributions").mkdir(exist_ok=True)
-    aws_s3("sync", f"s3://{BUCKET}/data/distributions/", str(DEST / "distributions") + "/")
     print(f"datasets in {DEST}")
 
 

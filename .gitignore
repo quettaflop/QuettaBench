@@ -16,7 +16,6 @@ logs/
 
 # Large datasets live on R2 (see data/fetch.py), not in git.
 data/*.jsonl
-data/distributions/*.json
 data/mooncake/*.jsonl
 data/mooncake/*.fit.json
 

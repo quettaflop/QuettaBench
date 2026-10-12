@@ -85,6 +85,7 @@ One line each; everything else follows section 2 "Target layout".
 - `probes/moe_routing.py` (`just moe-routing`, slice verification), `serving_decode_grid.py` and `serving_stage_split.py` (read by the export builders) are probes beyond section 2's list.
 - `profiling/frontend.py` holds the `frontend` and `pd_host` sources, not `native.py`: both import QuettaSim at the top, and the profiler imports `native.py` for every source.
 - `profiling/kv_transfer.py` stays its own module: it is a torchrun target (`-m quettabench.profiling.kv_transfer`) and the tool name in the kernel manifest.
+- `analysis/` has no synthetic-sampler studies or `build_trace_distributions`: `analysis/synthetic/` was deleted by owner decision (2026-10-12, "scrap synthetic").
 
 ## Who writes, who starts a process
 

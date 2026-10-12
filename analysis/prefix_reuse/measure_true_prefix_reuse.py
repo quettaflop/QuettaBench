@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Step 1: measure ACTUAL prefix reuse, instead of inferring it from size deltas.
 
-`build_trace_distributions.py` derives cache_hit_rate as
+Inferring prefix reuse from sizes derives cache_hit_rate as
 
     new_prefill   = max(1, total_context - previous_context)
     cache_hit     = 1 - new_prefill / total_context
