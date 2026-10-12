@@ -35,7 +35,8 @@ def burst_arrivals(num_requests: int, n_bursts: int, burst_size: int, gap_s: flo
     if num_requests > n_bursts * burst_size:
         raise ValueError(
             f"burst spec covers {n_bursts * burst_size} requests but the trace has "
-            f"{num_requests}; raise the spec or use --limit")
+            f"{num_requests}; raise the spec or use --limit"
+        )
     times = []
     for b in range(n_bursts):
         take = min(burst_size, num_requests - len(times))

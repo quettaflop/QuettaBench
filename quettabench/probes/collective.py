@@ -3,6 +3,7 @@
 
 Rank 0 emits the curve as collectives/{gpu}_tp{world}.csv ProbeRows and prints the legacy tp_comm: YAML block; run it once per world size.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -55,9 +56,11 @@ def main(argv=None):
     ap.add_argument("--hidden", type=int, required=True, help="model hidden_size (for prefill rate)")
     ap.add_argument("--layers", type=int, required=True, help="model n_layers (for prefill rate)")
     ap.add_argument("--prefill-tokens", type=int, default=2048, help="chunk width for the per-token rate")
-    ap.add_argument("--ops", default="all_reduce,all_gather,reduce_scatter,all_to_all",
-                    help="collectives to sweep (comma-separated). all_reduce is required "
-                         "for the legacy tp_comm: scalars.")
+    ap.add_argument(
+        "--ops",
+        default="all_reduce,all_gather,reduce_scatter,all_to_all",
+        help="collectives to sweep (comma-separated). all_reduce is required for the legacy tp_comm: scalars.",
+    )
     a = ap.parse_args(argv)
 
     dist.init_process_group(backend="nccl")
@@ -66,7 +69,7 @@ def main(argv=None):
     torch.cuda.set_device(rank % torch.cuda.device_count())
 
     # Small sizes give the latency floor, large ones the bandwidth.
-    sizes = [2 ** k for k in range(10, 28)]  # 1K to 128M elements
+    sizes = [2**k for k in range(10, 28)]  # 1K to 128M elements
     ops = [o.strip() for o in a.ops.split(",") if o.strip()]
     rows: list[tuple[str, int, int, float]] = []  # (op, world, bytes, us)
     lat_us, bw = [], []
@@ -99,8 +102,15 @@ def main(argv=None):
         if a.out_dir != "-":  # --out - prints without writing
             table = f"collectives/{a.gpu_label}_tp{world}.csv"
             for op, wd, nbytes, t_us in rows:
-                emit(ProbeRow("collective", table, {"op": op, "world": wd, "bytes": nbytes},
-                              {"latency_us": round(t_us, 4), "dtype_bytes": 2}, "amortized_wallclock"))
+                emit(
+                    ProbeRow(
+                        "collective",
+                        table,
+                        {"op": op, "world": wd, "bytes": nbytes},
+                        {"latency_us": round(t_us, 4), "dtype_bytes": 2},
+                        "amortized_wallclock",
+                    )
+                )
             got = sorted({op for op, _, _, _ in rows})
             print(f"{len(rows)} rows of {table}  (world={world}, ops={got})\n")
 

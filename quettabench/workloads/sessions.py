@@ -36,16 +36,15 @@ class SessionTrace(RealTrace):
         groups = {}
         for r in self.requests():
             groups.setdefault(r.session_id, []).append(r)
-        return [sorted(turns, key=lambda r: (r.turn is None, r.turn or 0, r.order))
-                for turns in groups.values()]
+        return [sorted(turns, key=lambda r: (r.turn is None, r.turn or 0, r.order)) for turns in groups.values()]
 
     def source_meta(self):
-        return {**super().source_meta(), "sessions": len(self.sessions()),
-                "pacing": self.pacing.pacing}
+        return {**super().source_meta(), "sessions": len(self.sessions()), "pacing": self.pacing.pacing}
 
 
 def turn_wait_metadata(turn: dict) -> dict:
     """The inter-turn wait fields of a trajectory turn (tool_wait_after_ms, human_wait_after_ms), accepting the `*_ms` and `*_wait_ms` aliases; missing is 0."""
+
     def _ms(*keys: str) -> float:
         for key in keys:
             if key in turn and turn[key] is not None:
@@ -57,9 +56,7 @@ def turn_wait_metadata(turn: dict) -> dict:
 
     return {
         "tool_wait_after_ms": _ms("tool_wait_after_ms", "tool_ms", "tool_wait_ms"),
-        "human_wait_after_ms": _ms(
-            "human_wait_after_ms", "human_ms", "human_wait_ms"
-        ),
+        "human_wait_after_ms": _ms("human_wait_after_ms", "human_ms", "human_wait_ms"),
     }
 
 
@@ -87,8 +84,18 @@ class MultiTurnSession:
 class LoadedSessionTrace(SessionTrace):
     """Sessions shuffled with the seed and cut to num_sessions, turns up to max_turn_index, turn 0 carrying the recorded arrival. max_turns is the longest session before the cut; warmup draws cycle the sessions turn-major."""
 
-    def __init__(self, sessions, path, reader, seed=42, num_sessions=100, warmup=0,
-                 max_turn_index=None, pacing=None, profile=None):
+    def __init__(
+        self,
+        sessions,
+        path,
+        reader,
+        seed=42,
+        num_sessions=100,
+        warmup=0,
+        max_turn_index=None,
+        pacing=None,
+        profile=None,
+    ):
         random.Random(seed).shuffle(sessions)
         sessions = sessions[:num_sessions]
         if not sessions:
@@ -101,8 +108,7 @@ class LoadedSessionTrace(SessionTrace):
                 if max_turn_index is not None and t > max_turn_index:
                     break
                 arrival = s.arrival_time_ms / 1000.0 if t == 0 else None
-                reqs.append(replace(req, order=len(reqs), session_id=s.session_id, turn=t,
-                                    arrival_ts=arrival))
+                reqs.append(replace(req, order=len(reqs), session_id=s.session_id, turn=t, arrival_ts=arrival))
         if profile is not None:
             path, reader = profile.file_path or profile.name, f"profile:{profile.dataset}"
         super().__init__(reqs, path, reader)
@@ -119,9 +125,14 @@ class LoadedSessionTrace(SessionTrace):
         if self.profile is None:
             return super().source_meta()
         p = self.profile
-        return {"profile": p.name, "dataset": p.dataset, "path": p.file_path,
-                "reqs": len(self.requests()), "sessions": len(self.replies),
-                "pacing": self.pacing.pacing}
+        return {
+            "profile": p.name,
+            "dataset": p.dataset,
+            "path": p.file_path,
+            "reqs": len(self.requests()),
+            "sessions": len(self.replies),
+            "pacing": self.pacing.pacing,
+        }
 
 
 class ShareGPTSessionTrace(LoadedSessionTrace):
@@ -130,9 +141,18 @@ class ShareGPTSessionTrace(LoadedSessionTrace):
     Pairs stop at the first reply outside the output bounds and turns at the first that overflows max_isl_tokens; conversations under min_turns are skipped, longer ones cut at max_turns.
     """
 
-    def __init__(self, min_turns=3, max_turns=10, num_sessions=200, seed=42,
-                 system_prompt="You are a helpful assistant.", max_isl_tokens=8192,
-                 max_osl_tokens=2048, min_osl_tokens=50, **trace_kw):
+    def __init__(
+        self,
+        min_turns=3,
+        max_turns=10,
+        num_sessions=200,
+        seed=42,
+        system_prompt="You are a helpful assistant.",
+        max_isl_tokens=8192,
+        max_osl_tokens=2048,
+        min_osl_tokens=50,
+        **trace_kw,
+    ):
         sessions = []
         for item in load_sharegpt():
             convs = item["conversations"]
@@ -159,8 +179,7 @@ class ShareGPTSessionTrace(LoadedSessionTrace):
                 total += est_tokens(human_msg)
                 if total > max_isl_tokens:
                     break
-                turns.append(Request([], 0, output_length=osl_est, messages=list(history),
-                                     metadata={}))
+                turns.append(Request([], 0, output_length=osl_est, messages=list(history), metadata={}))
                 assistant_message = {"role": "assistant", "content": assistant_msg}
                 history.append(assistant_message)
                 assistant_messages.append(assistant_message)
@@ -170,8 +189,7 @@ class ShareGPTSessionTrace(LoadedSessionTrace):
             sessions.append(MultiTurnSession(len(sessions), turns, assistant_messages))
             if len(sessions) >= num_sessions * 3:
                 break
-        super().__init__(sessions, "sharegpt", "sharegpt-multi-turn", seed=seed,
-                         num_sessions=num_sessions, **trace_kw)
+        super().__init__(sessions, "sharegpt", "sharegpt-multi-turn", seed=seed, num_sessions=num_sessions, **trace_kw)
 
 
 class TrajectorySessionTrace(LoadedSessionTrace):
@@ -180,9 +198,18 @@ class TrajectorySessionTrace(LoadedSessionTrace):
     Sessions under min_turns are skipped, longer ones cut at max_turns; a session stops at the first turn whose estimated prompt exceeds max_isl_tokens less its output and the margin.
     """
 
-    def __init__(self, path, min_turns=3, max_turns=30, num_sessions=100, seed=42,
-                 max_isl_tokens=131072, max_osl_tokens=2000, context_safety_margin_tokens=0,
-                 **trace_kw):
+    def __init__(
+        self,
+        path,
+        min_turns=3,
+        max_turns=30,
+        num_sessions=100,
+        seed=42,
+        max_isl_tokens=131072,
+        max_osl_tokens=2000,
+        context_safety_margin_tokens=0,
+        **trace_kw,
+    ):
         sessions = []
         with open(path) as f:
             lines = [json.loads(line) for line in (raw.strip() for raw in f) if line]
@@ -198,25 +225,31 @@ class TrajectorySessionTrace(LoadedSessionTrace):
                 prompt_budget = max_isl_tokens - osl - context_safety_margin_tokens
                 if prompt_budget < 1 or isl_est > prompt_budget:
                     break
-                turns.append(Request([], 0, output_length=osl, messages=messages, metadata={
-                    "source_session_id": entry.get("session_id"),
-                    "source_turn_index": t.get("turn_idx", t.get("turn_index", len(turns))),
-                    "trace_content_source": entry.get("source"),
-                    "planned_total_context_tokens": isl_est,
-                    "planned_output_tokens": osl,
-                    "planned_total_with_output_tokens": isl_est + osl,
-                    "context_window_tokens": max_isl_tokens,
-                    "context_safety_margin_tokens": context_safety_margin_tokens,
-                    "prompt_token_budget": prompt_budget,
-                    "truncated_by_context_limit": False,
-                    **turn_wait_metadata(t),
-                }))
+                turns.append(
+                    Request(
+                        [],
+                        0,
+                        output_length=osl,
+                        messages=messages,
+                        metadata={
+                            "source_session_id": entry.get("session_id"),
+                            "source_turn_index": t.get("turn_idx", t.get("turn_index", len(turns))),
+                            "trace_content_source": entry.get("source"),
+                            "planned_total_context_tokens": isl_est,
+                            "planned_output_tokens": osl,
+                            "planned_total_with_output_tokens": isl_est + osl,
+                            "context_window_tokens": max_isl_tokens,
+                            "context_safety_margin_tokens": context_safety_margin_tokens,
+                            "prompt_token_budget": prompt_budget,
+                            "truncated_by_context_limit": False,
+                            **turn_wait_metadata(t),
+                        },
+                    )
+                )
             if len(turns) < min_turns:
                 continue
-            sessions.append(MultiTurnSession(len(sessions), turns,
-                                             arrival_time_ms=session_arrival_ms(entry)))
-        super().__init__(sessions, path, "trajectory", seed=seed, num_sessions=num_sessions,
-                         **trace_kw)
+            sessions.append(MultiTurnSession(len(sessions), turns, arrival_time_ms=session_arrival_ms(entry)))
+        super().__init__(sessions, path, "trajectory", seed=seed, num_sessions=num_sessions, **trace_kw)
 
 
 def inter_turn_wait_s(

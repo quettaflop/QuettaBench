@@ -18,8 +18,9 @@ BLOCK = 512
 def describe_ids(ids, first_ids):
     """Length, digest, head, and how many leading 512-token blocks match request 0."""
     shared = 0
-    while (shared + 1) * BLOCK <= min(len(ids), len(first_ids)) and \
-            ids[shared * BLOCK:(shared + 1) * BLOCK] == first_ids[shared * BLOCK:(shared + 1) * BLOCK]:
+    while (shared + 1) * BLOCK <= min(len(ids), len(first_ids)) and ids[
+        shared * BLOCK : (shared + 1) * BLOCK
+    ] == first_ids[shared * BLOCK : (shared + 1) * BLOCK]:
         shared += 1
     return {
         "len": len(ids),
@@ -39,18 +40,25 @@ def read_all(case, path):
         ds = live.MooncakeTrace(str(path))
         served = [ds.get_next_request() for _ in range(6)]  # five lines, then the wrap
     reqs = [r.to_dict() for r in trace.requests()]
-    case.assertEqual([r["prompt_token_ids"] for r in reqs] + [reqs[0]["prompt_token_ids"]],
-                     [s.metadata["prompt_token_ids"] for s in served])
+    case.assertEqual(
+        [r["prompt_token_ids"] for r in reqs] + [reqs[0]["prompt_token_ids"]],
+        [s.metadata["prompt_token_ids"] for s in served],
+    )
     first = reqs[0]["prompt_token_ids"]
     return {
-        "requests": [{**{k: v for k, v in r.items() if k != "prompt_token_ids"},
-                      "prompt_token_ids": describe_ids(r["prompt_token_ids"], first)}
-                     for r in reqs],
+        "requests": [
+            {
+                **{k: v for k, v in r.items() if k != "prompt_token_ids"},
+                "prompt_token_ids": describe_ids(r["prompt_token_ids"], first),
+            }
+            for r in reqs
+        ],
         "workload_hash": trace.workload_hash(),
         "source_meta": {k: v for k, v in trace.source_meta().items() if k != "path"},
-        "dataset": [{"max_tokens": s.max_tokens,
-                     "metadata": {k: v for k, v in s.metadata.items() if k != "prompt_token_ids"}}
-                    for s in served],
+        "dataset": [
+            {"max_tokens": s.max_tokens, "metadata": {k: v for k, v in s.metadata.items() if k != "prompt_token_ids"}}
+            for s in served
+        ],
     }
 
 
@@ -59,12 +67,13 @@ class MooncakeReaderGolden(unittest.TestCase):
         rows = [json.loads(line) for line in MOONCAKE_TRACE.read_text().splitlines()]
         with tempfile.TemporaryDirectory() as td:
             no_hash_ids = Path(td) / "mooncake_no_hash_ids.jsonl"
-            no_hash_ids.write_text("".join(
-                json.dumps({k: v for k, v in r.items() if k != "hash_ids"}) + "\n" for r in rows))
+            no_hash_ids.write_text(
+                "".join(json.dumps({k: v for k, v in r.items() if k != "hash_ids"}) + "\n" for r in rows)
+            )
             zero_out = Path(td) / "mooncake_zero_output.jsonl"
-            zero_out.write_text("".join(
-                json.dumps({**r, "output_length": 0} if i == 4 else r) + "\n"
-                for i, r in enumerate(rows)))
+            zero_out.write_text(
+                "".join(json.dumps({**r, "output_length": 0} if i == 4 else r) + "\n" for i, r in enumerate(rows))
+            )
             record = {
                 "with_hash_ids": read_all(self, MOONCAKE_TRACE),
                 "without_hash_ids": read_all(self, no_hash_ids),
@@ -118,17 +127,20 @@ class WorkloadHashGolden(unittest.TestCase):
         self.assertNotEqual(paced, injected_hash)
         self.assertEqual(as_requests, paced)
         self.assertEqual(round_trip, reqs)
-        check_json(self, "workload_hash", {
-            "loaded_requests": reqs,
-            "request_digests": digests,
-            "paced": paced,
-            "completion_order_reversed": completion_reversed,
-            "completion_order_rotated": completion_rotated,
-            "one_token_altered": altered_hash,
-            "injected_poisson_2.0": {"arrival_ts": [r["arrival_ts"] for r in injected],
-                                     "hash": injected_hash},
-            "file_lines_reordered": reordered_lines,
-        })
+        check_json(
+            self,
+            "workload_hash",
+            {
+                "loaded_requests": reqs,
+                "request_digests": digests,
+                "paced": paced,
+                "completion_order_reversed": completion_reversed,
+                "completion_order_rotated": completion_rotated,
+                "one_token_altered": altered_hash,
+                "injected_poisson_2.0": {"arrival_ts": [r["arrival_ts"] for r in injected], "hash": injected_hash},
+                "file_lines_reordered": reordered_lines,
+            },
+        )
 
 
 if __name__ == "__main__":

@@ -1,4 +1,5 @@
 """What every kernel probe shares: ProbeRow, the Probe ABC, the output arguments, the run record, launch_vllm for live-server probes, and remote_probe's ssh and rsync."""
+
 from __future__ import annotations
 
 import abc
@@ -31,6 +32,7 @@ _WRITER: RunWriter | None = None
 @dataclasses.dataclass(frozen=True)
 class ProbeRow:
     """One measured row of a QuettaSim table: table is <kind>/<file> (gemm/H200.csv), columns are key then value, timing picks the dir. A JSON table's row is key {"entry": name}, value {"value": ...}."""
+
     probe: str
     table: str
     key: dict
@@ -45,8 +47,9 @@ class ProbeRow:
 def emit(row: ProbeRow) -> None:
     """Append row to the recording run's rows.jsonl."""
     if _WRITER is None:
-        raise RuntimeError(f"{row.probe}: no run records its rows; run it as a probe "
-                           "(python -m, just probe) or through qbench run")
+        raise RuntimeError(
+            f"{row.probe}: no run records its rows; run it as a probe (python -m, just probe) or through qbench run"
+        )
     _WRITER.probe_row(row)
 
 
@@ -86,11 +89,19 @@ def add_output_args(ap: argparse.ArgumentParser) -> None:
     """Add --gpu-label, --out (default results/probes/<gpu-label>) and --run-id; each run records under <out>/<probe>/<run-id>/. Flags are taken only as written, so export reads probe_args as the probe did."""
     ap.allow_abbrev = False
     ap.add_argument("--gpu-label", "--gpu", required=True, help="GPU name the tables are keyed by, e.g. A100/H100")
-    ap.add_argument("--out", "--out-dir", dest="out_dir", default=None,
-                    help="parent of the probe's own <probe>/ dir (default: results/probes/<gpu-label>)")
-    ap.add_argument("--run-id", default=None,
-                    help="this run's own dir under <out>/<probe>/; the probe CLI sets it to the "
-                         "start time, and without it the run records into <out>/<probe>/ itself")
+    ap.add_argument(
+        "--out",
+        "--out-dir",
+        dest="out_dir",
+        default=None,
+        help="parent of the probe's own <probe>/ dir (default: results/probes/<gpu-label>)",
+    )
+    ap.add_argument(
+        "--run-id",
+        default=None,
+        help="this run's own dir under <out>/<probe>/; the probe CLI sets it to the "
+        "start time, and without it the run records into <out>/<probe>/ itself",
+    )
 
 
 def run_id(now: datetime) -> str:
@@ -136,9 +147,13 @@ def run_recorded(main, name: str, file_flag: str | None = None, now: datetime | 
     run_dir = record_dir(name, argv, file_flag) if env_map.torchrun_rank() in (None, 0) else None
     writer = None
     if run_dir is not None:
-        cfg = Config(EngineCfg(), WorkloadCfg(), ModeCfg(mode="probe", probe=name,
-                                                         probe_args=shlex.join(argv)),
-                     HardwareCfg(), run_name=f"probe-{name}")
+        cfg = Config(
+            EngineCfg(),
+            WorkloadCfg(),
+            ModeCfg(mode="probe", probe=name, probe_args=shlex.join(argv)),
+            HardwareCfg(),
+            run_name=f"probe-{name}",
+        )
         try:
             writer = RunWriter(run_dir, cfg, exclusive=True)
         except FileExistsError:
@@ -159,9 +174,18 @@ def run_recorded(main, name: str, file_flag: str | None = None, now: datetime | 
             writer.finish({"probe": name, "argv": redact(argv)}, status=status, reason=reason)
 
 
-def launch_vllm(run_dir: Path, model: str, *, port: int, max_model_len: int, prefix_caching: bool,
-                tp: int = 1, gpu_util: float = 0.9, vllm_flags: dict | None = None,
-                timeout_s: int = 1800):
+def launch_vllm(
+    run_dir: Path,
+    model: str,
+    *,
+    port: int,
+    max_model_len: int,
+    prefix_caching: bool,
+    tp: int = 1,
+    gpu_util: float = 0.9,
+    vllm_flags: dict | None = None,
+    timeout_s: int = 1800,
+):
     """Start vLLM as `qbench run` does: a Config through the vllm adapter's translate, then launcher.start into run_dir. vllm_flags go in as engine.extra.vllm.
 
     The hardware is run_config's when `qbench run` started the probe, else the defaults. Returns the Handle; the caller stops it.
@@ -169,9 +193,16 @@ def launch_vllm(run_dir: Path, model: str, *, port: int, max_model_len: int, pre
     # Imported here: remote kernel-probe hosts have no engine stack.
     from quettabench.engines import launcher, vllm
 
-    engine = EngineCfg(model=model, tp=tp, dtype="bfloat16", port=port, gpu_util=gpu_util,
-                       max_model_len=max_model_len, prefix_caching=prefix_caching,
-                       extra={"vllm": dict(vllm_flags or {})})
+    engine = EngineCfg(
+        model=model,
+        tp=tp,
+        dtype="bfloat16",
+        port=port,
+        gpu_util=gpu_util,
+        max_model_len=max_model_len,
+        prefix_caching=prefix_caching,
+        extra={"vllm": dict(vllm_flags or {})},
+    )
     hardware = _RUN_CFG.hardware if _RUN_CFG else HardwareCfg()
     hardware = dataclasses.replace(hardware, provision={"py": sys.executable, **hardware.provision})
     cfg = Config(engine, WorkloadCfg(), ModeCfg(), hardware, run_name=Path(run_dir).name)
@@ -180,9 +211,15 @@ def launch_vllm(run_dir: Path, model: str, *, port: int, max_model_len: int, pre
 
 
 # What remote_probe ships: the probes and what base.py imports for run.json.
-SHIPPED = ("quettabench/__init__.py", "quettabench/probes/", "quettabench/config/__init__.py",
-           "quettabench/config/schema.py", "quettabench/config/env_map.py",
-           "quettabench/metrics/__init__.py", "quettabench/metrics/results.py")
+SHIPPED = (
+    "quettabench/__init__.py",
+    "quettabench/probes/",
+    "quettabench/config/__init__.py",
+    "quettabench/config/schema.py",
+    "quettabench/config/env_map.py",
+    "quettabench/metrics/__init__.py",
+    "quettabench/metrics/results.py",
+)
 REMOTE_DIR = re.compile(r"/tmp/qbench-probes\.[A-Za-z0-9]{6,}")
 NAME = re.compile(r"[a-z][a-z0-9_]*")
 GPU = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
@@ -192,8 +229,7 @@ OWN_FLAGS = ("--out", "--out-dir", "--run-id", "--gpu-label", "--gpu")
 
 def _own_flag(name):
     """name is one of OWN_FLAGS or, past "--", a prefix an abbreviating parser would expand to one."""
-    return name in OWN_FLAGS or (name.startswith("--") and len(name) > 2
-                                 and any(f.startswith(name) for f in OWN_FLAGS))
+    return name in OWN_FLAGS or (name.startswith("--") and len(name) > 2 and any(f.startswith(name) for f in OWN_FLAGS))
 
 
 def _remote_args(argv):
@@ -210,8 +246,7 @@ def _remote_args(argv):
     ap.add_argument("probe_argv", nargs="*", help="the probe's own flags, after --")
     a = ap.parse_args(argv)
     if not a.host or a.host.startswith("-") or not NAME.fullmatch(a.name) or not GPU.fullmatch(a.gpu):
-        ap.error("needs --host (set REMOTE_HOST, not starting with -), a probe module name "
-                 "and a GPU label")
+        ap.error("needs --host (set REMOTE_HOST, not starting with -), a probe module name and a GPU label")
     a.probe_argv = [*shlex.split(a.probe_args), *a.probe_argv]
     if any(_own_flag(arg.split("=")[0]) for arg in a.probe_argv):
         ap.error(f"remote_probe sets {', '.join(OWN_FLAGS)} itself; leave them out of the probe args")
@@ -242,8 +277,12 @@ def remote_probe(argv=None, run=subprocess.run, now=None) -> int:
     a = _remote_args(argv)
     ssh = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=30", a.host]
     rsh = "ssh -o BatchMode=yes -o ConnectTimeout=30"
-    made = run([*ssh, "d=$(mktemp -d /tmp/qbench-probes.XXXXXX) && mkdir -p $d/out && echo $d"],
-               check=True, capture_output=True, text=True).stdout
+    made = run(
+        [*ssh, "d=$(mktemp -d /tmp/qbench-probes.XXXXXX) && mkdir -p $d/out && echo $d"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
     # The last line that is a dir: a login banner may come first.
     dirs = [line.strip() for line in made.splitlines() if REMOTE_DIR.fullmatch(line.strip())]
     if not dirs:
@@ -251,14 +290,17 @@ def remote_probe(argv=None, run=subprocess.run, now=None) -> int:
     rdir = dirs[-1]
     py = _remote_python(a.py)
     if a.nproc > 1:
-        launch = (f"CUDA_VISIBLE_DEVICES={shlex.quote(a.gpu_ids or a.gpu_id)} {py} "
-                  f"-m torch.distributed.run --nproc_per_node={a.nproc} -m quettabench.probes.{a.name}")
+        launch = (
+            f"CUDA_VISIBLE_DEVICES={shlex.quote(a.gpu_ids or a.gpu_id)} {py} "
+            f"-m torch.distributed.run --nproc_per_node={a.nproc} -m quettabench.probes.{a.name}"
+        )
     else:
         ncu = f"NCU_BIN={shlex.quote(a.ncu_bin)} " if a.ncu_bin else ""
         launch = f"CUDA_VISIBLE_DEVICES={shlex.quote(a.gpu_id)} {ncu}{py} -m quettabench.probes.{a.name}"
     rid = run_id(now or datetime.now(timezone.utc))
-    command = (f"cd {rdir} && {launch} --gpu-label {a.gpu} --out {rdir}/out --run-id {rid} "
-               f"{shlex.join(a.probe_argv)}").rstrip()
+    command = (
+        f"cd {rdir} && {launch} --gpu-label {a.gpu} --out {rdir}/out --run-id {rid} {shlex.join(a.probe_argv)}"
+    ).rstrip()
     started, pulled, status = False, None, None
     try:
         run(["rsync", "-a", "--relative", "-e", rsh, *SHIPPED, f"{a.host}:{rdir}/"], check=True)
@@ -270,12 +312,15 @@ def remote_probe(argv=None, run=subprocess.run, now=None) -> int:
             local = Path("results") / "probes" / a.gpu
             local.mkdir(parents=True, exist_ok=True)
             try:
-                pulled = run(["rsync", "-a", "--ignore-existing", "-e", rsh,
-                              f"{a.host}:{rdir}/out/", f"{local}/"]).returncode
+                pulled = run(
+                    ["rsync", "-a", "--ignore-existing", "-e", rsh, f"{a.host}:{rdir}/out/", f"{local}/"]
+                ).returncode
             finally:
                 if pulled != 0:
-                    print(f"pulling {a.host}:{rdir}/out/ failed ({pulled}); the remote dir "
-                          f"{a.host}:{rdir} is kept", file=sys.stderr)
+                    print(
+                        f"pulling {a.host}:{rdir}/out/ failed ({pulled}); the remote dir {a.host}:{rdir} is kept",
+                        file=sys.stderr,
+                    )
             if not pulled:
                 _finish_here(local / a.name / rid)
         if not pulled:
@@ -283,6 +328,7 @@ def remote_probe(argv=None, run=subprocess.run, now=None) -> int:
     if pulled:
         raise SystemExit(f"remote dir kept: {a.host}:{rdir} (probe exit {status})")
     return status
+
 
 if __name__ == "__main__":
     if sys.argv[1:2] != ["remote-probe"]:

@@ -60,6 +60,7 @@ def _prompt_logprobs(ids, k):
     """vLLM's shape: None at position 0, then per position the top-k tokens
     plus the prompt token, scored by torch.toy_logits of the prefix."""
     import torch
+
     out = [None]
     for pos in range(1, len(ids)):
         lps = torch.log_softmax_row(torch.toy_logits(ids)[pos - 1])
@@ -84,8 +85,7 @@ def run_batch(prompts, sampling_params):
     n = sampling_params.max_tokens
     CLOCK.now += generate_seconds(prompt_len, len(prompts), n, CLOCK.generate_calls)
     k = sampling_params.kwargs.get("prompt_logprobs")
-    return [_RequestOutput(list(range(n)), k and _prompt_logprobs(p["prompt_token_ids"], k))
-            for p in prompts]
+    return [_RequestOutput(list(range(n)), k and _prompt_logprobs(p["prompt_token_ids"], k)) for p in prompts]
 
 
 class LLM:

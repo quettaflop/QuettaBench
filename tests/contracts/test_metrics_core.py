@@ -43,8 +43,7 @@ TABLE = [
     (SINGLE, {50: (42.0, 42.0), 90: (42.0, 42.0), 95: (42.0, 42.0), 99: (42.0, 42.0)}),
     (TWO, {50: (20.0, 15.0), 90: (20.0, 19.0), 95: (20.0, 19.5), 99: (20.0, 19.900000000000002)}),
     (TIES, {50: (2.0, 2.0), 90: (3.0, 2.6), 95: (3.0, 2.8), 99: (3.0, 2.96)}),
-    (SEVEN, {50: (7.0, 7.0), 90: (13.0, 11.8), 95: (13.0, 12.399999999999999),
-             99: (13.0, 12.879999999999999)}),
+    (SEVEN, {50: (7.0, 7.0), 90: (13.0, 11.8), 95: (13.0, 12.399999999999999), 99: (13.0, 12.879999999999999)}),
     (ARANGE, {50: (500.0, 499.5), 90: (900.0, 899.1), 95: (950.0, 949.05), 99: (990.0, 989.01)}),
 ]
 
@@ -60,8 +59,7 @@ class PercentileTest(unittest.TestCase):
     def test_pcts_maps_the_four_quantiles(self):
         for values, by_p in TABLE:
             for method, col in (("nearest", 0), ("linear", 1)):
-                self.assertEqual(pcts(values, method),
-                                 {f"p{p}": v[col] for p, v in by_p.items()})
+                self.assertEqual(pcts(values, method), {f"p{p}": v[col] for p, v in by_p.items()})
 
     def test_empty(self):
         self.assertEqual(percentile([], 99, "linear"), 0.0)
@@ -111,13 +109,16 @@ class ServeSummaryTest(unittest.TestCase):
 
 class SpecCountsTest(unittest.TestCase):
     def test_summed_over_engines(self):
-        text = ('vllm:spec_decode_num_drafts_total{engine="0"} 10\n'
-                'vllm:spec_decode_num_drafts_total{engine="1"} 5\n'
-                'vllm:spec_decode_num_drafts_created{engine="0"} 1.7e9\n'
-                'vllm:spec_decode_num_draft_tokens_total{engine="0"} 45\n'
-                'vllm:spec_decode_num_accepted_tokens_total{engine="0"} 20\n')
-        self.assertEqual(spec_counts(parse_prometheus(text)),
-                         {"accepted_tokens": 20.0, "draft_tokens": 45.0, "drafts": 15.0})
+        text = (
+            'vllm:spec_decode_num_drafts_total{engine="0"} 10\n'
+            'vllm:spec_decode_num_drafts_total{engine="1"} 5\n'
+            'vllm:spec_decode_num_drafts_created{engine="0"} 1.7e9\n'
+            'vllm:spec_decode_num_draft_tokens_total{engine="0"} 45\n'
+            'vllm:spec_decode_num_accepted_tokens_total{engine="0"} 20\n'
+        )
+        self.assertEqual(
+            spec_counts(parse_prometheus(text)), {"accepted_tokens": 20.0, "draft_tokens": 45.0, "drafts": 15.0}
+        )
 
     def test_none_without_spec_decoding(self):
         self.assertIsNone(spec_counts(parse_prometheus("process_open_fds 42\n")))
@@ -139,9 +140,11 @@ class SlaVerdictTest(unittest.TestCase):
 
 class BurstRecoveryTest(unittest.TestCase):
     def test_recovers_two_windows_after_peak(self):
-        recs = ([{"arrival_s": t, "ttft_ms": 100.0} for t in range(0, 5)]
-                + [{"arrival_s": t, "ttft_ms": 9000.0} for t in range(5, 10)]
-                + [{"arrival_s": t, "ttft_ms": 100.0} for t in range(15, 20)])
+        recs = (
+            [{"arrival_s": t, "ttft_ms": 100.0} for t in range(0, 5)]
+            + [{"arrival_s": t, "ttft_ms": 9000.0} for t in range(5, 10)]
+            + [{"arrival_s": t, "ttft_ms": 100.0} for t in range(15, 20)]
+        )
         # peak in bucket 1, back under the SLA in bucket 3: (3 - 1) * 5 s
         self.assertEqual(burst_recovery(recs, 1000.0, 5.0), (10.0, 9000.0))
 
@@ -160,18 +163,20 @@ class BurstRecoveryTest(unittest.TestCase):
 
 
 def _summary(n, ok, usage, kinds=None):
-    return types.SimpleNamespace(num_requests=n, successful_requests=ok,
-                                 usage_reported_requests=usage, error_kinds=kinds or {})
+    return types.SimpleNamespace(
+        num_requests=n, successful_requests=ok, usage_reported_requests=usage, error_kinds=kinds or {}
+    )
 
 
 class GateTest(unittest.TestCase):
     def test_success_rate(self):
-        self.assertEqual(success_rate_gate(_summary(0, 0, 0), 0.9),
-                         ("abort", "ABORT: No requests completed. Minimum success rate: 90%"))
+        self.assertEqual(
+            success_rate_gate(_summary(0, 0, 0), 0.9),
+            ("abort", "ABORT: No requests completed. Minimum success rate: 90%"),
+        )
         verdict, msg = success_rate_gate(_summary(10, 8, 8, {"timeout": 1, "http_error": 1}), 0.9)
         self.assertEqual(verdict, "abort")
-        self.assertEqual(msg, "ABORT: Success rate 80.0% below minimum 90% (8/10); "
-                              "failures: http_error=1, timeout=1")
+        self.assertEqual(msg, "ABORT: Success rate 80.0% below minimum 90% (8/10); failures: http_error=1, timeout=1")
         self.assertEqual(success_rate_gate(_summary(10, 9, 9), 0.9), ("pass", None))
 
     def test_usage(self):
@@ -187,15 +192,18 @@ class GateTest(unittest.TestCase):
         self.assertEqual(verdict, "warn")
         lines = msg.split("\n")
         self.assertEqual(len(lines), 4)
-        self.assertEqual(lines[0], "WARNING: only 2.5 requests per concurrency slot "
-                                   "(10 requests at concurrency 4).")
+        self.assertEqual(lines[0], "WARNING: only 2.5 requests per concurrency slot (10 requests at concurrency 4).")
         self.assertEqual(lines[3], "         to at least 32 for a settled measurement.")
         for args in ((16, 4), (3, 1), (0, 8)):
             self.assertEqual(transient_gate(*args), ("pass", None))
 
     def test_first_error(self):
-        rs = [None, RequestResult(success=True), RequestResult(success=False),
-              RequestResult(success=False, error=ValueError("x"))]
+        rs = [
+            None,
+            RequestResult(success=True),
+            RequestResult(success=False),
+            RequestResult(success=False, error=ValueError("x")),
+        ]
         self.assertEqual(first_error(rs), "x")
         self.assertEqual(first_error(iter([RequestResult(success=True)])), "no error text recorded")
 
@@ -205,40 +213,57 @@ class CacheEstimateTests(unittest.TestCase):
 
     def _result(self, input_tokens=1000):
         from quettabench.metrics.core import RequestResult
+
         return RequestResult(success=True, input_tokens=input_tokens, output_tokens=200)
 
     def test_synthetic_reply_is_not_reusable(self):
         from quettabench.metrics.core import annotate_multi_turn_cache_estimate
+
         r = annotate_multi_turn_cache_estimate(
-            self._result(1000), session_id=0, turn_index=1,
-            previous_context_tokens=770, previous_output_tokens=200,
-            reply_in_cache=False)
+            self._result(1000),
+            session_id=0,
+            turn_index=1,
+            previous_context_tokens=770,
+            previous_output_tokens=200,
+            reply_in_cache=False,
+        )
         self.assertEqual(r.cached_context_tokens, 770)
         self.assertEqual(r.new_prefill_tokens, 230)
         self.assertEqual(r.cache_estimate_source, "previous_prompt_tokens")
 
     def test_the_engines_own_reply_is_reusable(self):
         from quettabench.metrics.core import annotate_multi_turn_cache_estimate
+
         r = annotate_multi_turn_cache_estimate(
-            self._result(1000), session_id=0, turn_index=1,
-            previous_context_tokens=770, previous_output_tokens=200,
-            reply_in_cache=True)
+            self._result(1000),
+            session_id=0,
+            turn_index=1,
+            previous_context_tokens=770,
+            previous_output_tokens=200,
+            reply_in_cache=True,
+        )
         self.assertEqual(r.cached_context_tokens, 970)
         self.assertEqual(r.new_prefill_tokens, 30)
         self.assertEqual(r.cache_estimate_source, "previous_prompt_and_reply_tokens")
 
     def test_reusable_prefix_cannot_exceed_the_prompt(self):
         from quettabench.metrics.core import annotate_multi_turn_cache_estimate
+
         r = annotate_multi_turn_cache_estimate(
-            self._result(800), session_id=0, turn_index=1,
-            previous_context_tokens=770, previous_output_tokens=200,
-            reply_in_cache=True)
+            self._result(800),
+            session_id=0,
+            turn_index=1,
+            previous_context_tokens=770,
+            previous_output_tokens=200,
+            reply_in_cache=True,
+        )
         self.assertEqual(r.cached_context_tokens, 800)
         self.assertEqual(r.new_prefill_tokens, 0)
 
 
-def _req(start, end, *, success=True, error_kind=None, ttft=0.01,
-         input_tokens=10, output_tokens=5, usage_reported=True):
+def _req(
+    start, end, *, success=True, error_kind=None, ttft=0.01, input_tokens=10, output_tokens=5, usage_reported=True
+):
     r = RequestResult(
         success=success,
         ttft=ttft,
@@ -277,9 +302,7 @@ class TestBusyTime(unittest.TestCase):
 
     def test_drain_is_busy_but_underutilized(self):
         """Four requests finishing at 1s, 2s, 3s and 10s never leave the server idle, so only mean in-flight (1.6 against a peak of 4) shows the drain."""
-        busy, mean, peak = _busy_time_and_load(
-            [_req(0, 1), _req(0, 2), _req(0, 3), _req(0, 10)]
-        )
+        busy, mean, peak = _busy_time_and_load([_req(0, 1), _req(0, 2), _req(0, 3), _req(0, 10)])
         self.assertAlmostEqual(busy, 10.0)
         self.assertEqual(peak, 4)
         self.assertAlmostEqual(mean, 1.6)
@@ -375,22 +398,21 @@ class TestLoadModeDiagnostics(unittest.TestCase):
     """Under closed loop concurrency is the in-flight cap; under open loop it only sizes warmup, so the question is whether the server kept up with the offered rate."""
 
     def test_open_loop_records_mode_and_offered_rate(self):
-        s = aggregate([_req(i, i + 1) for i in range(10)], duration_s=10.0,
-                      concurrency=40, load_mode="open-loop", target_rate=2.0)
+        s = aggregate(
+            [_req(i, i + 1) for i in range(10)], duration_s=10.0, concurrency=40, load_mode="open-loop", target_rate=2.0
+        )
         self.assertEqual(s.load_mode, "open-loop")
         self.assertAlmostEqual(s.target_rate, 2.0)
 
     def test_open_loop_keeping_up_is_arrival_limited_not_draining(self):
         """Mean in-flight 5.8 against concurrency 40 is not a drain when the server matches the offered rate."""
         results = [_req(i * 0.5, i * 0.5 + 1) for i in range(20)]
-        s = aggregate(results, duration_s=10.0, concurrency=40,
-                      load_mode="open-loop", target_rate=2.0)
+        s = aggregate(results, duration_s=10.0, concurrency=40, load_mode="open-loop", target_rate=2.0)
         self.assertAlmostEqual(s.request_throughput, 2.0)
         self.assertLess(s.mean_inflight_requests, 40 * 0.7)
 
     def test_closed_loop_still_flags_draining(self):
-        s = aggregate([_req(0, 10)], duration_s=10.0, concurrency=40,
-                      load_mode="closed-loop")
+        s = aggregate([_req(0, 10)], duration_s=10.0, concurrency=40, load_mode="closed-loop")
         self.assertEqual(s.load_mode, "closed-loop")
         self.assertLess(s.mean_inflight_requests, 40 * 0.7)
 
@@ -408,15 +430,13 @@ class TestOpenLoopUnits(unittest.TestCase):
         return out
 
     def test_session_throughput_counts_sessions_not_turns(self):
-        s = aggregate(self._multi_turn(), duration_s=10.0,
-                      load_mode="open-loop", target_rate=0.4)
+        s = aggregate(self._multi_turn(), duration_s=10.0, load_mode="open-loop", target_rate=0.4)
         self.assertEqual(s.sessions_completed, 4)
         self.assertAlmostEqual(s.session_throughput, 0.4)
         self.assertAlmostEqual(s.request_throughput, 2.0)
 
     def test_single_turn_has_no_sessions_so_falls_back_to_requests(self):
-        s = aggregate([_req(i, i + 1) for i in range(10)], duration_s=10.0,
-                      load_mode="open-loop", target_rate=1.0)
+        s = aggregate([_req(i, i + 1) for i in range(10)], duration_s=10.0, load_mode="open-loop", target_rate=1.0)
         self.assertEqual(s.sessions_completed, 0)
         self.assertAlmostEqual(s.request_throughput, 1.0)
 
@@ -449,15 +469,17 @@ class TestWarmupWidthCoverage(unittest.TestCase):
     def test_peak_inflight_beyond_warmup_width_is_recorded(self):
         """Warmup at width 8 with a peak of 39 leaves unseen batch shapes to compile mid-measurement."""
         results = [_req(0, 5) for _ in range(39)]
-        s = aggregate(results, duration_s=5.0, concurrency=8,
-                      load_mode="open-loop", target_rate=2.0, warmup_concurrency=8)
+        s = aggregate(
+            results, duration_s=5.0, concurrency=8, load_mode="open-loop", target_rate=2.0, warmup_concurrency=8
+        )
         self.assertEqual(s.max_inflight_requests, 39)
         self.assertGreater(s.max_inflight_requests, s.warmup_concurrency)
 
     def test_adequate_warmup_width_leaves_no_gap(self):
         results = [_req(0, 5) for _ in range(39)]
-        s = aggregate(results, duration_s=5.0, concurrency=8,
-                      load_mode="open-loop", target_rate=2.0, warmup_concurrency=64)
+        s = aggregate(
+            results, duration_s=5.0, concurrency=8, load_mode="open-loop", target_rate=2.0, warmup_concurrency=64
+        )
         self.assertLessEqual(s.max_inflight_requests, s.warmup_concurrency)
 
 
@@ -467,8 +489,7 @@ class TestStationarity(unittest.TestCase):
     def test_steady_run_shows_no_drift(self):
         results = [_req(i * 1.0, i * 1.0 + 2.0) for i in range(20)]
         s = aggregate(results, duration_s=21.0)
-        self.assertAlmostEqual(s.mean_inflight_first_half,
-                               s.mean_inflight_second_half, delta=0.3)
+        self.assertAlmostEqual(s.mean_inflight_first_half, s.mean_inflight_second_half, delta=0.3)
 
     def test_growing_queue_is_visible_in_halves(self):
         results = [_req(i * 1.0, i * 1.0 + 1.0 + i * 0.8) for i in range(20)]
@@ -488,7 +509,8 @@ class TestStationarity(unittest.TestCase):
         mean_duration = s.busy_time_s * s.mean_inflight_requests / s.successful_requests
         self.assertAlmostEqual(
             s.busy_request_throughput * mean_duration,
-            s.mean_inflight_requests, places=6,
+            s.mean_inflight_requests,
+            places=6,
             msg="Little's Law holds by construction here, so it validates nothing",
         )
 
@@ -608,7 +630,8 @@ class RunnerCacheMetadataTests(unittest.TestCase):
 
     def test_request_observability_records_shape_timing_and_metadata(self):
         request = Request(
-            [], 0,
+            [],
+            0,
             messages=[
                 {"role": "system", "content": "s"},
                 {"role": "user", "content": "hello"},
@@ -638,8 +661,7 @@ class RunnerCacheMetadataTests(unittest.TestCase):
         self.assertEqual(result.request_metadata["planned_new_prefill_tokens"], 17)
 
     def test_request_observability_allows_unscheduled_multiturn_requests(self):
-        request = Request([], 0, output_length=8, messages=[{"role": "user", "content": "hello"}],
-                          metadata={})
+        request = Request([], 0, output_length=8, messages=[{"role": "user", "content": "hello"}], metadata={})
         result = RequestResult(success=True)
 
         annotate_request_observability(
@@ -732,7 +754,8 @@ class RunnerCacheMetadataTests(unittest.TestCase):
             result,
             request_index=7,
             request=Request(
-                [], 0,
+                [],
+                0,
                 messages=[{"role": "user", "content": "hello world"}],
                 output_length=64,
                 metadata={"planned_new_prefill_tokens": 75},
@@ -749,8 +772,12 @@ class RunnerCacheMetadataTests(unittest.TestCase):
             previous_context_tokens=175,
             cache_block_size=16,
         )
-        cfg = Config(engine=EngineCfg(), workload=WorkloadCfg(source="chat-multiturn-short"),
-                     mode=ModeCfg(prefix_cache_block_size=16), hardware=HardwareCfg())
+        cfg = Config(
+            engine=EngineCfg(),
+            workload=WorkloadCfg(source="chat-multiturn-short"),
+            mode=ModeCfg(prefix_cache_block_size=16),
+            hardware=HardwareCfg(),
+        )
 
         with tempfile.TemporaryDirectory() as tmp:
             writer = RunWriter(tmp, cfg)
@@ -785,15 +812,12 @@ GIB = 1 << 30
 
 def batch(ctx, bs, step, wall, phase="fit", attempt=0, tp=1):
     """bs rows of one InProcessDriver batch."""
-    cell = {"ctx": ctx, "bs": bs, "tp": tp, "step_point": step, "phase": phase,
-            "attempt": attempt}
-    return [RequestResult(success=True, e2el=wall, batch_wall_s=wall, cell=dict(cell))
-            for _ in range(bs)]
+    cell = {"ctx": ctx, "bs": bs, "tp": tp, "step_point": step, "phase": phase, "attempt": attempt}
+    return [RequestResult(success=True, e2el=wall, batch_wall_s=wall, cell=dict(cell)) for _ in range(bs)]
 
 
 def attempt_rows(ctx, bs, walls, attempt):
-    return [r for step, wall in zip(STEPS, walls) for r in batch(ctx, bs, step, wall,
-                                                                  attempt=attempt)]
+    return [r for step, wall in zip(STEPS, walls) for r in batch(ctx, bs, step, wall, attempt=attempt)]
 
 
 class FitTest(unittest.TestCase):
@@ -837,16 +861,19 @@ class FitRunTest(unittest.TestCase):
         attn = kv_gib / (kv_gib + 15.0)
         self.assertEqual(entry["ms_per_step"], slope * 1e3)
         self.assertEqual(entry["ms_at_eval"], ms_at_eval(slope * 1e3, attn, 50, 230.0, 4096))
-        self.assertEqual((entry["r2"], entry["prefill_s"], entry["kv_gib"], entry["attn_share"]),
-                         (r2, inter, kv_gib, attn))
-        self.assertEqual((entry["raw"], entry["step_points"], entry["mean_steps"]),
-                         (walls, STEPS, 230.0))
+        self.assertEqual(
+            (entry["r2"], entry["prefill_s"], entry["kv_gib"], entry["attn_share"]), (r2, inter, kv_gib, attn)
+        )
+        self.assertEqual((entry["raw"], entry["step_points"], entry["mean_steps"]), (walls, STEPS, 230.0))
         self.assertEqual(entry["attempts"], 1)
 
     def test_best_r2_attempt_wins_earliest_on_tie(self):
         bent, straight = [0.35, 1.51, 2.06], [0.27, 0.96, 1.65]
-        rows = (attempt_rows(1024, 1, bent, 0) + attempt_rows(1024, 1, straight, 1)
-                + attempt_rows(1024, 1, [0.27, 0.96, 1.6500001], 2))
+        rows = (
+            attempt_rows(1024, 1, bent, 0)
+            + attempt_rows(1024, 1, straight, 1)
+            + attempt_rows(1024, 1, [0.27, 0.96, 1.6500001], 2)
+        )
         (entry,) = fit_run(rows, 50, 131072, 15.0)
         self.assertEqual((entry["raw"], entry["attempts"]), (straight, 3))
         tie = attempt_rows(1024, 1, bent, 0) + attempt_rows(1024, 1, list(bent), 1)
@@ -854,18 +881,21 @@ class FitRunTest(unittest.TestCase):
 
     def test_cells_keep_first_seen_order(self):
         rows = attempt_rows(100, 8, [1, 2, 3.5], 0) + attempt_rows(100, 1, [1, 2, 3], 0)
-        self.assertEqual([(e["ctx"], e["bs"]) for e in fit_run(rows, 50, 1, 1.0)],
-                         [(100, 8), (100, 1)])
+        self.assertEqual([(e["ctx"], e["bs"]) for e in fit_run(rows, 50, 1, 1.0)], [(100, 8), (100, 1)])
 
     def test_measured_rows_pass_through(self):
-        row = {"cell": {"ctx": 1024, "bs": 4, "tp": 2, "step_point": None},
-               "measured_ms_per_step": 3.5, "group": "decode_loop", "kv": "fp16"}
-        self.assertEqual(fit_run([row], 50, 1, 1.0),
-                         [{"ctx": 1024, "bs": 4, "tp": 2, "ms_per_step": 3.5, "measured": True}])
+        row = {
+            "cell": {"ctx": 1024, "bs": 4, "tp": 2, "step_point": None},
+            "measured_ms_per_step": 3.5,
+            "group": "decode_loop",
+            "kv": "fp16",
+        }
+        self.assertEqual(
+            fit_run([row], 50, 1, 1.0), [{"ctx": 1024, "bs": 4, "tp": 2, "ms_per_step": 3.5, "measured": True}]
+        )
 
     def test_rows_without_a_cell_or_fit_phase_are_ignored(self):
-        rows = [RequestResult(success=True, e2el=1.0)] + batch(100, 1, 64, 0.5, phase="text",
-                                                                 attempt=None)
+        rows = [RequestResult(success=True, e2el=1.0)] + batch(100, 1, 64, 0.5, phase="text", attempt=None)
         self.assertEqual(fit_run(rows, 50, 1, 1.0), [])
 
 

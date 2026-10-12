@@ -1,4 +1,5 @@
 """Maps environment variables to Config fields; read_env() and export() are the only reads and writes of os.environ."""
+
 import os
 
 from quettabench.config.schema import ConfigError
@@ -47,11 +48,9 @@ ENV_MAP = {
     # The caller's value beats the hardware yaml for the collective pins.
     "NCCL_P2P_LEVEL": ("hardware.collective.NCCL_P2P_LEVEL", str, "bench.sh:42 vmin_fit.py:30"),
     "NCCL_IB_DISABLE": ("hardware.collective.NCCL_IB_DISABLE", str, "bench.sh:42 vmin_fit.py:30"),
-    "NCCL_SOCKET_IFNAME": ("hardware.collective.NCCL_SOCKET_IFNAME", str,
-                           "bench.sh:42 vmin_fit.py:30"),
+    "NCCL_SOCKET_IFNAME": ("hardware.collective.NCCL_SOCKET_IFNAME", str, "bench.sh:42 vmin_fit.py:30"),
     "LLMSRV_NO_NVLS": ("hardware.collective.LLMSRV_NO_NVLS", str, "bench.sh:42 vmin_fit.py:30"),
-    "LLMSRV_TWOSHOT_MIN_BYTES": ("hardware.collective.LLMSRV_TWOSHOT_MIN_BYTES", str,
-                                 "bench.sh:42 vmin_fit.py:30"),
+    "LLMSRV_TWOSHOT_MIN_BYTES": ("hardware.collective.LLMSRV_TWOSHOT_MIN_BYTES", str, "bench.sh:42 vmin_fit.py:30"),
     "QS_SHA": ("provenance.engine_sha", str, "cache.py:46"),
     "DS_ENGINE_SHA": ("provenance.engine_sha", str, "cache.py:46, used when QS_SHA is unset"),
     "CUDA_VISIBLE_DEVICES": ("hardware.visible_devices", str, "trace_serve.py:111,491"),

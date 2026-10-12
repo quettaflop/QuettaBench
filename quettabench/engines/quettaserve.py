@@ -40,8 +40,7 @@ def gdn_rule(p, extra, world):
         env["QS_CUSTOM_AR"] = str(extra.get("qs_custom_ar") or "1")
     mode = extra.get("qs_mode") or ("eager" if kernels == "exact" else "graph")
     env[f"{p}_MODE"] = mode
-    header = (f" kern={kernels} ar={env.get('QS_CUSTOM_AR', '0')} mode={mode}"
-              f" gdn_dir={gdn_dir or 'none'}")
+    header = f" kern={kernels} ar={env.get('QS_CUSTOM_AR', '0')} mode={mode} gdn_dir={gdn_dir or 'none'}"
     return env, (), header
 
 
@@ -68,8 +67,9 @@ class QuettaServeAdapter(EngineAdapter):
         if engine.instrumentation == "torch":
             raise UnsupportedField("quettaserve", "instrumentation=torch", "no torch in the bench")
         if engine.serving_style != "aggregated":
-            raise UnsupportedField("quettaserve", f"serving_style={engine.serving_style}",
-                                   "the bench runs one aggregated world")
+            raise UnsupportedField(
+                "quettaserve", f"serving_style={engine.serving_style}", "the bench runs one aggregated world"
+            )
         if bench["family"] not in FAMILY_RULES:
             raise ConfigError(f"quettaserve: unknown family {bench['family']!r}")
         p, world, steps = bench["env_prefix"], engine.tp, hw.timing_steps
@@ -82,30 +82,34 @@ class QuettaServeAdapter(EngineAdapter):
         ok = OK_BY_TEST[bench["test"]]
         if engine.layers is not None:
             if bench["test"] != "batch_bench":
-                raise UnsupportedField("quettaserve", f"layers={engine.layers}",
-                                       f"only batch_bench reads {p}_LAYERS")
+                raise UnsupportedField("quettaserve", f"layers={engine.layers}", f"only batch_bench reads {p}_LAYERS")
             env[f"{p}_LAYERS"] = str(engine.layers)
             drop = tuple(d for d in drop if d != f"{p}_LAYERS")
             ok = ok.replace("layers=all", f"layers={engine.layers}")
-        env.update({f"{p}_CKPT": engine.model, f"{p}_WORLD": str(world),
-                    f"{p}_TIMING_STEPS": str(steps)})
+        env.update({f"{p}_CKPT": engine.model, f"{p}_WORLD": str(world), f"{p}_TIMING_STEPS": str(steps)})
         header = ""
         if cell is not None:
             ctx, bs = cell
             max_seq = ctx + steps + hw.max_seq_headroom
-            env.update({f"{p}_BATCH": str(bs), f"{p}_BENCH_PROMPT": str(ctx),
-                        f"{p}_MAX_SEQ": str(max_seq)})
-            header = (f">>> ctx={ctx} bs={bs} world={world} max_seq={max_seq} "
-                      f"link={hw.link_profile} nccl={algo}/{proto}{header_tail}")
+            env.update({f"{p}_BATCH": str(bs), f"{p}_BENCH_PROMPT": str(ctx), f"{p}_MAX_SEQ": str(max_seq)})
+            header = (
+                f">>> ctx={ctx} bs={bs} world={world} max_seq={max_seq} "
+                f"link={hw.link_profile} nccl={algo}/{proto}{header_tail}"
+            )
         binary = engine.extra.get("bench_bin")
-        argv = ([binary, "--nocapture"] if binary else
-                ["cargo", "test", "-p", bench["crate"], "--test", bench["test"],
-                 "--release", "--", "--nocapture"])
+        argv = (
+            [binary, "--nocapture"]
+            if binary
+            else ["cargo", "test", "-p", bench["crate"], "--test", bench["test"], "--release", "--", "--nocapture"]
+        )
         if engine.instrumentation == "nsys":
             name = "nsys" if cell is None else f"nsys-{cell[0]}x{cell[1]}"
             argv = nsys_argv(cfg, run_dir, name) + argv
-        cells = () if cell is not None or cfg.grid is None else tuple(
-            (ctx, bs, self.translate(cfg, run_dir, (ctx, bs))) for ctx, bs in cfg.grid.cells)
+        cells = (
+            ()
+            if cell is not None or cfg.grid is None
+            else tuple((ctx, bs, self.translate(cfg, run_dir, (ctx, bs))) for ctx, bs in cfg.grid.cells)
+        )
         return LaunchSpec(
             adapter=self.name,
             bench_argv=tuple(argv),

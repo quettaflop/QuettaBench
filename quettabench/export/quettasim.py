@@ -2,6 +2,7 @@
 
 kernel_tables builds QuettaSim's kernel tables from the probe runs' rows.jsonl into its data root (--kernel-dest). The other builders write fitted constants and grids under --dest; every export writes a manifest of the runs it read.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -42,8 +43,7 @@ def run_dirs(root: Path) -> dict[Path, str | None]:
     A server/ dir under a run dir is part of that run; a .clearing-* dir is no run. Cached per root; export() clears it before each builder.
     """
     runs = {}
-    dirs = sorted({p.parent for marker in RUN_MARKERS for p in Path(root).rglob(marker)
-                   if not clearing(p, root)})
+    dirs = sorted({p.parent for marker in RUN_MARKERS for p in Path(root).rglob(marker) if not clearing(p, root)})
     for run_dir in dirs:
         if run_dir.name == "server" and run_dir.parent in dirs:
             continue
@@ -117,13 +117,24 @@ def stage_split_legs(results_dirs: Iterable[Path], gpu: str) -> list[tuple[int, 
 
 
 # A row's timing -> QuettaSim's kernel_data dir (kernel_composed/provenance.py MODES).
-DIRS = {"graph_replay": "graph", "ncu": "graph", "amortized_wallclock": "graph",
-        "eager": "eager", "host_wallclock": "eager"}
+DIRS = {
+    "graph_replay": "graph",
+    "ncu": "graph",
+    "amortized_wallclock": "graph",
+    "eager": "eager",
+    "host_wallclock": "eager",
+}
 # The indent and ending of a probe's JSON table, as its own file was written.
 JSON_STYLE = {"elementwise": (2, ""), "gemm": (2, "\n"), "moe": (1, "\n")}
 # The reduce each probe takes over its timings, for graph_replay and eager tables.
-REDUCE = {"gemm": "min", "moe": "min", "elementwise": "median", "flash_attn": "median",
-          "cross_attn": "median", "gdn": "median"}
+REDUCE = {
+    "gemm": "min",
+    "moe": "min",
+    "elementwise": "median",
+    "flash_attn": "median",
+    "cross_attn": "median",
+    "gdn": "median",
+}
 # The key a collectives row replaces a dest row on.
 COLLECTIVE_KEY = ("op", "world", "bytes")
 GEOMETRY = ("n_heads", "n_kv_heads", "head_dim")
@@ -136,13 +147,29 @@ ROW_KEYS = {
     ("gemm", "gemm_wide"): ("M", "N", "K"),
     ("moe", "moe"): ("tokens", "n_experts", "top_k", "intermediate", "hidden"),
     ("reparallel", "reparallel"): ("gpu", "world", "tp_from", "tp_to", "total_weight_gb"),
-    ("kv_transfer", "kv_transfer"): ("gpu", "kv_heads_per_rank", "head_dim", "block_size", "layers",
-                                     "layout", "tokens"),
+    ("kv_transfer", "kv_transfer"): (
+        "gpu",
+        "kv_heads_per_rank",
+        "head_dim",
+        "block_size",
+        "layers",
+        "layout",
+        "tokens",
+    ),
 }
 # Keyed tables whose union is sorted on these columns.
-SORTED = {("reparallel", "reparallel"): ROW_KEYS[("reparallel", "reparallel")],
-          ("kv_transfer", "kv_transfer"): ("gpu", "kv_heads_per_rank", "layout", "tokens",
-                                           "head_dim", "block_size", "layers")}
+SORTED = {
+    ("reparallel", "reparallel"): ROW_KEYS[("reparallel", "reparallel")],
+    ("kv_transfer", "kv_transfer"): (
+        "gpu",
+        "kv_heads_per_rank",
+        "layout",
+        "tokens",
+        "head_dim",
+        "block_size",
+        "layers",
+    ),
+}
 # Probes that live outside quettabench/probes/, by their sidecar tool.
 TOOLS = {"kv_transfer": "quettabench.profiling.kv_transfer"}
 # Probes whose run without --append replaces the whole table.
@@ -178,21 +205,26 @@ def _sidecar(rel: Path, by_probe: dict[str, list[Source]], runs: set[Path]) -> d
     for probe, sources in by_probe.items():
         for _, table, run, _ in (s for s in sources if s[2] in runs):
             _, args, day = _record(run)
-            for mode in ({"reference"} if rel.stem.endswith("_nccl_vs_vllm") else table.timings):
+            for mode in {"reference"} if rel.stem.endswith("_nccl_vs_vllm") else table.timings:
                 modes.add(mode)
-                reduces.add("min" if mode == "ncu" else REDUCE.get(probe)
-                            if mode in ("graph_replay", "eager") else None)
+                reduces.add(
+                    "min" if mode == "ncu" else REDUCE.get(probe) if mode in ("graph_replay", "eager") else None
+                )
             probes.add(probe)
             gpus.add(_gpu(args))
             days.append(day or "")
-    return {"schema": 1, "table": rel.as_posix(), "dir": rel.parts[0],
-            "gpu": gpus.pop() if len(gpus) == 1 else None,
-            "mode": modes.pop() if len(modes) == 1 else "unknown",
-            "tool": " + ".join(TOOLS.get(p, f"quettabench.probes.{p}") for p in sorted(probes)),
-            "reduce": reduces.pop() if len(reduces) == 1 else None,
-            "measured": max(days, default="") or None,
-            "notes": "" if len(modes) <= 1 else f"rows timed as {', '.join(sorted(modes))}",
-            "provenance": "qbench export kernel_tables; source runs in kernel_data/qbench_manifest.json"}
+    return {
+        "schema": 1,
+        "table": rel.as_posix(),
+        "dir": rel.parts[0],
+        "gpu": gpus.pop() if len(gpus) == 1 else None,
+        "mode": modes.pop() if len(modes) == 1 else "unknown",
+        "tool": " + ".join(TOOLS.get(p, f"quettabench.probes.{p}") for p in sorted(probes)),
+        "reduce": reduces.pop() if len(reduces) == 1 else None,
+        "measured": max(days, default="") or None,
+        "notes": "" if len(modes) <= 1 else f"rows timed as {', '.join(sorted(modes))}",
+        "provenance": "qbench export kernel_tables; source runs in kernel_data/qbench_manifest.json",
+    }
 
 
 def _keep_sidecar(meta: dict, table: Path, kept: bool) -> dict:
@@ -214,13 +246,20 @@ def _keep_sidecar(meta: dict, table: Path, kept: bool) -> dict:
     days = sorted(d for d in (*str(prior.get("measured") or "").split(" .. "), meta.get("measured")) if d)
     tools = [t for t in (*str(prior.get("tool") or "").split(" + "), *meta["tool"].split(" + ")) if t]
     mode = meta["mode"] if prior.get("mode") in (None, meta["mode"]) else "unknown"
-    return {**prior, **meta, "mode": mode, "notes": notes, "tool": " + ".join(dict.fromkeys(tools)),
-            "measured": " .. ".join(dict.fromkeys(days[:1] + days[-1:])) or None}
+    return {
+        **prior,
+        **meta,
+        "mode": mode,
+        "notes": notes,
+        "tool": " + ".join(dict.fromkeys(tools)),
+        "measured": " .. ".join(dict.fromkeys(days[:1] + days[-1:])) or None,
+    }
 
 
 @dataclasses.dataclass
 class Rows:
     """One run's rows of one table from its rows.jsonl: each row's key and value cells, the probe and how the rows were timed."""
+
     probe: str
     timings: set[str]
     cells: list[dict]
@@ -263,7 +302,8 @@ def found(results_dirs: Iterable[Path]) -> dict[Path, dict[str, list[Source]]]:
                 rows.cells.append({**row["key"], **row["value"]})
             for rel, rows in mine.items():
                 tables.setdefault(rel, {}).setdefault(rows.probe, []).append(
-                    (finished(run), rows, run, "--append" in args))
+                    (finished(run), rows, run, "--append" in args)
+                )
     for by_probe in tables.values():
         for sources in by_probe.values():
             sources.sort(key=lambda s: (s[0], str(s[2])))
@@ -279,14 +319,22 @@ def _runs_used(probe: str, rel: Path, sources: list[Source]) -> list[Source]:
         return sources[-1:]
     if probe in RESET_WITHOUT_APPEND:
         resets = [i for i, s in enumerate(sources) if not s[3]]
-        return sources[resets[-1]:] if resets else sources
+        return sources[resets[-1] :] if resets else sources
     return sources
 
 
 def _key(row: dict, key: tuple[str, ...]) -> tuple:
     """row's key, numbers parsed with int(); an empty op is all_reduce, as QuettaSim's collectives loader reads it."""
-    return tuple((row.get("op") or "all_reduce") if c == "op" else row[c] if c in ("gpu", "layout")
-                 else float(row[c]) if c == "total_weight_gb" else int(row[c]) for c in key)
+    return tuple(
+        (row.get("op") or "all_reduce")
+        if c == "op"
+        else row[c]
+        if c in ("gpu", "layout")
+        else float(row[c])
+        if c == "total_weight_gb"
+        else int(row[c])
+        for c in key
+    )
 
 
 def _newline(table: Path | Rows) -> str:
@@ -305,8 +353,7 @@ def _write_csv(out: Path, fields: list[str], rows: Iterable[dict], like: Path | 
         w.writerows(rows)
 
 
-def _read_csv(rel: Path, table: Path | Rows, run: Path,
-              key: tuple[str, ...] = ()) -> tuple[list[str], list[dict]]:
+def _read_csv(rel: Path, table: Path | Rows, run: Path, key: tuple[str, ...] = ()) -> tuple[list[str], list[dict]]:
     """table's header and rows as csv reads them; stops the export on a row with a missing or extra cell or an empty or unparsable key."""
     if isinstance(table, Rows):
         fields = list(dict.fromkeys(c for cells in table.cells for c in cells))
@@ -337,8 +384,9 @@ def _read_json(rel: Path, table: Path | Rows, run: Path) -> object:
         raise SystemExit(f"{rel.as_posix()}: {run} malformed JSON") from None
 
 
-def _union_csv(rel: Path, sources: list[Source], key: tuple[str, ...], out: Path,
-               old: Source | None = None) -> list[Path]:
+def _union_csv(
+    rel: Path, sources: list[Source], key: tuple[str, ...], out: Path, old: Source | None = None
+) -> list[Path]:
     """Rows of the dest table old, then of every source oldest first, each source replacing earlier rows on the keys it holds. Returns the run dirs with a row kept.
 
     Within a run the last row on a key wins; old keeps repeated keys (QuettaSim's loaders reduce them) unless its table is in SORTED.
@@ -393,8 +441,9 @@ def _json_style(table: Path | Rows) -> tuple[int | None, str]:
     return indent, "\n" * text.endswith("\n")
 
 
-def _merge_collectives(rel: Path, collective: Source | None, vllm: Source | None, out: Path,
-                       old: Source | None = None) -> list[Path]:
+def _merge_collectives(
+    rel: Path, collective: Source | None, vllm: Source | None, out: Path, old: Source | None = None
+) -> list[Path]:
     """Collectives table: old's rows, then the collective run's replacing on COLLECTIVE_KEY, then vllm_allreduce's all_reduce rows replacing every earlier all_reduce row of their world.
 
     Beside a vllm_allreduce run the collective run's all_reduce rows are left out. Collective rows fill an empty dtype_bytes (2) and path (nccl).
@@ -408,13 +457,19 @@ def _merge_collectives(rel: Path, collective: Source | None, vllm: Source | None
     newer: set[tuple] = set()
     for source, (_, rows) in sources:
         if source is collective:
-            rows = [{**r, **{c: r.get(c) or v for c, v in fill.items()}} for r in rows
-                    if not (vllm and _key(r, ("op",)) == ("all_reduce",))]
+            rows = [
+                {**r, **{c: r.get(c) or v for c, v in fill.items()}}
+                for r in rows
+                if not (vllm and _key(r, ("op",)) == ("all_reduce",))
+            ]
         if source is vllm:
             rows = [r for r in rows if _key(r, ("op",)) == ("all_reduce",)]
             worlds = {_key(r, ("world",)) for r in rows}
-            mine = {_key(r, COLLECTIVE_KEY) for r, _ in kept
-                    if _key(r, ("op",)) == ("all_reduce",) and _key(r, ("world",)) in worlds}
+            mine = {
+                _key(r, COLLECTIVE_KEY)
+                for r, _ in kept
+                if _key(r, ("op",)) == ("all_reduce",) and _key(r, ("world",)) in worlds
+            }
         else:
             mine = set()
         mine |= {_key(r, COLLECTIVE_KEY) for r in rows}
@@ -431,14 +486,19 @@ def _merge_collectives(rel: Path, collective: Source | None, vllm: Source | None
 def _check(rel: Path, by_probe: dict[str, list[Source]]) -> None:
     """Stop on a file two probes write that kernel_tables does not merge."""
     probes = sorted(by_probe)
-    if len(probes) > 1 and (probes, rel.suffix) not in ((["collective", "vllm_allreduce"], ".csv"),
-                                                        (["elementwise", "gemm"], ".json")):
-        raise SystemExit(f"{rel.as_posix()}: written by probes {probes}; kernel_tables "
-                         "merges only collective+vllm_allreduce and elementwise+gemm")
+    if len(probes) > 1 and (probes, rel.suffix) not in (
+        (["collective", "vllm_allreduce"], ".csv"),
+        (["elementwise", "gemm"], ".json"),
+    ):
+        raise SystemExit(
+            f"{rel.as_posix()}: written by probes {probes}; kernel_tables "
+            "merges only collective+vllm_allreduce and elementwise+gemm"
+        )
 
 
-def _lost(rel: Path, old: Source, out: Path, key: tuple[str, ...], newer: set[tuple],
-          rows: list[dict] | None = None) -> None:
+def _lost(
+    rel: Path, old: Source, out: Path, key: tuple[str, ...], newer: set[tuple], rows: list[dict] | None = None
+) -> None:
     """Stop (Lost) when out lacks a column of old or drops one of its rows, cell for cell, unless a newer run re-measured that key."""
     head, olds = _read_csv(rel, old[1], old[1], key)
     fields, kept = _read_csv(rel, out, out, key)
@@ -461,16 +521,16 @@ def _lost(rel: Path, old: Source, out: Path, key: tuple[str, ...], newer: set[tu
         raise Lost(f"{rel.as_posix()}: the export would keep {left} of its {len(rows)} rows in {old[1]}{stop}")
 
 
-def _write(rel: Path, by_probe: dict[str, list[Source]], out: Path,
-           old: Source | None = None) -> list[Path]:
+def _write(rel: Path, by_probe: dict[str, list[Source]], out: Path, old: Source | None = None) -> list[Path]:
     """Build one dest file over the dest table old, if any; returns the run dirs (and old's path) whose rows it holds."""
     used = {probe: _runs_used(probe, rel, sources) for probe, sources in by_probe.items()}
     probes = sorted(used)
     olds = [old] if old else []
     tp_table = rel.parts[-2] == "collectives" and not rel.stem.endswith("_nccl_vs_vllm") and rel.suffix == ".csv"
     if tp_table and set(probes) <= {"collective", "vllm_allreduce"}:
-        return _merge_collectives(rel, *(used[p][-1] if p in used else None
-                                         for p in ("collective", "vllm_allreduce")), out, old)
+        return _merge_collectives(
+            rel, *(used[p][-1] if p in used else None for p in ("collective", "vllm_allreduce")), out, old
+        )
     if probes == ["elementwise", "gemm"]:
         return _union_json(rel, olds + used["elementwise"] + used["gemm"], out)
     (probe,) = probes
@@ -495,8 +555,9 @@ def _write(rel: Path, by_probe: dict[str, list[Source]], out: Path,
     return _union_csv(rel, sources, key, out)
 
 
-def run_kernel_tables(results_dirs: Iterable[Path], dest: Path,
-        replace: bool = False) -> tuple[list[Path], dict[str, list[str]]]:
+def run_kernel_tables(
+    results_dirs: Iterable[Path], dest: Path, replace: bool = False
+) -> tuple[list[Path], dict[str, list[str]]]:
     """Build every table and sidecar in a temp dir under dest, then replace the dest files, so a stop leaves dest as it was. With replace, tables that would stop with Lost are rebuilt without dest's rows.
 
     Returns the files written and {<dir>/<kind>/<file>: run dirs with rows in it, in finished order} for the manifest.
@@ -529,10 +590,10 @@ def run_kernel_tables(results_dirs: Iterable[Path], dest: Path,
                     meta = _keep_sidecar(meta, table, table in runs)
                 meta = json.dumps(meta, indent=1, sort_keys=True)
                 out.with_name(out.name + ".meta.json").write_text(meta + "\n")
-                order = sorted((s[0], str(s[2])) for sources in by_probe.values() for s in sources
-                               if s[2] in runs)
+                order = sorted((s[0], str(s[2])) for sources in by_probe.values() for s in sources if s[2] in runs)
                 used[rel.as_posix()] = (["adopted from dest"] if table in runs else []) + list(
-                    dict.fromkeys(run for _, run in order))
+                    dict.fromkeys(run for _, run in order)
+                )
             written = []
             for rel, by_probe in tables:
                 out = dest / "kernel_data" / rel
@@ -568,12 +629,10 @@ def _span_new_rate(path: Path) -> dict:
                 f = m[r][col] / m[col][col]
                 m[r] = [a - f * b for a, b in zip(m[r], m[col])]
     beta = [m[i][3] / m[i][i] for i in range(3)]
-    return {"floor_ms": beta[0], "new_ms_per_tok": beta[1], "cached_ms_per_tok": beta[2],
-            "n_rows": n}
+    return {"floor_ms": beta[0], "new_ms_per_tok": beta[1], "cached_ms_per_tok": beta[2], "n_rows": n}
 
 
-def build_tpn(n: int, tpn_csv: Path, out_json: Path, tp1_csv: Path, gpu: str = "H100",
-              host: str = "h100") -> None:
+def build_tpn(n: int, tpn_csv: Path, out_json: Path, tp1_csv: Path, gpu: str = "H100", host: str = "h100") -> None:
     """Like-for-like stage-split estimate at tp n: comm_total = prefill_span.new(tpN) - span.new(tp1)/N, the per-new-token cost above the 1/N GEMM share, pinned per config as prefill_tp_comm_ms_per_token. Each GPU uses its own tp1 leg."""
     for p in (tp1_csv, tpn_csv):
         if not p.exists():
@@ -583,30 +642,39 @@ def build_tpn(n: int, tpn_csv: Path, out_json: Path, tp1_csv: Path, gpu: str = "
     comm = tpn["new_ms_per_tok"] - tp1["new_ms_per_tok"] / float(n)
     payload = {
         "schema": "prefill_tp_comm.v1",
-        "gpu": f"{gpu}x{n}", "model": "Llama-3.1-8B", "tp": n,
-        "method": ("like-for-like multiprocess api_server stage-split pair (same script both "
-                   f"legs); comm_total = prefill_span.new(tp{n}) − prefill_span.new(tp1)/{n}"),
+        "gpu": f"{gpu}x{n}",
+        "model": "Llama-3.1-8B",
+        "tp": n,
+        "method": (
+            "like-for-like multiprocess api_server stage-split pair (same script both "
+            f"legs); comm_total = prefill_span.new(tp{n}) − prefill_span.new(tp1)/{n}"
+        ),
         "tp1_fit": {k: round(v, 6) if isinstance(v, float) else v for k, v in tp1.items()},
         f"tp{n}_fit": {k: round(v, 6) if isinstance(v, float) else v for k, v in tpn.items()},
         "constants": {"prefill_tp_comm_ms_per_token_total": comm},
         "fallback_it_replaces_ms_per_token": None,
-        "_notes": (f"TOTAL tp{n} comm per new token (NOT per-extra-rank). Pinned in the "
-                   f"deployment JSON key prefill_tp_comm_ms_per_token of the {gpu}x{n} config; "
-                   "every config without the pin keeps PREFILL_TP_COMM_MS_PER_TOKEN*(tp-1). "
-                   "Regenerate: just export. Sources: "
-                   f"serving_stage_split.py --tensor-parallel-size {{1,{n}}} on {host}."),
+        "_notes": (
+            f"TOTAL tp{n} comm per new token (NOT per-extra-rank). Pinned in the "
+            f"deployment JSON key prefill_tp_comm_ms_per_token of the {gpu}x{n} config; "
+            "every config without the pin keeps PREFILL_TP_COMM_MS_PER_TOKEN*(tp-1). "
+            "Regenerate: just export. Sources: "
+            f"serving_stage_split.py --tensor-parallel-size {{1,{n}}} on {host}."
+        ),
     }
     try:  # informational; QuettaSim may not have the constant
         import simulator.ttft_queue_sim as _sim
+
         payload["fallback_it_replaces_ms_per_token"] = _sim.PREFILL_TP_COMM_MS_PER_TOKEN * (n - 1)
     except ImportError:
         pass
     out_json.parent.mkdir(parents=True, exist_ok=True)
     out_json.write_text(json.dumps(payload, indent=2) + "\n")
     fallback = payload["fallback_it_replaces_ms_per_token"]
-    print(f"tp1 span.new {tp1['new_ms_per_tok']*1e3:.3f} ms/1k | tp{n} "
-          f"{tpn['new_ms_per_tok']*1e3:.3f} -> comm_total {comm*1e3:.4f} ms/1k "
-          f"(fallback it replaces: {'n/a' if fallback is None else f'{fallback*1e3:.4f}'} ms/1k)")
+    print(
+        f"tp1 span.new {tp1['new_ms_per_tok'] * 1e3:.3f} ms/1k | tp{n} "
+        f"{tpn['new_ms_per_tok'] * 1e3:.3f} -> comm_total {comm * 1e3:.4f} ms/1k "
+        f"(fallback it replaces: {'n/a' if fallback is None else f'{fallback * 1e3:.4f}'} ms/1k)"
+    )
     print(f"wrote {out_json}")
 
 
@@ -618,26 +686,33 @@ def build_tp2(tp1_csv: Path, tp2_csv: Path, out_json: Path) -> None:
     in_band = NCCL_PHYSICS_BAND_MS_PER_1K[0] <= comm * 1e3 <= NCCL_PHYSICS_BAND_MS_PER_1K[1] + 1.0
     payload = {
         "schema": "prefill_tp_comm.v1",
-        "gpu": "H100", "model": "Llama-3.1-8B",
-        "method": ("like-for-like multiprocess api_server stage-split pair (same script both "
-                   "legs); comm = prefill_span.new(tp2) − prefill_span.new(tp1)/2"),
+        "gpu": "H100",
+        "model": "Llama-3.1-8B",
+        "method": (
+            "like-for-like multiprocess api_server stage-split pair (same script both "
+            "legs); comm = prefill_span.new(tp2) − prefill_span.new(tp1)/2"
+        ),
         "tp1_fit": {k: round(v, 6) if isinstance(v, float) else v for k, v in tp1.items()},
         "tp2_fit": {k: round(v, 6) if isinstance(v, float) else v for k, v in tp2.items()},
         "constants": {"PREFILL_TP_COMM_MS_PER_TOKEN": comm},
         "nccl_physics_band_ms_per_1k": list(NCCL_PHYSICS_BAND_MS_PER_1K),
         "within_physics_band_plus_1": in_band,
         "retired_backed_out_remainder": 0.00585,
-        "_notes": ("Replaces the instrumentation-inconsistent backed-out remainder 5.85 ms/1k "
-                   "(audit-v2 G3): the like-for-like pair removes the multiprocess-vs-in-process "
-                   "mismatch, and the residual lands at the top of the NCCL all-reduce physics "
-                   "band. Regenerate: just export. Sources: "
-                   "serving_stage_split.py --tensor-parallel-size {1,2} on h100."),
+        "_notes": (
+            "Replaces the instrumentation-inconsistent backed-out remainder 5.85 ms/1k "
+            "(audit-v2 G3): the like-for-like pair removes the multiprocess-vs-in-process "
+            "mismatch, and the residual lands at the top of the NCCL all-reduce physics "
+            "band. Regenerate: just export. Sources: "
+            "serving_stage_split.py --tensor-parallel-size {1,2} on h100."
+        ),
     }
     out_json.parent.mkdir(parents=True, exist_ok=True)
     out_json.write_text(json.dumps(payload, indent=2) + "\n")
-    print(f"tp1 span.new {tp1['new_ms_per_tok']*1e3:.3f} ms/1k | tp2 {tp2['new_ms_per_tok']*1e3:.3f} "
-          f"-> comm {comm*1e3:.4f} ms/1k (retired remainder 5.85; physics band "
-          f"{NCCL_PHYSICS_BAND_MS_PER_1K})")
+    print(
+        f"tp1 span.new {tp1['new_ms_per_tok'] * 1e3:.3f} ms/1k | tp2 {tp2['new_ms_per_tok'] * 1e3:.3f} "
+        f"-> comm {comm * 1e3:.4f} ms/1k (retired remainder 5.85; physics band "
+        f"{NCCL_PHYSICS_BAND_MS_PER_1K})"
+    )
     print(f"wrote {out_json}")
 
 
@@ -731,12 +806,14 @@ def quartile_medians(pairs: list[tuple[float, float]]) -> list[dict]:
     out = []
     n = len(pairs)
     for q in range(4):
-        chunk = pairs[q * n // 4: (q + 1) * n // 4] or pairs[-1:]
-        out.append({
-            "bw_roofline_ms_range": [round(chunk[0][0], 2), round(chunk[-1][0], 2)],
-            "n": len(chunk),
-            "util_bw_median": round(statistics.median(r for _, r in chunk), 4),
-        })
+        chunk = pairs[q * n // 4 : (q + 1) * n // 4] or pairs[-1:]
+        out.append(
+            {
+                "bw_roofline_ms_range": [round(chunk[0][0], 2), round(chunk[-1][0], 2)],
+                "n": len(chunk),
+                "util_bw_median": round(statistics.median(r for _, r in chunk), 4),
+            }
+        )
     return out
 
 
@@ -766,8 +843,12 @@ def build_roofline_utils(gpu: str, params_path: Path, trace_paths: dict[str, Pat
         candidates = []
         excluded_unknown_ctx = 0
         for s, c in zip(steps, ctxs):
-            if (_i(s.get("decode_batch")) > 0 and _i(s.get("prefill_tokens")) == 0
-                    and str(s.get("model_executed")) == "true" and c is None):
+            if (
+                _i(s.get("decode_batch")) > 0
+                and _i(s.get("prefill_tokens")) == 0
+                and str(s.get("model_executed")) == "true"
+                and c is None
+            ):
                 excluded_unknown_ctx += 1
             if c is None:
                 continue
@@ -775,8 +856,7 @@ def build_roofline_utils(gpu: str, params_path: Path, trace_paths: dict[str, Pat
                 continue
             if _i(s.get("step_id")) <= WARMUP_STEP_ID:
                 continue
-            bw_ms = (bpp * n_params + c["ctx_total"] * kv_bpt + c["batch"] * kv_bpt) \
-                / peak_bw * 1e3
+            bw_ms = (bpp * n_params + c["ctx_total"] * kv_bpt + c["batch"] * kv_bpt) / peak_bw * 1e3
             if bw_ms < BW_DOMINANCE * SCHED_PRIOR_MS:
                 continue
             wall = _f(s.get("engine_step_wall_ms"))
@@ -804,9 +884,11 @@ def build_roofline_utils(gpu: str, params_path: Path, trace_paths: dict[str, Pat
 
         fl_cand = []
         for s in steps:
-            if not (_i(s.get("prefill_tokens")) >= PREFILL_MIN_TOKENS
-                    and _i(s.get("decode_batch")) == 0
-                    and str(s.get("model_executed")) == "true"):
+            if not (
+                _i(s.get("prefill_tokens")) >= PREFILL_MIN_TOKENS
+                and _i(s.get("decode_batch")) == 0
+                and str(s.get("model_executed")) == "true"
+            ):
                 continue
             m = _i(s.get("prefill_tokens"))
             submit = _f(s.get("model_submit_wall_ms"))
@@ -821,8 +903,7 @@ def build_roofline_utils(gpu: str, params_path: Path, trace_paths: dict[str, Pat
             fl_trim = [(m, sub, eng) for m, sub, eng in fl_cand if lo <= sub / m <= hi]
         fl_ratios = [2.0 * n_params * m / peak_flops * 1e3 / sub for m, sub, _ in fl_trim]
         flops_pool.extend(fl_ratios)
-        flops_pool_engine.extend(
-            2.0 * n_params * m / peak_flops * 1e3 / eng for m, _, eng in fl_trim if eng > 0)
+        flops_pool_engine.extend(2.0 * n_params * m / peak_flops * 1e3 / eng for m, _, eng in fl_trim if eng > 0)
         tr["util_flops"] = {
             "n_candidates": len(fl_cand),
             "n_after_trim": len(fl_trim),
@@ -831,8 +912,11 @@ def build_roofline_utils(gpu: str, params_path: Path, trace_paths: dict[str, Pat
 
         gaps = []
         for s in steps:
-            if (_i(s.get("decode_batch")) == 1 and _i(s.get("prefill_tokens")) == 0
-                    and str(s.get("model_executed")) == "true"):
+            if (
+                _i(s.get("decode_batch")) == 1
+                and _i(s.get("prefill_tokens")) == 0
+                and str(s.get("model_executed")) == "true"
+            ):
                 gaps.append(_f(s.get("engine_step_wall_ms")) - _f(s.get("model_submit_wall_ms")))
         sched_pool.extend(gaps)
         tr["sched"] = {
@@ -842,14 +926,13 @@ def build_roofline_utils(gpu: str, params_path: Path, trace_paths: dict[str, Pat
         per_trace[key] = tr
 
     util_bw = statistics.median(r for _, r in bw_pool) if bw_pool else None
-    util_flops = (statistics.median(flops_pool)
-                  if len(flops_pool) >= UTIL_FLOPS_MIN_N else None)
+    util_flops = statistics.median(flops_pool) if len(flops_pool) >= UTIL_FLOPS_MIN_N else None
     sched = statistics.median(sched_pool) if sched_pool else None
 
     out = {
         "gpu": gpu,
         "recipe": "profiling/docs/defit_log_entries/L6-utils.md (pre-registered 2026-06-10; "
-                  "implemented by quettabench/export/quettasim/roofline_utils.py)",
+        "implemented by quettabench/export/quettasim/roofline_utils.py)",
         "params_source": params_path.name,
         "util_bw": round(util_bw, 4) if util_bw is not None else None,
         "util_flops": round(util_flops, 4) if util_flops is not None else None,
@@ -860,13 +943,11 @@ def build_roofline_utils(gpu: str, params_path: Path, trace_paths: dict[str, Pat
             "sched": len(sched_pool),
         },
         "diagnostics": {
-            "util_bw_net_of_sched_prior": round(statistics.median(bw_pool_net), 4)
-            if bw_pool_net else None,
+            "util_bw_net_of_sched_prior": round(statistics.median(bw_pool_net), 4) if bw_pool_net else None,
             "util_bw_net_note": "same steps, ratio vs (engine_wall - 5.7ms): the "
             "ttft_queue_sim.py:762 convention (sched added separately). Headline uses the "
             "full engine wall: closed_form_tpot adds no sched term to tpot.",
-            "util_flops_vs_engine_wall": round(statistics.median(flops_pool_engine), 4)
-            if flops_pool_engine else None,
+            "util_flops_vs_engine_wall": round(statistics.median(flops_pool_engine), 4) if flops_pool_engine else None,
             "util_flops_thinness": "pure-prefill steps are rare in decode-heavy serving "
             "traces; prefill_gemm_util_H100.json (R1 measured curve) remains the better "
             "prefill-util source.",
@@ -877,9 +958,11 @@ def build_roofline_utils(gpu: str, params_path: Path, trace_paths: dict[str, Pat
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(out, indent=2) + "\n")
     print(f"wrote {out_path}")
-    print(json.dumps({k: out[k] for k in
-                      ("util_bw", "util_flops", "scheduler_overhead_ms_per_step", "n_steps")},
-                     indent=2))
+    print(
+        json.dumps(
+            {k: out[k] for k in ("util_bw", "util_flops", "scheduler_overhead_ms_per_step", "n_steps")}, indent=2
+        )
+    )
 
 
 def run_roofline_utils(results_dirs: Iterable[Path], dest: Path) -> list[Path]:
@@ -926,8 +1009,7 @@ _LAG_UPGRADE_HEADROOM = 1.5  # adopted pass's p99 loop lag <= 1.5x the flag limi
 LAG_UPGRADE_FIELD = "lag_reproducibility_upgrade"
 
 
-def build_decode_grid(inputs: list[Path], snap_tolerance: float = 0.02,
-          lag_upgrade: bool = False) -> list[dict]:
+def build_decode_grid(inputs: list[Path], snap_tolerance: float = 0.02, lag_upgrade: bool = False) -> list[dict]:
     """Merge runs (latest wins per cell) and summarize.
 
     snap_tolerance: measured effective contexts land within ~1.5% of nominal T but are unique floats per cell, which would make every load_grid t-axis column ragged. Within the tolerance context_len snaps to T and the measured value goes to effective_context_len; beyond it the cell is flagged check.
@@ -968,11 +1050,19 @@ def build_decode_grid(inputs: list[Path], snap_tolerance: float = 0.02,
             row["context_len"] = nominal
         else:
             row["validation_status"] = "check"
-            print(f"cell {key}: effective context {eff} deviates >{snap_tolerance:.0%} "
-                  f"from nominal {nominal} -> kept + check")
-        if (lag_upgrade and row["validation_status"] == "check" and not dropped and snap_ok
-                and row["n_samples"] >= min_samples and row["steady_window_s"] > 0
-                and len(history[key]) >= 2):
+            print(
+                f"cell {key}: effective context {eff} deviates >{snap_tolerance:.0%} "
+                f"from nominal {nominal} -> kept + check"
+            )
+        if (
+            lag_upgrade
+            and row["validation_status"] == "check"
+            and not dropped
+            and snap_ok
+            and row["n_samples"] >= min_samples
+            and row["steady_window_s"] > 0
+            and len(history[key]) >= 2
+        ):
             per_pass = []
             for recs_i, name_i in history[key]:
                 ok_i = [r for r in recs_i if r.get("t_first_wall") is not None]
@@ -987,14 +1077,13 @@ def build_decode_grid(inputs: list[Path], snap_tolerance: float = 0.02,
             if per_pass is not None:
                 vals = [v for v, _, _ in per_pass]
                 spread = (max(vals) - min(vals)) / vals[-1]
-                if (spread <= _LAG_UPGRADE_SPREAD
-                        and per_pass[-1][1] <= _LAG_UPGRADE_HEADROOM * lag_limit_ms):
+                if spread <= _LAG_UPGRADE_SPREAD and per_pass[-1][1] <= _LAG_UPGRADE_HEADROOM * lag_limit_ms:
                     row["validation_status"] = "ok"
                     row[LAG_UPGRADE_FIELD] = (
                         f"passes={len(per_pass)} spread={spread * 100:.3f}% "
-                        f"lags={'/'.join(f'{lag:.3f}' for _, lag, _ in per_pass)}")
-                    print(f"cell {key}: lag-only flag upgraded to ok "
-                          f"({row[LAG_UPGRADE_FIELD]})")
+                        f"lags={'/'.join(f'{lag:.3f}' for _, lag, _ in per_pass)}"
+                    )
+                    print(f"cell {key}: lag-only flag upgraded to ok ({row[LAG_UPGRADE_FIELD]})")
         row["source_file"] = src
         rows.append(row)
     return rows
@@ -1050,9 +1139,14 @@ def source_runs(results_dirs: list[Path]) -> list[dict]:
             print(f"skip {run_dir}: {why}")
         for path in files(root, "run.json"):
             doc = json.loads(path.read_text())
-            runs.append({"run": str(path.parent), "run_name": doc["config"].get("run_name"),
-                         "status": doc["run_status"]["status"],
-                         "started": doc["provenance"].get("started")})
+            runs.append(
+                {
+                    "run": str(path.parent),
+                    "run_name": doc["config"].get("run_name"),
+                    "status": doc["run_status"]["status"],
+                    "started": doc["provenance"].get("started"),
+                }
+            )
     return runs
 
 
@@ -1065,8 +1159,13 @@ def manifest(results_dirs: list[Path]) -> dict:
     }
 
 
-def export(results_dirs: Iterable[Path], dest: Path | None = None, only: Iterable[str] | None = None,
-           kernel_dest: Path | None = None, replace_tables: bool = False) -> list[Path]:
+def export(
+    results_dirs: Iterable[Path],
+    dest: Path | None = None,
+    only: Iterable[str] | None = None,
+    kernel_dest: Path | None = None,
+    replace_tables: bool = False,
+) -> list[Path]:
     """Run the builders (all, or the named ones) over the results dirs; return the files written.
 
     kernel_tables writes under kernel_dest (QuettaSim's data root) and merges into its tables unless replace_tables; the other builders write under dest. Each runs only when its dest is given, and naming one without its dest stops the export.
@@ -1122,24 +1221,36 @@ def export(results_dirs: Iterable[Path], dest: Path | None = None, only: Iterabl
 
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(prog="qbench export", description=__doc__)
-    ap.add_argument("--results", type=Path, nargs="+", default=[Path("results")],
-                    help="results dirs the builders read; a named table comes from the ok run that "
-                         "finished last, a tie from the earlier dir")
-    ap.add_argument("--dest", type=Path,
-                    help="where every builder but kernel_tables writes (kernels/, results/, "
-                         "manifest.json); those builders run only when it is given")
-    ap.add_argument("--kernel-dest", type=Path,
-                    help="QuettaSim's data root ($QUETTASIM_DATA, e.g. ../QuettaSim/data): "
-                         "kernel_tables writes its kernel_data/ (with qbench_manifest.json) there, "
-                         "and runs only when given")
-    ap.add_argument("--replace-tables", action="store_true",
-                    help="replace the kernel tables (and sidecars) --kernel-dest holds where merging "
-                         "into them would stop, dropping their rows; the others still merge")
-    ap.add_argument("--only", nargs="+", choices=sorted(BUILDERS),
-                    help="run just these builders (default: all)")
+    ap.add_argument(
+        "--results",
+        type=Path,
+        nargs="+",
+        default=[Path("results")],
+        help="results dirs the builders read; a named table comes from the ok run that "
+        "finished last, a tie from the earlier dir",
+    )
+    ap.add_argument(
+        "--dest",
+        type=Path,
+        help="where every builder but kernel_tables writes (kernels/, results/, "
+        "manifest.json); those builders run only when it is given",
+    )
+    ap.add_argument(
+        "--kernel-dest",
+        type=Path,
+        help="QuettaSim's data root ($QUETTASIM_DATA, e.g. ../QuettaSim/data): "
+        "kernel_tables writes its kernel_data/ (with qbench_manifest.json) there, "
+        "and runs only when given",
+    )
+    ap.add_argument(
+        "--replace-tables",
+        action="store_true",
+        help="replace the kernel tables (and sidecars) --kernel-dest holds where merging "
+        "into them would stop, dropping their rows; the others still merge",
+    )
+    ap.add_argument("--only", nargs="+", choices=sorted(BUILDERS), help="run just these builders (default: all)")
     a = ap.parse_args(argv)
-    for path in export(a.results, a.dest, a.only, kernel_dest=a.kernel_dest,
-                       replace_tables=a.replace_tables):
+    for path in export(a.results, a.dest, a.only, kernel_dest=a.kernel_dest, replace_tables=a.replace_tables):
         print(path)
 
 

@@ -37,7 +37,7 @@ def corpus_window(ids, n, slot):
     start = (slot * 997) % max(1, len(ids))
     out = []
     while len(out) < n:
-        out.extend(ids[start:start + (n - len(out))])
+        out.extend(ids[start : start + (n - len(out))])
         start = 0
     return out
 
@@ -45,8 +45,7 @@ def corpus_window(ids, n, slot):
 class GridTrace(Trace):
     """Cells over maxlen (ctx + max(step_points) + 2 > maxlen) carry no requests. tokenizer is a zero-arg callable called at the first corpus cell, since the engine's tokenizer exists only after the model loads."""
 
-    def __init__(self, cells, step_points, prompt_mode, maxlen,
-                 corpus_path=None, tokenizer=None, trace=None, seed=10):
+    def __init__(self, cells, step_points, prompt_mode, maxlen, corpus_path=None, tokenizer=None, trace=None, seed=10):
         if prompt_mode not in PROMPT_MODES:
             raise ValueError(f"unknown prompt_mode {prompt_mode!r}; use {', '.join(PROMPT_MODES)}")
         if prompt_mode == "trace" and trace is None:
@@ -68,8 +67,15 @@ class GridTrace(Trace):
         w = cfg.workload
         trace = RealTrace.from_jsonl(w.source) if w.prompt_mode == "trace" and w.source else None
         corpus = w.source if w.prompt_mode == "corpus" and w.source else None
-        return cls(cfg.grid.cells, cfg.grid.step_points, w.prompt_mode, cfg.engine.max_model_len,
-                   corpus_path=corpus, tokenizer=tokenizer, trace=trace)
+        return cls(
+            cfg.grid.cells,
+            cfg.grid.step_points,
+            w.prompt_mode,
+            cfg.engine.max_model_len,
+            corpus_path=corpus,
+            tokenizer=tokenizer,
+            trace=trace,
+        )
 
     @property
     def cells_over_maxlen(self):
@@ -106,13 +112,16 @@ class GridTrace(Trace):
             prompts, _ = self.cell_prompts(ctx, bs)
             for step in self.step_points:
                 for ids in prompts:
-                    out.append(Request(ids, len(ids), order=len(out),
-                                       output_length=step, seed=self.seed))
+                    out.append(Request(ids, len(ids), order=len(out), output_length=step, seed=self.seed))
         return out
 
     def source_meta(self):
-        meta = {"reader": "grid", "prompt_mode": self.prompt_mode,
-                "cells": len(self.cells), "step_points": self.step_points}
+        meta = {
+            "reader": "grid",
+            "prompt_mode": self.prompt_mode,
+            "cells": len(self.cells),
+            "step_points": self.step_points,
+        }
         if self.trace is not None:
             meta["trace"] = self.trace.source_meta()
         if self.corpus_path:

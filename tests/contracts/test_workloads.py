@@ -62,9 +62,9 @@ class RealTraceTest(unittest.TestCase):
             plain = RealTrace.from_jsonl(write_jsonl(td, [{"prompt_token_ids": [1, 2]}]))
             self.assertFalse(plain.supports_spec)
             self.assertEqual(plain.source_meta()["text_mode"], "synthetic")
-            real = RealTrace.from_jsonl(write_jsonl(td, [
-                {"prompt_token_ids": [1, 2]},
-                {"prompt_token_ids": [3], "output_token_ids": [4, 5]}]))
+            real = RealTrace.from_jsonl(
+                write_jsonl(td, [{"prompt_token_ids": [1, 2]}, {"prompt_token_ids": [3], "output_token_ids": [4, 5]}])
+            )
             self.assertTrue(real.supports_spec)
             self.assertEqual(real.source_meta()["text_mode"], "real")
 
@@ -120,28 +120,38 @@ class GridTraceTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             corpus = Path(td) / "c.txt"
             corpus.write_text("abcdef")
-            grid = GridTrace(self.CELLS, self.STEPS, "corpus", 4096, corpus_path=corpus,
-                             tokenizer=lambda: (lambda text: {"input_ids": [ord(c) for c in text]}))
+            grid = GridTrace(
+                self.CELLS,
+                self.STEPS,
+                "corpus",
+                4096,
+                corpus_path=corpus,
+                tokenizer=lambda: lambda text: {"input_ids": [ord(c) for c in text]},
+            )
             ids, _ = grid.cell_prompts(8, 1)
         self.assertEqual(ids, [[97, 98, 99, 100, 101, 102, 97, 98]])
 
     def test_grid_hash_covers_every_request(self):
         grid = GridTrace(self.CELLS, self.STEPS, "distinct", 4096)
         self.assertEqual(grid.workload_hash(), GridTrace(self.CELLS, self.STEPS, "distinct", 4096).workload_hash())
-        self.assertNotEqual(grid.workload_hash(),
-                            GridTrace(self.CELLS, [10, 20, 41], "distinct", 4096).workload_hash())
+        self.assertNotEqual(grid.workload_hash(), GridTrace(self.CELLS, [10, 20, 41], "distinct", 4096).workload_hash())
 
 
 class SessionTraceTest(unittest.TestCase):
     def test_sessions_group_by_id_and_order_by_turn(self):
         with tempfile.TemporaryDirectory() as td:
-            trace = SessionTrace.from_jsonl(write_jsonl(td, [
-                {"prompt_token_ids": [1], "session_id": "b", "turn": 1},
-                {"prompt_token_ids": [2], "session_id": "a", "turn": 0},
-                {"prompt_token_ids": [3], "session_id": "b", "turn": 0}]))
+            trace = SessionTrace.from_jsonl(
+                write_jsonl(
+                    td,
+                    [
+                        {"prompt_token_ids": [1], "session_id": "b", "turn": 1},
+                        {"prompt_token_ids": [2], "session_id": "a", "turn": 0},
+                        {"prompt_token_ids": [3], "session_id": "b", "turn": 0},
+                    ],
+                )
+            )
         self.assertIsInstance(trace, SessionTrace)
-        self.assertEqual([[r.prompt_token_ids[0] for r in s] for s in trace.sessions()],
-                         [[3, 1], [2]])
+        self.assertEqual([[r.prompt_token_ids[0] for r in s] for s in trace.sessions()], [[3, 1], [2]])
         self.assertEqual(trace.pacing, TurnPacing())
         trace.pacing = TurnPacing(pacing="interleaved", tool_wait_ms=50.0)
         self.assertEqual(trace.source_meta()["pacing"], "interleaved")
@@ -154,8 +164,9 @@ def write_rows(path, rows):
 
 
 def config(source, kind="live"):
-    return Config(engine=EngineCfg(), workload=WorkloadCfg(kind=kind, source=source),
-                  mode=ModeCfg(), hardware=HardwareCfg())
+    return Config(
+        engine=EngineCfg(), workload=WorkloadCfg(kind=kind, source=source), mode=ModeCfg(), hardware=HardwareCfg()
+    )
 
 
 class SingleTurn(unittest.TestCase):
@@ -167,22 +178,22 @@ class SingleTurn(unittest.TestCase):
         self.td.cleanup()
 
     def test_warmup_draws_come_first_without_a_rewind(self):
-        path = write_rows(self.dir / "c.jsonl", [
-            {"system": "s", "user": f"u{i}", "osl_tokens": 2 + i} for i in range(4)])
+        path = write_rows(
+            self.dir / "c.jsonl", [{"system": "s", "user": f"u{i}", "osl_tokens": 2 + i} for i in range(4)]
+        )
         source = PromptJsonlTrace(path, seed=5)
         drawn = [source.get_next_request() for _ in range(9)]
         trace = PromptJsonlTrace(path, seed=5).draw(7, warmup=2)
-        self.assertEqual([r.messages for r in trace.warmup_requests(2)],
-                         [d.messages for d in drawn[:2]])
+        self.assertEqual([r.messages for r in trace.warmup_requests(2)], [d.messages for d in drawn[:2]])
         self.assertEqual([r.messages for r in trace.requests()], [d.messages for d in drawn[2:]])
-        self.assertEqual([r.max_tokens for r in trace.requests()],
-                         [d.max_tokens for d in drawn[2:]])
+        self.assertEqual([r.max_tokens for r in trace.requests()], [d.max_tokens for d in drawn[2:]])
         self.assertEqual([r.order for r in trace.requests()], list(range(7)))
 
     def test_a_rewindable_trace_restarts_after_warmup(self):
-        path = write_rows(self.dir / "m.jsonl", [
-            {"timestamp": i, "input_length": 30 + i, "output_length": 3, "hash_ids": [i]}
-            for i in range(5)])
+        path = write_rows(
+            self.dir / "m.jsonl",
+            [{"timestamp": i, "input_length": 30 + i, "output_length": 3, "hash_ids": [i]} for i in range(5)],
+        )
         trace = MooncakeTrace(path).draw(5, warmup=3)
         first = trace.requests()[0]
         self.assertEqual(first.prompt_token_ids, trace.warmup_requests(1)[0].prompt_token_ids)
@@ -190,24 +201,28 @@ class SingleTurn(unittest.TestCase):
         self.assertEqual(first.metadata["request_index"], 0)
 
     def test_a_wrapped_lap_follows_the_last_at_the_trace_pace(self):
-        path = write_rows(self.dir / "m.jsonl", [
-            {"timestamp": t, "input_length": 30, "output_length": 3, "hash_ids": [i]}
-            for i, t in enumerate((1000, 3000, 5000))])
+        path = write_rows(
+            self.dir / "m.jsonl",
+            [
+                {"timestamp": t, "input_length": 30, "output_length": 3, "hash_ids": [i]}
+                for i, t in enumerate((1000, 3000, 5000))
+            ],
+        )
         trace = MooncakeTrace(path).draw(7, warmup=0)
-        self.assertEqual([r.arrival_ts for r in trace.requests()],
-                         [1.0, 3.0, 5.0, 7.0, 9.0, 11.0, 13.0])
+        self.assertEqual([r.arrival_ts for r in trace.requests()], [1.0, 3.0, 5.0, 7.0, 9.0, 11.0, 13.0])
 
     def test_a_wrap_over_a_zero_span_trace_is_refused_under_arrival_trace(self):
-        path = write_rows(self.dir / "m.jsonl", [
-            {"timestamp": 1000, "input_length": 30, "output_length": 3, "hash_ids": [i]}
-            for i in range(3)])
+        path = write_rows(
+            self.dir / "m.jsonl",
+            [{"timestamp": 1000, "input_length": 30, "output_length": 3, "hash_ids": [i]} for i in range(3)],
+        )
         for arrival, n, refused in (("trace", 4, True), ("trace", 3, False), ("steady", 4, False)):
             cfg = config("mooncake-trace")
-            cfg = dataclasses.replace(cfg, workload=dataclasses.replace(
-                cfg.workload, arrival=arrival, num_requests=n))
-            with self.subTest(arrival=arrival, n=n), \
-                    mock.patch.object(runner, "single_turn_trace",
-                                      return_value=MooncakeTrace(path)):
+            cfg = dataclasses.replace(cfg, workload=dataclasses.replace(cfg.workload, arrival=arrival, num_requests=n))
+            with (
+                self.subTest(arrival=arrival, n=n),
+                mock.patch.object(runner, "single_turn_trace", return_value=MooncakeTrace(path)),
+            ):
                 if refused:
                     with self.assertRaisesRegex(ConfigError, "span 0 ms"):
                         runner.build_trace(cfg)
@@ -222,8 +237,7 @@ class SingleTurn(unittest.TestCase):
 
     def test_build_names_the_profile(self):
         trace = runner.build_trace(config("test"))
-        self.assertEqual(trace.source_meta(), {"profile": "test", "dataset": "test", "path": "",
-                                               "reqs": 100})
+        self.assertEqual(trace.source_meta(), {"profile": "test", "dataset": "test", "path": "", "reqs": 100})
         self.assertEqual(trace.requests()[0].max_tokens, 20)
 
     def test_multi_turn_profile_is_refused_single_turn(self):
@@ -235,8 +249,10 @@ class MultiTurn(unittest.TestCase):
     def build(self, **kw):
         sessions = []
         for s in range(3):
-            turns = [{"turn_idx": t, "messages": [{"role": "user", "content": f"s{s} t{t}"}],
-                      "osl_tokens": 2, "tool_ms": 5} for t in range(13 + s)]
+            turns = [
+                {"turn_idx": t, "messages": [{"role": "user", "content": f"s{s} t{t}"}], "osl_tokens": 2, "tool_ms": 5}
+                for t in range(13 + s)
+            ]
             sessions.append({"session_id": f"S{s}", "arrival_time_ms": 100 * s, "turns": turns})
         td = tempfile.TemporaryDirectory()
         self.addCleanup(td.cleanup)
@@ -251,8 +267,7 @@ class MultiTurn(unittest.TestCase):
         for turns in trace.sessions():
             sid = turns[0].session_id
             source = int(turns[0].metadata["source_session_id"][1:])
-            self.assertEqual([r.messages[0]["content"] for r in turns],
-                             [f"s{source} t{t}" for t in range(13 + source)])
+            self.assertEqual([r.messages[0]["content"] for r in turns], [f"s{source} t{t}" for t in range(13 + source)])
             self.assertEqual([r.turn for r in turns], list(range(len(turns))))
             self.assertEqual(turns[0].arrival_ts, source / 10.0)
             self.assertIsNone(turns[1].arrival_ts)
@@ -261,8 +276,7 @@ class MultiTurn(unittest.TestCase):
         self.assertEqual(trace.pacing.pacing, "interleaved")
         self.assertEqual(trace.max_turns, 15)
         firsts = [s[0].messages for s in trace.sessions()]
-        self.assertEqual([r.messages for r in trace.warmup_requests(4)], firsts + [
-            trace.sessions()[0][1].messages])
+        self.assertEqual([r.messages for r in trace.warmup_requests(4)], firsts + [trace.sessions()[0][1].messages])
         self.assertEqual([r.order for r in trace.warmup_requests(4)], [0, 1, 2, 3])
 
     def test_turns_past_max_turn_index_are_not_in_the_trace(self):
@@ -309,9 +323,7 @@ class RealTraceWorkloadTests(unittest.TestCase):
                 ],
             },
         ]
-        fake_datasets_module = types.SimpleNamespace(
-            load_dataset=lambda *args, **kwargs: fake_dataset
-        )
+        fake_datasets_module = types.SimpleNamespace(load_dataset=lambda *args, **kwargs: fake_dataset)
 
         with patch.dict(sys.modules, {"datasets": fake_datasets_module}):
             trace = ShareGPTTrace(
@@ -347,9 +359,7 @@ class RealTraceWorkloadTests(unittest.TestCase):
                 ],
             },
         ]
-        fake_datasets_module = types.SimpleNamespace(
-            load_dataset=lambda *args, **kwargs: fake_dataset
-        )
+        fake_datasets_module = types.SimpleNamespace(load_dataset=lambda *args, **kwargs: fake_dataset)
 
         class FakeTokenizer:
             def apply_chat_template(self, messages, add_generation_prompt, tokenize):
@@ -357,15 +367,16 @@ class RealTraceWorkloadTests(unittest.TestCase):
                 return [0] * (180 if "w99" in content else 100)
 
         fake_transformers_module = types.SimpleNamespace(
-            AutoTokenizer=types.SimpleNamespace(
-                from_pretrained=lambda *args, **kwargs: FakeTokenizer()
-            )
+            AutoTokenizer=types.SimpleNamespace(from_pretrained=lambda *args, **kwargs: FakeTokenizer())
         )
 
-        with patch.dict(sys.modules, {
-            "datasets": fake_datasets_module,
-            "transformers": fake_transformers_module,
-        }):
+        with patch.dict(
+            sys.modules,
+            {
+                "datasets": fake_datasets_module,
+                "transformers": fake_transformers_module,
+            },
+        ):
             trace = ShareGPTTrace(
                 num_prompts=10,
                 system_prompt="",
@@ -434,17 +445,20 @@ class RealTraceWorkloadTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "trace.jsonl"
             path.write_text(
-                json.dumps({
-                    "session_id": "trace-2",
-                    "source": "unit-trace",
-                    "turns": [
-                        {
-                            "turn_idx": 0,
-                            "messages": [{"role": "user", "content": words(50)}],
-                            "osl_tokens": 20,
-                        }
-                    ],
-                }) + "\n",
+                json.dumps(
+                    {
+                        "session_id": "trace-2",
+                        "source": "unit-trace",
+                        "turns": [
+                            {
+                                "turn_idx": 0,
+                                "messages": [{"role": "user", "content": words(50)}],
+                                "osl_tokens": 20,
+                            }
+                        ],
+                    }
+                )
+                + "\n",
                 encoding="utf-8",
             )
             profile = WorkloadProfile(
@@ -463,11 +477,14 @@ class RealTraceWorkloadTests(unittest.TestCase):
                 turn_style="multi-turn",
                 data_source="swebench",
             )
-            cfg = Config(engine=EngineCfg(), workload=WorkloadCfg(kind="sessions", source=profile.name),
-                         mode=ModeCfg(concurrency=1), hardware=HardwareCfg())
+            cfg = Config(
+                engine=EngineCfg(),
+                workload=WorkloadCfg(kind="sessions", source=profile.name),
+                mode=ModeCfg(concurrency=1),
+                hardware=HardwareCfg(),
+            )
 
-            with patch.dict(PROFILES, {profile.name: profile}), \
-                    contextlib.redirect_stdout(io.StringIO()):
+            with patch.dict(PROFILES, {profile.name: profile}), contextlib.redirect_stdout(io.StringIO()):
                 trace = runner.build_trace(cfg)
 
             meta = trace.requests()[0].metadata
@@ -477,32 +494,49 @@ class RealTraceWorkloadTests(unittest.TestCase):
 
 class ProfileRegistryTests(unittest.TestCase):
     def test_profiles_are_the_yaml_entries(self):
-        self.assertEqual(sorted(PROFILES), ["chat-multiturn-short", "chat-singleturn",
-                                            "coding-singleturn", "mooncake-trace", "random-1k",
-                                            "swebench-multiturn-short", "test"])
+        self.assertEqual(
+            sorted(PROFILES),
+            [
+                "chat-multiturn-short",
+                "chat-singleturn",
+                "coding-singleturn",
+                "mooncake-trace",
+                "random-1k",
+                "swebench-multiturn-short",
+                "test",
+            ],
+        )
 
     def test_unknown_key_is_an_error(self):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "w.yaml"
-            path.write_text("x:\n  isl_tokens: 1\n  osl_tokens: 1\n  isl_stddev: 0.0\n"
-                            "  description: d\n  dataset: test\n  isl: 3\n")
+            path.write_text(
+                "x:\n  isl_tokens: 1\n  osl_tokens: 1\n  isl_stddev: 0.0\n  description: d\n  dataset: test\n  isl: 3\n"
+            )
             with self.assertRaisesRegex(ValueError, r"w.yaml: x: unknown profile key\(s\) \['isl'\]"):
                 load_profiles(path)
 
     def test_site_packages_install_names_the_editable_fix(self):
         with tempfile.TemporaryDirectory() as td:
-            shutil.copytree(Path(runner.__file__).parent, Path(td) / "site-packages" / "quettabench",
-                            ignore=shutil.ignore_patterns("__pycache__"))
-            proc = subprocess.run([sys.executable, "-c", "import quettabench.workloads.live"],
-                                  cwd=td, env={**os.environ, "PYTHONPATH": f"{td}/site-packages"},
-                                  capture_output=True, text=True, check=False)
+            shutil.copytree(
+                Path(runner.__file__).parent,
+                Path(td) / "site-packages" / "quettabench",
+                ignore=shutil.ignore_patterns("__pycache__"),
+            )
+            proc = subprocess.run(
+                [sys.executable, "-c", "import quettabench.workloads.live"],
+                cwd=td,
+                env={**os.environ, "PYTHONPATH": f"{td}/site-packages"},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn("configs/workloads.yaml not found", proc.stderr)
         self.assertIn("pip install -e .", proc.stderr)
 
     def test_listings_hide_inactive_profiles(self):
-        self.assertEqual(active_profiles(), ["chat-singleturn", "coding-singleturn",
-                                             "mooncake-trace"])
+        self.assertEqual(active_profiles(), ["chat-singleturn", "coding-singleturn", "mooncake-trace"])
         with self.assertRaises(ValueError) as e:
             get_profile("nope")
         self.assertIn(str(active_profiles()), str(e.exception))
@@ -556,9 +590,15 @@ def tagged_words(n, tag):
 
 
 def sharegpt_rows():
-    rows = [{"conversations": [{"from": "human", "value": "lonely"}]},
-            {"conversations": [{"from": "gpt", "value": tagged_words(80, "g")},
-                               {"from": "human", "value": tagged_words(30, "h")}]}]
+    rows = [
+        {"conversations": [{"from": "human", "value": "lonely"}]},
+        {
+            "conversations": [
+                {"from": "gpt", "value": tagged_words(80, "g")},
+                {"from": "human", "value": tagged_words(30, "h")},
+            ]
+        },
+    ]
     for k in range(40):
         convs = []
         for t in range(1 + k % 12):
@@ -592,11 +632,17 @@ def trajectory_rows(tag):
 def write_fixtures(root):
     files = {
         "data/coding_agent_prompts.jsonl": [
-            {"system": f"sys{i}", "user": tagged_words(10 + i, f"u{i}."), "osl_tokens": 100 + i}
-            for i in range(5)],
+            {"system": f"sys{i}", "user": tagged_words(10 + i, f"u{i}."), "osl_tokens": 100 + i} for i in range(5)
+        ],
         "data/mooncake/conversation_trace.jsonl": [
-            {"timestamp": 10 * i, "input_length": 700 + 300 * i, "output_length": 5 + i,
-             "hash_ids": list(range(i % 3, i % 3 + 1 + i))} for i in range(4)],
+            {
+                "timestamp": 10 * i,
+                "input_length": 700 + 300 * i,
+                "output_length": 5 + i,
+                "hash_ids": list(range(i % 3, i % 3 + 1 + i)),
+            }
+            for i in range(4)
+        ],
         "data/swebench_trajectories.jsonl": trajectory_rows("swe"),
     }
     for rel, rows in files.items():
@@ -624,22 +670,39 @@ class FakeTokenizer:
 FAKE_MODULES = {
     "datasets": types.SimpleNamespace(load_dataset=lambda *a, **k: sharegpt_rows()),
     "transformers": types.SimpleNamespace(
-        AutoTokenizer=types.SimpleNamespace(from_pretrained=lambda *a, **k: FakeTokenizer())),
+        AutoTokenizer=types.SimpleNamespace(from_pretrained=lambda *a, **k: FakeTokenizer())
+    ),
 }
 
 MULTI_TURN = ("sharegpt-multi-turn", "swebench-multi-turn")
 
 
 def profile_config(name, kind, max_turn_index=None):
-    return Config(engine=EngineCfg(model="fake-model"), hardware=HardwareCfg(),
-                  workload=WorkloadCfg(kind=kind, source=name, seed=SEED,
-                                       num_requests=NUM_REQUESTS, max_turn_index=max_turn_index),
-                  mode=ModeCfg(concurrency=4, warmup=WARMUP))
+    return Config(
+        engine=EngineCfg(model="fake-model"),
+        hardware=HardwareCfg(),
+        workload=WorkloadCfg(
+            kind=kind, source=name, seed=SEED, num_requests=NUM_REQUESTS, max_turn_index=max_turn_index
+        ),
+        mode=ModeCfg(concurrency=4, warmup=WARMUP),
+    )
 
 
 def row(r):
-    return [r.prompt_token_ids, r.prompt_len, r.order, r.output_length, r.max_tokens,
-            r.session_id, r.turn, r.arrival_ts, r.seed, r.source, r.messages, r.metadata]
+    return [
+        r.prompt_token_ids,
+        r.prompt_len,
+        r.order,
+        r.output_length,
+        r.max_tokens,
+        r.session_id,
+        r.turn,
+        r.arrival_ts,
+        r.seed,
+        r.source,
+        r.messages,
+        r.metadata,
+    ]
 
 
 def digest(trace):
@@ -649,8 +712,7 @@ def digest(trace):
         "source_meta": trace.source_meta(),
         "max_turns": getattr(trace, "max_turns", None),
         "replies": {str(k): v for k, v in getattr(trace, "replies", {}).items()},
-        "sessions": [[r.order for r in s] for s in trace.sessions()]
-        if hasattr(trace, "sessions") else None,
+        "sessions": [[r.order for r in s] for s in trace.sessions()] if hasattr(trace, "sessions") else None,
     }
     return hashlib.sha256(json.dumps(record, sort_keys=True, default=str).encode()).hexdigest()[:16]
 

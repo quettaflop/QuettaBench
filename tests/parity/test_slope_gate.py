@@ -14,8 +14,7 @@ class SlopeGate(unittest.TestCase):
         for c in cells:
             with self.subTest(ctx=c["ctx"], bs=c["bs"]):
                 self.assertGreaterEqual(min(c["r2_http"], c["r2_inproc"]), rule["r2_min"])
-                self.assertAlmostEqual(c["delta_ms"], c["ms_per_step_http"] - c["ms_per_step_inproc"],
-                                       places=6)
+                self.assertAlmostEqual(c["delta_ms"], c["ms_per_step_http"] - c["ms_per_step_inproc"], places=6)
                 self.assertLessEqual(abs(c["delta_ms"]), rule["abs_delta_ms_max"])
 
 

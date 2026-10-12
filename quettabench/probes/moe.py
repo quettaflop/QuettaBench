@@ -4,6 +4,7 @@
 The roofline has no launch cost, so it under-prices a grouped kernel when each expert gets about one token. Use --graph for graphed decode (graph/); the eager default (eager/) includes dispatch.
 --routing instead dumps one MoE block's input, output and routing from a transformers model to results/probes/<gpu>/moe_routing/<run-id>/<model>_layer<L>.safetensors, for an engine-side diff.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -68,6 +69,7 @@ _BACKEND = "triton"
 def _flashinfer_moe():
     # Imported here: only --backend flashinfer needs it.
     from flashinfer.fused_moe import cutlass_fused_moe
+
     return cutlass_fused_moe
 
 
@@ -95,12 +97,11 @@ def _fp8_quant_config(e, inter, hidden, dev):
     from vllm.model_executor.layers.fused_moe.config import (
         fp8_w8a8_moe_quant_config,
     )
+
     bn, bk = FP8_BLOCK
     nb = lambda x, b: (x + b - 1) // b  # noqa: E731
-    s1 = torch.rand(e, nb(2 * inter, bn), nb(hidden, bk),
-                    device=dev, dtype=torch.float32).mul_(0.01).add_(1e-4)
-    s2 = torch.rand(e, nb(hidden, bn), nb(inter, bk),
-                    device=dev, dtype=torch.float32).mul_(0.01).add_(1e-4)
+    s1 = torch.rand(e, nb(2 * inter, bn), nb(hidden, bk), device=dev, dtype=torch.float32).mul_(0.01).add_(1e-4)
+    s2 = torch.rand(e, nb(hidden, bn), nb(inter, bk), device=dev, dtype=torch.float32).mul_(0.01).add_(1e-4)
     return fp8_w8a8_moe_quant_config(w1_scale=s1, w2_scale=s2, block_shape=list(FP8_BLOCK))
 
 
@@ -109,8 +110,7 @@ def sweep_expert_kernel(name, e, k, inter, hidden, tokens_axis, dev, max_mem_gb)
     w_bytes = 1 if _FP8 else DT_BYTES
     w_gb = (e * 2 * inter * hidden + e * hidden * inter) * w_bytes / 1e9
     if w_gb > max_mem_gb:
-        print(f"  skip {name} E={e} inter={inter}: weights {w_gb:.1f} GB > {max_mem_gb}",
-              flush=True)
+        print(f"  skip {name} E={e} inter={inter}: weights {w_gb:.1f} GB > {max_mem_gb}", flush=True)
         return []
     w1 = torch.randn(e, 2 * inter, hidden, device=dev, dtype=DT) * 0.02
     w2 = torch.randn(e, hidden, inter, device=dev, dtype=DT) * 0.02
@@ -129,16 +129,25 @@ def sweep_expert_kernel(name, e, k, inter, hidden, tokens_axis, dev, max_mem_gb)
             tw, tid, *_rest = fused_topk(x, gate, k, True)
             if _BACKEND == "flashinfer":
                 if _FP8:
-                    raise RuntimeError("--backend flashinfer supports bf16 only here "
-                                       "(the served CUTLASS Unquantized path)")
+                    raise RuntimeError(
+                        "--backend flashinfer supports bf16 only here (the served CUTLASS Unquantized path)"
+                    )
                 cutlass_fused_moe = _flashinfer_moe()
                 tid_i = tid.to(torch.int)
                 tw_f = tw.to(torch.float32)
                 out = torch.empty_like(x)
-                us = _time(lambda: cutlass_fused_moe(
-                    input=x, token_selected_experts=tid_i, token_final_scales=tw_f,
-                    fc1_expert_weights=w1, fc2_expert_weights=w2,
-                    output_dtype=DT, quant_scales=[], output=out))
+                us = _time(
+                    lambda: cutlass_fused_moe(
+                        input=x,
+                        token_selected_experts=tid_i,
+                        token_final_scales=tw_f,
+                        fc1_expert_weights=w1,
+                        fc2_expert_weights=w2,
+                        output_dtype=DT,
+                        quant_scales=[],
+                        output=out,
+                    )
+                )
             elif qc is not None:
                 us = _time(lambda: fused_experts(x, w1, w2, tw, tid, quant_config=qc))
             else:
@@ -149,11 +158,18 @@ def sweep_expert_kernel(name, e, k, inter, hidden, tokens_axis, dev, max_mem_gb)
         except Exception as ex:  # noqa: BLE001
             print(f"  skip {name} tokens={m}: {type(ex).__name__}: {ex}", flush=True)
             continue
-        rows.append({"tokens": m, "n_experts": e, "top_k": k, "intermediate": inter,
-                     "hidden": hidden, "dtype_bytes": (1 if _FP8 else DT_BYTES),
-                     "latency_us": round(us, 3)})
-        print(f"  {name:16s} E={e:4d} k={k} inter={inter:6d} h={hidden:5d} "
-              f"tok={m:5d}: {us:9.2f} us", flush=True)
+        rows.append(
+            {
+                "tokens": m,
+                "n_experts": e,
+                "top_k": k,
+                "intermediate": inter,
+                "hidden": hidden,
+                "dtype_bytes": (1 if _FP8 else DT_BYTES),
+                "latency_us": round(us, 3),
+            }
+        )
+        print(f"  {name:16s} E={e:4d} k={k} inter={inter:6d} h={hidden:5d} tok={m:5d}: {us:9.2f} us", flush=True)
     del w1, w2
     torch.cuda.empty_cache()
     return rows
@@ -204,8 +220,7 @@ def sweep_routing(dev, e_default=128, k_default=8):
     for key, pts in (("moe_topk", topk_pts), ("moe_permute", perm_pts)):
         fit = fit_affine(pts)
         if fit:
-            out[key] = {"floor_us": round(fit[0], 4), "eff_bw_gb_s": round(fit[1], 1),
-                        "n_points": len(pts)}
+            out[key] = {"floor_us": round(fit[0], 4), "eff_bw_gb_s": round(fit[1], 1), "n_points": len(pts)}
 
     # moe_align_block_size is launch-bound, so its median is a flat per-layer constant.
     aligns = []
@@ -214,20 +229,19 @@ def sweep_routing(dev, e_default=128, k_default=8):
         from vllm.model_executor.layers.fused_moe.moe_align_block_size import (
             moe_align_block_size,
         )
+
         for m in (8, 64, 512):
             tid = torch.randint(0, e_default, (m, k_default), device=dev, dtype=torch.int32)
             aligns.append(_time(lambda: moe_align_block_size(tid, 128, e_default)))
     except Exception as ex:  # noqa: BLE001
-        print(f"  moe_align_block_size unavailable ({type(ex).__name__}); "
-              f"routing_launch_us not measured", flush=True)
+        print(f"  moe_align_block_size unavailable ({type(ex).__name__}); routing_launch_us not measured", flush=True)
     if aligns:
         out["_moe_align_launch_us"] = round(st.median(aligns), 3)
     return out
 
 
 # --routing: 16 fixed prompt ids (below Kimi-K3's 163840 vocab; no tokenizer).
-PROMPT_IDS = [1, 4321, 100, 65535, 2048, 777, 31415, 9,
-              128000, 42, 5, 99991, 1234, 60000, 8, 163839]
+PROMPT_IDS = [1, 4321, 100, 65535, 2048, 777, 31415, 9, 128000, 42, 5, 99991, 1234, 60000, 8, 163839]
 # (submodule, "in" or "out", dump name)
 STAGES = [
     ("routed_expert_down_proj", "out", "latent"),
@@ -244,27 +258,29 @@ def routing_parser() -> argparse.ArgumentParser:
     ap.add_argument("--routing", action="store_true", required=True)
     ap.add_argument("--model", required=True, help="checkpoint dir")
     ap.add_argument("--layer", type=int, default=1, help="decoder layer whose MoE block is dumped")
-    ap.add_argument("--layers", type=int, default=None,
-                    help="keep only the first N decoder layers (engine.layers)")
+    ap.add_argument("--layers", type=int, default=None, help="keep only the first N decoder layers (engine.layers)")
     ap.add_argument("--dtype", default="float32", help="torch dtype the model runs in")
-    ap.add_argument("--kda-mode", default=None,
-                    help="set self_attn.mode on every layer that has one (KDA prefill kernel)")
-    ap.add_argument("--prompt-ids", default=",".join(map(str, PROMPT_IDS)),
-                    help="comma-separated token ids fed in one prefill")
+    ap.add_argument(
+        "--kda-mode", default=None, help="set self_attn.mode on every layer that has one (KDA prefill kernel)"
+    )
+    ap.add_argument(
+        "--prompt-ids", default=",".join(map(str, PROMPT_IDS)), help="comma-separated token ids fed in one prefill"
+    )
     return ap
 
 
 def routing_model(args):
     """The model on the visible GPUs in args.dtype, cut to args.layers; MXFP4 experts are not kept packed, so a checkpoint must fit decompressed to bf16."""
     from transformers import AutoConfig, AutoModelForCausalLM  # imported here: only --routing needs it
+
     config = AutoConfig.from_pretrained(args.model, trust_remote_code=True)
     if args.layers:
         config.num_hidden_layers = args.layers
         if isinstance(getattr(config, "layer_types", None), list):
-            config.layer_types = config.layer_types[:args.layers]
+            config.layer_types = config.layer_types[: args.layers]
     model = AutoModelForCausalLM.from_pretrained(
-        args.model, config=config, torch_dtype=getattr(torch, args.dtype),
-        device_map="auto", trust_remote_code=True)
+        args.model, config=config, torch_dtype=getattr(torch, args.dtype), device_map="auto", trust_remote_code=True
+    )
     model.eval()
     if args.kda_mode:
         for layer in model.model.layers:
@@ -282,8 +298,7 @@ def routing_tensors(args) -> dict:
     model, config = routing_model(args)
     ids = [int(t) for t in args.prompt_ids.split(",")]
     if max(ids) >= config.vocab_size:
-        raise SystemExit(f"prompt id {max(ids)} >= vocab_size {config.vocab_size}; "
-                         "pass --prompt-ids")
+        raise SystemExit(f"prompt id {max(ids)} >= vocab_size {config.vocab_size}; pass --prompt-ids")
     layer = model.model.layers[args.layer]
     moe = getattr(layer, "block_sparse_moe", None) or layer.mlp
     if not hasattr(moe, "gate"):
@@ -296,6 +311,7 @@ def routing_tensors(args) -> dict:
             if isinstance(t, tuple):
                 t = t[0]
             cap[name] = t.detach().float().cpu()
+
         return hook
 
     def routing(_m, _inputs, output):
@@ -305,9 +321,11 @@ def routing_tensors(args) -> dict:
         else:
             cap["router_logits"] = output.detach().float().cpu()
 
-    handles = [moe.register_forward_pre_hook(keep("in", "in")),
-               moe.register_forward_hook(keep("out", "out")),
-               moe.gate.register_forward_hook(routing)]
+    handles = [
+        moe.register_forward_pre_hook(keep("in", "in")),
+        moe.register_forward_hook(keep("out", "out")),
+        moe.gate.register_forward_hook(routing),
+    ]
     for attr, side, name in STAGES:
         sub = getattr(moe, attr, None)
         if sub is not None:
@@ -318,13 +336,13 @@ def routing_tensors(args) -> dict:
         model(input_ids=torch.tensor([ids], device=device))
     for h in handles:
         h.remove()
-    return {f"moe{args.layer}_{k}": (v[0] if v.dim() == 3 else v).contiguous()
-            for k, v in cap.items()}
+    return {f"moe{args.layer}_{k}": (v[0] if v.dim() == 3 else v).contiguous() for k, v in cap.items()}
 
 
 def routing_main(argv) -> None:
     args = routing_parser().parse_args(argv)
     from safetensors.torch import save_file  # imported here: only --routing needs it
+
     tensors = routing_tensors(args)
     out = out_root(args, "moe_routing") / f"{Path(args.model).name}_layer{args.layer}.safetensors"
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -339,55 +357,74 @@ def main(argv=None) -> None:
     if "--routing" in argv:
         return routing_main(argv)
     # No abbreviations: export reads --append from the argv as written.
-    ap = argparse.ArgumentParser(description=__doc__, allow_abbrev=False,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, allow_abbrev=False, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     add_output_args(ap)
-    ap.add_argument("--geometries", default=",".join(GEOMETRIES),
-                    help="comma-separated model keys to sweep")
-    ap.add_argument("--geometry-spec", default=None,
-                    help="explicit geometries E:top_k:intermediate:hidden (comma-separated), "
-                         "for shapes that are not a model's tp shard -- notably an "
-                         "EXPERT-PARALLEL rank, which owns n_experts/ep WHOLE experts at "
-                         "the FULL d_ff (e.g. 16:8:1536:4096 = Qwen3-235B at ep8). Swept "
-                         "verbatim; --tp is ignored for these.")
-    ap.add_argument("--tp", default="1,2,4",
-                    help="tp shards to sweep (each divides `intermediate`)")
+    ap.add_argument("--geometries", default=",".join(GEOMETRIES), help="comma-separated model keys to sweep")
+    ap.add_argument(
+        "--geometry-spec",
+        default=None,
+        help="explicit geometries E:top_k:intermediate:hidden (comma-separated), "
+        "for shapes that are not a model's tp shard -- notably an "
+        "EXPERT-PARALLEL rank, which owns n_experts/ep WHOLE experts at "
+        "the FULL d_ff (e.g. 16:8:1536:4096 = Qwen3-235B at ep8). Swept "
+        "verbatim; --tp is ignored for these.",
+    )
+    ap.add_argument("--tp", default="1,2,4", help="tp shards to sweep (each divides `intermediate`)")
     ap.add_argument("--tokens", default=None, help="comma-separated token axis override")
     ap.add_argument("--max-mem-gb", type=float, default=40.0)
     ap.add_argument("--skip-routing", action="store_true")
-    ap.add_argument("--dtype", choices=("bf16", "fp8"), default="bf16",
-                    help="bf16: vLLM's unquantized fused_experts. fp8: the SAME entry "
-                         "point with a block-scaled FP8 quant_config (128x128 weight "
-                         "blocks), i.e. what a `quant_method: fp8` checkpoint runs. "
-                         "Writes {gpu}_fp8.csv with dtype_bytes=1.")
-    ap.add_argument("--append", action="store_true",
-                    help="at export, add this run's rows over earlier ok runs' tables; "
-                         "without it the export drops the rows of runs that finished before it")
-    ap.add_argument("--graph", action="store_true",
-                    help="CUDA-graph-replay timing -> graph/moe/. Faithful for vLLM's "
-                         "CUDA-graphed MoE DECODE (the eager rationale below only "
-                         "holds for eager execution); slight underprice of small "
-                         "eager prefill chunks, negligible at real chunk sizes.")
-    ap.add_argument("--backend", choices=("triton", "flashinfer"), default="triton",
-                    help="triton: vLLM's fused_experts (Triton grouped GEMM). "
-                         "flashinfer: FlashInfer's CUTLASS grouped kernel -- what "
-                         "vLLM >= 0.28 actually serves for unquantized bf16 MoE.")
+    ap.add_argument(
+        "--dtype",
+        choices=("bf16", "fp8"),
+        default="bf16",
+        help="bf16: vLLM's unquantized fused_experts. fp8: the SAME entry "
+        "point with a block-scaled FP8 quant_config (128x128 weight "
+        "blocks), i.e. what a `quant_method: fp8` checkpoint runs. "
+        "Writes {gpu}_fp8.csv with dtype_bytes=1.",
+    )
+    ap.add_argument(
+        "--append",
+        action="store_true",
+        help="at export, add this run's rows over earlier ok runs' tables; "
+        "without it the export drops the rows of runs that finished before it",
+    )
+    ap.add_argument(
+        "--graph",
+        action="store_true",
+        help="CUDA-graph-replay timing -> graph/moe/. Faithful for vLLM's "
+        "CUDA-graphed MoE DECODE (the eager rationale below only "
+        "holds for eager execution); slight underprice of small "
+        "eager prefill chunks, negligible at real chunk sizes.",
+    )
+    ap.add_argument(
+        "--backend",
+        choices=("triton", "flashinfer"),
+        default="triton",
+        help="triton: vLLM's fused_experts (Triton grouped GEMM). "
+        "flashinfer: FlashInfer's CUTLASS grouped kernel -- what "
+        "vLLM >= 0.28 actually serves for unquantized bf16 MoE.",
+    )
     a = ap.parse_args(argv)
     global _GRAPH, _FP8, _BACKEND
     _GRAPH = a.graph
-    _FP8 = (a.dtype == "fp8")
+    _FP8 = a.dtype == "fp8"
     _BACKEND = a.backend
     if _FP8:
         # The FP8 path builds a CustomOp, which needs a live vLLM config; imported only for fp8.
         from vllm.config import VllmConfig, set_current_vllm_config
+
         set_current_vllm_config(VllmConfig()).__enter__()
 
     dev = torch.device("cuda")
-    tokens_axis = ([int(x) for x in a.tokens.split(",")] if a.tokens else TOKENS)
+    tokens_axis = [int(x) for x in a.tokens.split(",")] if a.tokens else TOKENS
     tps = [int(x) for x in a.tp.split(",")]
-    print(f"[moe] {torch.cuda.get_device_name(0)} | dtype={a.dtype} "
-          f"| geometries={a.geometries} | tp={tps} | {len(tokens_axis)} token points",
-          flush=True)
+    print(
+        f"[moe] {torch.cuda.get_device_name(0)} | dtype={a.dtype} "
+        f"| geometries={a.geometries} | tp={tps} | {len(tokens_axis)} token points",
+        flush=True,
+    )
 
     rows = []
     seen: set[tuple[int, int, int, int]] = set()
@@ -396,8 +433,7 @@ def main(argv=None) -> None:
             continue
         e, k, inter, hidden = (int(x) for x in spec.strip().split(":"))
         seen.add((e, k, inter, hidden))
-        rows += sweep_expert_kernel(f"ep/{spec.strip()}", e, k, inter, hidden,
-                                    tokens_axis, dev, a.max_mem_gb)
+        rows += sweep_expert_kernel(f"ep/{spec.strip()}", e, k, inter, hidden, tokens_axis, dev, a.max_mem_gb)
     for key in ("" if a.geometry_spec else a.geometries).split(","):
         key = key.strip()
         if not key:
@@ -413,15 +449,21 @@ def main(argv=None) -> None:
             if (e, k, shard, hidden) in seen:  # tp shards can collide across models
                 continue
             seen.add((e, k, shard, hidden))
-            rows += sweep_expert_kernel(f"{key}/tp{tp}", e, k, shard, hidden,
-                                        tokens_axis, dev, a.max_mem_gb)
+            rows += sweep_expert_kernel(f"{key}/tp{tp}", e, k, shard, hidden, tokens_axis, dev, a.max_mem_gb)
 
     # On H200 the eager grid overpriced graphed decode 2.3x; use --graph for decode.
     timing = "graph_replay" if _GRAPH else "eager"
     table = f"moe/{a.gpu_label}{'' if a.dtype == 'bf16' else '_' + a.dtype}.csv"
     for r in rows:
-        emit(ProbeRow("moe", table, {c: r[c] for c in KEY},
-                      {"dtype_bytes": r["dtype_bytes"], "latency_us": r["latency_us"]}, timing))
+        emit(
+            ProbeRow(
+                "moe",
+                table,
+                {c: r[c] for c in KEY},
+                {"dtype_bytes": r["dtype_bytes"], "latency_us": r["latency_us"]},
+                timing,
+            )
+        )
     print(f"[moe] {len(rows)} rows of {table}{', --append' if a.append else ''}", flush=True)
 
     if not a.skip_routing and a.dtype == "bf16":
@@ -431,9 +473,11 @@ def main(argv=None) -> None:
             emit(ProbeRow("moe", f"moe/{a.gpu_label}_routing.json", {"entry": name}, {"value": value}, timing))
         print(f"[moe] {len(routing)} entries of moe/{a.gpu_label}_routing.json", flush=True)
         if "_moe_align_launch_us" in routing:
-            print(f"[moe] set `moe.routing_launch_us: "
-                  f"{routing['_moe_align_launch_us']}` in the {a.gpu_label} device YAML",
-                  flush=True)
+            print(
+                f"[moe] set `moe.routing_launch_us: "
+                f"{routing['_moe_align_launch_us']}` in the {a.gpu_label} device YAML",
+                flush=True,
+            )
 
 
 if __name__ == "__main__":

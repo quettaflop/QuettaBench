@@ -64,8 +64,7 @@ def serve(metrics=METRICS):
             else:
                 chunks = [{"choices": [{"text": "t"}]} for _ in range(n)]
                 prompt_len = len(body["prompt"])
-            chunks.append({"choices": [], "usage": {"prompt_tokens": prompt_len,
-                                                    "completion_tokens": n}})
+            chunks.append({"choices": [], "usage": {"prompt_tokens": prompt_len, "completion_tokens": n}})
             lines = [f"data: {json.dumps(c)}\n\n" for c in chunks] + ["data: [DONE]\n\n"]
             self._reply("".join(lines).encode(), "text/event-stream")
 
@@ -89,8 +88,17 @@ def serve(metrics=METRICS):
 
 RECORDED = "2026-09-21T14:13:20+00:00"
 FAKE_BENCH_SHA = "0123abc"
-RAW_STEP = {"ctx": 4096, "bs": 64, "tp": 1, "ms_per_step": 19.874, "ms_at_eval": None,
-            "eval_pos": 0, "r2": 0.9995, "prefill_s": 1.1, "raw": [2.29, 5.67, 9.05]}
+RAW_STEP = {
+    "ctx": 4096,
+    "bs": 64,
+    "tp": 1,
+    "ms_per_step": 19.874,
+    "ms_at_eval": None,
+    "eval_pos": 0,
+    "r2": 0.9995,
+    "prefill_s": 1.1,
+    "raw": [2.29, 5.67, 9.05],
+}
 
 
 def _edit_run_json(path, edit):
@@ -104,14 +112,14 @@ def grid_run_dir(out):
     out = Path(out)
     fake_git = types.SimpleNamespace(stdout=FAKE_BENCH_SHA + "\n")
     with mock.patch("subprocess.run", return_value=fake_git):
-        run = run_grid_cli(grid_argv("llama", "--set", f"run_name={out.name}",
-                                     "--results-dir", str(out.parent)), {})
+        run = run_grid_cli(grid_argv("llama", "--set", f"run_name={out.name}", "--results-dir", str(out.parent)), {})
     if run["exit"] is not None:
         raise RuntimeError(f"grid run exited: {run['exit']}")
 
     def edit(run_json):
         run_json["steps"].append(dict(RAW_STEP))
         run_json["provenance"]["finished"] = RECORDED
+
     _edit_run_json(out / "run.json", edit)
     return out
 
@@ -130,5 +138,10 @@ def bench_run_dir(out, bench_log):
 
 
 def bench_config(run_name):
-    return Config(engine=EngineCfg(name="quettaserve"), workload=WorkloadCfg(), mode=ModeCfg(),
-                  hardware=HardwareCfg(), run_name=run_name)
+    return Config(
+        engine=EngineCfg(name="quettaserve"),
+        workload=WorkloadCfg(),
+        mode=ModeCfg(),
+        hardware=HardwareCfg(),
+        run_name=run_name,
+    )

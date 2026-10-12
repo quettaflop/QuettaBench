@@ -17,14 +17,29 @@ class ReadEnv(unittest.TestCase):
                 self.assertTrue(path in paths or dict_field(path) or path.startswith("detect."))
 
     def test_values_are_typed_per_var(self):
-        got = read_env({"XVAL_PP": "2", "GPU_UTIL": "0.85", "ENABLE_EP": "Yes",
-                        "QS_SHA": "1234567", "CUDA_VISIBLE_DEVICES": "0",
-                        "XVAL_ALLOW_METHOD_MISMATCH": "0", "TPU_NAME": "v5"})
-        self.assertEqual(got, {"engine.pp": 2, "engine.gpu_util": 0.85, "engine.ep": True,
-                               "provenance.engine_sha": "1234567",
-                               "hardware.visible_devices": "0",
-                               "crossval.allow_method_mismatch": True,
-                               "detect.tpu_name": "v5"})
+        got = read_env(
+            {
+                "XVAL_PP": "2",
+                "GPU_UTIL": "0.85",
+                "ENABLE_EP": "Yes",
+                "QS_SHA": "1234567",
+                "CUDA_VISIBLE_DEVICES": "0",
+                "XVAL_ALLOW_METHOD_MISMATCH": "0",
+                "TPU_NAME": "v5",
+            }
+        )
+        self.assertEqual(
+            got,
+            {
+                "engine.pp": 2,
+                "engine.gpu_util": 0.85,
+                "engine.ep": True,
+                "provenance.engine_sha": "1234567",
+                "hardware.visible_devices": "0",
+                "crossval.allow_method_mismatch": True,
+                "detect.tpu_name": "v5",
+            },
+        )
 
     def test_unset_and_empty_vars_are_skipped(self):
         self.assertEqual(read_env({"XVAL_PP": "", "UNRELATED": "1"}), {})
@@ -52,8 +67,7 @@ class ReadEnv(unittest.TestCase):
         self.assertEqual(read_env({"XVAL_TRACE": "b.jsonl"}), {"workload.source": "b.jsonl"})
 
     def test_afd_pools_become_a_serving_style(self):
-        self.assertEqual(read_env({"XVAL_AFD": "attn=2,ffn=6"}),
-                         {"engine.serving_style": "afd:2a6f"})
+        self.assertEqual(read_env({"XVAL_AFD": "attn=2,ffn=6"}), {"engine.serving_style": "afd:2a6f"})
         for bad in ("attn=2", "attn=2,ffn=6,moe=1", "attn=x,ffn=1", "2,6"):
             with self.subTest(bad), self.assertRaisesRegex(ConfigError, "XVAL_AFD"):
                 read_env({"XVAL_AFD": bad})
@@ -81,14 +95,16 @@ ALLOWLIST = {
 def reads_env(source):
     """True when the module reads the process environment in any of the scanned forms."""
     for node in ast.walk(ast.parse(source)):
-        if isinstance(node, ast.Attribute) and node.attr in ENV_NAMES \
-                and isinstance(node.value, ast.Name) and node.value.id == "os":
+        if (
+            isinstance(node, ast.Attribute)
+            and node.attr in ENV_NAMES
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "os"
+        ):
             return True
-        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) \
-                and node.value.id == "environ":
+        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) and node.value.id == "environ":
             return True
-        if isinstance(node, ast.ImportFrom) and node.module == "os" \
-                and any(a.name in ENV_NAMES for a in node.names):
+        if isinstance(node, ast.ImportFrom) and node.module == "os" and any(a.name in ENV_NAMES for a in node.names):
             return True
     return False
 
@@ -97,13 +113,23 @@ def env_names(path):
     """The literal names a module reads or sets through os.environ / os.getenv."""
     names = set()
     for node in ast.walk(ast.parse(path.read_text())):
-        if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant) \
-                and isinstance(node.value, ast.Attribute) and node.value.attr == "environ":
+        if (
+            isinstance(node, ast.Subscript)
+            and isinstance(node.slice, ast.Constant)
+            and isinstance(node.value, ast.Attribute)
+            and node.value.attr == "environ"
+        ):
             names.add(node.slice.value)
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.args \
-                and isinstance(node.args[0], ast.Constant) \
-                and (node.func.attr == "getenv" or (isinstance(node.func.value, ast.Attribute)
-                                                    and node.func.value.attr == "environ")):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and (
+                node.func.attr == "getenv"
+                or (isinstance(node.func.value, ast.Attribute) and node.func.value.attr == "environ")
+            )
+        ):
             names.add(node.args[0].value)
     return names
 
@@ -121,8 +147,7 @@ class NoEnviron(unittest.TestCase):
     def test_only_env_map_and_allowlisted_files_read_env(self):
         readers = env_readers()
         self.assertIn(OWNER, readers)
-        self.assertEqual(sorted(readers - ALLOWLIST - {OWNER}), [],
-                         "read env through config/env_map.read_env instead")
+        self.assertEqual(sorted(readers - ALLOWLIST - {OWNER}), [], "read env through config/env_map.read_env instead")
 
     def test_allowlist_has_no_stale_entries(self):
         stale = sorted(ALLOWLIST - env_readers())
@@ -136,8 +161,12 @@ class NoEnviron(unittest.TestCase):
                 self.assertIn(f"`{name}`", law, path)
 
     def test_scanner_catches_each_form(self):
-        for src in ("import os\nos.environ.get('X')", "import os\nos.getenv('X')",
-                    "from os import environ\nenviron['X']", "from os import getenv"):
+        for src in (
+            "import os\nos.environ.get('X')",
+            "import os\nos.getenv('X')",
+            "from os import environ\nenviron['X']",
+            "from os import getenv",
+        ):
             with self.subTest(src):
                 self.assertTrue(reads_env(src))
         self.assertFalse(reads_env("import os\nos.path.exists('x')"))

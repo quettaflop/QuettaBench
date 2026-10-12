@@ -27,31 +27,30 @@ def read_json(path):
 def run_totals(run):
     """(output tokens, wall seconds) of a run.json summary."""
     s = run.get("summary") or {}
-    return (s.get("out_tokens", s.get("total_output_tokens", 0)),
-            s.get("wall_s", s.get("duration_s", 0.0)))
+    return (s.get("out_tokens", s.get("total_output_tokens", 0)), s.get("wall_s", s.get("duration_s", 0.0)))
 
 
 def check_args(sources, args):
     unknown = sorted(set(sources) - set(SOURCES))
     if unknown:
         raise ValueError(f"unknown source(s) {unknown}; known: {', '.join(SOURCES)}")
-    needs = {"cost": ("gpu_cost_hr",), "gsm8k": ("gsm8k_file", "gsm8k_n"),
-             "kernels": ("kernel_steps",)}
+    needs = {"cost": ("gpu_cost_hr",), "gsm8k": ("gsm8k_file", "gsm8k_n"), "kernels": ("kernel_steps",)}
     for source in sources:
         missing = [k for k in needs.get(source, ()) if args.get(k) is None]
         if missing:
             raise ValueError(f"source {source} needs {', '.join(missing)}")
 
 
-def measure_energy(results_dir, engine, config, nvidia_smi="nvidia-smi", interval_s=1.0,
-                   energy_s=None, poll_s=0.5, timeout_s=86400):
+def measure_energy(
+    results_dir, engine, config, nvidia_smi="nvidia-smi", interval_s=1.0, energy_s=None, poll_s=0.5, timeout_s=86400
+):
     """Sample until run.json appears, or for energy_s seconds. Returns (samples, window "run" or "fixed")."""
     run_json = Path(results_dir) / "run.json"
     if energy_s is None and run_json.exists():
-        raise ValueError("run.json already exists: the run is over; pass energy_s "
-                         "for a fixed window")
-    sampler = wrapped.PowerSampler(wrapped.energy_devices(engine, config),
-                                   nvidia_smi=nvidia_smi, interval_s=interval_s).start()
+        raise ValueError("run.json already exists: the run is over; pass energy_s for a fixed window")
+    sampler = wrapped.PowerSampler(
+        wrapped.energy_devices(engine, config), nvidia_smi=nvidia_smi, interval_s=interval_s
+    ).start()
     deadline = time.monotonic() + (energy_s if energy_s is not None else timeout_s)
     while time.monotonic() < deadline and (energy_s is not None or not run_json.exists()):
         time.sleep(poll_s)
@@ -72,8 +71,7 @@ def run_source(source, results_dir, engine, args, energy):
     if source == "energy":
         samples, window = energy
         devices = wrapped.energy_devices(engine, config)
-        section = wrapped.energy_section(samples, args.get("interval_s", 1.0),
-                                         run_totals(run)[0], devices)
+        section = wrapped.energy_section(samples, args.get("interval_s", 1.0), run_totals(run)[0], devices)
         if window == "fixed":
             section["joules_per_token"] = None
         return {**section, "window": window}
@@ -84,11 +82,11 @@ def run_source(source, results_dir, engine, args, energy):
             raise ValueError("cost needs run.json")
         out_tokens, wall_s = run_totals(run)
         e = config.get("engine") or {}
-        return wrapped.cost_section(args["gpu_cost_hr"], e.get("tp", 1) * e.get("pp", 1),
-                                    wall_s, out_tokens)
+        return wrapped.cost_section(args["gpu_cost_hr"], e.get("tp", 1) * e.get("pp", 1), wall_s, out_tokens)
     if source == "gsm8k":
-        items = wrapped.load_gsm8k(args["gsm8k_file"], args.get("tokenizer") or model,
-                                   args["gsm8k_n"], tokenizer=args.get("gsm8k_tokenizer"))
+        items = wrapped.load_gsm8k(
+            args["gsm8k_file"], args.get("tokenizer") or model, args["gsm8k_n"], tokenizer=args.get("gsm8k_tokenizer")
+        )
         generate = args.get("gsm8k_generate") or wrapped.http_generate(_endpoint(engine), model)
         return wrapped.gsm8k_accuracy(generate, items)
     if source == "frontend":
@@ -98,8 +96,9 @@ def run_source(source, results_dir, engine, args, energy):
     if source == "kv_transfer":
         return native.kv_transfer(args.get("kv_transfer_run") or results_dir)
     if source == "kernels":
-        return native.kernel_summary(results_dir, args["kernel_steps"], args.get("kernel_window"),
-                                     args.get("kernel_subtract"))
+        return native.kernel_summary(
+            results_dir, args["kernel_steps"], args.get("kernel_window"), args.get("kernel_subtract")
+        )
     raise ValueError(f"unknown source {source}")
 
 
@@ -116,11 +115,12 @@ def profile(results_dir, sources, **source_args):
             if source == "energy":
                 run = read_json(results_dir / "run.json") or {}
                 energy = measure_energy(
-                    results_dir, engine, run.get("config"),
-                    **{k: source_args[k] for k in ("nvidia_smi", "interval_s", "energy_s")
-                       if k in source_args})
-            out[SECTION.get(source, source)] = run_source(source, results_dir, engine,
-                                                          source_args, energy)
+                    results_dir,
+                    engine,
+                    run.get("config"),
+                    **{k: source_args[k] for k in ("nvidia_smi", "interval_s", "energy_s") if k in source_args},
+                )
+            out[SECTION.get(source, source)] = run_source(source, results_dir, engine, source_args, energy)
         except Exception as e:  # noqa: BLE001  one broken source must not lose the others
             errors[source] = f"{type(e).__name__}: {e}"
     out["traces"] = native.collect_armed_traces(results_dir, engine.get("instrumentation", "none"))
@@ -136,16 +136,20 @@ def legacy_profile_lines(profile):
     lines = []
     e = profile.get("energy")
     if e is not None and e.get("joules_per_token") is not None:
-        lines.append(f"ENERGYSUM joules={e['joules']:.0f} "
-                     f"joules_per_token={e['joules_per_token']:.3f} scope=gpu_board "
-                     f"devices={e['devices']} samples={e['samples']}")
+        lines.append(
+            f"ENERGYSUM joules={e['joules']:.0f} "
+            f"joules_per_token={e['joules_per_token']:.3f} scope=gpu_board "
+            f"devices={e['devices']} samples={e['samples']}"
+        )
     a = profile.get("accuracy")
     if a is not None:
         lines.append(f"ACCSUM dataset=gsm8k exact_match={a['exact_match']:.3f} n={a['n']}")
     c = profile.get("cost")
     if c is not None:
-        lines.append(f"COSTSUM usd={c['usd']:.4f} usd_per_m_out_tokens={c['usd_per_m_out_tokens']:.2f} "
-                     f"gpu_cost_hr={c['gpu_cost_hr']} devices={c['devices']} wall_s={c['wall_s']:.1f}")
+        lines.append(
+            f"COSTSUM usd={c['usd']:.4f} usd_per_m_out_tokens={c['usd_per_m_out_tokens']:.2f} "
+            f"gpu_cost_hr={c['gpu_cost_hr']} devices={c['devices']} wall_s={c['wall_s']:.1f}"
+        )
     return lines
 
 
@@ -155,14 +159,20 @@ def print_legacy_profile_lines(profile):
 
 
 def get_args(argv=None):
-    ap = argparse.ArgumentParser(prog="qbench profile", description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        prog="qbench profile", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--run", required=True, help="results/<run> directory")
-    ap.add_argument("--source", action="append", required=True, choices=SOURCES,
-                    help="repeatable. metrics: one scrape of the endpoint; energy: board power until run.json "
-                         "appears; cost: USD over the run's wall time; gsm8k: exact match through the endpoint; "
-                         "frontend, pd_host: live-server probes; kv_transfer: a NIXL probe run's rows.jsonl; "
-                         "kernels: per-kernel GPU time per decode step from the armed nsys trace")
+    ap.add_argument(
+        "--source",
+        action="append",
+        required=True,
+        choices=SOURCES,
+        help="repeatable. metrics: one scrape of the endpoint; energy: board power until run.json "
+        "appears; cost: USD over the run's wall time; gsm8k: exact match through the endpoint; "
+        "frontend, pd_host: live-server probes; kv_transfer: a NIXL probe run's rows.jsonl; "
+        "kernels: per-kernel GPU time per decode step from the armed nsys trace",
+    )
     ap.add_argument("--nvidia-smi", default="nvidia-smi")
     ap.add_argument("--interval-s", type=float, default=1.0)
     ap.add_argument("--energy-s", type=float, help="fixed energy window instead of the run's")
@@ -171,13 +181,16 @@ def get_args(argv=None):
     ap.add_argument("--gsm8k-n", type=int)
     ap.add_argument("--tokenizer", help="gsm8k tokenizer; default config engine.model")
     ap.add_argument("--served-model", help="OpenAI model name; default config engine.model")
-    ap.add_argument("--frontend-args", default="",
-                    help='frontend source flags, e.g. '
-                         '"--gpu-label H200 --device-yaml ../QuettaSim/device_spec/h200.yaml"')
+    ap.add_argument(
+        "--frontend-args",
+        default="",
+        help='frontend source flags, e.g. "--gpu-label H200 --device-yaml ../QuettaSim/device_spec/h200.yaml"',
+    )
     ap.add_argument("--pd-host-args", default="", help="pd_host flags")
-    ap.add_argument("--kv-transfer-run",
-                    help="the kv_transfer probe's run dir, results/probes/<gpu>/kv_transfer/<run-id>; "
-                         "default --run")
+    ap.add_argument(
+        "--kv-transfer-run",
+        help="the kv_transfer probe's run dir, results/probes/<gpu>/kv_transfer/<run-id>; default --run",
+    )
     ap.add_argument("--kernel-steps", type=int, help="decode steps the kernels window holds")
     ap.add_argument("--kernel-window", help="NVTX range the kernels source reads (default all)")
     ap.add_argument("--kernel-subtract", help="NVTX range whose kernel totals come off first")
@@ -186,13 +199,22 @@ def get_args(argv=None):
 
 def main(argv=None):
     ap, a = get_args(argv)
-    args = {"nvidia_smi": a.nvidia_smi, "interval_s": a.interval_s, "energy_s": a.energy_s,
-            "gpu_cost_hr": a.gpu_cost_hr, "gsm8k_file": a.gsm8k_file, "gsm8k_n": a.gsm8k_n,
-            "tokenizer": a.tokenizer, "served_model": a.served_model,
-            "frontend_argv": shlex.split(a.frontend_args),
-            "pd_host_argv": shlex.split(a.pd_host_args), "kv_transfer_run": a.kv_transfer_run,
-            "kernel_steps": a.kernel_steps, "kernel_window": a.kernel_window,
-            "kernel_subtract": a.kernel_subtract}
+    args = {
+        "nvidia_smi": a.nvidia_smi,
+        "interval_s": a.interval_s,
+        "energy_s": a.energy_s,
+        "gpu_cost_hr": a.gpu_cost_hr,
+        "gsm8k_file": a.gsm8k_file,
+        "gsm8k_n": a.gsm8k_n,
+        "tokenizer": a.tokenizer,
+        "served_model": a.served_model,
+        "frontend_argv": shlex.split(a.frontend_args),
+        "pd_host_argv": shlex.split(a.pd_host_args),
+        "kv_transfer_run": a.kv_transfer_run,
+        "kernel_steps": a.kernel_steps,
+        "kernel_window": a.kernel_window,
+        "kernel_subtract": a.kernel_subtract,
+    }
     try:
         out = profile(a.run, a.source, **args)
     except ValueError as e:

@@ -87,8 +87,7 @@ async def _stream_chat(
 ) -> RequestResult:
     """Stream one chat completion; every chunk carrying content, reasoning or tool_calls is one token. On failure the partial timings are kept, so a truncated tail still shows."""
     headers = _headers(api_key, extra_headers, request_id)
-    payload = _payload(model, {"messages": messages}, max_tokens, temperature, ignore_eos,
-                       request_id, seed, min_tokens)
+    payload = _payload(model, {"messages": messages}, max_tokens, temperature, ignore_eos, request_id, seed, min_tokens)
 
     start_time = time.perf_counter()
     ttft = None
@@ -116,7 +115,7 @@ async def _stream_chat(
                 if not line.startswith("data:"):
                     continue
 
-                data_str = line[len("data:"):].strip()
+                data_str = line[len("data:") :].strip()
 
                 if data_str == "[DONE]":
                     break
@@ -227,8 +226,7 @@ async def _stream_completions(
         )
 
     headers = _headers(api_key, extra_headers, request_id)
-    payload = _payload(model, {"prompt": prompt}, max_tokens, temperature, ignore_eos,
-                       request_id, seed, min_tokens)
+    payload = _payload(model, {"prompt": prompt}, max_tokens, temperature, ignore_eos, request_id, seed, min_tokens)
 
     start_time = time.perf_counter()
     ttft = None
@@ -255,7 +253,7 @@ async def _stream_completions(
                 if not line.startswith("data:"):
                     continue
 
-                data_str = line[len("data:"):].strip()
+                data_str = line[len("data:") :].strip()
 
                 if data_str == "[DONE]":
                     break
@@ -357,8 +355,9 @@ class HttpDriver(Driver):
     backend_name is serve.py's --backend and picks the cache-reset endpoint; timeout is in seconds for every request and the reset. run() with a cell is a grid batch.
     """
 
-    def __init__(self, endpoint, backend_name="vllm", *, url=None, model=None,
-                 api_key="test", timeout=60, accelerator="cuda"):
+    def __init__(
+        self, endpoint, backend_name="vllm", *, url=None, model=None, api_key="test", timeout=60, accelerator="cuda"
+    ):
         self.endpoint, self.backend_name, self.accelerator = endpoint, backend_name, accelerator
         self._stream, self.ttft_rule = ENDPOINTS[endpoint]
         self.url, self.model, self.api_key, self.timeout = url, model, api_key, timeout
@@ -396,8 +395,17 @@ class HttpDriver(Driver):
             finally:
                 self._http = None
 
-    async def send(self, request, *, ignore_eos=False, temperature=0.0, seed=None,
-                   min_tokens=0, request_id=None, capture_text=False) -> RequestResult:
+    async def send(
+        self,
+        request,
+        *,
+        ignore_eos=False,
+        temperature=0.0,
+        seed=None,
+        min_tokens=0,
+        request_id=None,
+        capture_text=False,
+    ) -> RequestResult:
         """Stream one Request: token ids when it has them, else its messages."""
         extra = {}
         if request.prompt_token_ids:
@@ -405,10 +413,19 @@ class HttpDriver(Driver):
         if capture_text:
             extra["capture_text"] = True
         return await self.send_request(
-            session=self._http, url=self.url, model=self.model, messages=request.messages,
-            max_tokens=request.max_tokens, api_key=self.api_key, ignore_eos=ignore_eos,
-            temperature=temperature, seed=seed, min_tokens=min_tokens, request_id=request_id,
-            **extra)
+            session=self._http,
+            url=self.url,
+            model=self.model,
+            messages=request.messages,
+            max_tokens=request.max_tokens,
+            api_key=self.api_key,
+            ignore_eos=ignore_eos,
+            temperature=temperature,
+            seed=seed,
+            min_tokens=min_tokens,
+            request_id=request_id,
+            **extra,
+        )
 
     def run(self, requests, *, concurrency=None, cell=None, **sampling):
         """Closed loop at `concurrency`, yielding results in request order; with a cell, one grid batch."""
@@ -430,15 +447,16 @@ class HttpDriver(Driver):
 
     def timed_batch(self, requests, cell_key=None):
         """(seconds, results) of every request sent at once, greedy and ignoring EOS so each decodes exactly max_tokens. A new cell_key resets the prefix cache first."""
+
         async def go():
             async with self.session(len(requests)):
                 if cell_key is not None and cell_key != self._cell:
                     await self.reset()
                     self._cell = cell_key
                 t0 = time.perf_counter()
-                results = await asyncio.gather(*(self.send(r, ignore_eos=True)
-                                                 for r in requests))
+                results = await asyncio.gather(*(self.send(r, ignore_eos=True) for r in requests))
                 return time.perf_counter() - t0, results
+
         return asyncio.run(go())
 
     def spec_counters(self):
@@ -461,13 +479,25 @@ class HttpDriver(Driver):
         wall, results = self.timed_batch(requests, (cell["ctx"], cell["bs"]))
         for res in results:
             if not res.success or not res.usage_reported or res.output_tokens != n:
-                why = (res.error if not res.success else "no usage reported"
-                       if not res.usage_reported else f"{res.output_tokens} tokens decoded")
+                why = (
+                    res.error
+                    if not res.success
+                    else "no usage reported"
+                    if not res.usage_reported
+                    else f"{res.output_tokens} tokens decoded"
+                )
                 raise GridBatchFailed(f"ctx={cell['ctx']} bs={cell['bs']} step={n}: {why}")
         for r in requests:
-            yield RequestResult(success=True, e2el=wall, batch_wall_s=wall,
-                                input_tokens=r.prompt_len, output_tokens=n, ttft_basis="batch",
-                                ttft_rule=self.ttft_rule, cell=dict(cell))
+            yield RequestResult(
+                success=True,
+                e2el=wall,
+                batch_wall_s=wall,
+                input_tokens=r.prompt_len,
+                output_tokens=n,
+                ttft_basis="batch",
+                ttft_rule=self.ttft_rule,
+                cell=dict(cell),
+            )
 
     async def reset(self, session=None, url=None, api_key=None, timeout=None) -> str:
         """Reset the server's prefix cache and return a status string; arguments left out come from the bound server.
@@ -498,9 +528,7 @@ class HttpDriver(Driver):
                 if resp.status != 200:
                     body = (await resp.text())[:200]
                     hint = f" {_DEV_MODE_HINT}" if resp.status == 404 else ""
-                    raise PrefixCacheResetError(
-                        f"POST {reset_url} returned HTTP {resp.status}: {body}.{hint}"
-                    )
+                    raise PrefixCacheResetError(f"POST {reset_url} returned HTTP {resp.status}: {body}.{hint}")
         except PrefixCacheResetError:
             raise
         except aiohttp.ClientConnectionError as e:
@@ -545,8 +573,13 @@ class BenchDriver(Driver):
         for note in notes:
             print(note)
         for (ctx, bs, tp), (ms, group, kv) in points.items():
-            yield {"cell": {"ctx": ctx, "bs": bs, "tp": tp, "step_point": None},
-                   "measured_ms_per_step": ms, "group": group, "kv": kv, "method": method}
+            yield {
+                "cell": {"ctx": ctx, "bs": bs, "tp": tp, "step_point": None},
+                "measured_ms_per_step": ms,
+                "group": group,
+                "kv": kv,
+                "method": method,
+            }
 
     def _log(self, line):
         print(line, file=sys.stderr, flush=True)
@@ -555,16 +588,21 @@ class BenchDriver(Driver):
 
     def _run_cell(self, ctx, bs, spec):
         """True when the cell's output matches spec.ok_pattern."""
-        if spec.bench_argv[0] == "cargo" and not (Path(spec.cwd) / spec.bench_argv[3]
-                                                  / "Cargo.toml").exists():
-            raise BenchFailed(f"no {spec.bench_argv[3]} crate under {spec.cwd!r}; "
-                              "set engine.extra.qs_dir or engine.extra.bench_bin")
+        if spec.bench_argv[0] == "cargo" and not (Path(spec.cwd) / spec.bench_argv[3] / "Cargo.toml").exists():
+            raise BenchFailed(
+                f"no {spec.bench_argv[3]} crate under {spec.cwd!r}; set engine.extra.qs_dir or engine.extra.bench_bin"
+            )
         self._log(spec.log_header)
         ok = re.compile(spec.ok_pattern)
         passed = False
-        proc = subprocess.Popen(spec.child_argv(spec.bench_argv), cwd=spec.cwd, text=True,
-                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                start_new_session=True)
+        proc = subprocess.Popen(
+            spec.child_argv(spec.bench_argv),
+            cwd=spec.cwd,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
         try:
             with self.log_path.open("a") as fh:
                 for line in proc.stdout:
@@ -593,10 +631,12 @@ class InProcessDriver(Driver):
     @property
     def version(self):
         import vllm
+
         return vllm.__version__
 
     def device(self):
         import torch
+
         return torch.cuda.get_device_name(0), torch.cuda.get_device_properties(0).total_memory
 
     def llm(self):
@@ -604,6 +644,7 @@ class InProcessDriver(Driver):
         if self._llm is None:
             env_map.export(self.spec.env)
             from vllm import LLM
+
             self._llm = LLM(**self.spec.engine_kwargs)
         return self._llm
 
@@ -613,6 +654,7 @@ class InProcessDriver(Driver):
     def generate(self, prompts, max_tokens):
         """(seconds, outputs) of one greedy generate() ignoring EOS, so every prompt decodes exactly max_tokens."""
         from vllm import SamplingParams
+
         sp = SamplingParams(temperature=0.0, max_tokens=max_tokens, ignore_eos=True)
         t0 = time.perf_counter()
         outs = self.llm().generate(prompts, sp, use_tqdm=False)
@@ -625,36 +667,48 @@ class InProcessDriver(Driver):
     def score(self, prompts):
         """One token per prompt, with top-2 logprobs at every prompt position."""
         from vllm import SamplingParams
+
         params = SamplingParams(temperature=0, max_tokens=1, prompt_logprobs=2)
-        return self.llm().generate([{"prompt_token_ids": ids} for ids in prompts], params,
-                                   use_tqdm=False)
+        return self.llm().generate([{"prompt_token_ids": ids} for ids in prompts], params, use_tqdm=False)
 
     def run(self, requests, *, cell, returns="none", concurrency=None, **kwargs):
         """The batch as one generate() at cell["step_point"] tokens; every row gets the batch wall as e2el and no TTFT. returns="logits" scores instead and times nothing."""
         if returns == "logits":
             outs = self.score([r.prompt_token_ids for r in requests])
             for r, out in zip(requests, outs):
-                yield RequestResult(success=True, input_tokens=r.prompt_len, cell=dict(cell),
-                                    logits=prompt_logprob_summary(r.prompt_token_ids,
-                                                                  out.prompt_logprobs))
+                yield RequestResult(
+                    success=True,
+                    input_tokens=r.prompt_len,
+                    cell=dict(cell),
+                    logits=prompt_logprob_summary(r.prompt_token_ids, out.prompt_logprobs),
+                )
             return
         n = cell["step_point"]
         wall, outs = self.generate([{"prompt_token_ids": r.prompt_token_ids} for r in requests], n)
         for r, out in zip(requests, outs):
             completion = out.outputs[0]
-            yield RequestResult(success=True, e2el=wall, batch_wall_s=wall,
-                                input_tokens=r.prompt_len, output_tokens=n, ttft_basis="batch",
-                                cell=dict(cell), generated_token_ids=list(completion.token_ids),
-                                generated_text=getattr(completion, "text", None))
+            yield RequestResult(
+                success=True,
+                e2el=wall,
+                batch_wall_s=wall,
+                input_tokens=r.prompt_len,
+                output_tokens=n,
+                ttft_basis="batch",
+                cell=dict(cell),
+                generated_token_ids=list(completion.token_ids),
+                generated_text=getattr(completion, "text", None),
+            )
 
 
 def truncated_config(model, layers):
     """The checkpoint's config cut to its first `layers` decoder layers, layer_types included."""
     from transformers import AutoConfig
+
     config = AutoConfig.from_pretrained(model, trust_remote_code=True)
     if layers > config.num_hidden_layers:
-        raise ValueError(f"reference: engine.layers={layers} exceeds the checkpoint's "
-                         f"{config.num_hidden_layers} layers")
+        raise ValueError(
+            f"reference: engine.layers={layers} exceeds the checkpoint's {config.num_hidden_layers} layers"
+        )
     config.num_hidden_layers = layers
     if isinstance(getattr(config, "layer_types", None), list):
         config.layer_types = config.layer_types[:layers]
@@ -685,18 +739,20 @@ class ReferenceDriver(Driver):
     @property
     def version(self):
         import transformers
+
         return transformers.__version__
 
     def tokenizer(self):
         from transformers import AutoTokenizer
-        return AutoTokenizer.from_pretrained(self.spec.engine_kwargs["model"],
-                                             trust_remote_code=True)
+
+        return AutoTokenizer.from_pretrained(self.spec.engine_kwargs["model"], trust_remote_code=True)
 
     def model(self):
         """AutoModelForCausalLM on cuda:0 in eval mode, built once, cut to engine_kwargs layers when set."""
         if self._model is None:
             import torch
             from transformers import AutoModelForCausalLM
+
             kw = self.spec.engine_kwargs
             load = {"torch_dtype": getattr(torch, kw["dtype"]), "trust_remote_code": True}
             if kw.get("layers"):
@@ -704,13 +760,16 @@ class ReferenceDriver(Driver):
             self._model = AutoModelForCausalLM.from_pretrained(kw["model"], **load).to("cuda:0")
             self._model.eval()
             if kw.get("layers") and len(self._model.model.layers) != kw["layers"]:
-                raise RuntimeError(f"reference: built {len(self._model.model.layers)} decoder "
-                                   f"layers, engine.layers asked for {kw['layers']}")
+                raise RuntimeError(
+                    f"reference: built {len(self._model.model.layers)} decoder "
+                    f"layers, engine.layers asked for {kw['layers']}"
+                )
         return self._model
 
     def score(self, ids):
         """Argmax, top-2 gap and true-token logprob at every position but the last."""
         import torch
+
         with torch.no_grad():
             t = torch.tensor([ids], device="cuda:0")
             logits = self.model()(t).logits[0].float()
@@ -723,8 +782,9 @@ class ReferenceDriver(Driver):
 
     def run(self, requests, *, cell, **kwargs):
         for r in requests:
-            yield RequestResult(success=True, input_tokens=r.prompt_len, cell=dict(cell),
-                                logits=self.score(r.prompt_token_ids))
+            yield RequestResult(
+                success=True, input_tokens=r.prompt_len, cell=dict(cell), logits=self.score(r.prompt_token_ids)
+            )
 
 
 class ReferenceAdapter(EngineAdapter):
@@ -744,8 +804,9 @@ class ReferenceAdapter(EngineAdapter):
         if cfg.mode.grid is None:
             raise ConfigError("reference: scores grid prompts only; set mode.grid")
         if cfg.hardware.backend in OTHER_ACCELERATORS:
-            raise ConfigError(f"reference: runs transformers on cuda:0; "
-                              f"hardware.backend={cfg.hardware.backend} has none")
+            raise ConfigError(
+                f"reference: runs transformers on cuda:0; hardware.backend={cfg.hardware.backend} has none"
+            )
         if engine.layers is not None and engine.layers < 1:
             raise ConfigError(f"reference: engine.layers must be >= 1, got {engine.layers}")
         kwargs = {"model": engine.model, "dtype": engine.dtype}

@@ -21,8 +21,7 @@ def integrate_power(samples_w, interval_s):
 def energy_devices(engine_json, config):
     """CUDA_VISIBLE_DEVICES from engine.json's launch_spec, else the Config's hardware.visible_devices; "" means every GPU."""
     env = ((engine_json or {}).get("launch_spec") or {}).get("env") or {}
-    return env.get("CUDA_VISIBLE_DEVICES") or \
-        ((config or {}).get("hardware") or {}).get("visible_devices") or ""
+    return env.get("CUDA_VISIBLE_DEVICES") or ((config or {}).get("hardware") or {}).get("visible_devices") or ""
 
 
 def device_label(ids):
@@ -66,9 +65,14 @@ class PowerSampler:
 def energy_section(samples_w, interval_s, out_tokens, devices):
     """profile.json `energy`: joules, joules per output token, scope, devices, samples."""
     joules = integrate_power(samples_w, interval_s)
-    return {"joules": joules, "joules_per_token": joules / max(out_tokens, 1),
-            "scope": "gpu_board", "devices": device_label(devices),
-            "samples": len(samples_w), "interval_s": interval_s}
+    return {
+        "joules": joules,
+        "joules_per_token": joules / max(out_tokens, 1),
+        "scope": "gpu_board",
+        "devices": device_label(devices),
+        "samples": len(samples_w),
+        "interval_s": interval_s,
+    }
 
 
 def cost_per_m_tokens(gpu_cost_hr, devices, wall_s, out_tokens):
@@ -80,8 +84,14 @@ def cost_per_m_tokens(gpu_cost_hr, devices, wall_s, out_tokens):
 def cost_section(gpu_cost_hr, devices, wall_s, out_tokens):
     """profile.json `cost`; devices is tp * pp."""
     usd, per_m = cost_per_m_tokens(gpu_cost_hr, devices, wall_s, out_tokens)
-    return {"usd": usd, "usd_per_m_out_tokens": per_m, "gpu_cost_hr": float(gpu_cost_hr),
-            "devices": devices, "wall_s": wall_s, "out_tokens": out_tokens}
+    return {
+        "usd": usd,
+        "usd_per_m_out_tokens": per_m,
+        "gpu_cost_hr": float(gpu_cost_hr),
+        "devices": devices,
+        "wall_s": wall_s,
+        "out_tokens": out_tokens,
+    }
 
 
 def gsm8k_answer(text):
@@ -112,17 +122,26 @@ def gsm8k_accuracy(generate, items, max_tokens=GSM8K_MAX_TOKENS):
         got = gsm8k_answer(generate(ids, max_tokens))
         correct += got is not None and got == gold
     n = len(items)
-    return {"dataset": "gsm8k", "correct": correct, "n": n,
-            "exact_match": correct / max(n, 1), "max_tokens": max_tokens}
+    return {
+        "dataset": "gsm8k",
+        "correct": correct,
+        "n": n,
+        "exact_match": correct / max(n, 1),
+        "max_tokens": max_tokens,
+    }
 
 
 def http_generate(endpoint, model, timeout_s=600):
     """generate(prompt_ids, max_tokens) -> text over a server's /v1/completions, greedy and non-streaming."""
+
     def generate(prompt_ids, max_tokens):
-        body = json.dumps({"model": model, "prompt": list(prompt_ids), "max_tokens": max_tokens,
-                           "temperature": 0.0}).encode()
-        req = urllib.request.Request(f"{endpoint}/v1/completions", data=body,
-                                     headers={"Content-Type": "application/json"})
+        body = json.dumps(
+            {"model": model, "prompt": list(prompt_ids), "max_tokens": max_tokens, "temperature": 0.0}
+        ).encode()
+        req = urllib.request.Request(
+            f"{endpoint}/v1/completions", data=body, headers={"Content-Type": "application/json"}
+        )
         with launcher.urlopen(req, timeout=timeout_s) as resp:
             return json.loads(resp.read())["choices"][0]["text"]
+
     return generate

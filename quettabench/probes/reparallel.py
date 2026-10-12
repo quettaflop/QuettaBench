@@ -3,6 +3,7 @@
 
 Rank 0 emits reparallel/<gpu>_reshard[_<mode>].csv rows (host_wallclock, last row on a key wins, sorted on KEY) and prints the floor + per-byte fit per (tp_from, tp_to) for a device YAML's reshard: block.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -15,8 +16,14 @@ import torch.distributed as dist
 from quettabench.probes.base import ProbeRow, add_output_args, emit, run_recorded
 
 KEY = ("gpu", "world", "tp_from", "tp_to", "total_weight_gb")
-COLS = KEY + ("k", "bytes_moved_per_gpu", "comm_ms", "eff_gbps", "pattern",
-              "bytes_inter_per_gpu")  # cross-node share of the move
+COLS = KEY + (
+    "k",
+    "bytes_moved_per_gpu",
+    "comm_ms",
+    "eff_gbps",
+    "pattern",
+    "bytes_inter_per_gpu",
+)  # cross-node share of the move
 
 
 def _fit(rows: list[dict]) -> tuple[float, float]:
@@ -38,8 +45,15 @@ def _emit(table: str, rows: list[dict]) -> None:
     cells = {tuple(str(r[k]) for k in KEY): {k: str(r.get(k, 0)) for k in COLS} for r in rows}
     for k in sorted(cells, key=lambda t: (t[0], int(t[1]), int(t[2]), int(t[3]), float(t[4]))):
         row = cells[k]
-        emit(ProbeRow("reparallel", table, {c: row[c] for c in KEY},
-                      {c: row[c] for c in COLS if c not in KEY}, "host_wallclock"))
+        emit(
+            ProbeRow(
+                "reparallel",
+                table,
+                {c: row[c] for c in KEY},
+                {c: row[c] for c in COLS if c not in KEY},
+                "host_wallclock",
+            )
+        )
 
 
 def _time_ms(fn, iters: int) -> float:
@@ -63,40 +77,59 @@ def _groups_of(k: int, world: int) -> list[list[int]]:
 
 
 def main(argv=None) -> bool:
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     add_output_args(ap)
-    ap.add_argument("--switches", nargs="+",
-                    default=["4:2", "2:1", "8:4", "4:1", "8:2", "2:4", "4:8"],
-                    help="tp_from:tp_to pairs (down = reshard, up = discard floor)")
-    ap.add_argument("--mode", default="tp",
-                    choices=["tp", "dp", "ep", "pp", "kv", "plan", "xnode"],
-                    help="tp: fixed-pool TP reshard (all-gather); dp: replica "
-                         "replication (broadcast a shard to fresh GPUs); ep: expert "
-                         "restage (all-to-all); pp: pipeline-stage reshard (whole-layer "
-                         "all-gather); kv: in-flight paged-KV reshard (head-shard "
-                         "all-gather); plan: whole PD-plan reshard (faithful per-GPU "
-                         "byte-range exchange for a P/D layout change; node-aware when "
-                         "launched across nodes); xnode: cross-node link physics -- "
-                         "concurrent p2p pair sweep (rail sharing / replica hydration) "
-                         "and node-spanning all-gathers. One dim per mode.")
-    ap.add_argument("--plans", nargs="+",
-                    default=["2:2,4:1>4:1,2:2", "4:1,4:1>2:3,2:1",
-                             "2:2,4:1>2:2,1:4", "4:1,4:1>4:1,4:1"],
-                    help="mode=plan: OLD>NEW where each side is 'tp_p:dp_p,tp_d:dp_d' "
-                         "(prefill pool, decode pool); worlds must sum to --nproc")
-    ap.add_argument("--weights-gb", type=float, nargs="+",
-                    default=[1, 2, 4, 8, 16, 32],
-                    help="total logical weight W swept; per-GPU move derived from it")
+    ap.add_argument(
+        "--switches",
+        nargs="+",
+        default=["4:2", "2:1", "8:4", "4:1", "8:2", "2:4", "4:8"],
+        help="tp_from:tp_to pairs (down = reshard, up = discard floor)",
+    )
+    ap.add_argument(
+        "--mode",
+        default="tp",
+        choices=["tp", "dp", "ep", "pp", "kv", "plan", "xnode"],
+        help="tp: fixed-pool TP reshard (all-gather); dp: replica "
+        "replication (broadcast a shard to fresh GPUs); ep: expert "
+        "restage (all-to-all); pp: pipeline-stage reshard (whole-layer "
+        "all-gather); kv: in-flight paged-KV reshard (head-shard "
+        "all-gather); plan: whole PD-plan reshard (faithful per-GPU "
+        "byte-range exchange for a P/D layout change; node-aware when "
+        "launched across nodes); xnode: cross-node link physics -- "
+        "concurrent p2p pair sweep (rail sharing / replica hydration) "
+        "and node-spanning all-gathers. One dim per mode.",
+    )
+    ap.add_argument(
+        "--plans",
+        nargs="+",
+        default=["2:2,4:1>4:1,2:2", "4:1,4:1>2:3,2:1", "2:2,4:1>2:2,1:4", "4:1,4:1>4:1,4:1"],
+        help="mode=plan: OLD>NEW where each side is 'tp_p:dp_p,tp_d:dp_d' "
+        "(prefill pool, decode pool); worlds must sum to --nproc",
+    )
+    ap.add_argument(
+        "--weights-gb",
+        type=float,
+        nargs="+",
+        default=[1, 2, 4, 8, 16, 32],
+        help="total logical weight W swept; per-GPU move derived from it",
+    )
     ap.add_argument("--iters", type=int, default=11)
-    ap.add_argument("--kv-tokens", type=int, nargs="+", dest="kv_tokens",
-                    default=[1024, 4096, 16384, 65536, 131072, 262144],
-                    help="mode=kv: per-request token counts to reshard")
+    ap.add_argument(
+        "--kv-tokens",
+        type=int,
+        nargs="+",
+        dest="kv_tokens",
+        default=[1024, 4096, 16384, 65536, 131072, 262144],
+        help="mode=kv: per-request token counts to reshard",
+    )
     ap.add_argument("--layers", type=int, default=94, help="mode=kv: model layers")
     ap.add_argument("--head-dim", type=int, default=128, help="mode=kv: KV head dim")
-    ap.add_argument("--out-name", default=None,
-                    help="CSV stem (default <gpu>_reshard); use e.g. <gpu>_reshard_val "
-                         "for a held-out validation sweep that must not touch calibration")
+    ap.add_argument(
+        "--out-name",
+        default=None,
+        help="CSV stem (default <gpu>_reshard); use e.g. <gpu>_reshard_val "
+        "for a held-out validation sweep that must not touch calibration",
+    )
     a = ap.parse_args(argv)
 
     rank = int(os.environ["RANK"])
@@ -130,9 +163,15 @@ def main(argv=None) -> bool:
         out_rows = _measure_tp(a, rank, world, _get_groups)
 
     if rank == 0:
-        default_stem = {"tp": "reshard", "dp": "reshard_dp", "ep": "reshard_ep",
-                        "pp": "reshard_pp", "kv": "reshard_kv",
-                        "plan": "reshard_plan", "xnode": "reshard_xnode"}[a.mode]
+        default_stem = {
+            "tp": "reshard",
+            "dp": "reshard_dp",
+            "ep": "reshard_ep",
+            "pp": "reshard_pp",
+            "kv": "reshard_kv",
+            "plan": "reshard_plan",
+            "xnode": "reshard_xnode",
+        }[a.mode]
         stem = a.out_name or f"{a.gpu_label}_{default_stem}"
         _emit(f"reparallel/{stem}.csv", out_rows)
         print(f"\n{len(out_rows)} rows of reparallel/{stem}.csv")
@@ -140,8 +179,7 @@ def main(argv=None) -> bool:
         seen = []
         pairs = sorted({(r["tp_from"], r["tp_to"]) for r in out_rows})
         for p, q in pairs:
-            rows = [r for r in out_rows if r["tp_from"] == p and r["tp_to"] == q
-                    and r["bytes_moved_per_gpu"] > 0]
+            rows = [r for r in out_rows if r["tp_from"] == p and r["tp_to"] == q and r["bytes_moved_per_gpu"] > 0]
             if len(rows) >= 2:
                 floor, bw = _fit(rows)
                 seen.append(bw)
@@ -193,15 +231,26 @@ def _measure_tp(a, rank: int, world: int, _get_groups) -> list[dict]:
                 pattern = "discard"
             comm_ms = _time_ms(_do, a.iters)
             eff = moved / (comm_ms / 1e3) / 1e9 if (moved and comm_ms > 0) else 0.0
-            row = {"gpu": a.gpu_label, "world": world, "tp_from": p, "tp_to": q,
-                   "total_weight_gb": wgb, "k": k, "bytes_moved_per_gpu": moved,
-                   "comm_ms": round(comm_ms, 4), "eff_gbps": round(eff, 2),
-                   "pattern": pattern}
+            row = {
+                "gpu": a.gpu_label,
+                "world": world,
+                "tp_from": p,
+                "tp_to": q,
+                "total_weight_gb": wgb,
+                "k": k,
+                "bytes_moved_per_gpu": moved,
+                "comm_ms": round(comm_ms, 4),
+                "eff_gbps": round(eff, 2),
+                "pattern": pattern,
+            }
             out_rows.append(row)
             if rank == 0:
-                print(f"tp{p}->tp{q} {pattern:9s} W={wgb:5.0f}GB  "
-                      f"move {moved / 1e9:7.3f} GB/gpu  {comm_ms:8.3f} ms  "
-                      f"-> {eff:7.1f} GB/s", flush=True)
+                print(
+                    f"tp{p}->tp{q} {pattern:9s} W={wgb:5.0f}GB  "
+                    f"move {moved / 1e9:7.3f} GB/gpu  {comm_ms:8.3f} ms  "
+                    f"-> {eff:7.1f} GB/s",
+                    flush=True,
+                )
             del src
             if q < p:
                 del dst
@@ -230,14 +279,25 @@ def _measure_dp(a, rank: int, world: int) -> list[dict]:
             comm_ms = _time_ms(_do, a.iters)
             moved = nbytes
             eff = moved / (comm_ms / 1e3) / 1e9 if comm_ms > 0 else 0.0
-            row = {"gpu": a.gpu_label, "world": world, "tp_from": tp, "tp_to": tp,
-                   "total_weight_gb": wgb, "k": 1, "bytes_moved_per_gpu": moved,
-                   "comm_ms": round(comm_ms, 4), "eff_gbps": round(eff, 2),
-                   "pattern": "p2p_bcast"}
+            row = {
+                "gpu": a.gpu_label,
+                "world": world,
+                "tp_from": tp,
+                "tp_to": tp,
+                "total_weight_gb": wgb,
+                "k": 1,
+                "bytes_moved_per_gpu": moved,
+                "comm_ms": round(comm_ms, 4),
+                "eff_gbps": round(eff, 2),
+                "pattern": "p2p_bcast",
+            }
             out_rows.append(row)
             if rank == 0:
-                print(f"dp replicate tp{tp} W={wgb:5.0f}GB  move {moved / 1e9:7.3f} GB/gpu"
-                      f"  {comm_ms:8.3f} ms  -> {eff:7.1f} GB/s", flush=True)
+                print(
+                    f"dp replicate tp{tp} W={wgb:5.0f}GB  move {moved / 1e9:7.3f} GB/gpu"
+                    f"  {comm_ms:8.3f} ms  -> {eff:7.1f} GB/s",
+                    flush=True,
+                )
             del buf
             torch.cuda.empty_cache()
     return out_rows
@@ -262,14 +322,25 @@ def _measure_ep(a, rank: int, world: int) -> list[dict]:
         comm_ms = _time_ms(_do, a.iters)
         moved = (ep - 1) * chunk
         eff = moved / (comm_ms / 1e3) / 1e9 if comm_ms > 0 else 0.0
-        row = {"gpu": a.gpu_label, "world": world, "tp_from": ep, "tp_to": ep,
-               "total_weight_gb": wgb, "k": ep, "bytes_moved_per_gpu": moved,
-               "comm_ms": round(comm_ms, 4), "eff_gbps": round(eff, 2),
-               "pattern": "all_to_all"}
+        row = {
+            "gpu": a.gpu_label,
+            "world": world,
+            "tp_from": ep,
+            "tp_to": ep,
+            "total_weight_gb": wgb,
+            "k": ep,
+            "bytes_moved_per_gpu": moved,
+            "comm_ms": round(comm_ms, 4),
+            "eff_gbps": round(eff, 2),
+            "pattern": "all_to_all",
+        }
         out_rows.append(row)
         if rank == 0:
-            print(f"ep restage ep{ep} W={wgb:5.0f}GB  move {moved / 1e9:7.3f} GB/gpu"
-                  f"  {comm_ms:8.3f} ms  -> {eff:7.1f} GB/s", flush=True)
+            print(
+                f"ep restage ep{ep} W={wgb:5.0f}GB  move {moved / 1e9:7.3f} GB/gpu"
+                f"  {comm_ms:8.3f} ms  -> {eff:7.1f} GB/s",
+                flush=True,
+            )
         del src, dst
         torch.cuda.empty_cache()
     return out_rows
@@ -296,13 +367,26 @@ def _measure_pp(a, rank: int, world: int, _get_groups) -> list[dict]:
             comm_ms = _time_ms(_do, a.iters)
             moved = (k - 1) * in_bytes
             eff = moved / (comm_ms / 1e3) / 1e9 if comm_ms > 0 else 0.0
-            out_rows.append({"gpu": a.gpu_label, "world": world, "tp_from": p,
-                             "tp_to": q, "total_weight_gb": wgb, "k": k,
-                             "bytes_moved_per_gpu": moved, "comm_ms": round(comm_ms, 4),
-                             "eff_gbps": round(eff, 2), "pattern": "pp_allgather"})
+            out_rows.append(
+                {
+                    "gpu": a.gpu_label,
+                    "world": world,
+                    "tp_from": p,
+                    "tp_to": q,
+                    "total_weight_gb": wgb,
+                    "k": k,
+                    "bytes_moved_per_gpu": moved,
+                    "comm_ms": round(comm_ms, 4),
+                    "eff_gbps": round(eff, 2),
+                    "pattern": "pp_allgather",
+                }
+            )
             if rank == 0:
-                print(f"pp{p}->pp{q} W={wgb:5.0f}GB  move {moved / 1e9:7.3f} GB/gpu"
-                      f"  {comm_ms:8.3f} ms  -> {eff:7.1f} GB/s", flush=True)
+                print(
+                    f"pp{p}->pp{q} W={wgb:5.0f}GB  move {moved / 1e9:7.3f} GB/gpu"
+                    f"  {comm_ms:8.3f} ms  -> {eff:7.1f} GB/s",
+                    flush=True,
+                )
             del src, dst
             torch.cuda.empty_cache()
     return out_rows
@@ -330,13 +414,25 @@ def _measure_kv(a, rank: int, world: int, _get_groups) -> list[dict]:
         comm_ms = _time_ms(_do, a.iters)
         moved = (k - 1) * nbytes
         eff = moved / (comm_ms / 1e3) / 1e9 if comm_ms > 0 else 0.0
-        out_rows.append({"gpu": a.gpu_label, "world": world, "tp_from": 4, "tp_to": 2,
-                         "total_weight_gb": round(tokens / 1e3, 3), "k": tokens,
-                         "bytes_moved_per_gpu": moved, "comm_ms": round(comm_ms, 4),
-                         "eff_gbps": round(eff, 2), "pattern": "kv_allgather"})
+        out_rows.append(
+            {
+                "gpu": a.gpu_label,
+                "world": world,
+                "tp_from": 4,
+                "tp_to": 2,
+                "total_weight_gb": round(tokens / 1e3, 3),
+                "k": tokens,
+                "bytes_moved_per_gpu": moved,
+                "comm_ms": round(comm_ms, 4),
+                "eff_gbps": round(eff, 2),
+                "pattern": "kv_allgather",
+            }
+        )
         if rank == 0:
-            print(f"kv reshard tok={tokens:>7}  move {moved / 1e9:7.3f} GB/gpu"
-                  f"  {comm_ms:8.3f} ms  -> {eff:7.1f} GB/s", flush=True)
+            print(
+                f"kv reshard tok={tokens:>7}  move {moved / 1e9:7.3f} GB/gpu  {comm_ms:8.3f} ms  -> {eff:7.1f} GB/s",
+                flush=True,
+            )
         del src, dst
         torch.cuda.empty_cache()
     return out_rows
@@ -363,8 +459,7 @@ def _measure_xnode(a, rank: int, world: int) -> list[dict]:
         for wgb in a.weights_gb:
             nbytes = int(wgb * 1e9)
             nbytes -= nbytes % 4
-            buf = (torch.empty(nbytes // 4, dtype=torch.float32, device="cuda")
-                   if active else None)
+            buf = torch.empty(nbytes // 4, dtype=torch.float32, device="cuda") if active else None
 
             def _do() -> None:
                 if not active:
@@ -378,14 +473,26 @@ def _measure_xnode(a, rank: int, world: int) -> list[dict]:
             moved = nbytes if active else 0
             eff = moved / (comm_ms / 1e3) / 1e9 if (moved and comm_ms > 0) else 0.0
             if rank == 0:
-                print(f"xpair n={npairs}  {wgb:5.1f} GB/pair  {comm_ms:8.3f} ms  "
-                      f"-> {eff:6.1f} GB/s per pair ({eff * npairs:6.1f} aggregate)",
-                      flush=True)
-            out_rows.append({"gpu": a.gpu_label, "world": world, "tp_from": npairs,
-                             "tp_to": npairs, "total_weight_gb": wgb, "k": npairs,
-                             "bytes_moved_per_gpu": nbytes, "comm_ms": round(comm_ms, 4),
-                             "eff_gbps": round(eff, 2), "pattern": f"xpair{npairs}",
-                             "bytes_inter_per_gpu": nbytes})
+                print(
+                    f"xpair n={npairs}  {wgb:5.1f} GB/pair  {comm_ms:8.3f} ms  "
+                    f"-> {eff:6.1f} GB/s per pair ({eff * npairs:6.1f} aggregate)",
+                    flush=True,
+                )
+            out_rows.append(
+                {
+                    "gpu": a.gpu_label,
+                    "world": world,
+                    "tp_from": npairs,
+                    "tp_to": npairs,
+                    "total_weight_gb": wgb,
+                    "k": npairs,
+                    "bytes_moved_per_gpu": nbytes,
+                    "comm_ms": round(comm_ms, 4),
+                    "eff_gbps": round(eff, 2),
+                    "pattern": f"xpair{npairs}",
+                    "bytes_inter_per_gpu": nbytes,
+                }
+            )
             if buf is not None:
                 del buf
             torch.cuda.empty_cache()
@@ -405,13 +512,25 @@ def _measure_xnode(a, rank: int, world: int) -> list[dict]:
         comm_ms = _time_ms(_do, a.iters)
         eff = nbytes / (comm_ms / 1e3) / 1e9 if comm_ms > 0 else 0.0
         if rank == 0:
-            print(f"xallgather k=2 x{gpn}  {wgb:5.1f} GB moved/gpu  {comm_ms:8.3f} ms  "
-                  f"-> {eff:6.1f} GB/s per gpu", flush=True)
-        out_rows.append({"gpu": a.gpu_label, "world": world, "tp_from": 2, "tp_to": 1,
-                         "total_weight_gb": wgb, "k": 2,
-                         "bytes_moved_per_gpu": nbytes, "comm_ms": round(comm_ms, 4),
-                         "eff_gbps": round(eff, 2), "pattern": "xallgather",
-                         "bytes_inter_per_gpu": nbytes})
+            print(
+                f"xallgather k=2 x{gpn}  {wgb:5.1f} GB moved/gpu  {comm_ms:8.3f} ms  -> {eff:6.1f} GB/s per gpu",
+                flush=True,
+            )
+        out_rows.append(
+            {
+                "gpu": a.gpu_label,
+                "world": world,
+                "tp_from": 2,
+                "tp_to": 1,
+                "total_weight_gb": wgb,
+                "k": 2,
+                "bytes_moved_per_gpu": nbytes,
+                "comm_ms": round(comm_ms, 4),
+                "eff_gbps": round(eff, 2),
+                "pattern": "xallgather",
+                "bytes_inter_per_gpu": nbytes,
+            }
+        )
         del src, dst
         torch.cuda.empty_cache()
     return out_rows
@@ -453,17 +572,18 @@ def _plan_owner_units(spec: str, world: int) -> dict[int, set[int]]:
     return owner
 
 
-def _plan_relabel(old_own: dict[int, set[int]], new_own: dict[int, set[int]],
-                  world: int, gpus_per_node: int | None = None) -> dict[int, int]:
+def _plan_relabel(
+    old_own: dict[int, set[int]], new_own: dict[int, set[int]], world: int, gpus_per_node: int | None = None
+) -> dict[int, int]:
     """Greedy max-overlap map of physical GPU to new-plan slot, deterministic so every rank agrees without communication.
 
     The cost model assumes this relabel; rank-to-rank would cost the pd_4x4 swap W/2 instead of 0. gpus_per_node keeps each GPU on its own node.
     """
     gpn = gpus_per_node or world
-    edges = sorted(((len(old_own[p] & new_own[s]), p, s)
-                    for p in range(world) for s in range(world)
-                    if p // gpn == s // gpn),
-                   key=lambda e: (-e[0], e[1], e[2]))
+    edges = sorted(
+        ((len(old_own[p] & new_own[s]), p, s) for p in range(world) for s in range(world) if p // gpn == s // gpn),
+        key=lambda e: (-e[0], e[1], e[2]),
+    )
     phys_to_slot: dict[int, int] = {}
     used_slot: set[int] = set()
     for _, p, s in edges:
@@ -501,8 +621,7 @@ def _measure_plan(a, rank: int, world: int) -> list[dict]:
         final_own = {p: new_own[phys_to_slot[p]] for p in range(world)}
         my_fetch = sorted(my_new - old_own[rank])
         # Every rank must pick the same source: the lowest holder on the destination's node, else the lowest anywhere.
-        holders = {u: [r for r in range(world) if u in old_own[r]]
-                   for u in range(n_cells)}
+        holders = {u: [r for r in range(world) if u in old_own[r]] for u in range(n_cells)}
 
         def _src_for(u: int, dst: int) -> int:
             same = [r for r in holders[u] if r // gpn == dst // gpn]
@@ -515,17 +634,20 @@ def _measure_plan(a, rank: int, world: int) -> list[dict]:
         for r in range(world):
             if r == rank:
                 continue
-            fetched = sorted(u for u in (final_own[r] - old_own[r])
-                             if _src_for(u, r) == rank)
+            fetched = sorted(u for u in (final_own[r] - old_own[r]) if _src_for(u, r) == rank)
             my_send_runs += [(r, ln) for _peer, ln in _coalesce_runs([(u, r) for u in fetched])]
         inter_units = sum(1 for u in my_fetch if src_of[u] // gpn != rank // gpn)
         for wgb in a.weights_gb:
             unit_bytes = int(wgb * 1e9 / n_cells)
             unit_bytes -= unit_bytes % 4
-            recv_bufs = [(peer, torch.empty(ln * unit_bytes // 4, dtype=torch.float32,
-                                            device="cuda")) for peer, ln in my_recv_runs]
-            send_bufs = [(peer, torch.ones(ln * unit_bytes // 4, dtype=torch.float32,
-                                           device="cuda")) for peer, ln in my_send_runs]
+            recv_bufs = [
+                (peer, torch.empty(ln * unit_bytes // 4, dtype=torch.float32, device="cuda"))
+                for peer, ln in my_recv_runs
+            ]
+            send_bufs = [
+                (peer, torch.ones(ln * unit_bytes // 4, dtype=torch.float32, device="cuda"))
+                for peer, ln in my_send_runs
+            ]
 
             def _do() -> None:
                 ops = [dist.P2POp(dist.irecv, b, peer) for peer, b in recv_bufs]
@@ -535,21 +657,32 @@ def _measure_plan(a, rank: int, world: int) -> list[dict]:
                         w.wait()
 
             comm_ms = _time_ms(_do, a.iters)
-            local = torch.tensor([float(len(my_fetch) * unit_bytes),
-                                  float(inter_units * unit_bytes)], device="cuda")
+            local = torch.tensor([float(len(my_fetch) * unit_bytes), float(inter_units * unit_bytes)], device="cuda")
             dist.all_reduce(local, op=dist.ReduceOp.MAX)
             moved = float(local[0].item())  # bottleneck GPU
             inter = float(local[1].item())
             eff = moved / (comm_ms / 1e3) / 1e9 if (moved and comm_ms > 0) else 0.0
-            out_rows.append({"gpu": a.gpu_label, "world": world, "tp_from": pid,
-                             "tp_to": pid, "total_weight_gb": wgb, "k": pid,
-                             "bytes_moved_per_gpu": moved, "comm_ms": round(comm_ms, 4),
-                             "eff_gbps": round(eff, 2), "pattern": f"plan:{spec}",
-                             "bytes_inter_per_gpu": inter})
+            out_rows.append(
+                {
+                    "gpu": a.gpu_label,
+                    "world": world,
+                    "tp_from": pid,
+                    "tp_to": pid,
+                    "total_weight_gb": wgb,
+                    "k": pid,
+                    "bytes_moved_per_gpu": moved,
+                    "comm_ms": round(comm_ms, 4),
+                    "eff_gbps": round(eff, 2),
+                    "pattern": f"plan:{spec}",
+                    "bytes_inter_per_gpu": inter,
+                }
+            )
             if rank == 0:
-                print(f"plan {spec:22s} W={wgb:5.0f}GB  move {moved / 1e9:7.3f} GB/gpu"
-                      f" (x-node {inter / 1e9:6.3f})  {comm_ms:8.3f} ms  -> {eff:7.1f} GB/s",
-                      flush=True)
+                print(
+                    f"plan {spec:22s} W={wgb:5.0f}GB  move {moved / 1e9:7.3f} GB/gpu"
+                    f" (x-node {inter / 1e9:6.3f})  {comm_ms:8.3f} ms  -> {eff:7.1f} GB/s",
+                    flush=True,
+                )
             del recv_bufs, send_bufs
             torch.cuda.empty_cache()
     return out_rows

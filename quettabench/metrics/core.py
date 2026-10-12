@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 @dataclass
 class RequestResult:
     """Per-request benchmark result, shared by every backend."""
+
     success: bool
     ttft: float | None = None  # seconds
     itl: list = field(default_factory=list)  # seconds
@@ -75,15 +76,9 @@ class RequestResult:
     @property
     def tpot(self) -> float | None:
         """Mean ITL past the first token; falls back to (e2el - ttft) / (output_tokens - 1) when ITL covers under 80% of tokens, since multi-token chunks make it inter-chunk."""
-        wall_clock_ok = (
-            self.e2el is not None and self.ttft is not None
-            and self.output_tokens > 1
-        )
+        wall_clock_ok = self.e2el is not None and self.ttft is not None and self.output_tokens > 1
         if self.itl:
-            incomplete = (
-                self.output_tokens > 1
-                and len(self.itl) < 0.8 * (self.output_tokens - 1)
-            )
+            incomplete = self.output_tokens > 1 and len(self.itl) < 0.8 * (self.output_tokens - 1)
             if incomplete and wall_clock_ok:
                 return (self.e2el - self.ttft) / (self.output_tokens - 1)
             return sum(self.itl) / len(self.itl)
@@ -113,11 +108,7 @@ def annotate_request_observability(
     result.dispatch_started_at_s = dispatch_started_at_s
     result.semaphore_acquired_at_s = semaphore_acquired_at_s
     result.completed_at_s = completed_at_s
-    result.client_schedule_delay_s = (
-        dispatch_started_at_s - scheduled_at_s
-        if scheduled_at_s is not None
-        else None
-    )
+    result.client_schedule_delay_s = dispatch_started_at_s - scheduled_at_s if scheduled_at_s is not None else None
     result.client_queue_wait_s = max(0.0, semaphore_acquired_at_s - dispatch_started_at_s)
     result.client_request_wall_s = max(0.0, completed_at_s - semaphore_acquired_at_s)
 
@@ -157,8 +148,7 @@ def annotate_multi_turn_cache_estimate(
     result.cached_context_tokens = cached_context
     result.new_prefill_tokens = new_prefill
     result.cache_hit_rate = cached_context / total_context if total_context > 0 else 0.0
-    result.cache_estimate_source = ("previous_prompt_and_reply_tokens"
-                                   if reply_in_cache else "previous_prompt_tokens")
+    result.cache_estimate_source = "previous_prompt_and_reply_tokens" if reply_in_cache else "previous_prompt_tokens"
 
     if cache_block_size is not None and cache_block_size > 0:
         block_size = int(cache_block_size)
@@ -167,16 +157,12 @@ def annotate_multi_turn_cache_estimate(
         result.cache_block_size = block_size
         result.block_aligned_cached_context_tokens = aligned_cached
         result.block_aligned_new_prefill_tokens = aligned_new_prefill
-        result.block_aligned_cache_hit_rate = (
-            aligned_cached / total_context if total_context > 0 else 0.0
-        )
+        result.block_aligned_cache_hit_rate = aligned_cached / total_context if total_context > 0 else 0.0
         result.uncached_prefix_tail_tokens = cached_context - aligned_cached
         result.total_context_blocks = (total_context + block_size - 1) // block_size
         result.cached_context_blocks = aligned_cached // block_size
         result.new_prefill_blocks = (
-            (aligned_new_prefill + block_size - 1) // block_size
-            if aligned_new_prefill > 0
-            else 0
+            (aligned_new_prefill + block_size - 1) // block_size if aligned_new_prefill > 0 else 0
         )
     return result
 
@@ -502,9 +488,7 @@ def aggregate(
         summary.request_throughput = summary.successful_requests / window_s
         summary.input_token_throughput = summary.total_input_tokens / window_s
         summary.output_token_throughput = summary.total_output_tokens / window_s
-        summary.total_token_throughput = (
-            summary.total_input_tokens + summary.total_output_tokens
-        ) / window_s
+        summary.total_token_throughput = (summary.total_input_tokens + summary.total_output_tokens) / window_s
 
     busy_s, mean_inflight, max_inflight = _busy_time_and_load(results)
     summary.busy_time_s = busy_s
@@ -517,9 +501,7 @@ def aggregate(
         summary.busy_request_throughput = summary.successful_requests / busy_s
         summary.busy_input_token_throughput = summary.total_input_tokens / busy_s
         summary.busy_output_token_throughput = summary.total_output_tokens / busy_s
-        summary.busy_total_token_throughput = (
-            summary.total_input_tokens + summary.total_output_tokens
-        ) / busy_s
+        summary.busy_total_token_throughput = (summary.total_input_tokens + summary.total_output_tokens) / busy_s
 
     if ttfts:
         summary.mean_ttft_ms = statistics.mean(ttfts)
@@ -551,6 +533,7 @@ def aggregate(
 @dataclass
 class TurnSummary:
     """Per-turn metrics for a multi-turn run."""
+
     turn_index: int
     num_requests: int = 0
     successful: int = 0
@@ -686,6 +669,7 @@ def aggregate_per_turn(results_by_turn: dict[int, list]) -> list[TurnSummary]:
 
 # Run gates return (verdict, message): verdict is "pass", "warn" or "abort", message is None on pass.
 
+
 def success_rate_gate(summary, min_rate: float) -> tuple[str, str | None]:
     """Abort when no request completed or the success rate is below min_rate."""
     if summary.num_requests == 0:
@@ -693,8 +677,10 @@ def success_rate_gate(summary, min_rate: float) -> tuple[str, str | None]:
     rate = summary.successful_requests / summary.num_requests
     if rate < min_rate:
         kinds = ", ".join(f"{k}={v}" for k, v in sorted(summary.error_kinds.items()))
-        return "abort", (f"ABORT: Success rate {rate:.1%} below minimum {min_rate:.0%} "
-                         f"({summary.successful_requests}/{summary.num_requests}); failures: {kinds}")
+        return "abort", (
+            f"ABORT: Success rate {rate:.1%} below minimum {min_rate:.0%} "
+            f"({summary.successful_requests}/{summary.num_requests}); failures: {kinds}"
+        )
     return "pass", None
 
 
@@ -703,12 +689,16 @@ def usage_gate(summary, allow_missing: bool) -> tuple[str, str | None]:
     if summary.successful_requests == 0 or summary.usage_reported_requests > 0:
         return "pass", None
     if allow_missing:
-        return "warn", ("WARNING: no usage block in any response; token counts and throughputs "
-                        "are zero-filled. Continuing because --allow-missing-usage was passed.")
-    return "abort", ("ABORT: no response carried a usage block, so every token count and "
-                     "throughput in this run would be 0 rather than measured. The server must "
-                     "honour stream_options.include_usage. Pass --allow-missing-usage to record "
-                     "the run anyway (latency metrics stay valid; token metrics do not).")
+        return "warn", (
+            "WARNING: no usage block in any response; token counts and throughputs "
+            "are zero-filled. Continuing because --allow-missing-usage was passed."
+        )
+    return "abort", (
+        "ABORT: no response carried a usage block, so every token count and "
+        "throughput in this run would be 0 rather than measured. The server must "
+        "honour stream_options.include_usage. Pass --allow-missing-usage to record "
+        "the run anyway (latency metrics stay valid; token metrics do not)."
+    )
 
 
 def transient_gate(num_requests: int, concurrency: int) -> tuple[str, str | None]:
@@ -718,13 +708,15 @@ def transient_gate(num_requests: int, concurrency: int) -> tuple[str, str | None
     per_slot = num_requests / concurrency
     if per_slot >= 4:
         return "pass", None
-    return "warn", "\n".join([
-        f"WARNING: only {per_slot:.1f} requests per concurrency slot "
-        f"({num_requests} requests at concurrency {concurrency}).",
-        "         The run is dominated by the startup wave and the drain tail, with no",
-        "         steady-state middle. --discard-first cannot recover it; raise --num-requests",
-        f"         to at least {concurrency * 8} for a settled measurement.",
-    ])
+    return "warn", "\n".join(
+        [
+            f"WARNING: only {per_slot:.1f} requests per concurrency slot "
+            f"({num_requests} requests at concurrency {concurrency}).",
+            "         The run is dominated by the startup wave and the drain tail, with no",
+            "         steady-state middle. --discard-first cannot recover it; raise --num-requests",
+            f"         to at least {concurrency * 8} for a settled measurement.",
+        ]
+    )
 
 
 def first_error(results) -> str:
@@ -740,16 +732,21 @@ def print_multi_turn_summary(turn_summaries: list, overall: BenchmarkSummary) ->
     print(f"{'=' * 98}")
     print(" Per-Turn Breakdown (prefix cache effect visible in TTFT trend)")
     print(f"{'=' * 98}")
-    print(f" {'Turn':>4}  {'Reqs':>5}  {'Avg ISL':>8}  {'New p50':>8}  {'Cache p50':>9}  "
-          f"{'Hit p50':>7}  {'TTFT p50':>9}  {'TTFT p90':>9}  {'TPOT p50':>9}  {'E2EL p50':>9}")
-    print(f" {'─' * 4}  {'─' * 5}  {'─' * 8}  {'─' * 8}  {'─' * 9}  {'─' * 7}  "
-          f"{'─' * 9}  {'─' * 9}  {'─' * 9}  {'─' * 9}")
+    print(
+        f" {'Turn':>4}  {'Reqs':>5}  {'Avg ISL':>8}  {'New p50':>8}  {'Cache p50':>9}  "
+        f"{'Hit p50':>7}  {'TTFT p50':>9}  {'TTFT p90':>9}  {'TPOT p50':>9}  {'E2EL p50':>9}"
+    )
+    print(
+        f" {'─' * 4}  {'─' * 5}  {'─' * 8}  {'─' * 8}  {'─' * 9}  {'─' * 7}  {'─' * 9}  {'─' * 9}  {'─' * 9}  {'─' * 9}"
+    )
     for ts in turn_summaries:
-        print(f" {ts.turn_index + 1:>4}  {ts.successful:>5}  {ts.avg_input_tokens:>8.0f}  "
-              f"{ts.median_new_prefill_tokens:>8.0f}  {ts.median_cached_context_tokens:>9.0f}  "
-              f"{ts.median_cache_hit_rate * 100:>6.0f}%  "
-              f"{ts.median_ttft_ms:>8.1f}ms  {ts.p90_ttft_ms:>8.1f}ms  "
-              f"{ts.median_tpot_ms:>8.1f}ms  {ts.median_e2el_ms:>8.1f}ms")
+        print(
+            f" {ts.turn_index + 1:>4}  {ts.successful:>5}  {ts.avg_input_tokens:>8.0f}  "
+            f"{ts.median_new_prefill_tokens:>8.0f}  {ts.median_cached_context_tokens:>9.0f}  "
+            f"{ts.median_cache_hit_rate * 100:>6.0f}%  "
+            f"{ts.median_ttft_ms:>8.1f}ms  {ts.p90_ttft_ms:>8.1f}ms  "
+            f"{ts.median_tpot_ms:>8.1f}ms  {ts.median_e2el_ms:>8.1f}ms"
+        )
     print(f"{'=' * 98}\n")
 
 
@@ -761,23 +758,25 @@ def print_summary(s: BenchmarkSummary) -> None:
     print(f" Duration:                 {s.duration_s:.2f}s")
     print(f" Requests:                 {s.successful_requests} ok / {s.failed_requests} failed")
     if s.excluded_requests:
-        print(f" Held out (--discard-first): {s.excluded_requests} request(s); "
-              f"window {s.measured_window_s:.2f}s")
-    busy_pct = (f" ({100.0 * s.busy_time_s / s.measured_window_s:.1f}% of window)"
-                if s.measured_window_s > 0 else "")
+        print(f" Held out (--discard-first): {s.excluded_requests} request(s); window {s.measured_window_s:.2f}s")
+    busy_pct = f" ({100.0 * s.busy_time_s / s.measured_window_s:.1f}% of window)" if s.measured_window_s > 0 else ""
     print(f" Busy time:                {s.busy_time_s:.2f}s{busy_pct}")
-    print(f" Mean in-flight requests:  {s.mean_inflight_requests:.1f} "
-          f"(peak {s.max_inflight_requests}; "
-          f"1st half {s.mean_inflight_first_half:.1f} -> "
-          f"2nd half {s.mean_inflight_second_half:.1f})")
-    print(f" Request throughput:       {s.request_throughput:.2f} req/s "
-          f"(busy: {s.busy_request_throughput:.2f})")
-    print(f" Input token throughput:   {s.input_token_throughput:.0f} tok/s "
-          f"(busy: {s.busy_input_token_throughput:.0f})")
-    print(f" Output token throughput:  {s.output_token_throughput:.0f} tok/s "
-          f"(busy: {s.busy_output_token_throughput:.0f})")
-    print(f" Total token throughput:   {s.total_token_throughput:.0f} tok/s "
-          f"(busy: {s.busy_total_token_throughput:.0f})")
+    print(
+        f" Mean in-flight requests:  {s.mean_inflight_requests:.1f} "
+        f"(peak {s.max_inflight_requests}; "
+        f"1st half {s.mean_inflight_first_half:.1f} -> "
+        f"2nd half {s.mean_inflight_second_half:.1f})"
+    )
+    print(f" Request throughput:       {s.request_throughput:.2f} req/s (busy: {s.busy_request_throughput:.2f})")
+    print(
+        f" Input token throughput:   {s.input_token_throughput:.0f} tok/s (busy: {s.busy_input_token_throughput:.0f})"
+    )
+    print(
+        f" Output token throughput:  {s.output_token_throughput:.0f} tok/s (busy: {s.busy_output_token_throughput:.0f})"
+    )
+    print(
+        f" Total token throughput:   {s.total_token_throughput:.0f} tok/s (busy: {s.busy_total_token_throughput:.0f})"
+    )
     # Mean in-flight against --concurrency only means something under closed loop; open loop asks whether the server kept up with the offered rate.
     if s.load_mode == "open-loop" and s.target_rate > 0:
         if s.sessions_completed:
@@ -785,12 +784,13 @@ def print_summary(s: BenchmarkSummary) -> None:
         else:
             served, unit = s.request_throughput, "req/s"
         # Two signals: in-flight growth catches overload only while arrivals continue, and the served/offered ratio reads slightly low from the final drain, so 0.75 leaves room for a healthy run.
-        growing = (s.mean_inflight_first_half > 0.5
-                   and s.mean_inflight_second_half > 1.5 * s.mean_inflight_first_half)
+        growing = s.mean_inflight_first_half > 0.5 and s.mean_inflight_second_half > 1.5 * s.mean_inflight_first_half
         rate_short = served < 0.75 * s.target_rate
-        print(f" NOTE: offered {s.target_rate:.2f} {unit}, served {served:.2f} {unit} "
-              f"({served / s.target_rate * 100:.0f}% of offered; mean in-flight "
-              f"{s.mean_inflight_requests:.1f}).")
+        print(
+            f" NOTE: offered {s.target_rate:.2f} {unit}, served {served:.2f} {unit} "
+            f"({served / s.target_rate * 100:.0f}% of offered; mean in-flight "
+            f"{s.mean_inflight_requests:.1f})."
+        )
         if rate_short or growing:
             why = []
             if rate_short:
@@ -805,46 +805,53 @@ def print_summary(s: BenchmarkSummary) -> None:
             print("       measures latency at that rate, NOT capacity. Raise")
             print("       --target-rate to find saturation.")
     elif s.concurrency and s.mean_inflight_requests < 0.7 * s.concurrency:
-        print(f" NOTE: mean in-flight ({s.mean_inflight_requests:.1f}) is well below "
-              f"concurrency ({s.concurrency}).")
+        print(f" NOTE: mean in-flight ({s.mean_inflight_requests:.1f}) is well below concurrency ({s.concurrency}).")
         print("       The server was idle or draining for much of the run, so the")
         print("       throughput above reflects the schedule, not its capacity.")
 
     # Growing in-flight means arrivals outran departures, so the averages depend on when measurement stopped.
     _f, _s2 = s.mean_inflight_first_half, s.mean_inflight_second_half
     if _f > 0.5 and _s2 > 1.5 * _f:
-        print(f" WARNING: in-flight grew {_f:.1f} -> {_s2:.1f} across the run "
-              f"({_s2 / _f:.1f}x).")
+        print(f" WARNING: in-flight grew {_f:.1f} -> {_s2:.1f} across the run ({_s2 / _f:.1f}x).")
         print("          The queue never stabilised, so these averages depend on run")
         print("          length and are not a steady-state measurement. Lower the")
         print("          offered load, or run long enough to reach equilibrium.")
 
     # Steady decode has TPOT mean near median; a mean well above it means intermittent stalls.
     if s.median_tpot_ms > 0 and s.mean_tpot_ms > 2.0 * s.median_tpot_ms:
-        print(f" WARNING: TPOT mean ({s.mean_tpot_ms:.1f} ms) is "
-              f"{s.mean_tpot_ms / s.median_tpot_ms:.1f}x its median "
-              f"({s.median_tpot_ms:.1f} ms).")
+        print(
+            f" WARNING: TPOT mean ({s.mean_tpot_ms:.1f} ms) is "
+            f"{s.mean_tpot_ms / s.median_tpot_ms:.1f}x its median "
+            f"({s.median_tpot_ms:.1f} ms)."
+        )
         print("          Decode was intermittently stalled rather than uniformly slow.")
         print("          Usual causes: kernel JIT at an unwarmed batch shape, scheduler")
         print("          preemption, or host stalls. The median is the reliable figure.")
 
     # Kernel JIT compiles per batch shape, so a width beyond what warmup exercised compiles during measurement.
     if s.warmup_concurrency and s.max_inflight_requests > s.warmup_concurrency:
-        print(f" WARNING: peak in-flight ({s.max_inflight_requests}) exceeded the warmup "
-              f"width ({s.warmup_concurrency}).")
+        print(
+            f" WARNING: peak in-flight ({s.max_inflight_requests}) exceeded the warmup width ({s.warmup_concurrency})."
+        )
         print("          Batch shapes past the warmup width may have compiled during")
-        print(f"          measurement. Re-run with --warmup-concurrency "
-              f">= {s.max_inflight_requests}.")
+        print(f"          measurement. Re-run with --warmup-concurrency >= {s.max_inflight_requests}.")
     print(f"{'─' * 52}")
-    print(f" TTFT  mean/p50/p90/p99:   {s.mean_ttft_ms:.1f} / {s.median_ttft_ms:.1f} / {s.p90_ttft_ms:.1f} / {s.p99_ttft_ms:.1f} ms")
-    print(f" TPOT  mean/p50/p90/p99:   {s.mean_tpot_ms:.1f} / {s.median_tpot_ms:.1f} / {s.p90_tpot_ms:.1f} / {s.p99_tpot_ms:.1f} ms")
-    print(f" ITL   mean/p50/p90/p99:   {s.mean_itl_ms:.1f} / {s.median_itl_ms:.1f} / {s.p90_itl_ms:.1f} / {s.p99_itl_ms:.1f} ms")
-    print(f" E2EL  mean/p50/p90/p99:   {s.mean_e2el_ms:.1f} / {s.median_e2el_ms:.1f} / {s.p90_e2el_ms:.1f} / {s.p99_e2el_ms:.1f} ms")
+    print(
+        f" TTFT  mean/p50/p90/p99:   {s.mean_ttft_ms:.1f} / {s.median_ttft_ms:.1f} / {s.p90_ttft_ms:.1f} / {s.p99_ttft_ms:.1f} ms"
+    )
+    print(
+        f" TPOT  mean/p50/p90/p99:   {s.mean_tpot_ms:.1f} / {s.median_tpot_ms:.1f} / {s.p90_tpot_ms:.1f} / {s.p99_tpot_ms:.1f} ms"
+    )
+    print(
+        f" ITL   mean/p50/p90/p99:   {s.mean_itl_ms:.1f} / {s.median_itl_ms:.1f} / {s.p90_itl_ms:.1f} / {s.p99_itl_ms:.1f} ms"
+    )
+    print(
+        f" E2EL  mean/p50/p90/p99:   {s.mean_e2el_ms:.1f} / {s.median_e2el_ms:.1f} / {s.p90_e2el_ms:.1f} / {s.p99_e2el_ms:.1f} ms"
+    )
     print(f"{'=' * 52}\n")
     if s.timeout_requests:
         pct = 100.0 * s.timeout_requests / s.num_requests if s.num_requests else 0.0
-        print(f" WARNING: {s.timeout_requests} request(s) ({pct:.1f}%) hit the client "
-              f"timeout and were cut off.")
+        print(f" WARNING: {s.timeout_requests} request(s) ({pct:.1f}%) hit the client timeout and were cut off.")
         print("          The percentiles above EXCLUDE them, so the latency tail is")
         print("          censored and biased low. Raise --timeout or lower the load")
         print("          before treating this cell as ground truth.\n")
@@ -855,22 +862,26 @@ def print_summary(s: BenchmarkSummary) -> None:
         kinds = ", ".join(f"{k}={v}" for k, v in sorted(s.error_kinds.items()))
         print(f" Failure kinds: {kinds}")
         if s.failed_with_partial_ttft:
-            print(f" ({s.failed_with_partial_ttft} failed request(s) recorded a partial "
-                  f"TTFT; see per_request in the result JSON)")
+            print(
+                f" ({s.failed_with_partial_ttft} failed request(s) recorded a partial "
+                f"TTFT; see per_request in the result JSON)"
+            )
     if s.errors:
-        print(f" Errors ({len(s.errors)} total, first {min(3,len(s.errors))}):")
+        print(f" Errors ({len(s.errors)} total, first {min(3, len(s.errors))}):")
         for e in s.errors[:3]:
             print(f"   {e}")
         print()
 
 
 # vLLM's speculative-decoding counters; they exist only on a server with spec decoding.
-SPEC_COUNTERS = {"accepted_tokens": "vllm:spec_decode_num_accepted_tokens",
-                 "draft_tokens": "vllm:spec_decode_num_draft_tokens",
-                 "drafts": "vllm:spec_decode_num_drafts"}
+SPEC_COUNTERS = {
+    "accepted_tokens": "vllm:spec_decode_num_accepted_tokens",
+    "draft_tokens": "vllm:spec_decode_num_draft_tokens",
+    "drafts": "vllm:spec_decode_num_drafts",
+}
 
 # name{labels} value [timestamp]; label values may hold escaped quotes.
-SAMPLE = re.compile(r'^([a-zA-Z_:][a-zA-Z0-9_:]*)(?:\{(.*)\})?\s+(\S+)(?:\s+\S+)?$')
+SAMPLE = re.compile(r"^([a-zA-Z_:][a-zA-Z0-9_:]*)(?:\{(.*)\})?\s+(\S+)(?:\s+\S+)?$")
 LABEL = re.compile(r'([a-zA-Z_][a-zA-Z0-9_]*)="((?:[^"\\]|\\.)*)"')
 
 

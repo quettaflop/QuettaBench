@@ -47,10 +47,8 @@ class Request:
 
 def messages_digest(messages):
     """sha256 of the messages as canonical JSON, assistant content left out because a live run writes replies there."""
-    plain = [{k: v for k, v in m.items() if not (m.get("role") == "assistant" and k == "content")}
-             for m in messages]
-    return hashlib.sha256(json.dumps(plain, sort_keys=True, separators=(",", ":"))
-                          .encode()).hexdigest()
+    plain = [{k: v for k, v in m.items() if not (m.get("role") == "assistant" and k == "content")} for m in messages]
+    return hashlib.sha256(json.dumps(plain, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
 def request_digest(r):
@@ -138,8 +136,7 @@ class DrawnTrace(Trace):
 
     def source_meta(self):
         p = self.profile
-        meta = ({"profile": p.name, "dataset": p.dataset, "path": p.file_path} if p
-                else {"reader": type(self).__name__})
+        meta = {"profile": p.name, "dataset": p.dataset, "path": p.file_path} if p else {"reader": type(self).__name__}
         return {**meta, "reqs": len(self._requests)}
 
 
@@ -150,14 +147,14 @@ def uniform_len_bounds(input_len, range_ratio):
 
 def load_tokenizer(name):
     from transformers import AutoTokenizer  # only random-token traces need it
+
     return AutoTokenizer.from_pretrained(name)
 
 
 class RandomTokenTrace(DrawnTrace):
     """InferenceX's random-token workload for cross-validation: ids (offset_i + i + j) % vocab decoded, re-encoded and trimmed or padded to the target length, sent as one user message. Random tokens trigger early EOS, so output lengths are unreliable."""
 
-    def __init__(self, tokenizer_name, input_len=1024, output_len=1024, num_prompts=500,
-                 range_ratio=1.0, seed=0):
+    def __init__(self, tokenizer_name, input_len=1024, output_len=1024, num_prompts=500, range_ratio=1.0, seed=0):
         super().__init__()
         self.output_len = output_len
         self.tokenizer = load_tokenizer(tokenizer_name)
@@ -178,8 +175,7 @@ class RandomTokenTrace(DrawnTrace):
             if len(re_encoded) > tgt_len:
                 re_encoded = re_encoded[:tgt_len]
             elif len(re_encoded) < tgt_len:
-                re_encoded.extend(rng.integers(0, tokenizer.vocab_size,
-                                               size=tgt_len - len(re_encoded)).tolist())
+                re_encoded.extend(rng.integers(0, tokenizer.vocab_size, size=tgt_len - len(re_encoded)).tolist())
             prompts.append(tokenizer.decode(re_encoded))
         return prompts
 
@@ -189,5 +185,10 @@ class RandomTokenTrace(DrawnTrace):
     def get_next_request(self):
         prompt = self.prompts[self._idx % len(self.prompts)]
         self._idx += 1
-        return Request([], 0, output_length=self.output_len,
-                       messages=[{"role": "user", "content": self.content(prompt)}], metadata={})
+        return Request(
+            [],
+            0,
+            output_length=self.output_len,
+            messages=[{"role": "user", "content": self.content(prompt)}],
+            metadata={},
+        )

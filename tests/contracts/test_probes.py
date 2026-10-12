@@ -1,4 +1,5 @@
 """probes/base.py run recording and remote runs, and every probe's justfile and flag contracts."""
+
 from __future__ import annotations
 
 import argparse
@@ -71,6 +72,7 @@ class RunRecorded(unittest.TestCase):
     def test_failure_is_recorded_and_raised(self):
         def boom(argv):
             raise RuntimeError("no GPU")
+
         raised, doc, _ = recorded(["--gpu-label", "H100", "--out", "<TD>"], boom)
         self.assertIsInstance(raised, RuntimeError)
         self.assertEqual(doc["run_status"], {"status": "failed", "reason": "RuntimeError: no GPU"})
@@ -90,8 +92,12 @@ class RunRecorded(unittest.TestCase):
                 self.assertEqual(found, files)
 
     def test_a_probe_that_names_its_file(self):
-        _, _, files = recorded(["--out-raw", "<TD>/h100/raw.jsonl.gz"], lambda argv: None,
-                               name="serving_decode_grid", file_flag="--out-raw")
+        _, _, files = recorded(
+            ["--out-raw", "<TD>/h100/raw.jsonl.gz"],
+            lambda argv: None,
+            name="serving_decode_grid",
+            file_flag="--out-raw",
+        )
         self.assertEqual(files, ["h100/run.json"])
 
     def test_emitted_rows_and_run_json_share_the_run_dir(self):
@@ -100,8 +106,11 @@ class RunRecorded(unittest.TestCase):
         def main(argv):
             emit(row)
             emit(row)
-        with tempfile.TemporaryDirectory() as td, \
-                mock.patch.object(sys, "argv", ["probe", "--gpu-label", "H100", "--out", td]):
+
+        with (
+            tempfile.TemporaryDirectory() as td,
+            mock.patch.object(sys, "argv", ["probe", "--gpu-label", "H100", "--out", td]),
+        ):
             run_recorded(main, "gemm", now=NOW)
             run = Path(td, "gemm", RUN)
             self.assertEqual(sorted(p.name for p in run.iterdir()), ["requests.jsonl", "rows.jsonl", "run.json"])
@@ -123,6 +132,7 @@ class RunRecorded(unittest.TestCase):
 
             def run_point(self, point):
                 return None if point == 2 else ProbeRow("x", "x/A.csv", {"n": point}, {"us": 1}, "eager")
+
         writer = mock.Mock()
         cfg = Config(EngineCfg(), WorkloadCfg(), ModeCfg(), HardwareCfg(), run_name="x")
         with probes_base.run_config(cfg, writer):
@@ -132,9 +142,13 @@ class RunRecorded(unittest.TestCase):
     def test_a_qbench_run_probe_writes_its_rows_into_the_run_dir(self):
         def main(argv):
             emit(ProbeRow("gemm", "gemm/A.csv", {"M": 1}, {"us": 2}, "eager"))
-        with tempfile.TemporaryDirectory() as td, mock.patch.dict(os.environ), \
-                mock.patch.dict(sys.modules, {"quettabench.probes.gemm": mock.Mock(main=main)}), \
-                mock.patch.object(runner.launcher, "idle_gpus", return_value="0"):
+
+        with (
+            tempfile.TemporaryDirectory() as td,
+            mock.patch.dict(os.environ),
+            mock.patch.dict(sys.modules, {"quettabench.probes.gemm": mock.Mock(main=main)}),
+            mock.patch.object(runner.launcher, "idle_gpus", return_value="0"),
+        ):
             runner.run_probe(probe_cfg("gemm"), Path(td))
             self.assertEqual(json.loads(Path(td, "rows.jsonl").read_text())["table"], "gemm/A.csv")
             self.assertTrue(Path(td, "run.json").is_file())
@@ -145,27 +159,36 @@ class RunRecorded(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             argv = ["probe", "--gpu-label", "H100", "--out", td]
             for i, fails in enumerate((False, True)):
-                with mock.patch.object(sys, "argv", argv), \
-                        contextlib.suppress(RuntimeError):
-                    run_recorded(mock.Mock(side_effect=RuntimeError("x") if fails else None),
-                                 "gemm", now=NOW + timedelta(seconds=i))
-            docs = {p.parent.name: json.loads(p.read_text())["run_status"]["status"]
-                    for p in Path(td).rglob("run.json")}
+                with mock.patch.object(sys, "argv", argv), contextlib.suppress(RuntimeError):
+                    run_recorded(
+                        mock.Mock(side_effect=RuntimeError("x") if fails else None),
+                        "gemm",
+                        now=NOW + timedelta(seconds=i),
+                    )
+            docs = {
+                p.parent.name: json.loads(p.read_text())["run_status"]["status"] for p in Path(td).rglob("run.json")
+            }
         self.assertEqual(docs, {RUN: "ok", run_id(NOW + timedelta(seconds=1)): "failed"})
 
     def test_a_run_dir_that_already_exists_is_refused(self):
         """Two runs started in one microsecond, or a hand-made dir, would share
         a run dir; the second run is refused before main, files untouched."""
         for argv, kw, made in (
-                (["--gpu-label", "H100", "--out", "<TD>"], {}, f"gemm/{RUN}"),
-                (["--out-raw", "<TD>/h100/raw.jsonl.gz"],
-                 {"name": "serving_decode_grid", "file_flag": "--out-raw"}, "h100")):
+            (["--gpu-label", "H100", "--out", "<TD>"], {}, f"gemm/{RUN}"),
+            (
+                ["--out-raw", "<TD>/h100/raw.jsonl.gz"],
+                {"name": "serving_decode_grid", "file_flag": "--out-raw"},
+                "h100",
+            ),
+        ):
             with self.subTest(made), tempfile.TemporaryDirectory() as td:
                 (Path(td) / made).mkdir(parents=True)
                 (Path(td) / made / "notes.txt").write_text("mine\n")
                 main = mock.Mock()
-                with mock.patch.object(sys, "argv", ["probe", *(a.replace("<TD>", td) for a in argv)]), \
-                        self.assertRaisesRegex(SystemExit, "already exists"):
+                with (
+                    mock.patch.object(sys, "argv", ["probe", *(a.replace("<TD>", td) for a in argv)]),
+                    self.assertRaisesRegex(SystemExit, "already exists"),
+                ):
                     run_recorded(main, kw.get("name", "gemm"), now=NOW, file_flag=kw.get("file_flag"))
                 main.assert_not_called()
                 self.assertEqual(sorted(p.name for p in (Path(td) / made).iterdir()), ["notes.txt"])
@@ -205,8 +228,13 @@ def main_def(name):
 
 
 def probe_cfg(name):
-    return Config(EngineCfg(), WorkloadCfg(), ModeCfg(mode="probe", probe=name, probe_args="--gpu A"),
-                  HardwareCfg(), run_name=f"p-{name}")
+    return Config(
+        EngineCfg(),
+        WorkloadCfg(),
+        ModeCfg(mode="probe", probe=name, probe_args="--gpu A"),
+        HardwareCfg(),
+        run_name=f"p-{name}",
+    )
 
 
 @pytest.mark.parametrize("name", probe_modules())
@@ -236,13 +264,17 @@ class LaunchVllm(unittest.TestCase):
     def test_server_goes_through_the_adapter_and_launcher(self):
         # by name: other tests re-import quettabench.engines.launcher
         with mock.patch("quettabench.engines.launcher.start") as start:
-            launch_vllm(Path("/r/serving_stage_split"), "/w/llama", port=8794, max_model_len=32768,
-                        prefix_caching=True, timeout_s=420,
-                        vllm_flags={"served_model_name": "llama", "api_key": "test",
-                                    "no_enable_log_requests": True})
+            launch_vllm(
+                Path("/r/serving_stage_split"),
+                "/w/llama",
+                port=8794,
+                max_model_len=32768,
+                prefix_caching=True,
+                timeout_s=420,
+                vllm_flags={"served_model_name": "llama", "api_key": "test", "no_enable_log_requests": True},
+            )
         spec, run_dir = start.call_args.args
-        self.assertEqual((run_dir, start.call_args.kwargs), (Path("/r/serving_stage_split"),
-                                                             {"timeout_s": 420}))
+        self.assertEqual((run_dir, start.call_args.kwargs), (Path("/r/serving_stage_split"), {"timeout_s": 420}))
         argv = list(spec.server_argv)
         self.assertEqual((Path(argv[0]).name, argv[1:3]), ("vllm", ["serve", "/w/llama"]))
         for flag in ("--enable-prefix-caching", "--served-model-name", "--no-enable-log-requests"):
@@ -252,8 +284,9 @@ class LaunchVllm(unittest.TestCase):
         self.assertEqual(argv[argv.index("--port") + 1], "8794")
 
     def test_a_run_probe_launches_with_the_runs_hardware(self):
-        cfg = dataclasses.replace(probe_cfg("serving_stage_split"),
-                                  hardware=HardwareCfg(provision={"py": "/venv/bin/python"}))
+        cfg = dataclasses.replace(
+            probe_cfg("serving_stage_split"), hardware=HardwareCfg(provision={"py": "/venv/bin/python"})
+        )
         with mock.patch("quettabench.engines.launcher.start") as start:
             with probes_base.run_config(cfg):
                 launch_vllm(Path("/r/x"), "/w", port=1, max_model_len=8, prefix_caching=False)
@@ -274,33 +307,84 @@ class LaunchVllm(unittest.TestCase):
             spec = start.call_args.args[0]
             return [Path(spec.server_argv[0]).name, *spec.server_argv[1:]], dict(spec.env)
 
-        common = ["--tensor-parallel-size", "1", "--dtype", "bfloat16", "--max-model-len", "32768",
-                  "--gpu-memory-utilization", "0.9"]
-        tail = ["--enable-chunked-prefill", "--trust-remote-code", "--served-model-name", "llama",
-                "--host", "127.0.0.1"]
+        common = [
+            "--tensor-parallel-size",
+            "1",
+            "--dtype",
+            "bfloat16",
+            "--max-model-len",
+            "32768",
+            "--gpu-memory-utilization",
+            "0.9",
+        ]
+        tail = [
+            "--enable-chunked-prefill",
+            "--trust-remote-code",
+            "--served-model-name",
+            "llama",
+            "--host",
+            "127.0.0.1",
+        ]
         env = {"VLLM_SERVER_DEV_MODE": "1", "VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS": "1"}
         with tempfile.TemporaryDirectory() as td:
             Path(td, "server.log").write_text("")
-            split = launched(lambda: serving_stage_split.launch_server(
-                "/w", 8794, 0.9, 32768, "k", "sha256", Path(td)))
-            grid = launched(lambda: serving_decode_grid.launch_server(
-                "/w", 8795, 0.9, 32768, "k", Path(td), 1, 256, 8192))
-        self.assertEqual(split, (["vllm", "serve", "/w", "--port", "8794", *common,
-                                  "--enable-prefix-caching", *tail,
-                                  "--no-enable-log-requests", "--prefix-caching-hash-algo",
-                                  "sha256"], {**env, "VLLM_API_KEY": "k"}))
-        self.assertEqual(grid, (["vllm", "serve", "/w", "--port", "8795", *common,
-                                 "--no-enable-prefix-caching", *tail, "--max-num-seqs", "256",
-                                 "--max-num-batched-tokens", "8192",
-                                 "--no-enable-log-requests"], {**env, "VLLM_API_KEY": "k"}))
+            split = launched(lambda: serving_stage_split.launch_server("/w", 8794, 0.9, 32768, "k", "sha256", Path(td)))
+            grid = launched(
+                lambda: serving_decode_grid.launch_server("/w", 8795, 0.9, 32768, "k", Path(td), 1, 256, 8192)
+            )
+        self.assertEqual(
+            split,
+            (
+                [
+                    "vllm",
+                    "serve",
+                    "/w",
+                    "--port",
+                    "8794",
+                    *common,
+                    "--enable-prefix-caching",
+                    *tail,
+                    "--no-enable-log-requests",
+                    "--prefix-caching-hash-algo",
+                    "sha256",
+                ],
+                {**env, "VLLM_API_KEY": "k"},
+            ),
+        )
+        self.assertEqual(
+            grid,
+            (
+                [
+                    "vllm",
+                    "serve",
+                    "/w",
+                    "--port",
+                    "8795",
+                    *common,
+                    "--no-enable-prefix-caching",
+                    *tail,
+                    "--max-num-seqs",
+                    "256",
+                    "--max-num-batched-tokens",
+                    "8192",
+                    "--no-enable-log-requests",
+                ],
+                {**env, "VLLM_API_KEY": "k"},
+            ),
+        )
 
     def test_no_probe_starts_a_process(self):
         for path in sorted(PROBES.glob("*.py")):
-            calls = {f"{n.func.value.id}.{n.func.attr}" for n in ast.walk(ast.parse(path.read_text()))
-                     if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
-                     and isinstance(n.func.value, ast.Name)}
-            self.assertFalse(calls & {"subprocess.Popen", "launcher.start"} - (
-                {"launcher.start"} if path.name == "base.py" else set()), path.name)
+            calls = {
+                f"{n.func.value.id}.{n.func.attr}"
+                for n in ast.walk(ast.parse(path.read_text()))
+                if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and isinstance(n.func.value, ast.Name)
+            }
+            self.assertFalse(
+                calls
+                & {"subprocess.Popen", "launcher.start"} - ({"launcher.start"} if path.name == "base.py" else set()),
+                path.name,
+            )
 
 
 class StageSplitKey(unittest.TestCase):
@@ -324,15 +408,14 @@ class StageSplitKey(unittest.TestCase):
             async def __aexit__(self, *exc):
                 return False
 
-        with mock.patch.object(sss.aiohttp, "ClientSession", Session), \
-                self.assertRaises(Stop):
-            sss.asyncio.run(sss.run_sweep("http://h:1", "llama", [8], [0], 1, "/dev/null",
-                                          api_key="sk-live"))
+        with mock.patch.object(sss.aiohttp, "ClientSession", Session), self.assertRaises(Stop):
+            sss.asyncio.run(sss.run_sweep("http://h:1", "llama", [8], [0], 1, "/dev/null", api_key="sk-live"))
         self.assertEqual(made[0]["headers"], {"Authorization": "Bearer sk-live"})
         self.assertNotIn("Bearer test", (PROBES / "serving_stage_split.py").read_text())
 
     def test_the_nsys_command_takes_the_key_from_the_env(self):
         from quettabench.probes import serving_stage_split as sss
+
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             sss.main(["--model", "/w", "--emit-nsys-cmd", "--api-key", "sk-live", "--out", "x.csv"])
@@ -343,6 +426,7 @@ class StageSplitKey(unittest.TestCase):
         """With no --out the probe would write a table record_dir cannot place;
         argparse refuses before anything is written."""
         from quettabench.probes import serving_stage_split as sss
+
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as stop:
             sss.main(["--model", "/w", "--no-launch"])
         self.assertEqual(stop.exception.code, 2)
@@ -355,8 +439,7 @@ def import_without_torch(name):
     fake.nn = types.ModuleType("torch.nn")
     fake.nn.functional = types.ModuleType("torch.nn.functional")
     fake.bfloat16 = "bfloat16"  # moe's module-level dtype
-    with mock.patch.dict(sys.modules, {"torch": fake, "torch.nn": fake.nn,
-                                       "torch.nn.functional": fake.nn.functional}):
+    with mock.patch.dict(sys.modules, {"torch": fake, "torch.nn": fake.nn, "torch.nn.functional": fake.nn.functional}):
         sys.modules.pop(f"quettabench.probes.{name}", None)
         return importlib.import_module(f"quettabench.probes.{name}")
 
@@ -365,8 +448,12 @@ def test_gemm_ncu_reads_kernels_through_the_shared_parser():
     """gemm --ncu takes its kernel times from _timing.ncu_kernel_durations, the one
     NCU CSV parser, and keeps the GEMM family's fastest launch."""
     gemm = import_without_torch("gemm")
-    launches = [("distribution_elementwise_kernel", 1.0), ("nvjet_tst_64x8", 5.0),
-                ("ampere_bf16_s16816gemm", 4.0), ("at::fill", 0.5)]
+    launches = [
+        ("distribution_elementwise_kernel", 1.0),
+        ("nvjet_tst_64x8", 5.0),
+        ("ampere_bf16_s16816gemm", 4.0),
+        ("at::fill", 0.5),
+    ]
     with mock.patch.object(gemm._timing, "ncu_kernel_durations", return_value=launches) as durs:
         assert gemm.ncu_gemm_us(1, 4096, 4096, "/opt/ncu") == 4.0
     assert durs.call_args.args[1] == "/opt/ncu"
@@ -402,8 +489,10 @@ def test_probe_flags_cannot_be_abbreviated():
     assert ap.parse_args(["--gpu", "H100"]).gpu_label == "H100"
 
 
-@pytest.mark.parametrize("name,out", [("serving_stage_split", ["--out", "x.csv"]),
-                                      ("serving_decode_grid", ["--out-raw", "r", "--out-summary", "s"])])
+@pytest.mark.parametrize(
+    "name,out",
+    [("serving_stage_split", ["--out", "x.csv"]), ("serving_decode_grid", ["--out-raw", "r", "--out-summary", "s"])],
+)
 def test_probes_without_output_args_take_no_abbreviation_either(name, out, capsys):
     probe = importlib.import_module(f"quettabench.probes.{name}")
     with pytest.raises(SystemExit) as stop:
@@ -414,8 +503,16 @@ def test_probes_without_output_args_take_no_abbreviation_either(name, out, capsy
 def test_record_dir_takes_no_abbreviation(tmp_path):
     """--out-d is no --out-dir for record_dir either, so run.json goes where
     the probe's own parser puts its tables."""
-    argv = ["--run-id", "20260101T000000.000000Z", "--gpu-label", "H100", "--out", str(tmp_path / "a"),
-            "--out-d", str(tmp_path / "b")]
+    argv = [
+        "--run-id",
+        "20260101T000000.000000Z",
+        "--gpu-label",
+        "H100",
+        "--out",
+        str(tmp_path / "a"),
+        "--out-d",
+        str(tmp_path / "b"),
+    ]
     assert probes_base.record_dir("flash_attn", argv) == tmp_path / "a" / "flash_attn" / argv[1]
 
 
@@ -431,14 +528,9 @@ def argparse_flags(probe: Path) -> set[str]:
     if probe.name != "base.py" and "add_output_args" in probe.read_text():
         flags |= argparse_flags(PROBES_DIR / "base.py")
     for node in ast.walk(ast.parse(probe.read_text())):
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "add_argument"
-        ):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "add_argument":
             flags.update(
-                arg.value for arg in node.args
-                if isinstance(arg, ast.Constant) and str(arg.value).startswith("--")
+                arg.value for arg in node.args if isinstance(arg, ast.Constant) and str(arg.value).startswith("--")
             )
     return flags
 
@@ -515,19 +607,13 @@ def test_every_probe_labels_its_gpu():
 def test_sibling_helper_imports_resolve():
     for probe in sorted(PROBES_DIR.glob("[!_]*.py")):
         for node in ast.walk(ast.parse(probe.read_text())):
-            if (
-                isinstance(node, ast.ImportFrom)
-                and node.module
-                and node.module.startswith("quettabench.probes.")
-            ):
+            if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("quettabench.probes."):
                 module = node.module.rsplit(".", 1)[-1]
                 helper = PROBES_DIR / f"{module}.py"
                 assert helper.is_file(), f"{probe.name} imports {node.module}, no {helper.name}"
                 exported = defined_names(helper)
                 for alias in node.names:
-                    assert alias.name in exported, (
-                        f"{probe.name} imports {node.module}.{alias.name}, not defined there"
-                    )
+                    assert alias.name in exported, f"{probe.name} imports {node.module}.{alias.name}, not defined there"
 
 
 def test_every_moved_probe_takes_out():
@@ -548,6 +634,7 @@ def test_remote_probe_ships_what_base_imports():
     """Exactly the files remote_probe ships, in a clean dir, import
     quettabench.probes.base under an isolated interpreter."""
     from quettabench.probes.base import SHIPPED
+
     assert "quettabench/probes/" in SHIPPED and "quettabench/__init__.py" in SHIPPED
     with tempfile.TemporaryDirectory() as td:
         for rel in SHIPPED:
@@ -557,8 +644,10 @@ def test_remote_probe_ships_what_base_imports():
             else:
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(src, dst)
-        code = ("import sys; sys.path.insert(0, sys.argv[1]); import quettabench.probes.base as b; "
-                "assert b.__file__.startswith(sys.argv[1]), b.__file__")
+        code = (
+            "import sys; sys.path.insert(0, sys.argv[1]); import quettabench.probes.base as b; "
+            "assert b.__file__.startswith(sys.argv[1]), b.__file__"
+        )
         proc = subprocess.run([sys.executable, "-I", "-c", code, td], capture_output=True, text=True)
     assert proc.returncode == 0, proc.stderr
 
@@ -581,8 +670,7 @@ class FakeHost:
             raise subprocess.CalledProcessError(rc, cmd)
         if cmd[0] == "rsync" and cmd[-2].endswith("/out/") and not rc:
             self.pulled(Path(cmd[-1]))
-        return subprocess.CompletedProcess(
-            cmd, rc, stdout="banner\n" + self.rdir + "\n" if "mktemp" in cmd[-1] else "")
+        return subprocess.CompletedProcess(cmd, rc, stdout="banner\n" + self.rdir + "\n" if "mktemp" in cmd[-1] else "")
 
     def pulled(self, local):
         """What the pull brings back: nothing, as from an empty out/."""
@@ -594,6 +682,7 @@ SSH = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=30", "a100"]
 
 def remote(argv, host, tmp_path, monkeypatch):
     from quettabench.probes.base import remote_probe
+
     monkeypatch.chdir(tmp_path)
     return remote_probe([*REMOTE, *argv], run=host, now=NOW)
 
@@ -608,8 +697,10 @@ def test_remote_probe_runs_in_its_own_dir_and_always_pulls(tmp_path, monkeypatch
     mktemp, ship, probe, pull, rm = host.calls
     assert mktemp == [*SSH, "d=$(mktemp -d /tmp/qbench-probes.XXXXXX) && mkdir -p $d/out && echo $d"]
     assert ship[:4] == ["rsync", "-a", "--relative", "-e"] and ship[-1] == f"a100:{rdir}/"
-    assert probe[-1] == (f"cd {rdir} && CUDA_VISIBLE_DEVICES=3 /v/bin/python -m quettabench.probes.gemm "
-                         f"--gpu-label A100 --out {rdir}/out --run-id 20261011T120000.123456Z --ncu --wide")
+    assert probe[-1] == (
+        f"cd {rdir} && CUDA_VISIBLE_DEVICES=3 /v/bin/python -m quettabench.probes.gemm "
+        f"--gpu-label A100 --out {rdir}/out --run-id 20261011T120000.123456Z --ncu --wide"
+    )
     assert pull[-2:] == [f"a100:{rdir}/out/", "results/probes/A100/"] and "--ignore-existing" in pull
     assert rm == [*SSH, f"rm -rf {rdir}"]
     assert (tmp_path / "results" / "probes" / "A100").is_dir()
@@ -618,12 +709,13 @@ def test_remote_probe_runs_in_its_own_dir_and_always_pulls(tmp_path, monkeypatch
 def test_remote_probe_under_torchrun_and_ncu(tmp_path, monkeypatch):
     host = FakeHost()
     remote(["--nproc", "2", "--gpu-ids", "0,1", "collective", "H100"], host, tmp_path, monkeypatch)
-    assert "CUDA_VISIBLE_DEVICES=0,1 /v/bin/python -m torch.distributed.run --nproc_per_node=2 " \
+    assert (
+        "CUDA_VISIBLE_DEVICES=0,1 /v/bin/python -m torch.distributed.run --nproc_per_node=2 "
         "-m quettabench.probes.collective --gpu-label H100" in host.calls[2][-1]
+    )
     host = FakeHost()
     remote(["--ncu-bin", "/opt/ncu", "gemm", "H100"], host, tmp_path, monkeypatch)
-    assert "CUDA_VISIBLE_DEVICES=3 NCU_BIN=/opt/ncu /v/bin/python -m quettabench.probes.gemm" \
-        in host.calls[2][-1]
+    assert "CUDA_VISIBLE_DEVICES=3 NCU_BIN=/opt/ncu /v/bin/python -m quettabench.probes.gemm" in host.calls[2][-1]
 
 
 def test_a_failed_pull_keeps_the_remote_dir(tmp_path, monkeypatch):
@@ -639,6 +731,7 @@ def test_a_pull_that_raises_still_says_the_remote_dir_is_kept(tmp_path, monkeypa
             if cmd[0] == "rsync" and cmd[-2].endswith("/out/"):
                 raise KeyboardInterrupt
             return super().__call__(cmd, check=check, **kw)
+
     host = PullRaises(probe_rc=4)
     with pytest.raises(KeyboardInterrupt):
         remote(["gemm", "A100"], host, tmp_path, monkeypatch)
@@ -668,10 +761,8 @@ class Pulls(FakeHost):
 def test_the_pulled_run_is_stamped_on_the_local_clock(tmp_path, monkeypatch):
     """The remote clock may be skewed: the pulled run.json keeps the remote
     finished and gets pulled from this machine's clock."""
-    remote(["gemm", "A100"], Pulls(json.dumps({"provenance": {"finished": "2099-01-01"}})),
-           tmp_path, monkeypatch)
-    doc = json.loads((tmp_path / "results/probes/A100/gemm/20261011T120000.123456Z/run.json")
-                     .read_text())
+    remote(["gemm", "A100"], Pulls(json.dumps({"provenance": {"finished": "2099-01-01"}})), tmp_path, monkeypatch)
+    doc = json.loads((tmp_path / "results/probes/A100/gemm/20261011T120000.123456Z/run.json").read_text())
     assert doc["provenance"]["finished"] == "2099-01-01" and "remote_finished" not in doc["provenance"]
     assert datetime.fromisoformat(doc["provenance"]["pulled"]) < datetime(2099, 1, 1, tzinfo=timezone.utc)
 
@@ -687,7 +778,7 @@ def test_a_bad_pulled_run_json_warns_and_the_remote_dir_still_goes(record, tmp_p
 def test_probe_args_pass_through_intact(tmp_path, monkeypatch):
     """Flags after `--` (the justfile's "$@") keep spaces, $ and quotes."""
     host = FakeHost()
-    remote(["--", "gemm", "A100", "--model-shapes", "a b$c\"d"], host, tmp_path, monkeypatch)
+    remote(["--", "gemm", "A100", "--model-shapes", 'a b$c"d'], host, tmp_path, monkeypatch)
     assert host.calls[2][-1].endswith("--model-shapes 'a b$c\"d'")
 
 
@@ -705,6 +796,7 @@ def test_a_failed_ship_removes_the_remote_dir(tmp_path, monkeypatch):
                 self.calls.append(cmd)
                 raise subprocess.CalledProcessError(12, cmd)
             return super().__call__(cmd, check=check, **kw)
+
     host = ShipFails()
     with pytest.raises(subprocess.CalledProcessError):
         remote(["gemm", "A100"], host, tmp_path, monkeypatch)
@@ -719,17 +811,24 @@ def test_an_odd_mktemp_answer_is_never_removed(rdir, tmp_path, monkeypatch):
     assert len(host.calls) == 1
 
 
-@pytest.mark.parametrize("argv", [["../x", "A100"], ["gemm", "A 100"], ["gemm", "A100", "--host", ""],
-                                  ["gemm", "A100", "--host=-oProxyCommand=x"],
-                                  ["gemm", "A100", "--probe-args=--out /x"],
-                                  ["gemm", "A100", "--probe-args=--run-id=1"],
-                                  ["gemm", "A100", "--probe-args=--gpu-label H100"],
-                                  ["--", "gemm", "A100", "--gpu=H100"],
-                                  ["--", "gemm", "A100", "--out-dir", "/x"],
-                                  ["gemm", "A100", "--probe-args=--out-d /x"],
-                                  ["gemm", "A100", "--probe-args=--gpu-l H100"],
-                                  ["gemm", "A100", "--probe-args=--ru=1"],
-                                  ["--", "gemm", "A100", "--o", "/x"]])
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["../x", "A100"],
+        ["gemm", "A 100"],
+        ["gemm", "A100", "--host", ""],
+        ["gemm", "A100", "--host=-oProxyCommand=x"],
+        ["gemm", "A100", "--probe-args=--out /x"],
+        ["gemm", "A100", "--probe-args=--run-id=1"],
+        ["gemm", "A100", "--probe-args=--gpu-label H100"],
+        ["--", "gemm", "A100", "--gpu=H100"],
+        ["--", "gemm", "A100", "--out-dir", "/x"],
+        ["gemm", "A100", "--probe-args=--out-d /x"],
+        ["gemm", "A100", "--probe-args=--gpu-l H100"],
+        ["gemm", "A100", "--probe-args=--ru=1"],
+        ["--", "gemm", "A100", "--o", "/x"],
+    ],
+)
 def test_remote_probe_refuses_odd_names(argv, tmp_path, monkeypatch):
     host = FakeHost()
     with pytest.raises(SystemExit):
@@ -755,8 +854,7 @@ def test_probes_import_their_siblings_at_the_top():
         for node in ast.walk(ast.parse(text)):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 inner = [n.module for n in ast.walk(node) if isinstance(n, ast.ImportFrom)]
-                assert not any(m and m.startswith("quettabench.probes._") for m in inner), \
-                    f"{probe.name}:{node.name}"
+                assert not any(m and m.startswith("quettabench.probes._") for m in inner), f"{probe.name}:{node.name}"
 
 
 def inline_imports_without_a_reason(path: Path) -> list[str]:
@@ -776,7 +874,7 @@ def inline_imports_without_a_reason(path: Path) -> list[str]:
             above = node.lineno - 2
             while above >= 0 and lines[above].strip().startswith(("from ", "import ")):
                 above -= 1
-            comment = [ln.lower() for ln in lines[node.lineno - 1:node.end_lineno] if "#" in ln]
+            comment = [ln.lower() for ln in lines[node.lineno - 1 : node.end_lineno] if "#" in ln]
             while above >= 0 and lines[above].strip().startswith("#"):
                 comment.append(lines[above].lower())
                 above -= 1
@@ -800,8 +898,7 @@ def test_moe_docstrings_name_only_real_backends():
     assert set(re.findall(r"--backend (\w+)", text)) <= {"triton", "flashinfer"}
 
 
-QUETTASIM_RECIPES = ("collectives", "cross-attn", "vllm-allreduce", "reparallel-probe",
-                     "reparallel-probe-val")
+QUETTASIM_RECIPES = ("collectives", "cross-attn", "vllm-allreduce", "reparallel-probe", "reparallel-probe-val")
 
 
 def readme_section(title: str) -> str:
@@ -868,6 +965,7 @@ def test_runbook_commands_still_run_here():
 
 def test_emitting_the_nsys_command_records_no_run(tmp_path, capsys):
     from quettabench.probes import serving_stage_split as sss
+
     assert sss.main(["--model", "/w", "--emit-nsys-cmd", "--out", str(tmp_path / "x.csv")]) is False
     assert list(tmp_path.iterdir()) == []
 

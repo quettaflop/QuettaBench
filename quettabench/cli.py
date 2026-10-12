@@ -19,20 +19,30 @@ DOORS = {
 
 def parser():
     """run's flags, and one help line per delegated door."""
-    ap = argparse.ArgumentParser(prog="qbench", description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        prog="qbench", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     sub = ap.add_subparsers(dest="door", metavar="{run," + ",".join(DOORS) + "}")
     run = sub.add_parser("run", help="quettabench.runner: one run yaml to results/<run>/")
     run.add_argument("run_yaml", help="configs/runs/<name>.yaml")
-    run.add_argument("--set", dest="overrides", action="append", default=[], metavar="K=V",
-                     help="override one Config path, highest precedence (repeatable)")
-    run.add_argument("--dry-run", action="store_true",
-                     help="print each Config with its origins and LaunchSpec; start nothing")
+    run.add_argument(
+        "--set",
+        dest="overrides",
+        action="append",
+        default=[],
+        metavar="K=V",
+        help="override one Config path, highest precedence (repeatable)",
+    )
+    run.add_argument(
+        "--dry-run", action="store_true", help="print each Config with its origins and LaunchSpec; start nothing"
+    )
     run.add_argument("--results-dir", default="results", help="parent of <run>/ (default results)")
-    run.add_argument("--allow-unverified", action="store_true",
-                     help="run a model whose yaml says verified: false (bring-up only)")
-    run.add_argument("--overwrite", action="store_true",
-                     help="empty a results/<run>/ that already holds a run before running")
+    run.add_argument(
+        "--allow-unverified", action="store_true", help="run a model whose yaml says verified: false (bring-up only)"
+    )
+    run.add_argument(
+        "--overwrite", action="store_true", help="empty a results/<run>/ that already holds a run before running"
+    )
     for door, module in DOORS.items():
         sub.add_parser(door, help=f"{module}.main", add_help=False)
     return ap
@@ -53,8 +63,7 @@ def main(argv=None):
         ap.print_help()
         return 2
     try:
-        return runner.main(a.run_yaml, a.overrides, a.dry_run, a.results_dir,
-                           a.allow_unverified, a.overwrite)
+        return runner.main(a.run_yaml, a.overrides, a.dry_run, a.results_dir, a.allow_unverified, a.overwrite)
     except (ConfigError, UnsupportedField) as e:
         sys.exit(str(e))
 

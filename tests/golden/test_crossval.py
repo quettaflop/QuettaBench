@@ -17,8 +17,10 @@ from tests.golden._harness import FIXTURES, check_text, crossval_path, fresh_imp
 
 VMIN_FIT_LOG = "vmin_fit_llama.log"
 BASELINE = "baseline_llama.json"
-LEGACY_RESULT = ("RESULT mode=FULL tp=1 kv=float16 ctx=4096 bs=64 ms_per_step=19.874 "
-                 "r2=0.99950 prefill_s=1.10 raw=[2.29, 5.67, 9.05]")
+LEGACY_RESULT = (
+    "RESULT mode=FULL tp=1 kv=float16 ctx=4096 bs=64 ms_per_step=19.874 "
+    "r2=0.99950 prefill_s=1.10 raw=[2.29, 5.67, 9.05]"
+)
 VLLM_SH_FILTER = re.compile(r"^(META|RESULT|SKIP|CAPACITY)")
 
 
@@ -46,11 +48,9 @@ NOW = calendar.timegm(time.strptime("2026-09-21T14:13:20Z", "%Y-%m-%dT%H:%M:%SZ"
 def run_crossval(ours, theirs):
     """crossval.main stdout, plus the SystemExit message when it exits."""
     out = io.StringIO()
-    with tempfile.TemporaryDirectory() as td, crossval_path(), \
-            mock.patch.dict(os.environ, {}, clear=True):
+    with tempfile.TemporaryDirectory() as td, crossval_path(), mock.patch.dict(os.environ, {}, clear=True):
         crossval = fresh_import("quettabench.crossval")
-        with mock.patch.object(crossval.time, "time", return_value=NOW), \
-                contextlib.redirect_stdout(out):
+        with mock.patch.object(crossval.time, "time", return_value=NOW), contextlib.redirect_stdout(out):
             try:
                 crossval.main([str(ours), str(theirs), "--json", str(Path(td) / "xval.json")])
             except SystemExit as e:
@@ -79,8 +79,7 @@ class TableTextGolden(unittest.TestCase):
         check_text(self, "table_criterion.txt", text)
 
     def test_run_dirs_give_the_same_text(self):
-        for bench, golden in (("bench_loop.log", "table_loop.txt"),
-                              ("bench_criterion.log", "table_criterion.txt")):
+        for bench, golden in (("bench_loop.log", "table_loop.txt"), ("bench_criterion.log", "table_criterion.txt")):
             with self.subTest(log=bench), tempfile.TemporaryDirectory() as td:
                 self.assertEqual(run_dirs_text(bench, td), (FIXTURES / golden).read_text())
 

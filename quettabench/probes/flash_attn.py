@@ -3,6 +3,7 @@
 
 Decode is NCU (--ncu), graph replay (--graph) or eager; prefill is always eager, as serving runs it.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -69,10 +70,8 @@ class FlashAttnProbe(Probe):
 
     def grid(self):
         a = self.a
-        kv_axis = ([int(x) for x in a.kv_axis.split(",")] if a.kv_axis
-                   else (KV_NCU if a.ncu else KV_AXIS))
-        batch_axis = ([int(x) for x in a.batch_axis.split(",")] if a.batch_axis
-                      else (BATCH_NCU if a.ncu else BATCH_AXIS))
+        kv_axis = [int(x) for x in a.kv_axis.split(",")] if a.kv_axis else (KV_NCU if a.ncu else KV_AXIS)
+        batch_axis = [int(x) for x in a.batch_axis.split(",")] if a.batch_axis else (BATCH_NCU if a.ncu else BATCH_AXIS)
         for kv in kv_axis:
             for b in batch_axis:
                 if 2 * b * kv * a.n_kv_heads * a.head_dim * 2 / 1e9 <= a.max_mem_gb:
@@ -99,8 +98,8 @@ class FlashAttnProbe(Probe):
             cu_q = torch.arange(0, b + 1, dtype=torch.int32, device=dev)
             cu_k = torch.arange(0, (b + 1) * kv, kv, dtype=torch.int32, device=dev)
             fn = lambda: flash_attn_varlen_func(  # noqa: E731
-                q, k, v, 1, cu_q, kv, cu_seqlens_k=cu_k, causal=True,
-                fa_version=a.fa_version)
+                q, k, v, 1, cu_q, kv, cu_seqlens_k=cu_k, causal=True, fa_version=a.fa_version
+            )
             if a.graph:
                 us = graph_median_us(fn)
             else:
@@ -108,10 +107,22 @@ class FlashAttnProbe(Probe):
             del q, k, v
             torch.cuda.empty_cache()
         print(f"{'ncu ' if a.ncu else ''}decode kv={kv} b={b}: {us:.1f}us/call", flush=True)
-        return ProbeRow("flash_attn", f"flash_attn/{a.gpu_label}.csv",
-                        {"q_len": 1, "kv_len": kv, "n_heads": a.n_heads, "n_kv_heads": a.n_kv_heads,
-                         "head_dim": a.head_dim, "batch": b, "causal": False, "phase": "decode"},
-                        {"layers": a.layers, "latency_us": round(us * a.layers, 3)}, self.decode_timing)
+        return ProbeRow(
+            "flash_attn",
+            f"flash_attn/{a.gpu_label}.csv",
+            {
+                "q_len": 1,
+                "kv_len": kv,
+                "n_heads": a.n_heads,
+                "n_kv_heads": a.n_kv_heads,
+                "head_dim": a.head_dim,
+                "batch": b,
+                "causal": False,
+                "phase": "decode",
+            },
+            {"layers": a.layers, "latency_us": round(us * a.layers, 3)},
+            self.decode_timing,
+        )
 
     def prefill(self, seq):
         a, dev, dt = self.a, self.dev, self.dt
@@ -119,19 +130,35 @@ class FlashAttnProbe(Probe):
         k = torch.randn(seq, a.n_kv_heads, a.head_dim, device=dev, dtype=dt)
         v = torch.randn_like(k)
         cu = torch.tensor([0, seq], dtype=torch.int32, device=dev)
-        us = time_call(lambda: flash_attn_varlen_func(
-            q, k, v, seq, cu, seq, cu_seqlens_k=cu, causal=True,
-            fa_version=a.fa_version))
+        us = time_call(
+            lambda: flash_attn_varlen_func(q, k, v, seq, cu, seq, cu_seqlens_k=cu, causal=True, fa_version=a.fa_version)
+        )
         del q, k, v
         torch.cuda.empty_cache()
         print(f"prefill seq={seq}: {us:.1f}us/call", flush=True)
-        return ProbeRow("flash_attn", f"fa3_prefill/{a.gpu_label}.csv",
-                        {"gpu": a.gpu_label, "prefill_tokens": seq, "q_len": seq, "kv_len": seq,
-                         "causal": True, "fa_version": f"vllm-fa{a.fa_version}", "n_heads": a.n_heads,
-                         "n_kv_heads": a.n_kv_heads, "head_dim": a.head_dim, "dtype": "bfloat16"},
-                        {"layers": a.layers, "flash_ms_median": round(us / 1000.0, 6),
-                         "flash_ms_mean": round(us / 1000.0, 6),
-                         "flash_full_model_ms": round(us / 1000.0 * a.layers, 6)}, "eager")
+        return ProbeRow(
+            "flash_attn",
+            f"fa3_prefill/{a.gpu_label}.csv",
+            {
+                "gpu": a.gpu_label,
+                "prefill_tokens": seq,
+                "q_len": seq,
+                "kv_len": seq,
+                "causal": True,
+                "fa_version": f"vllm-fa{a.fa_version}",
+                "n_heads": a.n_heads,
+                "n_kv_heads": a.n_kv_heads,
+                "head_dim": a.head_dim,
+                "dtype": "bfloat16",
+            },
+            {
+                "layers": a.layers,
+                "flash_ms_median": round(us / 1000.0, 6),
+                "flash_ms_mean": round(us / 1000.0, 6),
+                "flash_full_model_ms": round(us / 1000.0 * a.layers, 6),
+            },
+            "eager",
+        )
 
 
 def main(argv=None):
@@ -144,16 +171,22 @@ def main(argv=None):
     add_output_args(ap)
     ap.add_argument("--tag", required=True, help="grid tag, e.g. tp1/tp2/tp4 (head config)")
     ap.add_argument("--max-mem-gb", type=float, default=40.0)
-    ap.add_argument("--kv-axis", default=None,
-                    help="comma-separated decode kv_len axis override (default tops out "
-                         "at 16384; a 64k-context workload needs 32768,65536 measured "
-                         "rather than linearly extrapolated)")
+    ap.add_argument(
+        "--kv-axis",
+        default=None,
+        help="comma-separated decode kv_len axis override (default tops out "
+        "at 16384; a 64k-context workload needs 32768,65536 measured "
+        "rather than linearly extrapolated)",
+    )
     ap.add_argument("--batch-axis", default=None, help="comma-separated decode batch axis override")
     ap.add_argument("--ncu", action="store_true", help="NCU per-kernel timing (the standard); curated grid")
     ap.add_argument("--ncu-bin", default=os.environ.get("NCU_BIN", "ncu"))
-    ap.add_argument("--graph", action="store_true",
-                    help="CUDA-graph-replay DECODE timing (graphed-decode-faithful, "
-                         "no NCU needed) -> graph/flash_attn/; prefill stays eager")
+    ap.add_argument(
+        "--graph",
+        action="store_true",
+        help="CUDA-graph-replay DECODE timing (graphed-decode-faithful, "
+        "no NCU needed) -> graph/flash_attn/; prefill stays eager",
+    )
     a = ap.parse_args(argv)
     if a.fa_version == 0:  # auto: FA3 needs sm90+
         a.fa_version = 3 if torch.cuda.get_device_capability()[0] >= 9 else 2

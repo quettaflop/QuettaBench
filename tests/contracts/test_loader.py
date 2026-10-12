@@ -12,11 +12,21 @@ from quettabench.config.loader import ConfigError, load, parse_set
 from quettabench.config.schema import CHOICES
 from quettabench.engines import base as engine_base
 
-MODEL = {"name": "Toy-1B", "dtype": "bfloat16", "weights_gib": 2, "max_model_len": 4096,
-         "attention": "dense", "verified": True}
-HARDWARE = {"world": 8, "timing_steps": 100, "max_seq_headroom": 28,
-            "collective": {"NCCL_ALGO": "ring", "NCCL_PROTO": "Simple"},
-            "provision": {"cache_root": "/c"}}
+MODEL = {
+    "name": "Toy-1B",
+    "dtype": "bfloat16",
+    "weights_gib": 2,
+    "max_model_len": 4096,
+    "attention": "dense",
+    "verified": True,
+}
+HARDWARE = {
+    "world": 8,
+    "timing_steps": 100,
+    "max_seq_headroom": 28,
+    "collective": {"NCCL_ALGO": "ring", "NCCL_PROTO": "Simple"},
+    "provision": {"cache_root": "/c"},
+}
 GRIDS = {"grids": {"toy": [[100, 1], [1024, 8], [4000, 1]]}, "step_points": [60, 230, 400]}
 
 
@@ -65,8 +75,7 @@ class LoaderRules(unittest.TestCase):
         self.assertIsNone(self.one().hardware.visible_devices)
 
     def test_cli_beats_env_beats_run_beats_model_beats_hardware(self):
-        run = {"engine": {"pp": 2, "dtype": "float16"},
-               "hardware": {"collective": {"NCCL_PROTO": "LL"}}}
+        run = {"engine": {"pp": 2, "dtype": "float16"}, "hardware": {"collective": {"NCCL_PROTO": "LL"}}}
         cfg = self.one(run, ["engine.pp=4"], {"XVAL_PP": "3", "NCCL_ALGO": "tree"})
         self.assertEqual(cfg.engine.pp, 4)
         self.assertEqual(cfg.engine.dtype, "float16")
@@ -76,11 +85,17 @@ class LoaderRules(unittest.TestCase):
         self.assertEqual(self.one(run, env={"XVAL_PP": "3"}).engine.pp, 3)
 
     def test_caller_env_wins_for_each_collective_pin(self):
-        pins = {"NCCL_P2P_LEVEL": ("SYS", "NVL"), "NCCL_IB_DISABLE": ("1", "0"),
-                "NCCL_SOCKET_IFNAME": ("", "eth0"), "LLMSRV_NO_NVLS": ("1", "0"),
-                "LLMSRV_TWOSHOT_MIN_BYTES": ("0", "65536")}
-        self.write("hardware/pcie.yaml", {**HARDWARE, "collective": {
-            **HARDWARE["collective"], **{k: yaml_v for k, (yaml_v, _) in pins.items()}}})
+        pins = {
+            "NCCL_P2P_LEVEL": ("SYS", "NVL"),
+            "NCCL_IB_DISABLE": ("1", "0"),
+            "NCCL_SOCKET_IFNAME": ("", "eth0"),
+            "LLMSRV_NO_NVLS": ("1", "0"),
+            "LLMSRV_TWOSHOT_MIN_BYTES": ("0", "65536"),
+        }
+        self.write(
+            "hardware/pcie.yaml",
+            {**HARDWARE, "collective": {**HARDWARE["collective"], **{k: yaml_v for k, (yaml_v, _) in pins.items()}}},
+        )
         for key, (yaml_value, caller) in pins.items():
             with self.subTest(key):
                 self.assertEqual(self.one().hardware.collective[key], yaml_value)
@@ -107,8 +122,11 @@ class LoaderRules(unittest.TestCase):
             ("models/toy.yaml", lambda: self.load(model={"maxlen": 1}), "maxlen"),
             ("models/toy.yaml", lambda: self.load(model={"quettaserve": {"ok": "x"}}), "ok"),
             ("models/toy.yaml", lambda: self.load(model={"crossval": {"x": 1}}), "crossval.x"),
-            ("runs/r.yaml", lambda: self.load({"hardware": {"collective": {"NCCL_X": 1}}}),
-             "hardware.collective.NCCL_X"),
+            (
+                "runs/r.yaml",
+                lambda: self.load({"hardware": {"collective": {"NCCL_X": 1}}}),
+                "hardware.collective.NCCL_X",
+            ),
         ]
         for rel, call, key in cases:
             with self.subTest(key=key), self.assertRaises(ConfigError) as ctx:
@@ -134,12 +152,13 @@ class LoaderRules(unittest.TestCase):
     def test_malformed_serving_style_keeps_parse_serving_style_message(self):
         with self.assertRaises(ConfigError) as ctx:
             self.load({"engine": {"serving_style": "disagg:2p"}})
-        self.assertEqual(str(ctx.exception), "unknown serving_style 'disagg:2p'; use aggregated, "
-                         "disagg:<P>p<D>d, afd:<A>a<F>f, or ep<N>dp<M>")
+        self.assertEqual(
+            str(ctx.exception),
+            "unknown serving_style 'disagg:2p'; use aggregated, disagg:<P>p<D>d, afd:<A>a<F>f, or ep<N>dp<M>",
+        )
 
     def test_zero_ep_or_dp_degree_is_refused(self):
-        with self.assertRaisesRegex(ConfigError, "ep_dp needs >=1 expert-parallel and >=1 "
-                                                 "data-parallel: 'ep0dp2'"):
+        with self.assertRaisesRegex(ConfigError, "ep_dp needs >=1 expert-parallel and >=1 data-parallel: 'ep0dp2'"):
             self.load({"engine": {"serving_style": "ep0dp2"}})
 
     def test_ep_degree_must_divide_known_expert_count(self):
@@ -158,8 +177,7 @@ class LoaderRules(unittest.TestCase):
         for attention in ("mla", "hybrid"):
             with self.subTest(attention), self.assertRaisesRegex(ConfigError, "needs kv_bytes"):
                 self.load(model={"attention": attention})
-        self.assertEqual(self.one(model={"attention": "mla", "kv_bytes": 24768}).engine.kv_bytes,
-                         24768)
+        self.assertEqual(self.one(model={"attention": "mla", "kv_bytes": 24768}).engine.kv_bytes, 24768)
 
     def test_bad_enum_value(self):
         with self.assertRaisesRegex(ConfigError, "unknown prompt_mode 'random'; use distinct, clone, corpus or trace"):
@@ -182,25 +200,22 @@ class LoaderRules(unittest.TestCase):
 
     def test_explicit_setting_against_serve_profile_is_refused(self):
         with self.assertRaisesRegex(ConfigError, "engine.prefix_caching=True contradicts"):
-            self.load({"mode": {"serve_profile": "stress-test"},
-                       "engine": {"prefix_caching": True}})
+            self.load({"mode": {"serve_profile": "stress-test"}, "engine": {"prefix_caching": True}})
 
     def test_workload_profile_turns_on_prefix_caching(self):
         cfg = self.one({"workload": {"source": "chat-singleturn"}})
-        self.assertEqual((cfg.engine.prefix_caching, cfg.origins["engine.prefix_caching"]),
-                         (True, "profile"))
+        self.assertEqual((cfg.engine.prefix_caching, cfg.origins["engine.prefix_caching"]), (True, "profile"))
         with self.assertRaisesRegex(ConfigError, "contradicts workload profile chat-singleturn"):
             self.load({"workload": {"source": "chat-singleturn"}}, ["engine.prefix_caching=false"])
-        self.assertFalse(self.one({"workload": {"source": "chat-singleturn"},
-                                   "mode": {"grid": "toy"}}).engine.prefix_caching)
+        self.assertFalse(
+            self.one({"workload": {"source": "chat-singleturn"}, "mode": {"grid": "toy"}}).engine.prefix_caching
+        )
         # a false from a level that states the checkpoint or box, not the run, is turned on
         for origin in ("default", "model", "hardware"):
-            values = {"workload.source": "chat-singleturn", "mode.grid": None,
-                      "engine.prefix_caching": False}
+            values = {"workload.source": "chat-singleturn", "mode.grid": None, "engine.prefix_caching": False}
             origins = {"engine.prefix_caching": origin}
             loader._profile_prefix_caching(values, origins, "w")
-            self.assertEqual((values["engine.prefix_caching"], origins["engine.prefix_caching"]),
-                             (True, "profile"))
+            self.assertEqual((values["engine.prefix_caching"], origins["engine.prefix_caching"]), (True, "profile"))
 
     def test_open_loop_needs_rate_arrival_and_closed_loop_forbids_it(self):
         with self.assertRaisesRegex(ConfigError, "open load needs a rate-bearing arrival"):
@@ -212,15 +227,27 @@ class LoaderRules(unittest.TestCase):
         self.one({"workload": {"arrival": "trace"}})
 
     def test_malformed_arrival(self):
-        for spec in ("poisson", "poisson:0", "ramp:1", "burst:4x8", "steady:3", "uniform",
-                     "poisson:nan", "poisson:inf", "ramp:-1:5", "burst:0x8@0.5", "burst:4x0@0.5",
-                     "burst:4x8@-1", "burst:4x8@nan", "burst:-2x8@0.5"):
+        for spec in (
+            "poisson",
+            "poisson:0",
+            "ramp:1",
+            "burst:4x8",
+            "steady:3",
+            "uniform",
+            "poisson:nan",
+            "poisson:inf",
+            "ramp:-1:5",
+            "burst:0x8@0.5",
+            "burst:4x0@0.5",
+            "burst:4x8@-1",
+            "burst:4x8@nan",
+            "burst:-2x8@0.5",
+        ):
             with self.subTest(spec), self.assertRaisesRegex(ConfigError, "arrival"):
                 self.load({"mode": {"load": "open"}, "workload": {"arrival": spec}})
 
     def test_a_burst_must_cover_the_drawn_requests(self):
-        run = {"mode": {"load": "open"},
-               "workload": {"source": "test", "arrival": "burst:4x8@0.5", "num_requests": 33}}
+        run = {"mode": {"load": "open"}, "workload": {"source": "test", "arrival": "burst:4x8@0.5", "num_requests": 33}}
         with self.assertRaisesRegex(ConfigError, "covers 32 requests but the trace has 33"):
             self.load(run)
         self.one({**run, "workload": {**run["workload"], "num_requests": 32}})
@@ -228,18 +255,20 @@ class LoaderRules(unittest.TestCase):
     def test_bad_values_are_config_errors(self):
         with self.assertRaisesRegex(ConfigError, "mode.concurrency must be a number, got 'x'"):
             self.load(overrides=["mode.concurrency=x"])
-        for run in ({"mode": {"goodput_sweep": True, "sla_ttft_ms": 1.0}},
-                    {"mode": {"goodput_sweep": True, "load": "open"},
-                     "workload": {"arrival": "poisson:2"}}):
+        for run in (
+            {"mode": {"goodput_sweep": True, "sla_ttft_ms": 1.0}},
+            {"mode": {"goodput_sweep": True, "load": "open"}, "workload": {"arrival": "poisson:2"}},
+        ):
             with self.subTest(run), self.assertRaisesRegex(ConfigError, "goodput sweep needs"):
                 self.load(run)
         with self.assertRaisesRegex(ConfigError, "a timing grid runs over HTTP with no tokenizer"):
             self.load({"mode": {"grid": "toy"}, "workload": {"prompt_mode": "corpus"}})
         for backend in ("rocm", "tpu", "neuron"):
-            with self.subTest(backend), self.assertRaisesRegex(
-                    ConfigError, f"hardware.backend={backend} has no CUDA"):
-                self.load({"mode": {"grid": "toy", "returns": "text"}},
-                          [f"hardware.backend={backend}", "engine.dtype=bfloat16"])
+            with self.subTest(backend), self.assertRaisesRegex(ConfigError, f"hardware.backend={backend} has no CUDA"):
+                self.load(
+                    {"mode": {"grid": "toy", "returns": "text"}},
+                    [f"hardware.backend={backend}", "engine.dtype=bfloat16"],
+                )
         self.one({"mode": {"grid": "toy", "returns": "text"}}, ["hardware.backend=cuda"])
 
     def test_empty_step_points_are_refused(self):
@@ -252,13 +281,22 @@ class LoaderRules(unittest.TestCase):
     def test_matrix_expands_cartesian_product_with_suffixed_names(self):
         configs = self.load({"matrix": {"engine.tp": [1, 2], "mode.concurrency": [4, 8]}})
         got = [(c.run_name, c.engine.tp, c.mode.concurrency) for c in configs]
-        self.assertEqual(got, [("r-tp1-concurrency4", 1, 4), ("r-tp1-concurrency8", 1, 8),
-                               ("r-tp2-concurrency4", 2, 4), ("r-tp2-concurrency8", 2, 8)])
+        self.assertEqual(
+            got,
+            [
+                ("r-tp1-concurrency4", 1, 4),
+                ("r-tp1-concurrency8", 1, 8),
+                ("r-tp2-concurrency4", 2, 4),
+                ("r-tp2-concurrency8", 2, 8),
+            ],
+        )
         self.assertEqual(configs[0].origins["engine.tp"], "run")
 
     def test_matrix_points_with_one_run_name_are_refused(self):
-        for matrix in ({"engine.tp": [1, 1]}, {"engine.port": [1], "mode.load": ["closed"],
-                                               "hardware.world": [8, "8"]}):
+        for matrix in (
+            {"engine.tp": [1, 1]},
+            {"engine.port": [1], "mode.load": ["closed"], "hardware.world": [8, "8"]},
+        ):
             with self.subTest(matrix), self.assertRaisesRegex(ConfigError, "points share run_name"):
                 self.load({"matrix": matrix})
 
@@ -280,8 +318,7 @@ class LoaderRules(unittest.TestCase):
         self.assertEqual(parse_set("engine.gpu_util=0.85"), ("engine.gpu_util", 0.85))
         self.assertEqual(parse_set("engine.ep=true"), ("engine.ep", True))
         self.assertEqual(parse_set("engine.quant=null"), ("engine.quant", None))
-        self.assertEqual(parse_set("engine.serving_style=disagg:1p1d"),
-                         ("engine.serving_style", "disagg:1p1d"))
+        self.assertEqual(parse_set("engine.serving_style=disagg:1p1d"), ("engine.serving_style", "disagg:1p1d"))
         with self.assertRaisesRegex(ConfigError, "expected key=value"):
             parse_set("engine.tp")
 
@@ -291,8 +328,23 @@ class LoaderRules(unittest.TestCase):
 
     def test_a_run_name_that_is_no_plain_dir_name_is_refused(self):
         """run_name becomes results/<run_name>/, which --overwrite empties."""
-        for name in ("..", ".", "/tmp/x", "a/../..", "probes", "xval", "baselines", "Probes",
-                     "", "-x", ".hidden", "a b", "a\\b", "trailing.", "x" * 201):
+        for name in (
+            "..",
+            ".",
+            "/tmp/x",
+            "a/../..",
+            "probes",
+            "xval",
+            "baselines",
+            "Probes",
+            "",
+            "-x",
+            ".hidden",
+            "a b",
+            "a\\b",
+            "trailing.",
+            "x" * 201,
+        ):
             with self.subTest(name=name), self.assertRaisesRegex(ConfigError, "run_name"):
                 self.load(overrides=[f"run_name={name}"])
         with self.assertRaisesRegex(ConfigError, "run_name"):
@@ -307,8 +359,10 @@ class LoaderRules(unittest.TestCase):
 
     def test_an_engine_without_an_adapter_is_refused_at_load(self):
         for name in ("sglang", "trtllm"):
-            with self.subTest(name), self.assertRaisesRegex(
-                    ConfigError, rf"unknown name '{name}'; .*vllm.*quettaserve"):
+            with (
+                self.subTest(name),
+                self.assertRaisesRegex(ConfigError, rf"unknown name '{name}'; .*vllm.*quettaserve"),
+            ):
                 self.load({"engine": {"name": name}})
         self.assertEqual(sorted(CHOICES["engine.name"]), sorted(engine_base._ADAPTERS))
 

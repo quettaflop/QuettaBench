@@ -23,8 +23,7 @@ from quettabench.config.schema import serving_style_compatible
 REPO = Path(__file__).resolve().parents[1]
 CONFIGS = REPO / "configs"
 XVAL_DIR = REPO / "results" / "xval"
-ENV = ("XVAL_QUANT", "XVAL_SERVING_STYLE", "NCCL_ALGO", "NCCL_PROTO",
-       "XVAL_ALLOW_METHOD_MISMATCH")
+ENV = ("XVAL_QUANT", "XVAL_SERVING_STYLE", "NCCL_ALGO", "NCCL_PROTO", "XVAL_ALLOW_METHOD_MISMATCH")
 
 
 GROUP_PREF = ("decode_batch_paged", "decode_batch", "decode_graph", "decode")
@@ -46,21 +45,49 @@ class Side:
 
 def header(**known):
     """A header with every key present; unknown facts are None."""
-    keys = ("gpu", "engine", "version", "model", "dtype", "grid", "graph_mode", "method",
-            "kv_dtype", "quant", "serving_style", "nccl_algo", "nccl_proto", "prompt_mode",
-            "eval_pos", "step_points", "timestamp", "bench_sha", "engine_sha",
-            "workload_hash", "comm_bound_bs")
+    keys = (
+        "gpu",
+        "engine",
+        "version",
+        "model",
+        "dtype",
+        "grid",
+        "graph_mode",
+        "method",
+        "kv_dtype",
+        "quant",
+        "serving_style",
+        "nccl_algo",
+        "nccl_proto",
+        "prompt_mode",
+        "eval_pos",
+        "step_points",
+        "timestamp",
+        "bench_sha",
+        "engine_sha",
+        "workload_hash",
+        "comm_bound_bs",
+    )
     unknown = set(known) - set(keys)
     if unknown:
         raise KeyError(f"not a Side header key: {sorted(unknown)}")
     return {k: known.get(k) for k in keys}
 
 
-def row(ctx, bs, tp, ms_per_step, *, group, kv, measured, ms_at_eval=None, eval_pos=None,
-        r2=None, mode="graph"):
-    return {"ctx": ctx, "bs": bs, "tp": tp, "group": group, "ms_per_step": ms_per_step,
-            "ms_at_eval": ms_at_eval, "eval_pos": eval_pos, "r2": r2, "kv": kv, "mode": mode,
-            "measured": measured}
+def row(ctx, bs, tp, ms_per_step, *, group, kv, measured, ms_at_eval=None, eval_pos=None, r2=None, mode="graph"):
+    return {
+        "ctx": ctx,
+        "bs": bs,
+        "tp": tp,
+        "group": group,
+        "ms_per_step": ms_per_step,
+        "ms_at_eval": ms_at_eval,
+        "eval_pos": eval_pos,
+        "r2": r2,
+        "kv": kv,
+        "mode": mode,
+        "measured": measured,
+    }
 
 
 def age_days(side, now):
@@ -140,13 +167,17 @@ def bench_log_points(path):
 def measured_row(key, ms, group, kv):
     """A row the engine timed itself."""
     ctx, bs, tp = key
-    return row(ctx, bs, tp, ms, group=group, kv=kv, measured=True,
-               mode="eager" if group == "decode_loop_eager" else "graph")
+    return row(
+        ctx, bs, tp, ms, group=group, kv=kv, measured=True, mode="eager" if group == "decode_loop_eager" else "graph"
+    )
 
 
-ENGINE_FACTS = {"engine.quant": "quant", "engine.serving_style": "serving_style",
-                "hardware.collective.NCCL_ALGO": "nccl_algo",
-                "hardware.collective.NCCL_PROTO": "nccl_proto"}
+ENGINE_FACTS = {
+    "engine.quant": "quant",
+    "engine.serving_style": "serving_style",
+    "hardware.collective.NCCL_ALGO": "nccl_algo",
+    "hardware.collective.NCCL_PROTO": "nccl_proto",
+}
 
 
 def engine_facts(values):
@@ -176,22 +207,47 @@ def comm_bound_bs(model):
 def read_baseline(path):
     """The vLLM side from a baseline json; a point without ms_at_eval keeps it None."""
     b = json.loads(Path(path).read_text())
-    rows = [row(p["ctx"], p["bs"], p.get("tp", 1), p["ms_per_step"], group="slope",
-                kv=p.get("kv", b.get("dtype", "?")), measured=False,
-                ms_at_eval=p.get("ms_at_eval"), eval_pos=p.get("eval_pos"), r2=p.get("r2"),
-                mode="eager" if b["mode"] == "NOGRAPH" else "graph")
-            for p in b["points"]]
-    return Side(rows, header(
-        gpu=b["gpu"], engine="vllm", version=b["vllm"], model=b.get("model", "?"),
-        dtype=b.get("dtype", "?"), grid=b.get("grid", "?"), graph_mode=b["mode"],
-        method=b.get("method", "slope"), kv_dtype=b.get("kv_dtype"),
-        quant=b.get("quant", b.get("dtype", "?")),
-        serving_style=b.get("serving_style", "aggregated"),
-        nccl_algo=b.get("nccl_algo"), nccl_proto=b.get("nccl_proto"),
-        prompt_mode=b.get("prompt_mode"), eval_pos=b.get("eval_pos"),
-        step_points=b.get("step_points"), timestamp=b["recorded_utc"],
-        bench_sha=b.get("bench_sha"), engine_sha=b.get("engine_sha"),
-        comm_bound_bs=comm_bound_bs(b.get("model", ""))))
+    rows = [
+        row(
+            p["ctx"],
+            p["bs"],
+            p.get("tp", 1),
+            p["ms_per_step"],
+            group="slope",
+            kv=p.get("kv", b.get("dtype", "?")),
+            measured=False,
+            ms_at_eval=p.get("ms_at_eval"),
+            eval_pos=p.get("eval_pos"),
+            r2=p.get("r2"),
+            mode="eager" if b["mode"] == "NOGRAPH" else "graph",
+        )
+        for p in b["points"]
+    ]
+    return Side(
+        rows,
+        header(
+            gpu=b["gpu"],
+            engine="vllm",
+            version=b["vllm"],
+            model=b.get("model", "?"),
+            dtype=b.get("dtype", "?"),
+            grid=b.get("grid", "?"),
+            graph_mode=b["mode"],
+            method=b.get("method", "slope"),
+            kv_dtype=b.get("kv_dtype"),
+            quant=b.get("quant", b.get("dtype", "?")),
+            serving_style=b.get("serving_style", "aggregated"),
+            nccl_algo=b.get("nccl_algo"),
+            nccl_proto=b.get("nccl_proto"),
+            prompt_mode=b.get("prompt_mode"),
+            eval_pos=b.get("eval_pos"),
+            step_points=b.get("step_points"),
+            timestamp=b["recorded_utc"],
+            bench_sha=b.get("bench_sha"),
+            engine_sha=b.get("engine_sha"),
+            comm_bound_bs=comm_bound_bs(b.get("model", "")),
+        ),
+    )
 
 
 def _utc(iso):
@@ -202,10 +258,19 @@ def _utc(iso):
 def _fitted_row(step, kv, mode):
     """A step-section cell, rounded as the grid RESULT line prints it."""
     ms_eval = step.get("ms_at_eval")
-    return row(step["ctx"], step["bs"], step["tp"], round(step["ms_per_step"], 3),
-               group="slope", kv=kv, measured=False,
-               ms_at_eval=None if ms_eval is None else round(ms_eval, 3),
-               eval_pos=step.get("eval_pos"), r2=round(step["r2"], 5), mode=mode)
+    return row(
+        step["ctx"],
+        step["bs"],
+        step["tp"],
+        round(step["ms_per_step"], 3),
+        group="slope",
+        kv=kv,
+        measured=False,
+        ms_at_eval=None if ms_eval is None else round(ms_eval, 3),
+        eval_pos=step.get("eval_pos"),
+        r2=round(step["r2"], 5),
+        mode=mode,
+    )
 
 
 def read_rows(results_dir):
@@ -239,30 +304,42 @@ def read_run(results_dir):
         if step.get("measured"):
             r = bench[(step["ctx"], step["bs"], step["tp"])]
             methods.add(r.get("method", "loop"))
-            rows.append(measured_row((step["ctx"], step["bs"], step["tp"]),
-                                     step["ms_per_step"], r.get("group"), r.get("kv")))
+            rows.append(
+                measured_row((step["ctx"], step["bs"], step["tp"]), step["ms_per_step"], r.get("group"), r.get("kv"))
+            )
         else:
             methods.add("slope")
             rows.append(_fitted_row(step, kv, row_mode))
     notes = bench_log_points(d / "bench.log")[2] if (d / "bench.log").exists() else []
 
-    workload = (grid.get("trace") or {}).get("workload_hash") \
-        or (summary.get("workload") or {}).get("expected")
-    return Side(rows, header(
-        gpu=meta.get("gpu") or prov.get("gpu"), engine=prov.get("engine"),
-        version=meta.get("vllm") or prov.get("engine_version"),
-        model=meta.get("model") or engine.get("model_name") or "?",
-        dtype=meta.get("dtype") or engine.get("dtype"), grid=meta.get("grid") or "?",
-        graph_mode=mode, method="+".join(sorted(methods)) or None, kv_dtype=kv,
-        quant=meta.get("quant") or prov.get("quant"),
-        serving_style=prov.get("serving_style"),
-        nccl_algo=meta.get("nccl_algo") or prov.get("nccl_algo"),
-        nccl_proto=meta.get("nccl_proto") or prov.get("nccl_proto"),
-        prompt_mode=meta.get("prompt_mode"), eval_pos=meta.get("eval_pos"),
-        step_points=meta.get("step_points"), timestamp=_utc(prov.get("finished")),
-        bench_sha=prov.get("bench_sha"), engine_sha=prov.get("engine_sha"),
-        workload_hash=workload, comm_bound_bs=(cfg.get("crossval") or {}).get("comm_bound_bs")),
-        notes)
+    workload = (grid.get("trace") or {}).get("workload_hash") or (summary.get("workload") or {}).get("expected")
+    return Side(
+        rows,
+        header(
+            gpu=meta.get("gpu") or prov.get("gpu"),
+            engine=prov.get("engine"),
+            version=meta.get("vllm") or prov.get("engine_version"),
+            model=meta.get("model") or engine.get("model_name") or "?",
+            dtype=meta.get("dtype") or engine.get("dtype"),
+            grid=meta.get("grid") or "?",
+            graph_mode=mode,
+            method="+".join(sorted(methods)) or None,
+            kv_dtype=kv,
+            quant=meta.get("quant") or prov.get("quant"),
+            serving_style=prov.get("serving_style"),
+            nccl_algo=meta.get("nccl_algo") or prov.get("nccl_algo"),
+            nccl_proto=meta.get("nccl_proto") or prov.get("nccl_proto"),
+            prompt_mode=meta.get("prompt_mode"),
+            eval_pos=meta.get("eval_pos"),
+            step_points=meta.get("step_points"),
+            timestamp=_utc(prov.get("finished")),
+            bench_sha=prov.get("bench_sha"),
+            engine_sha=prov.get("engine_sha"),
+            workload_hash=workload,
+            comm_bound_bs=(cfg.get("crossval") or {}).get("comm_bound_bs"),
+        ),
+        notes,
+    )
 
 
 # Reference top-2 gap at or below which an argmax flip is a near tie: one bf16 step for logits in [16, 32).
@@ -303,14 +380,26 @@ def greedy(ours_rows, theirs_rows):
     rows = []
     for key in sorted(set(a) & set(b)):
         prefix, of = common_prefix(a[key], b[key]), min(len(a[key]), len(b[key]))
-        rows.append({"kind": "greedy", "request": key, "prefix": prefix, "of": of,
-                     "match_pct": 100.0 * prefix / of if of else 0.0})
+        rows.append(
+            {
+                "kind": "greedy",
+                "request": key,
+                "prefix": prefix,
+                "of": of,
+                "match_pct": 100.0 * prefix / of if of else 0.0,
+            }
+        )
     if rows:
         prefixes = [r["prefix"] for r in rows]
-        rows.append({"kind": "greedy_summary", "prompts": len(prefixes),
-                     "mean_prefix": statistics.mean(prefixes),
-                     "median_prefix": statistics.median(prefixes),
-                     "agree4plus": sum(1 for p in prefixes if p >= AGREE_MIN)})
+        rows.append(
+            {
+                "kind": "greedy_summary",
+                "prompts": len(prefixes),
+                "mean_prefix": statistics.mean(prefixes),
+                "median_prefix": statistics.median(prefixes),
+                "agree4plus": sum(1 for p in prefixes if p >= AGREE_MIN),
+            }
+        )
     return rows
 
 
@@ -330,19 +419,33 @@ def logit(ours_rows, theirs_rows):
             elif ref["top2_gap"][pos] <= NEAR_TIE_GAP:
                 near_tie += 1
             else:
-                rows.append({"kind": "logit_disagree", "request": key, "pos": pos,
-                             "reference_gap": ref["top2_gap"][pos],
-                             "reference": ref["argmax"][pos], "ours": ours["argmax"][pos]})
+                rows.append(
+                    {
+                        "kind": "logit_disagree",
+                        "request": key,
+                        "pos": pos,
+                        "reference_gap": ref["top2_gap"][pos],
+                        "reference": ref["argmax"][pos],
+                        "ours": ours["argmax"][pos],
+                    }
+                )
             if pos < len(ours["logprob"]) and pos < len(ref["logprob"]):
                 deltas.append(abs(ours["logprob"][pos] - ref["logprob"][pos]))
     hard = len(rows)
     deltas.sort()
-    rows.append({"kind": "logit_summary", "positions": total, "argmax_agree": agree,
-                 "near_tie_flips": near_tie, "hard_disagreements": hard,
-                 "delta_mean": sum(deltas) / len(deltas) if deltas else None,
-                 "delta_p95": deltas[int(0.95 * len(deltas))] if deltas else None,
-                 "delta_max": deltas[-1] if deltas else None,
-                 "verdict": "SKIP" if not total else "PASS" if hard == 0 else "FAIL"})
+    rows.append(
+        {
+            "kind": "logit_summary",
+            "positions": total,
+            "argmax_agree": agree,
+            "near_tie_flips": near_tie,
+            "hard_disagreements": hard,
+            "delta_mean": sum(deltas) / len(deltas) if deltas else None,
+            "delta_p95": deltas[int(0.95 * len(deltas))] if deltas else None,
+            "delta_max": deltas[-1] if deltas else None,
+            "verdict": "SKIP" if not total else "PASS" if hard == 0 else "FAIL",
+        }
+    )
     return rows
 
 
@@ -360,9 +463,14 @@ def band(ours_rows, anchor_rows, floor_runs):
     floors = [flips(rows, anchor_rows) for rows in floor_runs]
     comparable = positions > 0 and all(p == positions for p, _ in floors)
     worst = max(f for _, f in floors)
-    return {"kind": "band", "positions": positions, "flips": ours,
-            "floor_flips": [f for _, f in floors], "floor": worst,
-            "verdict": "WITHHELD" if not comparable else "PASS" if ours <= worst else "FAIL"}
+    return {
+        "kind": "band",
+        "positions": positions,
+        "flips": ours,
+        "floor_flips": [f for _, f in floors],
+        "floor": worst,
+        "verdict": "WITHHELD" if not comparable else "PASS" if ours <= worst else "FAIL",
+    }
 
 
 def compare_runs(ours_rows, theirs_rows):
@@ -376,32 +484,40 @@ def render_agreement(rows):
     for r in rows:
         kind = r["kind"]
         if kind == "greedy":
-            lines.append(f"AGREE {r['prefix']:2d}/{r['of']} tokens ({r['match_pct']:5.1f}%) "
-                         f"| {r['request']}")
+            lines.append(f"AGREE {r['prefix']:2d}/{r['of']} tokens ({r['match_pct']:5.1f}%) | {r['request']}")
         elif kind == "greedy_summary":
-            lines.append(f"SUMMARY prompts={r['prompts']} mean_prefix={r['mean_prefix']:.1f} "
-                         f"median_prefix={r['median_prefix']} "
-                         f"agree4plus={r['agree4plus']}/{r['prompts']}")
+            lines.append(
+                f"SUMMARY prompts={r['prompts']} mean_prefix={r['mean_prefix']:.1f} "
+                f"median_prefix={r['median_prefix']} "
+                f"agree4plus={r['agree4plus']}/{r['prompts']}"
+            )
         elif kind == "logit_disagree":
-            lines.append(f"DISAGREE {r['request']} pos={r['pos']} "
-                         f"reference_gap={r['reference_gap']:.4f} "
-                         f"reference={r['reference']} ours={r['ours']}")
+            lines.append(
+                f"DISAGREE {r['request']} pos={r['pos']} "
+                f"reference_gap={r['reference_gap']:.4f} "
+                f"reference={r['reference']} ours={r['ours']}"
+            )
         elif kind == "logit_summary":
             if r["positions"]:
-                lines.append(f"SUMMARY positions={r['positions']} "
-                             f"argmax_agree={r['argmax_agree']} "
-                             f"({100.0 * r['argmax_agree'] / r['positions']:.2f}%) "
-                             f"near_tie_flips={r['near_tie_flips']} "
-                             f"hard_disagreements={r['hard_disagreements']}")
+                lines.append(
+                    f"SUMMARY positions={r['positions']} "
+                    f"argmax_agree={r['argmax_agree']} "
+                    f"({100.0 * r['argmax_agree'] / r['positions']:.2f}%) "
+                    f"near_tie_flips={r['near_tie_flips']} "
+                    f"hard_disagreements={r['hard_disagreements']}"
+                )
             if r["delta_max"] is not None:
-                lines.append(f"SUMMARY true_token_logprob_delta mean={r['delta_mean']:.5f} "
-                             f"p95={r['delta_p95']:.5f} max={r['delta_max']:.5f}")
-            lines.append(f"FIDELITY verdict={r['verdict']} "
-                         f"hard_disagreements={r['hard_disagreements']}")
+                lines.append(
+                    f"SUMMARY true_token_logprob_delta mean={r['delta_mean']:.5f} "
+                    f"p95={r['delta_p95']:.5f} max={r['delta_max']:.5f}"
+                )
+            lines.append(f"FIDELITY verdict={r['verdict']} hard_disagreements={r['hard_disagreements']}")
         elif kind == "band":
-            lines.append(f"BAND verdict={r['verdict']} flips={r['flips']} floor={r['floor']} "
-                         f"floor_runs={','.join(map(str, r['floor_flips']))} "
-                         f"positions={r['positions']}")
+            lines.append(
+                f"BAND verdict={r['verdict']} flips={r['flips']} floor={r['floor']} "
+                f"floor_runs={','.join(map(str, r['floor_flips']))} "
+                f"positions={r['positions']}"
+            )
     return lines
 
 
@@ -480,10 +596,20 @@ def pair_row(a, b, report):
     if report.workload_mismatch:
         withheld.append("workload")
     tps_a, tps_b = bs * 1000.0 / ms_a, bs * 1000.0 / ms_b
-    return {"group": a["group"], "ctx": a["ctx"], "bs": bs, "tp": a["tp"],
-            "ours_ms": ms_a, "theirs_ms": ms_b, "ours_tok_s": tps_a, "theirs_tok_s": tps_b,
-            "ratio": None if withheld else tps_a / tps_b, "r2": r2,
-            "flags": flags, "withheld": withheld}
+    return {
+        "group": a["group"],
+        "ctx": a["ctx"],
+        "bs": bs,
+        "tp": a["tp"],
+        "ours_ms": ms_a,
+        "theirs_ms": ms_b,
+        "ours_tok_s": tps_a,
+        "theirs_tok_s": tps_b,
+        "ratio": None if withheld else tps_a / tps_b,
+        "r2": r2,
+        "flags": flags,
+        "withheld": withheld,
+    }
 
 
 def pair(ours, theirs, allow_method_mismatch=False, now=0.0):
@@ -496,16 +622,22 @@ def pair(ours, theirs, allow_method_mismatch=False, now=0.0):
     b = {(r["ctx"], r["bs"], r["tp"]): r for r in theirs.rows}
     comm = t["comm_bound_bs"] if t["comm_bound_bs"] is not None else o["comm_bound_bs"]
     report = Report(
-        ours=ours, theirs=theirs, age_days=age_days(theirs, now),
-        nccl_mismatch=_nccl_mismatch(ours, theirs), serving=serving, quant=quant,
+        ours=ours,
+        theirs=theirs,
+        age_days=age_days(theirs, now),
+        nccl_mismatch=_nccl_mismatch(ours, theirs),
+        serving=serving,
+        quant=quant,
         serving_mismatch=not serving_style_compatible(serving[1], serving[0]),
         quant_mismatch=quant[0] != quant[1],
-        method_matched=(o["method"] in MARGINAL and t["method"] in MARGINAL)
-        or bool(allow_method_mismatch),
+        method_matched=(o["method"] in MARGINAL and t["method"] in MARGINAL) or bool(allow_method_mismatch),
         workload_mismatch=all(hashes) and hashes[0] != hashes[1],
         comm_bound_bs=None if comm is None else int(comm),
         tps_without_theirs=sorted({k[2] for k in a} - {k[2] for k in b}),
-        rows=[], ours_only=sorted(set(a) - set(b)), theirs_only=sorted(set(b) - set(a)))
+        rows=[],
+        ours_only=sorted(set(a) - set(b)),
+        theirs_only=sorted(set(b) - set(a)),
+    )
     report.rows = [pair_row(a[k], b[k], report) for k in sorted(set(a) & set(b))]
     return report
 
@@ -527,47 +659,55 @@ def render_preamble(report):
         + (f"  engine {t['engine_sha'][:9]}" if t["engine_sha"] else "")
         + (f"  prompts {t['prompt_mode']}" if t["prompt_mode"] else "")
         + (f"  eval_pos {t['eval_pos']}" if t["eval_pos"] else "")
-        + (f"  nccl={t['nccl_algo']}/{t['nccl_proto']}" if nccl else ""))
+        + (f"  nccl={t['nccl_algo']}/{t['nccl_proto']}" if nccl else "")
+    )
     if report.age_days > STALE_DAYS:
         lines.append(f"WARNING: baseline older than {STALE_DAYS}d; re-run `just run configs/runs/<wl>.yaml`")
     if report.nccl_mismatch:
-        lines.append(f"NCCL MISMATCH engine={o['nccl_algo']}/{o['nccl_proto']} "
-                     f"vllm={t['nccl_algo']}/{t['nccl_proto']}")
+        lines.append(f"NCCL MISMATCH engine={o['nccl_algo']}/{o['nccl_proto']} vllm={t['nccl_algo']}/{t['nccl_proto']}")
     if report.serving_mismatch:
-        lines.append(f"SERVING MISMATCH engine={report.serving[0]} vllm={report.serving[1]}; "
-                     "ratios withheld")
+        lines.append(f"SERVING MISMATCH engine={report.serving[0]} vllm={report.serving[1]}; ratios withheld")
     if report.quant_mismatch:
-        lines.append(f"QUANT MISMATCH engine={report.quant[0]} vllm={report.quant[1]}; "
-                     "ratios withheld")
+        lines.append(f"QUANT MISMATCH engine={report.quant[0]} vllm={report.quant[1]}; ratios withheld")
     if report.workload_mismatch:
-        lines.append(f"WORKLOAD MISMATCH engine={o['workload_hash']} "
-                     f"vllm={t['workload_hash']}; ratios withheld")
+        lines.append(f"WORKLOAD MISMATCH engine={o['workload_hash']} vllm={t['workload_hash']}; ratios withheld")
     if not report.comparable:
-        lines.append("engine log times one synchronized step per iteration; the baseline "
-                     "is a pipelined slope. Not the same quantity, so ratios are withheld "
-                     "(XVAL_ALLOW_METHOD_MISMATCH=1 to force).")
+        lines.append(
+            "engine log times one synchronized step per iteration; the baseline "
+            "is a pipelined slope. Not the same quantity, so ratios are withheld "
+            "(XVAL_ALLOW_METHOD_MISMATCH=1 to force)."
+        )
     lines.append("")
     if report.tps_without_theirs:
         base_tps = sorted({r["tp"] for r in report.theirs.rows})
-        lines.append(f"tp mismatch: engine rows at tp {report.tps_without_theirs} have no "
-                     f"baseline (baseline holds tp {base_tps}); capture one per tp")
+        lines.append(
+            f"tp mismatch: engine rows at tp {report.tps_without_theirs} have no "
+            f"baseline (baseline holds tp {base_tps}); capture one per tp"
+        )
     return lines
 
 
 def render_table(report):
     """The paired rows, the COMM footnote, and the unpaired cells."""
-    lines = [(f"{'group':<20} {'ctx':>6} {'bs':>4} {'tp':>4} {'ours ms':>10} {'vllm ms':>9} "
-              f"{'ours tok/s':>12} {'vllm tok/s':>11} {'ratio':>7} {'r2':>7}")]
+    lines = [
+        (
+            f"{'group':<20} {'ctx':>6} {'bs':>4} {'tp':>4} {'ours ms':>10} {'vllm ms':>9} "
+            f"{'ours tok/s':>12} {'vllm tok/s':>11} {'ratio':>7} {'r2':>7}"
+        )
+    ]
     for r in report.rows:
         ratio = f"{'--':>7}" if r["ratio"] is None else f"{r['ratio']:>6.2f}x"
         lines.append(
             f"{r['group']:<20} {r['ctx']:>6} {r['bs']:>4} {r['tp']:>4} {r['ours_ms']:>10.3f} "
             f"{r['theirs_ms']:>9.3f} {r['ours_tok_s']:>12.0f} {r['theirs_tok_s']:>11.0f} "
-            f"{ratio} {r['r2']:>7.5f}" + "".join(f"  {f}" for f in r["flags"]))
+            f"{ratio} {r['r2']:>7.5f}" + "".join(f"  {f}" for f in r["flags"])
+        )
     if any("comm" in r["withheld"] for r in report.rows):
-        lines.append(f"\nCOMM = collective-bound (bs>={report.comm_bound_bs}): absolute ms is "
-                     f"dominated by the shared TP allreduce and is node/NCCL-specific; "
-                     f"cross-node reference anchoring is not meaningful for these cells.")
+        lines.append(
+            f"\nCOMM = collective-bound (bs>={report.comm_bound_bs}): absolute ms is "
+            f"dominated by the shared TP allreduce and is node/NCCL-specific; "
+            f"cross-node reference anchoring is not meaningful for these cells."
+        )
     if report.ours_only:
         lines.append(f"\nours-only: {_cells(report.ours_only)}")
     if report.theirs_only:
@@ -604,13 +744,20 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="qbench xval", description=__doc__.splitlines()[0])
     ap.add_argument("ours", help="results/<run>/ dir, baselines/*.json, or bench log")
     ap.add_argument("theirs", help="results/<run>/ dir, baselines/*.json, or bench log")
-    ap.add_argument("--allow-method-mismatch", action="store_true",
-                    help="ratios even when the two sides time different quantities")
-    ap.add_argument("--floor", action="append", default=[], metavar="RUN",
-                    help="a reference run at the engine's dtype; theirs is then the anchor "
-                         "and ours passes BAND within the worst floor run's argmax flips")
-    ap.add_argument("--json", type=Path, default=None,
-                    help="report path (default results/xval/<ours>_vs_<theirs>.json)")
+    ap.add_argument(
+        "--allow-method-mismatch", action="store_true", help="ratios even when the two sides time different quantities"
+    )
+    ap.add_argument(
+        "--floor",
+        action="append",
+        default=[],
+        metavar="RUN",
+        help="a reference run at the engine's dtype; theirs is then the anchor "
+        "and ours passes BAND within the worst floor run's argmax flips",
+    )
+    ap.add_argument(
+        "--json", type=Path, default=None, help="report path (default results/xval/<ours>_vs_<theirs>.json)"
+    )
     args = ap.parse_args(argv)
     for path in (args.ours, args.theirs, *args.floor):
         if not Path(path).exists():
@@ -630,8 +777,7 @@ def main(argv=None):
         ours_rows, theirs_rows = read_rows(args.ours), read_rows(args.theirs)
         report.agreement = compare_runs(ours_rows, theirs_rows)
         if args.floor:
-            report.agreement.append(band(
-                ours_rows, theirs_rows, [read_rows(f) for f in args.floor]))
+            report.agreement.append(band(ours_rows, theirs_rows, [read_rows(f) for f in args.floor]))
     print(render(report), end="")
 
     a, b = (Path(p).name if Path(p).is_dir() else Path(p).stem for p in (args.ours, args.theirs))
@@ -640,8 +786,7 @@ def main(argv=None):
     out.write_text(json.dumps(report_json(report), indent=2) + "\n")
     if not report.rows and not report.agreement:
         sys.exit("no overlapping (ctx, bs, tp) points")
-    if any(r["kind"] in ("logit_summary", "band") and r["verdict"] == "FAIL"
-           for r in report.agreement):
+    if any(r["kind"] in ("logit_summary", "band") and r["verdict"] == "FAIL" for r in report.agreement):
         sys.exit(1)
 
 

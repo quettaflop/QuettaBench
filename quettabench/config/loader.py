@@ -1,4 +1,5 @@
 """Builds Configs from yaml, env and --set; precedence high to low is --set, env, run yaml, model yaml, hardware yaml, schema defaults."""
+
 import itertools
 import re
 import shutil
@@ -26,12 +27,21 @@ from quettabench.workloads import arrival, live
 
 # model yaml key -> Config path
 MODEL_KEYS = {
-    "name": "engine.model_name", "dtype": "engine.dtype", "tp": "engine.tp",
-    "weights_gib": "engine.weights_gib", "max_model_len": "engine.max_model_len",
-    "kv_dtype": "engine.kv_dtype", "kv_bytes": "engine.kv_bytes", "quant": "engine.quant",
-    "ep": "engine.ep", "attention": "engine.attention", "num_experts": "engine.num_experts",
-    "verified": "engine.verified", "quettaserve": "engine.extra.quettaserve",
-    "provenance": "provenance", "crossval": "crossval",
+    "name": "engine.model_name",
+    "dtype": "engine.dtype",
+    "tp": "engine.tp",
+    "weights_gib": "engine.weights_gib",
+    "max_model_len": "engine.max_model_len",
+    "kv_dtype": "engine.kv_dtype",
+    "kv_bytes": "engine.kv_bytes",
+    "quant": "engine.quant",
+    "ep": "engine.ep",
+    "attention": "engine.attention",
+    "num_experts": "engine.num_experts",
+    "verified": "engine.verified",
+    "quettaserve": "engine.extra.quettaserve",
+    "provenance": "provenance",
+    "crossval": "crossval",
 }
 QUETTASERVE_KEYS = ("crate", "test", "env_prefix", "family")
 RUN_KEYS = ("model", "engine", "workload", "mode", "hardware", "matrix")
@@ -42,10 +52,15 @@ RATE_ARRIVALS = ("poisson", "ramp", "burst")
 RUN_NAME = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._-]{0,198}[A-Za-z0-9_-])?")
 RESERVED_RUN_NAMES = ("probes", "xval", "baselines")
 # path -> (lowest, highest) allowed; None is no bound
-RANGES = {"mode.concurrency": (1, None), "workload.num_requests": (1, None),
-          "mode.warmup": (0, None), "mode.discard_first": (0, None),
-          "mode.min_success_rate": (0.0, 1.0), "workload.tool_wait_ms": (0.0, None),
-          "workload.human_wait_ms": (0.0, None)}
+RANGES = {
+    "mode.concurrency": (1, None),
+    "workload.num_requests": (1, None),
+    "mode.warmup": (0, None),
+    "mode.discard_first": (0, None),
+    "mode.min_success_rate": (0.0, 1.0),
+    "workload.tool_wait_ms": (0.0, None),
+    "workload.human_wait_ms": (0.0, None),
+}
 
 
 def _read_yaml(path):
@@ -70,7 +85,7 @@ def _check_path(path, where):
         return
     df = dict_field(path)
     if df is not None:
-        key = path[len(df) + 1:]
+        key = path[len(df) + 1 :]
         allowed = DICT_KEYS[df]
         if "." not in key and (allowed is None or key in allowed):
             return
@@ -136,15 +151,15 @@ def arrival_kind(spec, num_requests=0):
     try:
         arrival.parse_arrival(str(spec), num_requests)
     except ValueError as e:
-        raise ConfigError(f"arrival {spec!r}: {e}; use steady, trace, poisson:<r>, "
-                          "ramp:<a>:<b> or burst:<n>x<size>@<gap>, rates > 0") from None
+        raise ConfigError(
+            f"arrival {spec!r}: {e}; use steady, trace, poisson:<r>, ramp:<a>:<b> or burst:<n>x<size>@<gap>, rates > 0"
+        ) from None
     return str(spec).partition(":")[0]
 
 
 def detect_backend(tpu_name):
     """The accelerator from the tooling on PATH: nvidia-smi cuda, rocm-smi or amd-smi rocm, neuron-ls neuron, libtpu (or TPU_NAME) tpu, else cpu."""
-    for tool, backend in (("nvidia-smi", "cuda"), ("rocm-smi", "rocm"), ("amd-smi", "rocm"),
-                          ("neuron-ls", "neuron")):
+    for tool, backend in (("nvidia-smi", "cuda"), ("rocm-smi", "rocm"), ("amd-smi", "rocm"), ("neuron-ls", "neuron")):
         if shutil.which(tool):
             return backend
     if tpu_name or Path("/lib/libtpu.so").exists():
@@ -157,8 +172,7 @@ def detect_link_profile(backend):
     if backend != "cuda":
         return "nvlink"
     try:
-        topo = subprocess.run(["nvidia-smi", "topo", "-m"], capture_output=True, text=True,
-                              check=False).stdout
+        topo = subprocess.run(["nvidia-smi", "topo", "-m"], capture_output=True, text=True, check=False).stdout
     except OSError:
         topo = ""
     return "nvlink" if re.search(r"NV\d", topo) else "pcie"
@@ -168,7 +182,7 @@ def _apply(values, origins, layer, origin):
     for path, value in layer.items():
         df = dict_field(path)
         if df is not None and path != df:
-            values[df] = {**values[df], path[len(df) + 1:]: value}
+            values[df] = {**values[df], path[len(df) + 1 :]: value}
         else:
             values[path] = value
         origins[path] = origin
@@ -177,8 +191,9 @@ def _apply(values, origins, layer, origin):
 def _force(values, origins, path, value, by, where):
     """Set a value a serve profile requires; an explicit contrary setting is refused."""
     if values[path] != value and origins.get(path, "default") != "default":
-        raise ConfigError(f"{where}: {path}={values[path]!r} contradicts "
-                          f"mode.serve_profile={values['mode.serve_profile']}")
+        raise ConfigError(
+            f"{where}: {path}={values[path]!r} contradicts mode.serve_profile={values['mode.serve_profile']}"
+        )
     values[path] = value
     origins[path] = by
 
@@ -191,8 +206,9 @@ def _profile_prefix_caching(values, origins, where):
     if values["engine.prefix_caching"] or not live.get_profile(source).prefix_caching_required:
         return
     if origins.get("engine.prefix_caching", "default") not in NOT_ASKED:
-        raise ConfigError(f"{where}: engine.prefix_caching=False contradicts workload profile "
-                          f"{source}, which requires prefix caching")
+        raise ConfigError(
+            f"{where}: engine.prefix_caching=False contradicts workload profile {source}, which requires prefix caching"
+        )
     values["engine.prefix_caching"] = True
     origins["engine.prefix_caching"] = "profile"
 
@@ -209,14 +225,12 @@ def _validate(values, origins, allow_unverified, where):
         values["hardware.visible_devices"] = str(values["hardware.visible_devices"])
     for path, allowed in CHOICES.items():
         if values[path] not in allowed:
-            raise ConfigError(f"{where}: unknown {path.rsplit('.', 1)[-1]} {values[path]!r}; "
-                              f"use {_one_of(allowed)}")
+            raise ConfigError(f"{where}: unknown {path.rsplit('.', 1)[-1]} {values[path]!r}; use {_one_of(allowed)}")
     for path, (low, high) in RANGES.items():
         if isinstance(values[path], bool) or not isinstance(values[path], (int, float)):
             raise ConfigError(f"{where}: {path} must be a number, got {values[path]!r}")
         if (low is not None and values[path] < low) or (high is not None and values[path] > high):
-            raise ConfigError(f"{where}: {path} must be in [{low}, {high or 'inf'}], "
-                              f"got {values[path]!r}")
+            raise ConfigError(f"{where}: {path} must be in [{low}, {high or 'inf'}], got {values[path]!r}")
     # The schema rules raise ValueError; as ConfigError the CLI prints one line, message unchanged.
     try:
         parse_serving_style(values["engine.serving_style"])
@@ -226,8 +240,7 @@ def _validate(values, origins, allow_unverified, where):
     except ValueError as e:
         raise ConfigError(str(e)) from None
     if not values["engine.verified"] and not allow_unverified:
-        raise ConfigError(f"{where}: {values['run_name']} is not validated yet; "
-                          "pass --allow-unverified to bring it up")
+        raise ConfigError(f"{where}: {values['run_name']} is not validated yet; pass --allow-unverified to bring it up")
     backend = values["hardware.backend"]
     if backend == "tpu" and values["engine.dtype"] in ("float16", "half"):
         raise ConfigError(f"{where}: TPU has no fp16; set engine.dtype=bfloat16")
@@ -236,8 +249,10 @@ def _validate(values, origins, allow_unverified, where):
     if values["mode.mode"] == "probe" and not values["mode.probe"]:
         raise ConfigError(f"{where}: mode=probe needs mode.probe, a quettabench.probes module")
     if values["engine.attention"] in ("mla", "hybrid") and values["engine.kv_bytes"] is None:
-        raise ConfigError(f"{where}: attention={values['engine.attention']} needs kv_bytes; "
-                          "the dense per-head formula overestimates its KV")
+        raise ConfigError(
+            f"{where}: attention={values['engine.attention']} needs kv_bytes; "
+            "the dense per-head formula overestimates its KV"
+        )
     profile = values["mode.serve_profile"]
     by = origins.get("mode.serve_profile", "default")
     if profile == "stress-test":
@@ -248,28 +263,33 @@ def _validate(values, origins, allow_unverified, where):
     _profile_prefix_caching(values, origins, where)
     # A single-turn profile draws num_requests; other sources set their own count.
     source = values["workload.source"]
-    drawn = (values["mode.grid"] is None and values["workload.kind"] == "live"
-             and source in live.PROFILES)
-    arrival = arrival_kind(values["workload.arrival"],
-                           values["workload.num_requests"] if drawn else 0)
+    drawn = values["mode.grid"] is None and values["workload.kind"] == "live" and source in live.PROFILES
+    arrival = arrival_kind(values["workload.arrival"], values["workload.num_requests"] if drawn else 0)
     if values["mode.load"] == "open" and arrival not in RATE_ARRIVALS + ("trace",):
-        raise ConfigError(f"{where}: open load needs a rate-bearing arrival "
-                          f"(poisson, ramp, burst) or trace, got {values['workload.arrival']!r}")
+        raise ConfigError(
+            f"{where}: open load needs a rate-bearing arrival "
+            f"(poisson, ramp, burst) or trace, got {values['workload.arrival']!r}"
+        )
     if values["mode.load"] == "closed" and arrival in RATE_ARRIVALS:
-        raise ConfigError(f"{where}: arrival {values['workload.arrival']!r} is open-loop "
-                          "offered load; set mode.load=open or arrival=steady")
-    if values["mode.goodput_sweep"] and (values["mode.load"] != "open" or not (
-            values["mode.sla_ttft_ms"] or values["mode.sla_tpot_ms"])):
-        raise ConfigError(f"{where}: goodput sweep needs open load and mode.sla_ttft_ms "
-                          "and/or sla_tpot_ms")
-    if (values["mode.grid"] and values["workload.prompt_mode"] == "corpus"
-            and values["mode.returns"] == "none"):
-        raise ConfigError(f"{where}: prompt_mode=corpus tokenizes in-process, which only a "
-                          "mode.returns run builds; a timing grid runs over HTTP with no tokenizer")
+        raise ConfigError(
+            f"{where}: arrival {values['workload.arrival']!r} is open-loop "
+            "offered load; set mode.load=open or arrival=steady"
+        )
+    if values["mode.goodput_sweep"] and (
+        values["mode.load"] != "open" or not (values["mode.sla_ttft_ms"] or values["mode.sla_tpot_ms"])
+    ):
+        raise ConfigError(f"{where}: goodput sweep needs open load and mode.sla_ttft_ms and/or sla_tpot_ms")
+    if values["mode.grid"] and values["workload.prompt_mode"] == "corpus" and values["mode.returns"] == "none":
+        raise ConfigError(
+            f"{where}: prompt_mode=corpus tokenizes in-process, which only a "
+            "mode.returns run builds; a timing grid runs over HTTP with no tokenizer"
+        )
     if values["mode.grid"] and values["mode.returns"] != "none" and backend in OTHER_ACCELERATORS:
-        raise ConfigError(f"{where}: mode.returns={values['mode.returns']} builds vLLM in-process, "
-                          f"which reads the device through torch.cuda; hardware.backend={backend} "
-                          "has no CUDA")
+        raise ConfigError(
+            f"{where}: mode.returns={values['mode.returns']} builds vLLM in-process, "
+            f"which reads the device through torch.cuda; hardware.backend={backend} "
+            "has no CUDA"
+        )
 
 
 def _grid(values, grids, step_points, where):
@@ -280,8 +300,7 @@ def _grid(values, grids, step_points, where):
         raise ConfigError(f"{where}: unknown grid {name!r}; grids: {', '.join(grids)}")
     cells = tuple(tuple(c) for c in grids[name.lower()])
     maxlen = values["engine.max_model_len"]
-    over = tuple(c for c in cells
-                 if maxlen is not None and c[0] + max(step_points) + 2 > maxlen)
+    over = tuple(c for c in cells if maxlen is not None and c[0] + max(step_points) + 2 > maxlen)
     return GridCfg(cells=cells, step_points=tuple(step_points), cells_over_maxlen=over)
 
 
@@ -296,8 +315,11 @@ def _build(values, origins, grid):
             origins.setdefault(path, "default")
     return Config(
         **{s: cls(**parts[s]) for s, cls in SECTIONS.items()},
-        grid=grid, run_name=values["run_name"], provenance=values["provenance"],
-        crossval=values["crossval"], origins=dict(sorted(origins.items())),
+        grid=grid,
+        run_name=values["run_name"],
+        provenance=values["provenance"],
+        crossval=values["crossval"],
+        origins=dict(sorted(origins.items())),
     )
 
 
@@ -327,11 +349,11 @@ def _resolve(upper, configs, grids, step_points, detect, allow_unverified, where
 def check_run_name(name, where):
     """Refuse a run_name that is not one plain dir name, or is a reserved one."""
     if not RUN_NAME.fullmatch(name):
-        raise ConfigError(f"{where}: run_name {name!r} must match {RUN_NAME.pattern}; "
-                          "it names the dir results/<run_name>/")
+        raise ConfigError(
+            f"{where}: run_name {name!r} must match {RUN_NAME.pattern}; it names the dir results/<run_name>/"
+        )
     if name.lower() in RESERVED_RUN_NAMES:
-        raise ConfigError(f"{where}: run_name {name!r} is reserved; results/{name}/ "
-                          "belongs to another writer")
+        raise ConfigError(f"{where}: run_name {name!r} is reserved; results/{name}/ belongs to another writer")
 
 
 def load(run_yaml, overrides=(), env=None):
@@ -364,17 +386,16 @@ def load(run_yaml, overrides=(), env=None):
         run_layer, cli_layer = {**run, **point}, dict(cli)
         named_by = cli_layer if "run_name" in cli else run_layer
         base = cli.get("run_name", run_path.stem)
-        named_by["run_name"] = "-".join(["" if base is None else str(base)] + [
-            re.sub(r"[^A-Za-z0-9._-]", "_", f"{p.rsplit('.', 1)[-1]}{v}")
-            for p, v in point.items()])
+        named_by["run_name"] = "-".join(
+            ["" if base is None else str(base)]
+            + [re.sub(r"[^A-Za-z0-9._-]", "_", f"{p.rsplit('.', 1)[-1]}{v}") for p, v in point.items()]
+        )
         name = named_by["run_name"]
         check_run_name(name, f"{run_path} [{name}]")
         upper = [("model", model), ("run", run_layer), ("env", from_env), ("cli", cli_layer)]
-        out.append(_resolve(upper, configs, grids, step_points, detect, allow_unverified,
-                            f"{run_path} [{name}]"))
+        out.append(_resolve(upper, configs, grids, step_points, detect, allow_unverified, f"{run_path} [{name}]"))
     names = [cfg.run_name for cfg in out]
     shared = sorted({n for n in names if names.count(n) > 1})
     if shared:
-        raise ConfigError(f"{run_path} matrix: points share run_name {shared}; each point "
-                          "needs its own results/<run>/")
+        raise ConfigError(f"{run_path} matrix: points share run_name {shared}; each point needs its own results/<run>/")
     return out

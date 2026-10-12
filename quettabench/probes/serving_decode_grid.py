@@ -3,6 +3,7 @@
 
 `just export --only serving_decode_grid` builds the grid CSV from the raw runs with summarize_cell from here.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -33,10 +34,10 @@ CAP_FRAC = 0.95
 
 # B -> nominal T: 26 fixed cells, each under B*(T+osl/2) <= 0.95*pool except (160, 12288) at 95.2%.
 LATTICE_TP4: dict[int, tuple[int, ...]] = {
-    1:   (512, 2048, 8192, 16384),
-    8:   (512, 2048, 8192, 16384),
-    32:  (512, 2048, 8192, 16384),
-    80:  (512, 2048, 8192, 16384),
+    1: (512, 2048, 8192, 16384),
+    8: (512, 2048, 8192, 16384),
+    32: (512, 2048, 8192, 16384),
+    80: (512, 2048, 8192, 16384),
     160: (512, 2048, 8192, 12288),
     256: (512, 2048, 6144),
     320: (512, 2048, 4096),
@@ -45,8 +46,7 @@ LATTICE_TP4: dict[int, tuple[int, ...]] = {
 T_MENU = (512, 2048, 4096, 6144, 8192, 12288, 16384)
 
 
-def solve_cell(b: int, t: int, chunk_budget: int = CHUNK_BUDGET,
-               steady: int = STEADY_MIN_STEPS) -> tuple[int, int]:
+def solve_cell(b: int, t: int, chunk_budget: int = CHUNK_BUDGET, steady: int = STEADY_MIN_STEPS) -> tuple[int, int]:
     """(prompt_tokens, osl) integer fixed point for cell (B, T)."""
     osl = steady
     for _ in range(50):
@@ -58,8 +58,9 @@ def solve_cell(b: int, t: int, chunk_budget: int = CHUNK_BUDGET,
     return t - osl // 2, osl  # pragma: no cover
 
 
-def lattice_cells(lattice: dict[int, tuple[int, ...]] = LATTICE_TP4,
-                  pool_tokens: int = KV_POOL_TOKENS_TP4) -> list[dict]:
+def lattice_cells(
+    lattice: dict[int, tuple[int, ...]] = LATTICE_TP4, pool_tokens: int = KV_POOL_TOKENS_TP4
+) -> list[dict]:
     """The fixed cell list with solved (prompt, osl) and the cap check."""
     cap = CAP_FRAC * pool_tokens
     cells = []
@@ -67,11 +68,17 @@ def lattice_cells(lattice: dict[int, tuple[int, ...]] = LATTICE_TP4,
         for t in lattice[b]:
             prompt, osl = solve_cell(b, t)
             kv_final = b * (prompt + osl)  # B*(T + osl/2) up to rounding
-            cells.append({
-                "batch_size": b, "nominal_T": t, "prompt_tokens": prompt, "osl": osl,
-                "kv_final_tokens": kv_final, "kv_frac_of_pool": round(kv_final / pool_tokens, 4),
-                "exceeds_cap": kv_final > cap,
-            })
+            cells.append(
+                {
+                    "batch_size": b,
+                    "nominal_T": t,
+                    "prompt_tokens": prompt,
+                    "osl": osl,
+                    "kv_final_tokens": kv_final,
+                    "kv_frac_of_pool": round(kv_final / pool_tokens, 4),
+                    "exceeds_cap": kv_final > cap,
+                }
+            )
     return cells
 
 
@@ -107,8 +114,7 @@ def _p99(vals: list[float]) -> float:
     return s[min(len(s) - 1, int(0.99 * (len(s) - 1) + 0.999999))]
 
 
-def summarize_cell(records: list[dict], min_samples: int = 64,
-                   lag_limit_ms: float = 2.0) -> dict:
+def summarize_cell(records: list[dict], min_samples: int = 64, lag_limit_ms: float = 2.0) -> dict:
     """Cell row from raw per-request records."""
     if not records:
         raise ValueError("empty cell")
@@ -128,8 +134,7 @@ def summarize_cell(records: list[dict], min_samples: int = 64,
     coalesced = total_deltas = 0
     for ts in ev_walls:
         # Delta k (event k to k+1) is in the window only if both ends are.
-        din = [(ts[k + 1] - ts[k]) * 1e3 for k in range(len(ts) - 1)
-               if ts[k] >= w_lo and ts[k + 1] <= w_hi]
+        din = [(ts[k + 1] - ts[k]) * 1e3 for k in range(len(ts) - 1) if ts[k] >= w_lo and ts[k + 1] <= w_hi]
         idx_in = [k + 1 for k in range(len(ts)) if w_lo <= ts[k] <= w_hi]  # 1-based token index
         per_req_n.append(len(din))
         if din:
@@ -166,9 +171,19 @@ def summarize_cell(records: list[dict], min_samples: int = 64,
 
 
 SUMMARY_FIELDS = [
-    "batch_size", "context_len", "decode_step_ms", "validation_status",
-    "nominal_T", "prompt_tokens", "osl", "n_samples", "steady_window_s",
-    "median_inwindow_progress", "p99_loop_lag_ms", "coalesce_frac", "itl_p50_spread_ms",
+    "batch_size",
+    "context_len",
+    "decode_step_ms",
+    "validation_status",
+    "nominal_T",
+    "prompt_tokens",
+    "osl",
+    "n_samples",
+    "steady_window_s",
+    "median_inwindow_progress",
+    "p99_loop_lag_ms",
+    "coalesce_frac",
+    "itl_p50_spread_ms",
 ]
 
 
@@ -195,9 +210,11 @@ async def _loop_lag_sampler(stop: asyncio.Event, out: list[float]) -> None:
         out.append((loop.time() - t0 - 0.05) * 1e3)
 
 
-async def _run_shard(req_specs: list[dict], port: int, api_key: str, model_name: str,
-                     eos_mode: str, barrier) -> list[dict]:
+async def _run_shard(
+    req_specs: list[dict], port: int, api_key: str, model_name: str, eos_mode: str, barrier
+) -> list[dict]:
     import aiohttp  # GPU host only
+
     url = f"http://127.0.0.1:{port}/v1/completions"
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     timeout = aiohttp.ClientTimeout(total=3600, sock_read=600)
@@ -217,23 +234,34 @@ async def _run_shard(req_specs: list[dict], port: int, api_key: str, model_name:
         sampler = asyncio.create_task(_loop_lag_sampler(stop, lag))
 
         async def one(spec: dict) -> dict:
-            ids = prompt_token_ids(spec["cell_b"], spec["nominal_T"], spec["req"],
-                                   spec["prompt_tokens"])
-            payload = {"model": model_name, "prompt": ids, "max_tokens": spec["osl"],
-                       "temperature": 0.0, "stream": True}
+            ids = prompt_token_ids(spec["cell_b"], spec["nominal_T"], spec["req"], spec["prompt_tokens"])
+            payload = {
+                "model": model_name,
+                "prompt": ids,
+                "max_tokens": spec["osl"],
+                "temperature": 0.0,
+                "stream": True,
+            }
             payload["ignore_eos" if eos_mode == "ignore_eos" else "min_tokens"] = (
-                True if eos_mode == "ignore_eos" else spec["osl"])
+                True if eos_mode == "ignore_eos" else spec["osl"]
+            )
             t_send = time.perf_counter()
             ts = await _stream_once(session, url, headers, payload)
             if not ts:
-                return {**{k: spec[k] for k in ("req", "prompt_tokens", "osl", "nominal_T")},
-                        "t_first_wall": None, "deltas_ms": [], "n_events": 0,
-                        "ttft_ms": None}
-            return {**{k: spec[k] for k in ("req", "prompt_tokens", "osl", "nominal_T")},
-                    "t_first_wall": round(ts[0] + wall_anchor, 6),
-                    "deltas_ms": [round((ts[k + 1] - ts[k]) * 1e3, 3) for k in range(len(ts) - 1)],
-                    "n_events": len(ts),
-                    "ttft_ms": round((ts[0] - t_send) * 1e3, 2)}
+                return {
+                    **{k: spec[k] for k in ("req", "prompt_tokens", "osl", "nominal_T")},
+                    "t_first_wall": None,
+                    "deltas_ms": [],
+                    "n_events": 0,
+                    "ttft_ms": None,
+                }
+            return {
+                **{k: spec[k] for k in ("req", "prompt_tokens", "osl", "nominal_T")},
+                "t_first_wall": round(ts[0] + wall_anchor, 6),
+                "deltas_ms": [round((ts[k + 1] - ts[k]) * 1e3, 3) for k in range(len(ts) - 1)],
+                "n_events": len(ts),
+                "ttft_ms": round((ts[0] - t_send) * 1e3, 2),
+            }
 
         results = await asyncio.gather(*(one(s) for s in req_specs))
         stop.set()
@@ -247,8 +275,7 @@ async def _run_shard(req_specs: list[dict], port: int, api_key: str, model_name:
     return out
 
 
-def _shard_entry(req_specs, port, api_key, model_name, eos_mode, barrier, shard_id, out_path,
-                 rt: bool = False):
+def _shard_entry(req_specs, port, api_key, model_name, eos_mode, barrier, shard_id, out_path, rt: bool = False):
     if rt:
         # SCHED_RR for the shard process only (needs CAP_SYS_NICE): the server's threads otherwise preempt the client loop for ~2 ms CFS slices, tripping the p99 loop-lag flag while p50 ITL is unchanged.
         try:
@@ -262,14 +289,29 @@ def _shard_entry(req_specs, port, api_key, model_name, eos_mode, barrier, shard_
     Path(out_path).write_text(json.dumps(res))
 
 
-def run_cell(cell: dict, port: int, api_key: str, model_name: str, eos_mode: str,
-             shard_threshold: int, n_shards: int, tmp_dir: Path,
-             rt_shards: bool = False) -> list[dict]:
+def run_cell(
+    cell: dict,
+    port: int,
+    api_key: str,
+    model_name: str,
+    eos_mode: str,
+    shard_threshold: int,
+    n_shards: int,
+    tmp_dir: Path,
+    rt_shards: bool = False,
+) -> list[dict]:
     """Fire one (B, T) cell; returns per-request records (wall-anchored)."""
     b = cell["batch_size"]
-    specs = [{"cell_b": b, "nominal_T": cell["nominal_T"], "req": i,
-              "prompt_tokens": cell["prompt_tokens"], "osl": cell["osl"]}
-             for i in range(b)]
+    specs = [
+        {
+            "cell_b": b,
+            "nominal_T": cell["nominal_T"],
+            "req": i,
+            "prompt_tokens": cell["prompt_tokens"],
+            "osl": cell["osl"],
+        }
+        for i in range(b)
+    ]
     shards = n_shards if b >= shard_threshold else 1
     if shards == 1:
         recs = asyncio.run(_run_shard(specs, port, api_key, model_name, eos_mode, None))
@@ -282,8 +324,9 @@ def run_cell(cell: dict, port: int, api_key: str, model_name: str, eos_mode: str
     for w in range(shards):
         chunk = specs[w::shards]
         path = tmp_dir / f"shard_{b}_{cell['nominal_T']}_{w}.json"
-        p = ctx.Process(target=_shard_entry, args=(chunk, port, api_key, model_name,
-                                                   eos_mode, barrier, w, str(path), rt_shards))
+        p = ctx.Process(
+            target=_shard_entry, args=(chunk, port, api_key, model_name, eos_mode, barrier, w, str(path), rt_shards)
+        )
         p.start()
         procs.append(p)
         paths.append(path)
@@ -299,16 +342,25 @@ def run_cell(cell: dict, port: int, api_key: str, model_name: str, eos_mode: str
     return recs
 
 
-def launch_server(model, port, gpu_mem, max_model_len, api_key, run_dir, tp,
-                  max_num_seqs, max_num_batched_tokens):
-    return launch_vllm(run_dir, model, port=port, tp=tp, gpu_util=gpu_mem,
-                       max_model_len=max_model_len,
-                       prefix_caching=False,  # each cell measures uncached prefill
-                       vllm_flags={"served_model_name": "llama", "host": "127.0.0.1",
-                                   "max_num_seqs": max_num_seqs,
-                                   "max_num_batched_tokens": max_num_batched_tokens,
-                                   "api_key": api_key, "no_enable_log_requests": True},
-                       timeout_s=600)
+def launch_server(model, port, gpu_mem, max_model_len, api_key, run_dir, tp, max_num_seqs, max_num_batched_tokens):
+    return launch_vllm(
+        run_dir,
+        model,
+        port=port,
+        tp=tp,
+        gpu_util=gpu_mem,
+        max_model_len=max_model_len,
+        prefix_caching=False,  # each cell measures uncached prefill
+        vllm_flags={
+            "served_model_name": "llama",
+            "host": "127.0.0.1",
+            "max_num_seqs": max_num_seqs,
+            "max_num_batched_tokens": max_num_batched_tokens,
+            "api_key": api_key,
+            "no_enable_log_requests": True,
+        },
+        timeout_s=600,
+    )
 
 
 def kv_pool_from_log(log_path: str) -> int | None:
@@ -326,8 +378,7 @@ def kv_pool_from_log(log_path: str) -> int | None:
 def warmup_and_verify_eos(port: int, api_key: str, model_name: str) -> str:
     """8 short streams; returns the eos mode that yields the full requested osl."""
     for mode in ("ignore_eos", "min_tokens"):
-        specs = [{"cell_b": 8, "nominal_T": 1024, "req": i, "prompt_tokens": 1024, "osl": 64}
-                 for i in range(8)]
+        specs = [{"cell_b": 8, "nominal_T": 1024, "req": i, "prompt_tokens": 1024, "osl": 64} for i in range(8)]
         try:
             recs = asyncio.run(_run_shard(specs, port, api_key, model_name, mode, None))
         except Exception as e:  # e.g. 400 on an unsupported field
@@ -341,10 +392,10 @@ def warmup_and_verify_eos(port: int, api_key: str, model_name: str) -> str:
 
 
 def main(argv=None) -> None:
-    ap = argparse.ArgumentParser(description=__doc__, allow_abbrev=False,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--model", default=None,
-                    help="model dir (Llama-3.1-8B-Instruct); needed unless --no-launch")
+    ap = argparse.ArgumentParser(
+        description=__doc__, allow_abbrev=False, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument("--model", default=None, help="model dir (Llama-3.1-8B-Instruct); needed unless --no-launch")
     ap.add_argument("--served-model-name", default="llama")
     ap.add_argument("--port", type=int, default=8791)
     ap.add_argument("--api-key", default="test")
@@ -353,18 +404,24 @@ def main(argv=None) -> None:
     ap.add_argument("--max-num-seqs", type=int, default=320)
     ap.add_argument("--max-num-batched-tokens", type=int, default=CHUNK_BUDGET)
     ap.add_argument("--tensor-parallel-size", type=int, default=4)
-    ap.add_argument("--pool-tokens", type=int, default=None,
-                    help="KV pool for lattice feasibility; default: tp4 pre-registered pool "
-                         f"({KV_POOL_TOKENS_TP4}); for other tp, pass the live pool and the "
-                         "lattice is re-derived by the same cap rule")
+    ap.add_argument(
+        "--pool-tokens",
+        type=int,
+        default=None,
+        help="KV pool for lattice feasibility; default: tp4 pre-registered pool "
+        f"({KV_POOL_TOKENS_TP4}); for other tp, pass the live pool and the "
+        "lattice is re-derived by the same cap rule",
+    )
     ap.add_argument("--shard-threshold", type=int, default=160)
     ap.add_argument("--n-shards", type=int, default=4)
-    ap.add_argument("--rt-shards", action="store_true",
-                    help="SCHED_RR for shard processes (needs root/CAP_SYS_NICE); the server "
-                         "keeps its normal policy. Counters the host's ~2 ms CFS preemptions "
-                         "of the client loop (loop-lag flag hygiene).")
-    ap.add_argument("--cells", default=None,
-                    help="optional explicit 'B:T,B:T,...' subset (default: the lattice)")
+    ap.add_argument(
+        "--rt-shards",
+        action="store_true",
+        help="SCHED_RR for shard processes (needs root/CAP_SYS_NICE); the server "
+        "keeps its normal policy. Counters the host's ~2 ms CFS preemptions "
+        "of the client loop (loop-lag flag hygiene).",
+    )
+    ap.add_argument("--cells", default=None, help="optional explicit 'B:T,B:T,...' subset (default: the lattice)")
     ap.add_argument("--out-raw", required=True, help="append-only per-request JSONL.gz")
     ap.add_argument("--out-summary", required=True, help="operator cell-summary CSV")
     ap.add_argument("--no-launch", action="store_true")
@@ -382,31 +439,46 @@ def main(argv=None) -> None:
     if a.cells:
         wanted = {tuple(int(x) for x in c.split(":")) for c in a.cells.split(",")}
         cells = [c for c in cells if (c["batch_size"], c["nominal_T"]) in wanted]
-    over = [c for c in cells if c["exceeds_cap"]
-            and not (c["batch_size"] == 160 and c["nominal_T"] == 12288)]
+    over = [c for c in cells if c["exceeds_cap"] and not (c["batch_size"] == 160 and c["nominal_T"] == 12288)]
     if over:
         raise SystemExit(f"cells exceed the 0.95 pool cap: {over}")
     print(f"{len(cells)} cells; pool {pool} tokens; cap {CAP_FRAC}", flush=True)
 
     server = None
     if not a.no_launch:
-        server = launch_server(a.model, a.port, a.gpu_mem, a.max_model_len, a.api_key,
-                               Path(a.out_raw).parent / "server",
-                               a.tensor_parallel_size, a.max_num_seqs,
-                               a.max_num_batched_tokens)
+        server = launch_server(
+            a.model,
+            a.port,
+            a.gpu_mem,
+            a.max_model_len,
+            a.api_key,
+            Path(a.out_raw).parent / "server",
+            a.tensor_parallel_size,
+            a.max_num_seqs,
+            a.max_num_batched_tokens,
+        )
     try:
         live_pool = kv_pool_from_log(server.results_dir / "server.log") if server else None
         print(f"server healthy; live KV pool from log: {live_pool} tokens", flush=True)
 
         eos_mode = warmup_and_verify_eos(a.port, a.api_key, a.served_model_name)
-        meta = {"_meta": True, "tool": "serving_decode_grid.py", "tp": a.tensor_parallel_size,
-                "engine_flags": {"gpu_mem": a.gpu_mem, "max_model_len": a.max_model_len,
-                                 "max_num_seqs": a.max_num_seqs,
-                                 "max_num_batched_tokens": a.max_num_batched_tokens,
-                                 "prefix_caching": False},
-                "eos_mode": eos_mode, "live_kv_pool_tokens": live_pool,
-                "lattice_pool_tokens": pool, "date": time.strftime("%Y-%m-%d"),
-                "n_cells": len(cells)}
+        meta = {
+            "_meta": True,
+            "tool": "serving_decode_grid.py",
+            "tp": a.tensor_parallel_size,
+            "engine_flags": {
+                "gpu_mem": a.gpu_mem,
+                "max_model_len": a.max_model_len,
+                "max_num_seqs": a.max_num_seqs,
+                "max_num_batched_tokens": a.max_num_batched_tokens,
+                "prefix_caching": False,
+            },
+            "eos_mode": eos_mode,
+            "live_kv_pool_tokens": live_pool,
+            "lattice_pool_tokens": pool,
+            "date": time.strftime("%Y-%m-%d"),
+            "n_cells": len(cells),
+        }
 
         out_raw = Path(a.out_raw)
         out_raw.parent.mkdir(parents=True, exist_ok=True)
@@ -417,19 +489,30 @@ def main(argv=None) -> None:
             raw_f.write(json.dumps(meta) + "\n")
             for c in cells:
                 t0 = time.time()
-                recs = run_cell(c, a.port, a.api_key, a.served_model_name, eos_mode,
-                                a.shard_threshold, a.n_shards, tmp_dir,
-                                rt_shards=a.rt_shards)
+                recs = run_cell(
+                    c,
+                    a.port,
+                    a.api_key,
+                    a.served_model_name,
+                    eos_mode,
+                    a.shard_threshold,
+                    a.n_shards,
+                    tmp_dir,
+                    rt_shards=a.rt_shards,
+                )
                 for r in recs:
                     raw_f.write(json.dumps({"cell": [c["batch_size"], c["nominal_T"]], **r}) + "\n")
                 raw_f.flush()
                 row = summarize_cell([r for r in recs if r["t_first_wall"] is not None])
                 rows.append(row)
-                print(f"  B={c['batch_size']:>3} T={c['nominal_T']:>5}  "
-                      f"itl_p50={row['decode_step_ms']:>8.3f} ms  ctx_eff={row['context_len']:>5}  "
-                      f"n>={row['n_samples']:>4}  win={row['steady_window_s']:>6.2f}s  "
-                      f"lag_p99={row['p99_loop_lag_ms']:>5.2f}  [{row['validation_status']}]  "
-                      f"({time.time()-t0:.0f}s)", flush=True)
+                print(
+                    f"  B={c['batch_size']:>3} T={c['nominal_T']:>5}  "
+                    f"itl_p50={row['decode_step_ms']:>8.3f} ms  ctx_eff={row['context_len']:>5}  "
+                    f"n>={row['n_samples']:>4}  win={row['steady_window_s']:>6.2f}s  "
+                    f"lag_p99={row['p99_loop_lag_ms']:>5.2f}  [{row['validation_status']}]  "
+                    f"({time.time() - t0:.0f}s)",
+                    flush=True,
+                )
 
         out_sum = Path(a.out_summary)
         out_sum.parent.mkdir(parents=True, exist_ok=True)
@@ -439,8 +522,11 @@ def main(argv=None) -> None:
             for row in rows:
                 w.writerow({k: row.get(k, "") for k in SUMMARY_FIELDS})
         print(f"\nwrote {out_raw} + {out_sum}", flush=True)
-        print("authoritative grid CSV: just export --only serving_decode_grid "
-              f"--results <dir holding {out_raw.name}> --dest <dir>", flush=True)
+        print(
+            "authoritative grid CSV: just export --only serving_decode_grid "
+            f"--results <dir holding {out_raw.name}> --dest <dir>",
+            flush=True,
+        )
     finally:
         if server is not None:
             server.stop()

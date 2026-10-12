@@ -152,10 +152,10 @@ class StandInServer:
         await asyncio.sleep(0)
         if self.pending:
             batch, self.pending = self.pending, []
-            params = self.vllm.SamplingParams(temperature=0.0, ignore_eos=True,
-                                              max_tokens=batch[0]["body"]["max_tokens"])
-            outs = self.vllm.run_batch([{"prompt_token_ids": e["body"]["prompt"]} for e in batch],
-                                       params)
+            params = self.vllm.SamplingParams(
+                temperature=0.0, ignore_eos=True, max_tokens=batch[0]["body"]["max_tokens"]
+            )
+            outs = self.vllm.run_batch([{"prompt_token_ids": e["body"]["prompt"]} for e in batch], params)
             for e, out in zip(batch, outs):
                 e["tokens"] = len(out.outputs[0].token_ids)
         usage = {"prompt_tokens": len(body["prompt"]), "completion_tokens": entry["tokens"]}
@@ -175,6 +175,7 @@ class Reply:
         async def lines():
             for line in self.lines:
                 yield line
+
         return lines()
 
     async def text(self):
@@ -204,9 +205,11 @@ def run_grid_cli(argv, env, model_config=None):
         if "--results-dir" not in argv:
             argv += ["--results-dir", str(Path(model_dir, "results"))]
         out = io.StringIO()
-        with crossval_path(stubs=True), \
-                mock.patch.dict(os.environ, env, clear=True), \
-                mock.patch("shutil.which", return_value=None):
+        with (
+            crossval_path(stubs=True),
+            mock.patch.dict(os.environ, env, clear=True),
+            mock.patch("shutil.which", return_value=None),
+        ):
             vllm = importlib.import_module("vllm")
             vllm.reset()
             vllm.generate_seconds = fake_generate_seconds
@@ -218,14 +221,16 @@ def run_grid_cli(argv, env, model_config=None):
             server = StandInServer(vllm, launcher)
             gpu = (torch.cuda.get_device_name(0), torch.cuda.get_device_properties(0).total_memory)
             exit_msg = None
-            with mock.patch.object(drivers, "time", clock), \
-                    mock.patch.object(launcher, "idle_gpus", return_value="0"), \
-                    mock.patch.object(launcher, "start", server.start), \
-                    mock.patch.object(launcher, "urlopen", server.urlopen), \
-                    mock.patch.object(launcher, "accelerator", return_value=gpu), \
-                    mock.patch.object(aiohttp, "ClientSession", server.session), \
-                    mock.patch.object(aiohttp, "TCPConnector", lambda **kw: None), \
-                    contextlib.redirect_stdout(out):
+            with (
+                mock.patch.object(drivers, "time", clock),
+                mock.patch.object(launcher, "idle_gpus", return_value="0"),
+                mock.patch.object(launcher, "start", server.start),
+                mock.patch.object(launcher, "urlopen", server.urlopen),
+                mock.patch.object(launcher, "accelerator", return_value=gpu),
+                mock.patch.object(aiohttp, "ClientSession", server.session),
+                mock.patch.object(aiohttp, "TCPConnector", lambda **kw: None),
+                contextlib.redirect_stdout(out),
+            ):
                 try:
                     cli.main(argv)
                 except SystemExit as e:
@@ -235,8 +240,10 @@ def run_grid_cli(argv, env, model_config=None):
     text = out.getvalue().replace(model_dir, "<MODEL>")
     return {
         "stdout": text.splitlines(),
-        "llm_kwargs": [{k: (v.replace(model_dir, "<MODEL>") if isinstance(v, str) else v)
-                        for k, v in kw.items()} for kw in llm_kwargs],
+        "llm_kwargs": [
+            {k: (v.replace(model_dir, "<MODEL>") if isinstance(v, str) else v) for k, v in kw.items()}
+            for kw in llm_kwargs
+        ],
         "generate_calls": calls,
         "exit": exit_msg,
     }

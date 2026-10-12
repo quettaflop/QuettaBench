@@ -44,8 +44,9 @@ class Parse(unittest.TestCase):
         m = native.parse_prometheus("vllm:gpu_prefix_cache_hits 3\nvllm:gpu_prefix_cache_queries 4\n")
         self.assertEqual(native.prefix_cache_hit_rate(m), 0.75)
         self.assertIsNone(native.prefix_cache_hit_rate({"vllm:gpu_prefix_cache_hits": 3.0}))
-        self.assertIsNone(native.prefix_cache_hit_rate(
-            {"vllm:gpu_prefix_cache_hits": 0.0, "vllm:gpu_prefix_cache_queries": 0.0}))
+        self.assertIsNone(
+            native.prefix_cache_hit_rate({"vllm:gpu_prefix_cache_hits": 0.0, "vllm:gpu_prefix_cache_queries": 0.0})
+        )
 
 
 class Scrape(unittest.TestCase):
@@ -53,24 +54,24 @@ class Scrape(unittest.TestCase):
         with helpers.serve() as (endpoint, _):
             section = native.metrics_section(native.scrape_metrics(endpoint))
         self.assertEqual(section["prefix_cache_hit_rate"], 0.75)
-        self.assertEqual(section["samples"][
-            'vllm:gpu_prefix_cache_hits_total{engine="0",model_name="m"}'], 800.0)
+        self.assertEqual(section["samples"]['vllm:gpu_prefix_cache_hits_total{engine="0",model_name="m"}'], 800.0)
         self.assertEqual(section["samples"]["process_open_fds"], 42.0)
 
 
 class Traces(unittest.TestCase):
     def test_lists_what_the_arming_left(self):
         with tempfile.TemporaryDirectory() as tmp:
-            self.assertEqual(native.collect_armed_traces(tmp, "none"),
-                             {"instrumentation": "none", "files": [], "missing": False})
+            self.assertEqual(
+                native.collect_armed_traces(tmp, "none"), {"instrumentation": "none", "files": [], "missing": False}
+            )
             self.assertTrue(native.collect_armed_traces(tmp, "nsys")["missing"])
             (Path(tmp) / "nsys.nsys-rep").write_bytes(b"")
-            self.assertEqual(native.collect_armed_traces(tmp, "nsys"),
-                             {"instrumentation": "nsys", "files": ["nsys.nsys-rep"],
-                              "missing": False})
+            self.assertEqual(
+                native.collect_armed_traces(tmp, "nsys"),
+                {"instrumentation": "nsys", "files": ["nsys.nsys-rep"], "missing": False},
+            )
             (Path(tmp) / "torch_trace.json").write_text("{}")
-            self.assertEqual(native.collect_armed_traces(tmp, "torch")["files"],
-                             ["torch_trace.json"])
+            self.assertEqual(native.collect_armed_traces(tmp, "torch")["files"], ["torch_trace.json"])
 
 
 def fake_nsys_export(db):
@@ -99,23 +100,36 @@ class Kernels(unittest.TestCase):
     def test_exports_once_then_tabulates_per_step(self):
         with tempfile.TemporaryDirectory() as tmp:
             (Path(tmp) / "nsys.nsys-rep").write_bytes(b"")
-            with mock.patch.object(native.subprocess, "run",
-                                   side_effect=lambda argv, check: fake_nsys_export(
-                                       Path(argv[argv.index("-o") + 1]))) as run:
+            with mock.patch.object(
+                native.subprocess,
+                "run",
+                side_effect=lambda argv, check: fake_nsys_export(Path(argv[argv.index("-o") + 1])),
+            ) as run:
                 out = native.kernel_summary(tmp, 2, window="prefill_decode")
                 native.kernel_summary(tmp, 2)
-            run.assert_called_once_with(["nsys", "export", "--type", "sqlite", "-o",
-                                         str(Path(tmp) / "nsys.partial.sqlite"),
-                                         str(Path(tmp) / "nsys.nsys-rep")], check=True)
+            run.assert_called_once_with(
+                [
+                    "nsys",
+                    "export",
+                    "--type",
+                    "sqlite",
+                    "-o",
+                    str(Path(tmp) / "nsys.partial.sqlite"),
+                    str(Path(tmp) / "nsys.nsys-rep"),
+                ],
+                check=True,
+            )
         self.assertEqual(out["launches_per_step"], 2.5)
         self.assertAlmostEqual(out["kernel_ms_per_step"], 0.0007)
-        self.assertEqual([(f["family"], f["launches_per_step"]) for f in out["families"]],
-                         [("GEMM / GEMV (library)", 1.0), ("act / norm (fused)", 1.0),
-                          ("collective (TP)", 0.5)])
-        self.assertEqual(out["kernels"][0], {"kernel": "nvjet_gemm", "launches_per_step": 1.0,
-                                             "ms_per_step": 0.0004, "us_per_call": 0.4})
-        self.assertEqual(out["memops"], [{"kind": "memcpy", "per_step": 0.5,
-                                          "ms_per_step": 0.000025}])
+        self.assertEqual(
+            [(f["family"], f["launches_per_step"]) for f in out["families"]],
+            [("GEMM / GEMV (library)", 1.0), ("act / norm (fused)", 1.0), ("collective (TP)", 0.5)],
+        )
+        self.assertEqual(
+            out["kernels"][0],
+            {"kernel": "nvjet_gemm", "launches_per_step": 1.0, "ms_per_step": 0.0004, "us_per_call": 0.4},
+        )
+        self.assertEqual(out["memops"], [{"kind": "memcpy", "per_step": 0.5, "ms_per_step": 0.000025}])
         # 1400 ns of kernels covering 1200 ns of wall over a 3000 ns window
         (dev,) = out["devices"]
         self.assertAlmostEqual(dev["sum_ms_per_step"], 0.0007)
@@ -134,8 +148,7 @@ class Kernels(unittest.TestCase):
             (Path(tmp) / "nsys.partial.sqlite").write_bytes(b"half")
             with mock.patch.object(native.subprocess, "run", side_effect=export):
                 out = native.kernel_summary(tmp, 2, window="prefill_decode")
-            self.assertEqual(sorted(p.name for p in Path(tmp).iterdir()),
-                             ["nsys.nsys-rep", "nsys.sqlite"])
+            self.assertEqual(sorted(p.name for p in Path(tmp).iterdir()), ["nsys.nsys-rep", "nsys.sqlite"])
         self.assertEqual(out["launches_per_step"], 2.5)
 
     def test_subtract_takes_the_prefill_off(self):
@@ -157,20 +170,27 @@ class Kernels(unittest.TestCase):
 
 def fake_probe(result):
     """A frontend module whose two sources share one parser and one result."""
+
     def parser():
         ap = argparse.ArgumentParser()
         for flag in ("--base-url", "--proxy-url", "--model", "--gpu-label"):
             ap.add_argument(flag)
         return ap
-    return types.SimpleNamespace(frontend_parser=parser, frontend_probe=lambda a: result(a),
-                                 pd_host_parser=parser, pd_host_probe=lambda a: result(a))
+
+    return types.SimpleNamespace(
+        frontend_parser=parser,
+        frontend_probe=lambda a: result(a),
+        pd_host_parser=parser,
+        pd_host_probe=lambda a: result(a),
+    )
 
 
 class LiveProbes(unittest.TestCase):
     def test_defaults_fill_only_missing_flags(self):
-        self.assertEqual(native.with_defaults(["--model", "x"], {"--model": "m", "--tp": 2,
-                                                                 "--skip": None}),
-                         ["--model", "x", "--tp", "2"])
+        self.assertEqual(
+            native.with_defaults(["--model", "x"], {"--model": "m", "--tp": 2, "--skip": None}),
+            ["--model", "x", "--tp", "2"],
+        )
 
     def test_frontend_points_at_the_endpoint(self):
         fake = fake_probe(lambda a: {"base_url": a.base_url, "model": a.model, "gpu": a.gpu_label})
@@ -187,14 +207,26 @@ class LiveProbes(unittest.TestCase):
     def test_kv_transfer_reads_its_probe_rows(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "rows.jsonl"
-            path.write_text(json.dumps({"probe": "kv_transfer", "table": "kv_transfer/H200_nixl.csv",
-                                        "key": {"gpu": "H200", "layout": "contig"},
-                                        "value": {"total_ms": 1.5}, "timing": "cuda_event"}) + "\n"
-                            + json.dumps({"probe": "gemm", "table": "gemm/H200.csv", "key": {"m": 1},
-                                          "value": {"ms": 2.0}, "timing": "ncu"}) + "\n")
-            self.assertEqual(native.kv_transfer(tmp),
-                             {"rows_jsonl": str(path), "rows": [{"gpu": "H200", "layout": "contig",
-                                                                 "total_ms": 1.5}]})
+            path.write_text(
+                json.dumps(
+                    {
+                        "probe": "kv_transfer",
+                        "table": "kv_transfer/H200_nixl.csv",
+                        "key": {"gpu": "H200", "layout": "contig"},
+                        "value": {"total_ms": 1.5},
+                        "timing": "cuda_event",
+                    }
+                )
+                + "\n"
+                + json.dumps(
+                    {"probe": "gemm", "table": "gemm/H200.csv", "key": {"m": 1}, "value": {"ms": 2.0}, "timing": "ncu"}
+                )
+                + "\n"
+            )
+            self.assertEqual(
+                native.kv_transfer(tmp),
+                {"rows_jsonl": str(path), "rows": [{"gpu": "H200", "layout": "contig", "total_ms": 1.5}]},
+            )
 
     def test_moved_probes_keep_a_runnable_main_with_out(self):
         tree = ast.parse((Path(native.__file__).parent / "frontend.py").read_text())
@@ -202,20 +234,26 @@ class LiveProbes(unittest.TestCase):
         self.assertIn("main", funcs)
         for name in ("frontend", "pd_host"):
             with self.subTest(name):
-                flags = {a.value for n in ast.walk(funcs[f"{name}_parser"]) if isinstance(n, ast.Call)
-                         and getattr(n.func, "attr", "") == "add_argument"
-                         for a in n.args if isinstance(a, ast.Constant)}
+                flags = {
+                    a.value
+                    for n in ast.walk(funcs[f"{name}_parser"])
+                    if isinstance(n, ast.Call) and getattr(n.func, "attr", "") == "add_argument"
+                    for a in n.args
+                    if isinstance(a, ast.Constant)
+                }
                 self.assertIn("--out", flags)
                 self.assertTrue({f"{name}_probe", f"{name}_main"} <= set(funcs))
 
     def test_kv_transfer_records_a_probe_run(self):
         """kv_transfer records its run through run_recorded, so its rows land in rows.jsonl and only `qbench export` moves them to kernel_data."""
         text = (Path(native.__file__).parent / "kv_transfer.py").read_text()
-        calls = {(n.func.id, tuple(getattr(a, "id", getattr(a, "value", None)) for a in n.args))
-                 for n in ast.walk(ast.parse(text))
-                 if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
+        calls = {
+            (n.func.id, tuple(getattr(a, "id", getattr(a, "value", None)) for a in n.args))
+            for n in ast.walk(ast.parse(text))
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+        }
         self.assertIn(("add_output_args", ("ap",)), calls)
-        self.assertIn("emit(ProbeRow(", text)
+        self.assertRegex(text, r"emit\(\s*ProbeRow\(")
         self.assertNotIn("import csv", text)
         self.assertIn(("run_recorded", ("main", "kv_transfer")), calls)
         self.assertNotIn("data/kernel_data", text)
@@ -223,12 +261,17 @@ class LiveProbes(unittest.TestCase):
     def test_kv_transfer_fails_its_run_on_a_hang_or_sigterm(self):
         """The gloo group times out after five minutes and SIGTERM raises SystemExit(143), so the run is recorded as failed."""
         tree = ast.parse((Path(native.__file__).parent / "kv_transfer.py").read_text())
-        (init,) = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
-                   and getattr(n.func, "attr", "") == "init_process_group"]
-        self.assertEqual(ast.unparse(next(k.value for k in init.keywords if k.arg == "timeout")),
-                         "timedelta(minutes=5)")
-        calls = [ast.unparse(n) for n in ast.walk(tree) if isinstance(n, ast.Call)
-                 and getattr(n.func, "attr", "") == "signal"]
+        (init,) = [
+            n for n in ast.walk(tree) if isinstance(n, ast.Call) and getattr(n.func, "attr", "") == "init_process_group"
+        ]
+        self.assertEqual(
+            ast.unparse(next(k.value for k in init.keywords if k.arg == "timeout")), "timedelta(minutes=5)"
+        )
+        calls = [
+            ast.unparse(n)
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Call) and getattr(n.func, "attr", "") == "signal"
+        ]
         self.assertEqual(calls, ["signal.signal(signal.SIGTERM, _on_sigterm)"])
         (handler,) = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_on_sigterm"]
         namespace = {}
@@ -246,9 +289,13 @@ class LiveProbes(unittest.TestCase):
         funcs = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
         for name in ("frontend", "pd_host"):
             with self.subTest(name):
-                (call,) = [n for n in ast.walk(funcs[f"{name}_parser"]) if isinstance(n, ast.Call)
-                           and getattr(n.func, "attr", "") == "add_argument"
-                           and any(getattr(x, "value", None) == "--device-yaml" for x in n.args)]
+                (call,) = [
+                    n
+                    for n in ast.walk(funcs[f"{name}_parser"])
+                    if isinstance(n, ast.Call)
+                    and getattr(n.func, "attr", "") == "add_argument"
+                    and any(getattr(x, "value", None) == "--device-yaml" for x in n.args)
+                ]
                 kw = {k.arg: getattr(k.value, "value", None) for k in call.keywords}
                 self.assertIs(kw.get("required"), True)
                 self.assertNotIn("default", kw)
@@ -281,8 +328,17 @@ class Energy(unittest.TestCase):
 
     def test_energy_section(self):
         e = wrapped.energy_section([300.0, 300.0], 1.0, out_tokens=200, devices="0,1")
-        self.assertEqual(e, {"joules": 600.0, "joules_per_token": 3.0, "scope": "gpu_board",
-                             "devices": 2, "samples": 2, "interval_s": 1.0})
+        self.assertEqual(
+            e,
+            {
+                "joules": 600.0,
+                "joules_per_token": 3.0,
+                "scope": "gpu_board",
+                "devices": 2,
+                "samples": 2,
+                "interval_s": 1.0,
+            },
+        )
         self.assertEqual(wrapped.energy_section([5.0], 1.0, 0, "")["joules_per_token"], 5.0)
         self.assertEqual(wrapped.energy_section([], 1.0, 0, "")["devices"], "all")
 
@@ -305,8 +361,9 @@ class Sampler(unittest.TestCase):
 
     def test_sums_the_listed_devices(self):
         sampler, samples = self.sample("0,2")
-        self.assertEqual(sampler.cmd, [FAKE_SMI, "--query-gpu=power.draw",
-                                       "--format=csv,noheader,nounits", "-i", "0,2"])
+        self.assertEqual(
+            sampler.cmd, [FAKE_SMI, "--query-gpu=power.draw", "--format=csv,noheader,nounits", "-i", "0,2"]
+        )
         self.assertTrue(samples)
         self.assertEqual(set(samples), {220.0})
 
@@ -331,14 +388,29 @@ class Cost(unittest.TestCase):
 
     def test_cost_section(self):
         c = wrapped.cost_section(3, 2, 1800.0, 1_500_000)
-        self.assertEqual(c, {"usd": 3.0, "usd_per_m_out_tokens": 2.0, "gpu_cost_hr": 3.0,
-                             "devices": 2, "wall_s": 1800.0, "out_tokens": 1_500_000})
+        self.assertEqual(
+            c,
+            {
+                "usd": 3.0,
+                "usd_per_m_out_tokens": 2.0,
+                "gpu_cost_hr": 3.0,
+                "devices": 2,
+                "wall_s": 1800.0,
+                "out_tokens": 1_500_000,
+            },
+        )
 
 
 class Gsm8k(unittest.TestCase):
-    CASES = (("The answer is 42.", "42"), ("so $1,234.50 total", "1234.50"),
-             ("step 1 ... #### 72", "72"), ("-3 then 7.", "7"), ("no digits", None),
-             ("#### -5", "-5"), ("1,000,000 dollars", "1000000"))
+    CASES = (
+        ("The answer is 42.", "42"),
+        ("so $1,234.50 total", "1234.50"),
+        ("step 1 ... #### 72", "72"),
+        ("-3 then 7.", "7"),
+        ("no digits", None),
+        ("#### -5", "-5"),
+        ("1,000,000 dollars", "1000000"),
+    )
 
     def test_answer(self):
         for text, want in self.CASES:
@@ -348,10 +420,17 @@ class Gsm8k(unittest.TestCase):
     def test_load_and_score(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "gsm8k.jsonl"
-            path.write_text("\n".join(json.dumps(x) for x in (
-                {"question": "ab", "answer": "x #### 3"},
-                {"question": "c", "answer": "y #### 4"},
-                {"question": "d", "answer": "z #### 5"})) + "\n\n")
+            path.write_text(
+                "\n".join(
+                    json.dumps(x)
+                    for x in (
+                        {"question": "ab", "answer": "x #### 3"},
+                        {"question": "c", "answer": "y #### 4"},
+                        {"question": "d", "answer": "z #### 5"},
+                    )
+                )
+                + "\n\n"
+            )
             items = wrapped.load_gsm8k(path, "unused", 2, tokenizer=Tokenizer())
         self.assertEqual(items, [([97, 98], "3"), ([99], "4")])
 
@@ -362,8 +441,7 @@ class Gsm8k(unittest.TestCase):
             return "so 3" if ids == [97, 98] else "nothing"
 
         acc = wrapped.gsm8k_accuracy(generate, items)
-        self.assertEqual(acc, {"dataset": "gsm8k", "correct": 1, "n": 2, "exact_match": 0.5,
-                               "max_tokens": 256})
+        self.assertEqual(acc, {"dataset": "gsm8k", "correct": 1, "n": 2, "exact_match": 0.5, "max_tokens": 256})
         self.assertEqual(calls, [([97, 98], 256), ([99], 256)])
         self.assertEqual(wrapped.gsm8k_accuracy(generate, [])["exact_match"], 0.0)
 
@@ -372,8 +450,9 @@ class HttpGenerate(unittest.TestCase):
     def test_posts_greedy_token_ids(self):
         with helpers.serve() as (endpoint, posts):
             self.assertEqual(wrapped.http_generate(endpoint, "m")([1, 2, 3], 256), "#### 3")
-        self.assertEqual(posts, [("/v1/completions", {
-            "model": "m", "prompt": [1, 2, 3], "max_tokens": 256, "temperature": 0.0})])
+        self.assertEqual(
+            posts, [("/v1/completions", {"model": "m", "prompt": [1, 2, 3], "max_tokens": 256, "temperature": 0.0})]
+        )
 
 
 if __name__ == "__main__":

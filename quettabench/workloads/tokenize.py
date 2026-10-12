@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Tokenizes an agent-bench JSONL trace into replay requests: prompt_text becomes prompt_token_ids and reasoning_text + content_text becomes output_token_ids. Needs the serving model's tokenizer."""
+
 import argparse
 import json
 import sys
@@ -37,10 +38,12 @@ def main():
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
     from transformers import AutoTokenizer
+
     tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
 
     def encode(s):
         return tok(s, add_special_tokens=False)["input_ids"]
+
     records = [json.loads(line) for line in open(args.trace) if line.strip()]
     reqs = r2_to_requests(records, encode)
     if not reqs:

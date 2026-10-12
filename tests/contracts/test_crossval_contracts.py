@@ -37,8 +37,7 @@ VERIFIED_CRATE = "llama"
 
 def _scripts(suffix):
     roots = (QB, REPO / "analysis")
-    return sorted(p for root in roots for p in root.rglob(f"*{suffix}")
-                  if "__pycache__" not in p.parts)
+    return sorted(p for root in roots for p in root.rglob(f"*{suffix}") if "__pycache__" not in p.parts)
 
 
 def _load_workloads():
@@ -46,21 +45,31 @@ def _load_workloads():
     fixtures = REPO / "tests" / "golden" / "fixtures"
     records = json.loads((fixtures / "config_workloads.json").read_text())
     glob = json.loads((fixtures / "config_global.json").read_text())["cleared"]
-    return {"workloads": {n: r["cleared"]["xval_config"]["workload"] for n, r in records.items()},
-            "grids": glob["grids"], "step_points": glob["step_points"]}
+    return {
+        "workloads": {n: r["cleared"]["xval_config"]["workload"] for n, r in records.items()},
+        "grids": glob["grids"],
+        "step_points": glob["step_points"],
+    }
 
 
 def _config(name, *sets, env=None):
     """The loader's Config for configs/runs/<name>.yaml under exactly `env`."""
-    (cfg,) = loader.load(REPO / "configs" / "runs" / f"{name}.yaml",
-                         ["allow_unverified=true", *sets], env=env or {})
+    (cfg,) = loader.load(REPO / "configs" / "runs" / f"{name}.yaml", ["allow_unverified=true", *sets], env=env or {})
     return cfg
 
 
 def synth_requests(count, ctx, seed=0):
     """`count` distinct request dicts of `ctx` synthetic tokens, numbered by order."""
-    return [{"prompt_token_ids": synth_ids(ctx, seed * 1_000_003 + j), "prompt_len": ctx,
-             "seed": seed, "order": j, "source": "SYNTHETIC"} for j in range(count)]
+    return [
+        {
+            "prompt_token_ids": synth_ids(ctx, seed * 1_000_003 + j),
+            "prompt_len": ctx,
+            "seed": seed,
+            "order": j,
+            "source": "SYNTHETIC",
+        }
+        for j in range(count)
+    ]
 
 
 def load_trace(path):
@@ -106,40 +115,46 @@ class CrossvalScripts(unittest.TestCase):
 
     def test_link_profile_detection(self):
         # a caller override wins; non-cuda backends take the no-pins nvlink profile.
-        self.assertEqual(_config("llama", env={"XVAL_LINK_PROFILE": "pcie"}).hardware.link_profile,
-                         "pcie")
-        self.assertEqual(_config("llama", "engine.dtype=bfloat16", env={"XVAL_BACKEND": "tpu"}).hardware.link_profile,
-                         "nvlink")
+        self.assertEqual(_config("llama", env={"XVAL_LINK_PROFILE": "pcie"}).hardware.link_profile, "pcie")
+        self.assertEqual(
+            _config("llama", "engine.dtype=bfloat16", env={"XVAL_BACKEND": "tpu"}).hardware.link_profile, "nvlink"
+        )
 
     def test_provision_defaults(self):
         # provision.py reads its defaults from the hardware yaml.
-        self.assertEqual(_config("llama").hardware.provision["cache_root"],
-                         "/workspace/.xval-cache")
+        self.assertEqual(_config("llama").hardware.provision["cache_root"], "/workspace/.xval-cache")
 
     def test_lss_export_covers_or_fails_loudly(self):
         # a missing probe cell must exit 2 with a MISSING line, never an interpolated row.
         with tempfile.TemporaryDirectory() as td:
             ref = Path(td) / "H200" / "meta-llama" / "Llama-3.1-8B" / "bf16"
             (ref / "tp1").mkdir(parents=True)
-            (ref / "tp1" / "dense.csv").write_text(
-                "layer,tokens,time_us\nact_fn,1,3.3\nact_fn,2,3.4\n")
-            (ref / "tp1" / "per_sequence.csv").write_text(
-                "layer,sequences,time_us\nlm_head,1,248.0\n")
+            (ref / "tp1" / "dense.csv").write_text("layer,tokens,time_us\nact_fn,1,3.3\nact_fn,2,3.4\n")
+            (ref / "tp1" / "per_sequence.csv").write_text("layer,sequences,time_us\nlm_head,1,248.0\n")
             (ref / "meta.yaml").write_text("hardware: H200\nmodel: m\n")
             probes = Path(td) / "probes.jsonl"
             recs = [
                 {"table": "dense", "tp": 1, "layer": "act_fn", "tokens": 1, "time_us": 3.31},
                 {"table": "dense", "tp": 1, "layer": "act_fn", "tokens": 1, "time_us": 3.39},
                 {"table": "dense", "tp": 1, "layer": "act_fn", "tokens": 2, "time_us": 3.44},
-                {"table": "per_sequence", "tp": 1, "layer": "lm_head", "sequences": 1,
-                 "time_us": 250.0},
+                {"table": "per_sequence", "tp": 1, "layer": "lm_head", "sequences": 1, "time_us": 250.0},
             ]
             probes.write_text("".join(json.dumps(r) + "\n" for r in recs))
             out = Path(td) / "out"
             full = subprocess.run(
-                [sys.executable, str(REPO / "analysis" / "lss_export.py"), "--probes", str(probes),
-                 "--reference", str(ref), "--out", str(out)],
-                capture_output=True, text=True)
+                [
+                    sys.executable,
+                    str(REPO / "analysis" / "lss_export.py"),
+                    "--probes",
+                    str(probes),
+                    "--reference",
+                    str(ref),
+                    "--out",
+                    str(out),
+                ],
+                capture_output=True,
+                text=True,
+            )
             self.assertEqual(full.returncode, 0, full.stdout + full.stderr)
             tree = out / "profiler" / "perf" / "H200" / "meta-llama" / "Llama-3.1-8B" / "bf16"
             dense = (tree / "tp1" / "dense.csv").read_text().splitlines()
@@ -148,9 +163,19 @@ class CrossvalScripts(unittest.TestCase):
             self.assertTrue((tree / "meta.yaml").exists())
             probes.write_text(json.dumps(recs[0]) + "\n")  # drop coverage
             gap = subprocess.run(
-                [sys.executable, str(REPO / "analysis" / "lss_export.py"), "--probes", str(probes),
-                 "--reference", str(ref), "--out", str(out)],
-                capture_output=True, text=True)
+                [
+                    sys.executable,
+                    str(REPO / "analysis" / "lss_export.py"),
+                    "--probes",
+                    str(probes),
+                    "--reference",
+                    str(ref),
+                    "--out",
+                    str(out),
+                ],
+                capture_output=True,
+                text=True,
+            )
             self.assertEqual(gap.returncode, 2, gap.stdout + gap.stderr)
             self.assertIn("MISSING table=dense tp=1 layer=act_fn tokens=2", gap.stdout)
             self.assertIn("MISSING", (out / "gaps.txt").read_text())
@@ -160,26 +185,45 @@ class CrossvalScripts(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             live = Path(td) / "bench_dir"
             live.mkdir()
-            sim_rows = ["instance id,request id,model,input,output,arrival,end_time,"
-                        "latency,queuing_delay,TTFT,TPOT,ITL"]
+            sim_rows = [
+                "instance id,request id,model,input,output,arrival,end_time,latency,queuing_delay,TTFT,TPOT,ITL"
+            ]
             with open(live / "requests.jsonl", "w") as fh:
                 for i in range(10):
                     sim_ttft_ms = 10.0 + i
                     toks = 256 * (i + 1)
-                    fh.write(json.dumps({
-                        "request_id": f"bench-{i}", "input_toks": toks, "output_toks": 8,
-                        "queued_ts": 1000.0 + i,
-                        "first_token_ts": 1000.0 + i + (sim_ttft_ms + 6.3) / 1e3,
-                        "last_token_ts": 1000.0 + i + 1.0}) + "\n")
-                    sim_rows.append(f"0,{i},m,{toks},8,0,0,0,0,{sim_ttft_ms * 1e6:.0f},0,\"[]\"")
+                    fh.write(
+                        json.dumps(
+                            {
+                                "request_id": f"bench-{i}",
+                                "input_toks": toks,
+                                "output_toks": 8,
+                                "queued_ts": 1000.0 + i,
+                                "first_token_ts": 1000.0 + i + (sim_ttft_ms + 6.3) / 1e3,
+                                "last_token_ts": 1000.0 + i + 1.0,
+                            }
+                        )
+                        + "\n"
+                    )
+                    sim_rows.append(f'0,{i},m,{toks},8,0,0,0,0,{sim_ttft_ms * 1e6:.0f},0,"[]"')
             sim = Path(td) / "sim.csv"
             sim.write_text("\n".join(sim_rows) + "\n")
             meta = Path(td) / "meta.yaml"
             meta.write_text("hardware: H200\n")
             out = subprocess.run(
-                [sys.executable, str(REPO / "analysis" / "lss_first_token.py"), "--live", str(live),
-                 "--sim", str(sim), "--meta", str(meta)],
-                capture_output=True, text=True)
+                [
+                    sys.executable,
+                    str(REPO / "analysis" / "lss_first_token.py"),
+                    "--live",
+                    str(live),
+                    "--sim",
+                    str(sim),
+                    "--meta",
+                    str(meta),
+                ],
+                capture_output=True,
+                text=True,
+            )
             self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
             self.assertIn("overhead_ms=6.300", out.stdout)
             self.assertIn("after_mape=0.0%", out.stdout)
@@ -189,6 +233,7 @@ class CrossvalScripts(unittest.TestCase):
         # the sweep must bracket the PASS/FAIL boundary within its probe cap.
         from quettabench.metrics.core import sla_verdict
         from quettabench.modes.serve import goodput_search
+
         gen = goodput_search(start=1.0)
         speeds, speed = [], next(gen)
         try:
@@ -211,6 +256,7 @@ class CrossvalScripts(unittest.TestCase):
         # injected schedules are deterministic, match their spec and change the workload hash.
         from quettabench.workloads import arrival
         from quettabench.workloads.base import workload_hash
+
         importlib.reload(arrival)
         self.assertIsNone(arrival.parse_arrival("trace", 8))
         p = arrival.parse_arrival("poisson:2.0", 8)
@@ -230,12 +276,14 @@ class CrossvalScripts(unittest.TestCase):
 
     def test_energy_integration(self):
         from quettabench.profiling.wrapped import integrate_power
+
         self.assertEqual(integrate_power([100.0, 100.0, 100.0], 1.0), 300.0)
         self.assertEqual(integrate_power([], 1.0), 0.0)
         self.assertIn("ENERGYSUM", (QB / "profiler.py").read_text())
 
     def test_cost_math(self):
         from quettabench.profiling.wrapped import cost_per_m_tokens
+
         # 2 GPUs at $3.60/hr for 30 min producing 1M tokens: $3.60, $3.60/M.
         usd, per_m = cost_per_m_tokens(3.6, 2, 1800.0, 1_000_000)
         self.assertAlmostEqual(usd, 3.6)
@@ -244,6 +292,7 @@ class CrossvalScripts(unittest.TestCase):
 
     def test_gsm8k_answer_parse(self):
         from quettabench.profiling.wrapped import gsm8k_answer as f
+
         self.assertEqual(f("Natalia sold 48 clips. #### 72"), "72")
         self.assertEqual(f("so the total is $1,234."), "1234")
         self.assertEqual(f("the answer is 3.5 apples"), "3.5")
@@ -256,16 +305,24 @@ class CrossvalScripts(unittest.TestCase):
         sys.path.insert(0, str(REPO))
         try:
             from quettabench.config import schema
+
             self.assertEqual(schema.parse_serving_style("aggregated"), {"mode": "aggregated"})
             self.assertEqual(schema.parse_serving_style(None), {"mode": "aggregated"})
-            self.assertEqual(schema.parse_serving_style("disagg:2p2d"),
-                             {"mode": "disagg", "prefill": 2, "decode": 2})
-            self.assertEqual(schema.parse_serving_style("ep8dp2"),
-                             {"mode": "ep_dp", "ep": 8, "dp": 2})
-            self.assertEqual(schema.parse_serving_style("afd:2a6f"),
-                             {"mode": "afd", "attn": 2, "ffn": 6})
-            for bad in ("disagg:0p1d", "disagg:2p", "ep8", "wideEP", "disagg:xp1d",
-                        "ep0dp2", "ep8dp0", "afd:0a1f", "afd:2a", "afd:2f6a"):
+            self.assertEqual(schema.parse_serving_style("disagg:2p2d"), {"mode": "disagg", "prefill": 2, "decode": 2})
+            self.assertEqual(schema.parse_serving_style("ep8dp2"), {"mode": "ep_dp", "ep": 8, "dp": 2})
+            self.assertEqual(schema.parse_serving_style("afd:2a6f"), {"mode": "afd", "attn": 2, "ffn": 6})
+            for bad in (
+                "disagg:0p1d",
+                "disagg:2p",
+                "ep8",
+                "wideEP",
+                "disagg:xp1d",
+                "ep0dp2",
+                "ep8dp0",
+                "afd:0a1f",
+                "afd:2a",
+                "afd:2f6a",
+            ):
                 with self.assertRaises(ValueError):
                     schema.parse_serving_style(bad)
             schema.check_ep_legal(8, 256)  # DeepSeek-V4-Flash: 256 experts
@@ -327,29 +384,42 @@ class CrossvalScripts(unittest.TestCase):
             stub = Path(td) / "stub"
             stub.write_text("#!/usr/bin/env bash\n" + stub_body + "\n")
             stub.chmod(0o755)
-            argv = [sys.executable, "-m", "quettabench.cli", "run",
-                    str(REPO / "configs" / "runs" / f"{workload}.yaml"), "--allow-unverified",
-                    "--results-dir", td, "--set", "engine.name=quettaserve",
-                    "--set", "engine.model=/dev/null", "--set", f"engine.extra.bench_bin={stub}",
-                    "--set", f"engine.extra.qs_dir={td}"]
+            argv = [
+                sys.executable,
+                "-m",
+                "quettabench.cli",
+                "run",
+                str(REPO / "configs" / "runs" / f"{workload}.yaml"),
+                "--allow-unverified",
+                "--results-dir",
+                td,
+                "--set",
+                "engine.name=quettaserve",
+                "--set",
+                "engine.model=/dev/null",
+                "--set",
+                f"engine.extra.bench_bin={stub}",
+                "--set",
+                f"engine.extra.qs_dir={td}",
+            ]
             for item in sets:
                 argv += ["--set", item]
-            out = subprocess.run(argv, capture_output=True, text=True, cwd=REPO,
-                                 env={**os.environ, "XVAL_BACKEND": "cpu", **(env or {})})
+            out = subprocess.run(
+                argv, capture_output=True, text=True, cwd=REPO, env={**os.environ, "XVAL_BACKEND": "cpu", **(env or {})}
+            )
             log = Path(td) / workload / "bench.log"
             return out, log.read_text() if log.exists() else ""
 
     BENCH_LINE = (
         'echo "[batch_bench] world=${DS_WORLD} bs=${DS_BATCH}'
-        ' max_seq=${DS_MAX_SEQ} layers=${DS_LAYERS:-all}'
-        ' prompt=${DS_BENCH_PROMPT} steps=92: median 1.000 ms/step,'
+        " max_seq=${DS_MAX_SEQ} layers=${DS_LAYERS:-all}"
+        " prompt=${DS_BENCH_PROMPT} steps=92: median 1.000 ms/step,"
         ' mean 1.0, best 1.0 -> 1.0 tok/s (median)"'
     )
 
     def test_bench_runs_the_deepseek_grid_at_the_workload_tp(self):
         # world from the workload tp, every cell runs, DS_LAYERS blocked.
-        out, log = self._bench("deepseek", self.BENCH_LINE, ["engine.extra.qs_cfg=/dev/null"],
-                               env={"DS_LAYERS": "6"})
+        out, log = self._bench("deepseek", self.BENCH_LINE, ["engine.extra.qs_cfg=/dev/null"], env={"DS_LAYERS": "6"})
         self.assertEqual(out.returncode, 0, out.stderr)
         cfg = _load_workloads()
         tp = cfg["workloads"]["deepseek"]["tp"]
@@ -397,7 +467,8 @@ class WorkloadsConfig(unittest.TestCase):
         for name, workload in cfg["workloads"].items():
             grid = workload.get("grid")
             self.assertIn(
-                grid, grids,
+                grid,
+                grids,
                 f"workload {name} names grid {grid!r}, absent from grids",
             )
 
@@ -416,7 +487,8 @@ class WorkloadsConfig(unittest.TestCase):
             m = re.search(r"-tp(\d+)$", name)
             if m:
                 self.assertEqual(
-                    workload.get("tp"), int(m.group(1)),
+                    workload.get("tp"),
+                    int(m.group(1)),
                     f"workload {name} must declare tp={m.group(1)}",
                 )
 
@@ -457,7 +529,8 @@ class WorkloadsConfig(unittest.TestCase):
         for name, workload in cfg["workloads"].items():
             for ctx, bs in cfg["grids"][workload["grid"]]:
                 self.assertLessEqual(
-                    ctx + top + 2, workload["maxlen"],
+                    ctx + top + 2,
+                    workload["maxlen"],
                     f"workload {name} cell ({ctx}, {bs}) exceeds maxlen "
                     f"{workload['maxlen']}; the grid run would SKIP it",
                 )
@@ -486,19 +559,25 @@ class EngineBenchContract(unittest.TestCase):
 class TableParity(unittest.TestCase):
     """crossval prints ratios only when both sides timed the same quantity; criterion logs withhold ratios and differing KV formats carry a KV flag."""
 
-    def _table(self, bench_text, kv="float16", env=None, expect_rc=0,
-               serving_style="aggregated", quant="bf16"):
+    def _table(self, bench_text, kv="float16", env=None, expect_rc=0, serving_style="aggregated", quant="bf16"):
         import sys
         import time
 
         base = {
             "recorded_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "gpu": "test", "vllm": "0", "mode": "FULL", "model": "m",
-            "dtype": "float16", "grid": "g", "method": "slope", "kv_dtype": kv,
-            "nccl_algo": "allreduce:tree;allgather:ring", "nccl_proto": "Simple",
-            "serving_style": serving_style, "quant": quant,
-            "points": [{"ctx": 1024, "bs": 1, "tp": 1, "ms_per_step": 5.0,
-                        "tok_s": 200.0, "r2": 1.0, "kv": kv}],
+            "gpu": "test",
+            "vllm": "0",
+            "mode": "FULL",
+            "model": "m",
+            "dtype": "float16",
+            "grid": "g",
+            "method": "slope",
+            "kv_dtype": kv,
+            "nccl_algo": "allreduce:tree;allgather:ring",
+            "nccl_proto": "Simple",
+            "serving_style": serving_style,
+            "quant": quant,
+            "points": [{"ctx": 1024, "bs": 1, "tp": 1, "ms_per_step": 5.0, "tok_s": 200.0, "r2": 1.0, "kv": kv}],
         }
         with tempfile.TemporaryDirectory() as td:
             bench = Path(td) / "bench.log"
@@ -506,9 +585,19 @@ class TableParity(unittest.TestCase):
             bench.write_text(bench_text)
             cache.write_text(json.dumps(base))
             out = subprocess.run(
-                [sys.executable, "-m", "quettabench.crossval", str(bench), str(cache),
-                 "--json", str(Path(td) / "xval.json")],
-                capture_output=True, text=True, env={**os.environ, **(env or {})}, cwd=REPO,
+                [
+                    sys.executable,
+                    "-m",
+                    "quettabench.crossval",
+                    str(bench),
+                    str(cache),
+                    "--json",
+                    str(Path(td) / "xval.json"),
+                ],
+                capture_output=True,
+                text=True,
+                env={**os.environ, **(env or {})},
+                cwd=REPO,
             )
         self.assertEqual(out.returncode, expect_rc, out.stderr)
         return out.stdout
@@ -521,8 +610,8 @@ class TableParity(unittest.TestCase):
     def test_quant_mismatch_flags_and_withholds(self):
         # an nvfp4 engine row against a bf16 baseline is flagged QUANT and withheld
         out = self._table(
-            "LOOP ctx=1024 bs=1 kv=fp16 ms_per_step=10.000 k=100\n",
-            quant="bf16", env={"XVAL_QUANT": "nvfp4"})
+            "LOOP ctx=1024 bs=1 kv=fp16 ms_per_step=10.000 k=100\n", quant="bf16", env={"XVAL_QUANT": "nvfp4"}
+        )
         self.assertIn("QUANT MISMATCH", out)
         self.assertIn("QUANT bf16/nvfp4", out)
         self.assertNotIn("0.50x", out)
@@ -533,29 +622,29 @@ class TableParity(unittest.TestCase):
         # A disagg baseline against an aggregated engine row is never a ratio.
         out = self._table(
             "LOOP ctx=1024 bs=1 kv=fp16 ms_per_step=10.000 k=100\n",
-            serving_style="disagg:1p1d", env={"XVAL_SERVING_STYLE": "aggregated"})
+            serving_style="disagg:1p1d",
+            env={"XVAL_SERVING_STYLE": "aggregated"},
+        )
         self.assertIn("SERVING MISMATCH", out)
         self.assertNotIn("0.50x", out)
         # matching topology still earns its ratio
         out2 = self._table(
             "LOOP ctx=1024 bs=1 kv=fp16 ms_per_step=10.000 k=100\n",
-            serving_style="aggregated", env={"XVAL_SERVING_STYLE": "aggregated"})
+            serving_style="aggregated",
+            env={"XVAL_SERVING_STYLE": "aggregated"},
+        )
         self.assertIn("0.50x", out2)
 
     def test_eager_loop_row_is_grouped_and_flagged(self):
         # eager rows keep the ratio but get their own group and an EAGER flag.
-        out = self._table(
-            "LOOP ctx=1024 bs=1 kv=fp16 ms_per_step=10.000 gdn=Vllm mode=eager\n"
-        )
+        out = self._table("LOOP ctx=1024 bs=1 kv=fp16 ms_per_step=10.000 gdn=Vllm mode=eager\n")
         self.assertIn("decode_loop_eager", out)
         self.assertIn("EAGER", out)
         self.assertIn("0.50x", out)
         self.assertIn("engine gdn kernel(s): Vllm", out)
 
     def test_graph_loop_row_has_no_eager_flag(self):
-        out = self._table(
-            "LOOP ctx=1024 bs=1 kv=fp16 ms_per_step=10.000 gdn=Tiled mode=graph\n"
-        )
+        out = self._table("LOOP ctx=1024 bs=1 kv=fp16 ms_per_step=10.000 gdn=Tiled mode=graph\n")
         self.assertNotIn("EAGER", out)
         self.assertNotIn("decode_loop_eager", out)
 
@@ -567,10 +656,7 @@ class TableParity(unittest.TestCase):
         self.assertIn("mode={mode}", text)
 
     def test_per_step_bench_gets_no_ratio(self):
-        out = self._table(
-            "decode_batch_paged/1024x1\n"
-            "                        time:   [9.9 ms 10.0 ms 10.1 ms]\n"
-        )
+        out = self._table("decode_batch_paged/1024x1\n                        time:   [9.9 ms 10.0 ms 10.1 ms]\n")
         self.assertIn("withheld", out)
         self.assertNotIn("0.50x", out)
 
@@ -580,9 +666,7 @@ class TableParity(unittest.TestCase):
 
     def test_deepseek_kv_difference_is_flagged(self):
         # bf16 engine vs fp8 baseline: KV flagged, ratio withheld (unofficial).
-        out = self._table(
-            "LOOP ctx=1024 bs=1 kv=bf16 ms_per_step=10.000 k=100\n", kv="fp8"
-        )
+        out = self._table("LOOP ctx=1024 bs=1 kv=bf16 ms_per_step=10.000 k=100\n", kv="fp8")
         self.assertIn("KV bf16/fp8", out)
         self.assertNotIn("0.50x", out)
         self.assertIn("--", out)
@@ -602,10 +686,7 @@ class TableParity(unittest.TestCase):
         self.assertIn("--", out)
 
     def test_loop_line_supersedes_the_bench_summary(self):
-        out = self._table(
-            self.BB.format(ms="20.000")
-            + "LOOP ctx=1024 bs=1 kv=fp16 ms_per_step=10.000 k=100\n"
-        )
+        out = self._table(self.BB.format(ms="20.000") + "LOOP ctx=1024 bs=1 kv=fp16 ms_per_step=10.000 k=100\n")
         self.assertIn("10.000", out)
         self.assertNotIn("20.000", out)
 
@@ -646,12 +727,19 @@ class TableParity(unittest.TestCase):
 
         base = {
             "recorded_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "gpu": "test", "vllm": "0", "mode": "FULL",
+            "gpu": "test",
+            "vllm": "0",
+            "mode": "FULL",
             "model": "DeepSeek-V4-Flash-0731",
-            "dtype": "float16", "grid": "g", "method": "slope", "kv_dtype": "float16",
-            "nccl_algo": "allreduce:tree;allgather:ring", "nccl_proto": "Simple",
-            "points": [{"ctx": 1024, "bs": 64, "tp": 1, "ms_per_step": 5.0,
-                        "tok_s": 12800.0, "r2": 1.0, "kv": "float16"}],
+            "dtype": "float16",
+            "grid": "g",
+            "method": "slope",
+            "kv_dtype": "float16",
+            "nccl_algo": "allreduce:tree;allgather:ring",
+            "nccl_proto": "Simple",
+            "points": [
+                {"ctx": 1024, "bs": 64, "tp": 1, "ms_per_step": 5.0, "tok_s": 12800.0, "r2": 1.0, "kv": "float16"}
+            ],
         }
         bench_text = "LOOP ctx=1024 bs=64 kv=fp16 ms_per_step=10.000 k=100\n"
         with tempfile.TemporaryDirectory() as td:
@@ -660,9 +748,19 @@ class TableParity(unittest.TestCase):
             bench.write_text(bench_text)
             cache.write_text(json.dumps(base))
             out = subprocess.run(
-                [sys.executable, "-m", "quettabench.crossval", str(bench), str(cache),
-                 "--json", str(Path(td) / "xval.json")],
-                capture_output=True, text=True, env=os.environ, cwd=REPO,
+                [
+                    sys.executable,
+                    "-m",
+                    "quettabench.crossval",
+                    str(bench),
+                    str(cache),
+                    "--json",
+                    str(Path(td) / "xval.json"),
+                ],
+                capture_output=True,
+                text=True,
+                env=os.environ,
+                cwd=REPO,
             )
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertIn("COMM", out.stdout)
@@ -674,12 +772,19 @@ class TableParity(unittest.TestCase):
 
         base = {
             "recorded_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "gpu": "test", "vllm": "0", "mode": "FULL",
+            "gpu": "test",
+            "vllm": "0",
+            "mode": "FULL",
             "model": "Llama-3.1-8B-Instruct",
-            "dtype": "float16", "grid": "g", "method": "slope", "kv_dtype": "float16",
-            "nccl_algo": "allreduce:tree;allgather:ring", "nccl_proto": "Simple",
-            "points": [{"ctx": 1024, "bs": 64, "tp": 1, "ms_per_step": 5.0,
-                        "tok_s": 12800.0, "r2": 1.0, "kv": "float16"}],
+            "dtype": "float16",
+            "grid": "g",
+            "method": "slope",
+            "kv_dtype": "float16",
+            "nccl_algo": "allreduce:tree;allgather:ring",
+            "nccl_proto": "Simple",
+            "points": [
+                {"ctx": 1024, "bs": 64, "tp": 1, "ms_per_step": 5.0, "tok_s": 12800.0, "r2": 1.0, "kv": "float16"}
+            ],
         }
         bench_text = "LOOP ctx=1024 bs=64 kv=fp16 ms_per_step=10.000 k=100\n"
         with tempfile.TemporaryDirectory() as td:
@@ -688,9 +793,19 @@ class TableParity(unittest.TestCase):
             bench.write_text(bench_text)
             cache.write_text(json.dumps(base))
             out = subprocess.run(
-                [sys.executable, "-m", "quettabench.crossval", str(bench), str(cache),
-                 "--json", str(Path(td) / "xval.json")],
-                capture_output=True, text=True, env=os.environ, cwd=REPO,
+                [
+                    sys.executable,
+                    "-m",
+                    "quettabench.crossval",
+                    str(bench),
+                    str(cache),
+                    "--json",
+                    str(Path(td) / "xval.json"),
+                ],
+                capture_output=True,
+                text=True,
+                env=os.environ,
+                cwd=REPO,
             )
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertNotIn("COMM", out.stdout)
@@ -713,12 +828,12 @@ class TableParity(unittest.TestCase):
         # No experimental text ships in the repo; corpus mode takes XVAL_CORPUS.
         self.assertIn("XVAL_CORPUS", (QB / "modes" / "serve.py").read_text())
 
-
     def test_hash_canonicalization(self):
         # the gate hashes the completed set, so completion order must not move the hash.
         import random
 
         from quettabench.workloads.base import workload_hash
+
         reqs = synth_requests(24, 64, seed=5)
         for i, r in enumerate(reqs):
             r["arrival_ts"] = round(0.25 * i, 6)
@@ -739,6 +854,7 @@ class TableParity(unittest.TestCase):
     def test_workload_identity_hash(self):
         # the same requests give the same hash in any order; a dropped or altered request changes it.
         from quettabench.workloads.base import workload_hash
+
         reqs = synth_requests(12, 64, seed=2)
         for i, r in enumerate(reqs):
             r["output_length"] = 128 + i
@@ -747,13 +863,21 @@ class TableParity(unittest.TestCase):
         self.assertNotEqual(h, workload_hash(reqs[:-1]), "dropping a request must change the hash")
         altered = [dict(r) for r in reqs]
         altered[0] = {**altered[0], "output_length": altered[0]["output_length"] + 1}
-        self.assertNotEqual(h, workload_hash(altered),
-                            "changing requested output must change the hash")
+        self.assertNotEqual(h, workload_hash(altered), "changing requested output must change the hash")
+
     def test_chat_requests_hash_their_messages(self):
         from quettabench.workloads.base import Request, workload_hash
+
         def chat(text, reply="r"):
-            return [Request([], 0, output_length=8, messages=[
-                {"role": "user", "content": text}, {"role": "assistant", "content": reply}])]
+            return [
+                Request(
+                    [],
+                    0,
+                    output_length=8,
+                    messages=[{"role": "user", "content": text}, {"role": "assistant", "content": reply}],
+                )
+            ]
+
         self.assertNotEqual(workload_hash(chat("a")), workload_hash(chat("b")))
         # assistant content is the engine's reply in a live session, so it does not count
         self.assertEqual(workload_hash(chat("a", "x")), workload_hash(chat("a", "y")))
@@ -772,11 +896,14 @@ class TableParity(unittest.TestCase):
 
     def test_burst_recovery_and_acceptance(self):
         from quettabench.metrics.core import acceptance, burst_recovery
+
         self.assertEqual(acceptance([1, 2, 3, 4], [1, 2, 9, 4]), (2, 0.5))
         self.assertEqual(acceptance([], [])[0], 0)
-        recs = ([{"arrival_s": t, "ttft_ms": 100.0} for t in range(0, 5)]
-                + [{"arrival_s": t, "ttft_ms": 9000.0} for t in range(5, 10)]
-                + [{"arrival_s": t, "ttft_ms": 100.0} for t in range(15, 20)])
+        recs = (
+            [{"arrival_s": t, "ttft_ms": 100.0} for t in range(0, 5)]
+            + [{"arrival_s": t, "ttft_ms": 9000.0} for t in range(5, 10)]
+            + [{"arrival_s": t, "ttft_ms": 100.0} for t in range(15, 20)]
+        )
         rec_s, peak = burst_recovery(recs, sla_ttft_ms=1000.0, window_s=5.0)
         self.assertEqual(peak, 9000.0)
         self.assertIsNotNone(rec_s)
@@ -787,9 +914,15 @@ class TableParity(unittest.TestCase):
     def test_r2_tokenize_and_output_ids_survive_load(self):
         # load_trace must preserve output_token_ids from agent-bench turns; encode is stubbed.
         from quettabench.workloads import tokenize as trace_tokenize
+
         importlib.reload(trace_tokenize)
-        recs = [{"model": "DS", "session_id": "s0", "turns": [
-            {"turn_index": 0, "prompt_text": "ab", "reasoning_text": "c", "content_text": "d"}]}]
+        recs = [
+            {
+                "model": "DS",
+                "session_id": "s0",
+                "turns": [{"turn_index": 0, "prompt_text": "ab", "reasoning_text": "c", "content_text": "d"}],
+            }
+        ]
         reqs = trace_tokenize.r2_to_requests(recs, encode=lambda s: [ord(ch) for ch in s])
         self.assertEqual(reqs[0]["prompt_token_ids"], [97, 98])
         self.assertEqual(reqs[0]["output_token_ids"], [99, 100])  # reasoning + content
@@ -810,11 +943,15 @@ class TableParity(unittest.TestCase):
         import tempfile
 
         from quettabench.workloads.grid import take
+
         tf = tempfile.mktemp()
         open(tf, "w").write(
-            _j.dumps({"prompt_token_ids": [1, 2, 3, 4, 5]}) + "\n"
-            + _j.dumps({"prompt_len": 40}) + "\n"
-            + _j.dumps({"input_length": 64, "output_length": 128}) + "\n"
+            _j.dumps({"prompt_token_ids": [1, 2, 3, 4, 5]})
+            + "\n"
+            + _j.dumps({"prompt_len": 40})
+            + "\n"
+            + _j.dumps({"input_length": 64, "output_length": 128})
+            + "\n"
         )
         tr = load_trace(tf)
         self.assertEqual([r["prompt_len"] for r in tr], [5, 40, 64])
@@ -855,16 +992,28 @@ class ConfigTree(unittest.TestCase):
     def test_qwen3_resolves_dense_hybrid_kv(self):
         e = _config("qwen3").engine
         # hybrid stack: KV lives only in the 16 full-attention layers x 2 (K+V) x 4 kv heads x 256 head_dim x 2 bytes (bf16).
-        self.assertEqual((e.tp, e.kv_bytes, e.dtype, e.ep, e.verified),
-                         (4, 16 * 2 * 4 * 256 * 2, "bfloat16", False, False))
+        self.assertEqual(
+            (e.tp, e.kv_bytes, e.dtype, e.ep, e.verified), (4, 16 * 2 * 4 * 256 * 2, "bfloat16", False, False)
+        )
 
     def test_pcie_pins_the_collective(self):
         coll = _config("llama", "hardware.link_profile=pcie").hardware.collective
-        self.assertEqual(set(coll), {"NCCL_ALGO", "NCCL_PROTO", "NCCL_P2P_LEVEL",
-                                     "NCCL_IB_DISABLE", "NCCL_SOCKET_IFNAME",
-                                     "LLMSRV_NO_NVLS", "LLMSRV_TWOSHOT_MIN_BYTES"})
-        self.assertEqual((coll["NCCL_ALGO"], coll["NCCL_PROTO"], coll["NCCL_P2P_LEVEL"]),
-                         ("allreduce:tree;allgather:ring", "Simple", "SYS"))
+        self.assertEqual(
+            set(coll),
+            {
+                "NCCL_ALGO",
+                "NCCL_PROTO",
+                "NCCL_P2P_LEVEL",
+                "NCCL_IB_DISABLE",
+                "NCCL_SOCKET_IFNAME",
+                "LLMSRV_NO_NVLS",
+                "LLMSRV_TWOSHOT_MIN_BYTES",
+            },
+        )
+        self.assertEqual(
+            (coll["NCCL_ALGO"], coll["NCCL_PROTO"], coll["NCCL_P2P_LEVEL"]),
+            ("allreduce:tree;allgather:ring", "Simple", "SYS"),
+        )
 
     def test_nvlink_exports_only_ib(self):
         # nvlink: pins come back empty so NCCL keeps NVLS/LL128 and the engine keeps peer-allreduce; only IB stays off.
@@ -888,10 +1037,10 @@ class TraceWorkloads(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             p = Path(td) / "t.jsonl"
             p.write_text(
-                json.dumps({"input_length": 8, "output_length": 4,
-                            "timestamp": 2000, "session_id": "s1"}) + "\n"
-                + json.dumps({"prompt_token_ids": [5, 6, 7], "output_length": 2,
-                              "arrival_ts": 3.5}) + "\n"
+                json.dumps({"input_length": 8, "output_length": 4, "timestamp": 2000, "session_id": "s1"})
+                + "\n"
+                + json.dumps({"prompt_token_ids": [5, 6, 7], "output_length": 2, "arrival_ts": 3.5})
+                + "\n"
             )
             reqs = load_trace(str(p))
         self.assertEqual(reqs[0]["arrival_ts"], 2.0)  # Mooncake ms -> seconds
@@ -906,12 +1055,18 @@ class TraceWorkloads(unittest.TestCase):
         from quettabench.metrics.core import summarize_serve
         from quettabench.modes import serve  # noqa: F401
         from quettabench.workloads.arrival import rebase_arrivals
+
         self.assertEqual(rebase_arrivals([10.0, 11.0, 14.0], speed=2.0), [0.0, 0.5, 2.0])
         self.assertEqual(rebase_arrivals([None, None], speed=1.0), [0.0, 0.0])
         s = summarize_serve(
-            [{"ttft_ms": 10.0, "tpot_ms": 5.0, "out_tokens": 3},
-             {"ttft_ms": 30.0, "tpot_ms": None, "out_tokens": 1},
-             {"ttft_ms": 20.0, "tpot_ms": 7.0, "out_tokens": 3}], wall_s=2.0, method="nearest")
+            [
+                {"ttft_ms": 10.0, "tpot_ms": 5.0, "out_tokens": 3},
+                {"ttft_ms": 30.0, "tpot_ms": None, "out_tokens": 1},
+                {"ttft_ms": 20.0, "tpot_ms": 7.0, "out_tokens": 3},
+            ],
+            wall_s=2.0,
+            method="nearest",
+        )
         self.assertEqual(s["n"], 3)
         self.assertEqual(s["ttft_ms"]["p50"], 20.0)
         self.assertEqual(s["ttft_ms"]["p99"], 30.0)
@@ -922,8 +1077,12 @@ class TraceWorkloads(unittest.TestCase):
 
 def text_run(out):
     """A stub llama grid run with mode.returns=text."""
-    run = run_grid_cli(grid_argv("llama", "--set", "mode.returns=text", "--set", f"run_name={out.name}",
-                                 "--results-dir", str(out.parent)), {})
+    run = run_grid_cli(
+        grid_argv(
+            "llama", "--set", "mode.returns=text", "--set", f"run_name={out.name}", "--results-dir", str(out.parent)
+        ),
+        {},
+    )
     assert run["exit"] is None, run["exit"]
     return crossval.read_rows(out)
 
@@ -947,20 +1106,19 @@ class Greedy(unittest.TestCase):
         self.assertEqual(len(per_request), sum(1 for r in self.rows if r.get("token_ids")))
         self.assertTrue(all(r["prefix"] == r["of"] == 64 for r in per_request))
         summary = rows[-1]
-        self.assertEqual((summary["kind"], summary["agree4plus"]),
-                         ("greedy_summary", summary["prompts"]))
+        self.assertEqual((summary["kind"], summary["agree4plus"]), ("greedy_summary", summary["prompts"]))
 
     def test_a_flipped_token_ends_the_prefix(self):
         theirs = json.loads(json.dumps(self.rows))
         first = next(r for r in theirs if r.get("token_ids"))
         first["token_ids"][10] += 1
-        rows = {r["request"]: r for r in crossval.greedy(self.rows, theirs)
-                if r["kind"] == "greedy"}
+        rows = {r["request"]: r for r in crossval.greedy(self.rows, theirs) if r["kind"] == "greedy"}
         cell = first["cell"]
         hit = rows[f"{cell['ctx']}x{cell['bs']} #0"]
         self.assertEqual((hit["prefix"], hit["of"]), (10, 64))
-        self.assertIn("AGREE 10/64 tokens ( 15.6%)", "\n".join(
-            crossval.render_agreement(crossval.greedy(self.rows, theirs))))
+        self.assertIn(
+            "AGREE 10/64 tokens ( 15.6%)", "\n".join(crossval.render_agreement(crossval.greedy(self.rows, theirs)))
+        )
 
     def test_runs_without_returns_give_no_rows(self):
         self.assertEqual(crossval.compare_runs([{"cell": None}], [{"cell": None}]), [])
@@ -999,8 +1157,9 @@ class Band(unittest.TestCase):
     def test_inside_the_worst_floor_run_passes(self):
         row = crossval.band(self.ONE_FLIP, REF, [REF, self.TWO_FLIPS])
         self.assertEqual((row["flips"], row["floor_flips"], row["verdict"]), (1, [0, 2], "PASS"))
-        self.assertEqual(crossval.render_agreement([row]),
-                         ["BAND verdict=PASS flips=1 floor=2 floor_runs=0,2 positions=4"])
+        self.assertEqual(
+            crossval.render_agreement([row]), ["BAND verdict=PASS flips=1 floor=2 floor_runs=0,2 positions=4"]
+        )
 
     def test_above_the_floor_fails(self):
         row = crossval.band(self.TWO_FLIPS, REF, [self.ONE_FLIP])
@@ -1015,8 +1174,9 @@ NOW = calendar.timegm(time.strptime("2026-09-21T14:13:20Z", "%Y-%m-%dT%H:%M:%SZ"
 
 
 def golden_pair(log="bench_loop.log", **kw):
-    return crossval.pair(crossval.read_bench_log(FIXTURES / log),
-                        crossval.read_baseline(FIXTURES / "baseline_llama.json"), now=NOW, **kw)
+    return crossval.pair(
+        crossval.read_bench_log(FIXTURES / log), crossval.read_baseline(FIXTURES / "baseline_llama.json"), now=NOW, **kw
+    )
 
 
 def by_cell(report):
@@ -1027,8 +1187,8 @@ class GoldenRows(unittest.TestCase):
     def test_loop_log_reasons(self):
         report = golden_pair()
         rows = by_cell(report)
-        self.assertEqual(rows[(100, 1)]["withheld"], ["kv"])         # batch_bench kv "?"
-        self.assertEqual(rows[(4096, 8)]["withheld"], ["kv"])        # bf16 against fp16
+        self.assertEqual(rows[(100, 1)]["withheld"], ["kv"])  # batch_bench kv "?"
+        self.assertEqual(rows[(4096, 8)]["withheld"], ["kv"])  # bf16 against fp16
         # LOW R2, RAW and EAGER are flags only: the ratio stays
         for cell, flag in (((1024, 16), "LOW R2"), ((4096, 64), "RAW"), ((100, 8), "EAGER")):
             self.assertIn(flag, rows[cell]["flags"])
@@ -1065,8 +1225,7 @@ class WorkloadGate(unittest.TestCase):
     def test_different_hashes_withhold_every_row(self):
         report = crossval.pair(*self.sides("aaaa", "bbbb"), now=NOW)
         self.assertTrue(report.workload_mismatch)
-        self.assertTrue(all("workload" in r["withheld"] and r["ratio"] is None
-                            for r in report.rows))
+        self.assertTrue(all("workload" in r["withheld"] and r["ratio"] is None for r in report.rows))
         self.assertIn("WORKLOAD MISMATCH engine=aaaa vllm=bbbb", crossval.render(report))
 
     def test_one_missing_hash_joins_on_cells_alone(self):
@@ -1100,8 +1259,7 @@ class Door(unittest.TestCase):
         self.assertEqual(report["ours_only"], [[2048, 4, 2], [8192, 1, 1]])
 
     def test_default_report_path(self):
-        with tempfile.TemporaryDirectory() as td, \
-                mock.patch.object(crossval, "XVAL_DIR", Path(td)):
+        with tempfile.TemporaryDirectory() as td, mock.patch.object(crossval, "XVAL_DIR", Path(td)):
             run([FIXTURES / "bench_loop.log", BASELINE])
             self.assertTrue((Path(td) / "bench_loop_vs_baseline_llama.json").is_file())
 
@@ -1109,29 +1267,31 @@ class Door(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             argv = [FIXTURES / "bench_criterion.log", BASELINE, "--json", Path(td) / "r.json"]
             self.assertIn("ratios are withheld", run(argv))
-            for forced in (run(argv + ["--allow-method-mismatch"]),
-                           run(argv, {"XVAL_ALLOW_METHOD_MISMATCH": "1"})):
+            for forced in (run(argv + ["--allow-method-mismatch"]), run(argv, {"XVAL_ALLOW_METHOD_MISMATCH": "1"})):
                 self.assertNotIn("ratios are withheld", forced)
                 self.assertIn("1.04x", forced)
 
     def test_engine_facts_from_env(self):
         with tempfile.TemporaryDirectory() as td:
-            text = run([FIXTURES / "bench_loop.log", BASELINE, "--json", Path(td) / "r.json"],
-                       {"NCCL_ALGO": "Ring", "XVAL_QUANT": "nvfp4"})
+            text = run(
+                [FIXTURES / "bench_loop.log", BASELINE, "--json", Path(td) / "r.json"],
+                {"NCCL_ALGO": "Ring", "XVAL_QUANT": "nvfp4"},
+            )
         self.assertIn("NCCL MISMATCH engine=Ring/None vllm=auto/auto", text)
         self.assertIn("QUANT MISMATCH engine=nvfp4 vllm=float16; ratios withheld", text)
 
     def test_fidelity_or_band_fail_exits_1_after_the_json(self):
         for kind in ("logit_summary", "band"):
-            with self.subTest(kind), tempfile.TemporaryDirectory() as td, \
-                    mock.patch.object(crossval, "read_side"), \
-                    mock.patch.object(crossval, "read_rows"), \
-                    mock.patch.object(crossval, "render", return_value=""), \
-                    mock.patch.object(crossval, "pair",
-                                      return_value=mock.Mock(rows=[], agreement=[])), \
-                    mock.patch.object(crossval, "report_json", return_value={}), \
-                    mock.patch.object(crossval, "compare_runs",
-                                      return_value=[{"kind": kind, "verdict": "FAIL"}]):
+            with (
+                self.subTest(kind),
+                tempfile.TemporaryDirectory() as td,
+                mock.patch.object(crossval, "read_side"),
+                mock.patch.object(crossval, "read_rows"),
+                mock.patch.object(crossval, "render", return_value=""),
+                mock.patch.object(crossval, "pair", return_value=mock.Mock(rows=[], agreement=[])),
+                mock.patch.object(crossval, "report_json", return_value={}),
+                mock.patch.object(crossval, "compare_runs", return_value=[{"kind": kind, "verdict": "FAIL"}]),
+            ):
                 with self.assertRaises(SystemExit) as e:
                     run([td, td, "--json", Path(td) / "r.json"])
                 self.assertEqual(e.exception.code, 1)
@@ -1151,9 +1311,9 @@ class BenchLog(unittest.TestCase):
     def test_loop_log(self):
         side = crossval.read_bench_log(FIXTURES / "bench_loop.log")
         self.assertEqual(side.header["method"], "loop")
-        self.assertEqual(side.notes, [
-            "ignored 1 truncated-model batch_bench line(s) (layers != all)",
-            "engine gdn kernel(s): Tiled"])
+        self.assertEqual(
+            side.notes, ["ignored 1 truncated-model batch_bench line(s) (layers != all)", "engine gdn kernel(s): Tiled"]
+        )
         cells = side_by_cell(side)
         self.assertEqual(len(cells), 8)
         self.assertEqual(cells[(100, 1, 1)]["group"], "batch_bench")
@@ -1172,8 +1332,7 @@ class BenchLog(unittest.TestCase):
         self.assertIsNone(cells[(1024, 1, 1)]["kv"])
 
     def test_engine_facts_fill_the_header(self):
-        side = crossval.read_bench_log(FIXTURES / "bench_loop.log",
-                                     {"quant": "nvfp4", "nccl_algo": "Ring"})
+        side = crossval.read_bench_log(FIXTURES / "bench_loop.log", {"quant": "nvfp4", "nccl_algo": "Ring"})
         self.assertEqual((side.header["quant"], side.header["nccl_algo"]), ("nvfp4", "Ring"))
 
 
@@ -1182,10 +1341,11 @@ class Baseline(unittest.TestCase):
         side = crossval.read_baseline(FIXTURES / "baseline_llama.json")
         self.assertEqual(len(side.rows), 15)
         h = side.header
-        self.assertEqual((h["engine"], h["version"], h["method"], h["timestamp"]),
-                         ("vllm", "0.0.0+stub", "slope", "2026-09-21T14:13:20Z"))
-        self.assertEqual((h["quant"], h["serving_style"], h["comm_bound_bs"]),
-                         ("float16", "aggregated", None))
+        self.assertEqual(
+            (h["engine"], h["version"], h["method"], h["timestamp"]),
+            ("vllm", "0.0.0+stub", "slope", "2026-09-21T14:13:20Z"),
+        )
+        self.assertEqual((h["quant"], h["serving_style"], h["comm_bound_bs"]), ("float16", "aggregated", None))
         raw = side_by_cell(side)[(4096, 64, 1)]
         self.assertIsNone(raw["ms_at_eval"])
         self.assertFalse(raw["measured"])
@@ -1218,10 +1378,14 @@ class RunDir(unittest.TestCase):
 
         for log in ("bench_loop.log", "bench_criterion.log"):
             # clock and commit frozen in the writer's module: a commit mid-test changes bench_sha
-            with self.subTest(log=log), tempfile.TemporaryDirectory() as td, \
-                    mock.patch.dict(RunWriter.finish.__globals__, {
-                        "_now": lambda: "2026-10-09T00:00:00+00:00",
-                        "bench_sha": lambda *a, **k: "0123abc"}):
+            with (
+                self.subTest(log=log),
+                tempfile.TemporaryDirectory() as td,
+                mock.patch.dict(
+                    RunWriter.finish.__globals__,
+                    {"_now": lambda: "2026-10-09T00:00:00+00:00", "bench_sha": lambda *a, **k: "0123abc"},
+                ),
+            ):
                 ours = crossval.read_run(bench_run_dir(Path(td) / "qs", FIXTURES / log))
                 theirs = crossval.read_run(hand_written(Path(td) / "hand" / "qs", FIXTURES / log))
                 self.assertEqual(ours, theirs)

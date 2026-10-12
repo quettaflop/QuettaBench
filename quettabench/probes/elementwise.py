@@ -3,6 +3,7 @@
 
 Each kernel is timed across element counts (eager, or --graph replay) and least-squares fitted; --vllm times vLLM's fused kernels instead of torch-chain proxies.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -43,7 +44,7 @@ def op_for(kernel, n, dev, dt):
     if kernel == "rmsnorm":
         x = torch.randn(n, device=dev, dtype=dt)
         w = torch.ones(n, device=dev, dtype=dt)
-        return lambda: (x * torch.rsqrt(x.float().pow(2).mean() + 1e-6).to(dt) * w)
+        return lambda: x * torch.rsqrt(x.float().pow(2).mean() + 1e-6).to(dt) * w
     if kernel == "silu_mul":
         g = torch.randn(n, device=dev, dtype=dt)
         u = torch.randn(n, device=dev, dtype=dt)
@@ -62,6 +63,7 @@ def op_for(kernel, n, dev, dt):
 def op_for_vllm(kernel, n, dev, dt):
     """vLLM's own kernel for each composition op; the torch-chain proxies launch several kernels where vLLM launches one, and on H200 overpriced fused ops by 2-3 ms/step at 48 layers. n means what the composition's elements means for that kernel. vllm is imported here: only --vllm needs it."""
     from vllm import _custom_ops as ops
+
     if kernel == "rmsnorm":
         t = max(1, n // HIDDEN)
         x = torch.randn(t, HIDDEN, device=dev, dtype=dt)
@@ -147,23 +149,34 @@ class ElementwiseProbe(Probe):
             ul.append(us)
         floor, bw = fit(bl, ul)
         print(f"  {kernel:14} floor={floor} us  eff_bw={bw} GB/s", flush=True)
-        return ProbeRow("elementwise", f"elementwise/{a.gpu_label}.json", {"entry": kernel},
-                        {"value": {"floor_us": floor, "eff_bw_gb_s": bw}}, self.timing)
+        return ProbeRow(
+            "elementwise",
+            f"elementwise/{a.gpu_label}.json",
+            {"entry": kernel},
+            {"value": {"floor_us": floor, "eff_bw_gb_s": bw}},
+            self.timing,
+        )
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser()
     add_output_args(ap)
     ap.add_argument("--max-mem-gb", type=float, default=20.0)
-    ap.add_argument("--graph", action="store_true",
-                    help="CUDA-graph-replay timing (graphed-decode-faithful, no NCU "
-                         "needed) -> graph/elementwise/; default eager -> eager/")
-    ap.add_argument("--vllm", action="store_true",
-                    help="time the REAL vLLM fused kernels (rms_norm, "
-                         "fused_add_rms_norm, silu_and_mul, rotary_embedding, "
-                         "reshape_and_cache_flash) instead of torch-chain proxies; "
-                         "adds the fused_add_rmsnorm + kv_cache_write entries the "
-                         "composition prefers when present")
+    ap.add_argument(
+        "--graph",
+        action="store_true",
+        help="CUDA-graph-replay timing (graphed-decode-faithful, no NCU "
+        "needed) -> graph/elementwise/; default eager -> eager/",
+    )
+    ap.add_argument(
+        "--vllm",
+        action="store_true",
+        help="time the REAL vLLM fused kernels (rms_norm, "
+        "fused_add_rms_norm, silu_and_mul, rotary_embedding, "
+        "reshape_and_cache_flash) instead of torch-chain proxies; "
+        "adds the fused_add_rmsnorm + kv_cache_write entries the "
+        "composition prefers when present",
+    )
     a = ap.parse_args(argv)
     tag = ("/graph" if a.graph else "") + ("/vllm" if a.vllm else "")
     print(f"[elem{tag}] {torch.cuda.get_device_name(0)}", flush=True)

@@ -195,12 +195,18 @@ class MooncakeTrace(DrawnTrace):
         self._cursor += 1
         ids = mooncake_prompt_ids(record, self.seed, self._block_cache)
         arrival = None if record.timestamp is None else (record.timestamp + lap * self.lap_ms) / 1e3
-        return Request(ids, len(ids), output_length=record.output_length, arrival_ts=arrival,
-                       messages=[], metadata={
-                           "prompt_token_ids": ids,
-                           "request_index": record.index,
-                           "num_hash_blocks": len(record.hash_ids),
-                       })
+        return Request(
+            ids,
+            len(ids),
+            output_length=record.output_length,
+            arrival_ts=arrival,
+            messages=[],
+            metadata={
+                "prompt_token_ids": ids,
+                "request_index": record.index,
+                "num_hash_blocks": len(record.hash_ids),
+            },
+        )
 
 
 def reshuffled(samples, rng):
@@ -232,8 +238,7 @@ class PromptJsonlTrace(SampledChatTrace):
     def __init__(self, path, seed=42):
         samples = []
         for _, entry in _rows(path):
-            messages = [{"role": "system", "content": entry["system"]},
-                        {"role": "user", "content": entry["user"]}]
+            messages = [{"role": "system", "content": entry["system"]}, {"role": "user", "content": entry["user"]}]
             samples.append((messages, entry["osl_tokens"]))
         random.Random(seed).shuffle(samples)
         super().__init__(samples, seed)
@@ -246,6 +251,7 @@ def est_tokens(text):
 
 def load_sharegpt():
     import datasets as hf_datasets  # only ShareGPT profiles need it
+
     return hf_datasets.load_dataset("Aeala/ShareGPT_Vicuna_unfiltered", split="train")
 
 
@@ -262,6 +268,7 @@ def load_chat_tokenizer(name):
     if not name:
         return None
     from transformers import AutoTokenizer  # imported here: optional dependency
+
     return AutoTokenizer.from_pretrained(name)
 
 
@@ -271,9 +278,18 @@ class ShareGPTTrace(SampledChatTrace):
     Pairs outside the input and output bounds are skipped, and with max_total_tokens so is one whose prompt, reply and margin overflow it. Loads up to 3x num_prompts pairs, shuffles, keeps num_prompts.
     """
 
-    def __init__(self, num_prompts=1000, seed=42, system_prompt="You are a helpful assistant.",
-                 max_isl_tokens=8192, max_osl_tokens=2048, min_osl_tokens=50,
-                 max_total_tokens=None, context_safety_margin_tokens=0, tokenizer_name=""):
+    def __init__(
+        self,
+        num_prompts=1000,
+        seed=42,
+        system_prompt="You are a helpful assistant.",
+        max_isl_tokens=8192,
+        max_osl_tokens=2048,
+        min_osl_tokens=50,
+        max_total_tokens=None,
+        context_safety_margin_tokens=0,
+        tokenizer_name="",
+    ):
         ds = load_sharegpt()
         tokenizer = load_chat_tokenizer(tokenizer_name) if max_total_tokens is not None else None
         samples = []
@@ -296,8 +312,7 @@ class ShareGPTTrace(SampledChatTrace):
             messages = [{"role": "system", "content": system_prompt}] if system_prompt else []
             messages.append({"role": "user", "content": user_msg})
             if max_total_tokens is not None:
-                prompt_tokens = (prompt_token_count(tokenizer, messages) if tokenizer is not None
-                                 else isl_est)
+                prompt_tokens = prompt_token_count(tokenizer, messages) if tokenizer is not None else isl_est
                 if prompt_tokens + osl_est + context_safety_margin_tokens > max_total_tokens:
                     continue
             samples.append((messages, osl_est))
@@ -315,8 +330,7 @@ class SmokeTrace(DrawnTrace):
         self.prompt = prompt
 
     def get_next_request(self):
-        return Request([], 0, output_length=20,
-                       messages=[{"role": "user", "content": self.prompt}], metadata={})
+        return Request([], 0, output_length=20, messages=[{"role": "user", "content": self.prompt}], metadata={})
 
 
 # Workload profiles by name from configs/workloads.yaml; an unknown key fails at import.
@@ -330,34 +344,35 @@ class WorkloadProfile:
     osl_tokens: int  # random: exact OSL; sharegpt: max OSL and max_tokens
     isl_stddev: float  # fraction of isl
     description: str
-    dataset: str             # "sharegpt", "test", "random", "jsonl", "sharegpt-multi-turn", "swebench-multi-turn", "terminalbench-multi-turn"
+    dataset: str  # "sharegpt", "test", "random", "jsonl", "sharegpt-multi-turn", "swebench-multi-turn", "terminalbench-multi-turn"
     file_path: str = ""
     system_prompt: str = "You are a helpful assistant."
     tokenizer_name: str = ""  # dataset="random" only
-    mode: str = "single-turn"           # "stress-test" | "single-turn" | "multi-turn"
+    mode: str = "single-turn"  # "stress-test" | "single-turn" | "multi-turn"
     prefix_caching_required: bool = False  # server needs --enable-prefix-caching
     min_turns: int = 1  # multi-turn only
     max_turns: int = 1  # multi-turn only
     num_sessions: int = 200  # multi-turn: concurrent sessions
-    agent_type: str = ""           # "chat" | "coding" | "terminal"
+    agent_type: str = ""  # "chat" | "coding" | "terminal"
     turn_style: str = "single-turn"  # "single-turn" | "multi-turn"
     serving_style: str = "not-disaggregated"  # "disaggregated" | "not-disaggregated"
-    data_source: str = ""          # "sharegpt" | "swebench" | "terminalbench" | "random" | "test"
+    data_source: str = ""  # "sharegpt" | "swebench" | "terminalbench" | "random" | "test"
     active: bool = True  # False: runnable but hidden from default listings
 
 
 def load_profiles(path=WORKLOADS):
     """Every entry of the workloads yaml as a WorkloadProfile, by name."""
     if not Path(path).exists():
-        raise FileNotFoundError(f"{path} not found: qbench reads configs/ beside its package, "
-                                "so install it from a checkout with pip install -e .")
+        raise FileNotFoundError(
+            f"{path} not found: qbench reads configs/ beside its package, "
+            "so install it from a checkout with pip install -e ."
+        )
     keys = {f.name for f in dataclasses.fields(WorkloadProfile)} - {"name"}
     profiles = {}
     for name, data in yaml.safe_load(Path(path).read_text()).items():
         unknown = sorted(set(data) - keys)
         if unknown:
-            raise ValueError(f"{path}: {name}: unknown profile key(s) {unknown}; "
-                             f"allowed: {sorted(keys)}")
+            raise ValueError(f"{path}: {name}: unknown profile key(s) {unknown}; allowed: {sorted(keys)}")
         try:
             profiles[name] = WorkloadProfile(name=name, **data)
         except TypeError as e:
@@ -367,6 +382,7 @@ def load_profiles(path=WORKLOADS):
 
 PROFILES: dict[str, WorkloadProfile] = load_profiles()
 
+
 def active_profiles() -> list[str]:
     """The names a listing shows: every profile with active true."""
     return sorted(name for name, p in PROFILES.items() if p.active)
@@ -375,5 +391,4 @@ def active_profiles() -> list[str]:
 def get_profile(name: str) -> WorkloadProfile:
     if name in PROFILES:
         return PROFILES[name]
-    raise ValueError(f"Unknown profile '{name}'. Available: {active_profiles()} "
-                     "(inactive profiles are not listed)")
+    raise ValueError(f"Unknown profile '{name}'. Available: {active_profiles()} (inactive profiles are not listed)")

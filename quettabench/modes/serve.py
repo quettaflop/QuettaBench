@@ -60,6 +60,7 @@ async def no_limit():
 @dataclass
 class Summary:
     """One run: the aggregate (None for a grid run), the rows in summary order, the per-turn breakdown (multi-turn only) and extra run.json sections."""
+
     core: BenchmarkSummary
     rows: list
     turns: list = field(default_factory=list)
@@ -72,8 +73,7 @@ class Summary:
         core = {**self.core.to_dict(), "percentile_method": "linear"} if self.core else {}
         out = {**core, **self.sections}
         if self.turns:
-            out["per_turn"] = [{**t.to_dict(), "percentile_method": "linear"}
-                               for t in self.turns]
+            out["per_turn"] = [{**t.to_dict(), "percentile_method": "linear"} for t in self.turns]
         return out
 
 
@@ -134,13 +134,14 @@ async def warmup(trace, driver, mode, count, multi_turn):
         async with slots:
             return await driver.send(request, **sampling(mode, request))
 
-    results = await asyncio.gather(*(one(r) for r in trace.warmup_requests(count)),
-                                   return_exceptions=True)
+    results = await asyncio.gather(*(one(r) for r in trace.warmup_requests(count)), return_exceptions=True)
     ok = sum(1 for r in results if not isinstance(r, BaseException) and r is not None and r.success)
     print(f"Warmup done: {ok}/{len(results)} succeeded.")
     if ok == 0:
-        raise RunAborted("ABORT: every warmup request failed. The server is not serving "
-                         "this profile; check the server log before benchmarking.")
+        raise RunAborted(
+            "ABORT: every warmup request failed. The server is not serving "
+            "this profile; check the server log before benchmarking."
+        )
 
 
 def emitter(mode, writer, probe=None):
@@ -151,8 +152,7 @@ def emitter(mode, writer, probe=None):
     def emit(request, result):
         result.ttft_basis = basis
         if request.output_token_ids and result.generated_token_ids is not None:
-            result.accepted_tokens = acceptance(request.output_token_ids,
-                                                result.generated_token_ids)[0]
+            result.accepted_tokens = acceptance(request.output_token_ids, result.generated_token_ids)[0]
         writer.append(result, **tag)
 
     return emit
@@ -171,14 +171,18 @@ async def replay(trace, driver, mode, emit, offsets, request_id):
         if delay > 0:
             await asyncio.sleep(delay)
         dispatched = time.perf_counter() - start
-        async with (no_limit() if open_loop else slots):
+        async with no_limit() if open_loop else slots:
             granted = time.perf_counter() - start
-            result = await driver.send(request, request_id=request_id(i, 0, i),
-                                       **sampling(mode, request))
+            result = await driver.send(request, request_id=request_id(i, 0, i), **sampling(mode, request))
         annotate_request_observability(
-            result, request_index=i, request=request, scheduled_at_s=at,
-            dispatch_started_at_s=dispatched, semaphore_acquired_at_s=granted,
-            completed_at_s=time.perf_counter() - start)
+            result,
+            request_index=i,
+            request=request,
+            scheduled_at_s=at,
+            dispatch_started_at_s=dispatched,
+            semaphore_acquired_at_s=granted,
+            completed_at_s=time.perf_counter() - start,
+        )
         if i < mode.discard_first:
             result.excluded_from_summary = True
         emit(request, result)
@@ -187,9 +191,11 @@ async def replay(trace, driver, mode, emit, offsets, request_id):
     await asyncio.gather(*(dispatch(i, r, t) for i, (r, t) in enumerate(zip(reqs, offsets))))
     fail = sum(1 for _, r in rows if not r.success)
     if fail > 0 and fail >= len(reqs) * 0.9:
-        raise RunAborted(f"ABORT: {fail}/{len(reqs)} requests failed "
-                         f"({fail / len(reqs) * 100:.0f}%). "
-                         f"Server may not be functional. Check server logs.")
+        raise RunAborted(
+            f"ABORT: {fail}/{len(reqs)} requests failed "
+            f"({fail / len(reqs) * 100:.0f}%). "
+            f"Server may not be functional. Check server logs."
+        )
     return rows, start
 
 
@@ -205,9 +211,9 @@ async def measure(trace, driver, mode, emit, workload, request_id):
     offsets = None if multi else arrival_offsets(trace, workload)
     sessions = None
     if multi:
-        sessions = SessionDispatcher(trace, mode, workload,
-                                     lambda r, **kw: driver.send(r, **kw, **sampling(mode, r)),
-                                     request_id, emit)
+        sessions = SessionDispatcher(
+            trace, mode, workload, lambda r, **kw: driver.send(r, **kw, **sampling(mode, r)), request_id, emit
+        )
         sessions.announce()
     async with driver.session(mode.concurrency, mode.load == "open"):
         if mode.warmup > 0:
@@ -233,22 +239,29 @@ def serve_records(pairs, open_loop):
         if not r.success or r.excluded_from_summary:
             continue
         n = r.output_tokens
-        arrival = r.scheduled_at_s if open_loop and r.scheduled_at_s is not None \
-            else r.semaphore_acquired_at_s
-        out.append({"ttft_ms": (r.ttft or r.e2el) * 1e3, "out_tokens": n, "arrival_s": arrival,
-                    "tpot_ms": (r.e2el - r.ttft) * 1e3 / (n - 1) if r.ttft and n > 1 else None})
+        arrival = r.scheduled_at_s if open_loop and r.scheduled_at_s is not None else r.semaphore_acquired_at_s
+        out.append(
+            {
+                "ttft_ms": (r.ttft or r.e2el) * 1e3,
+                "out_tokens": n,
+                "arrival_s": arrival,
+                "tpot_ms": (r.e2el - r.ttft) * 1e3 / (n - 1) if r.ttft and n > 1 else None,
+            }
+        )
     return out
 
 
 def spec_section(pairs):
     """SPECSUM: mean accepted leading tokens and rate over the scored rows."""
-    scored = [(r.accepted_tokens, len(q.output_token_ids)) for q, r in pairs
-              if r.accepted_tokens is not None]
+    scored = [(r.accepted_tokens, len(q.output_token_ids)) for q, r in pairs if r.accepted_tokens is not None]
     if not scored:
         return {"spec": "off"}
-    return {"spec": "measured", "n": len(scored),
-            "accept_len": sum(a for a, _ in scored) / len(scored),
-            "accept_rate": sum(a / n for a, n in scored) / len(scored)}
+    return {
+        "spec": "measured",
+        "n": len(scored),
+        "accept_len": sum(a for a, _ in scored) / len(scored),
+        "accept_rate": sum(a / n for a, n in scored) / len(scored),
+    }
 
 
 def server_spec_section(before, after):
@@ -258,9 +271,14 @@ def server_spec_section(before, after):
     d = {key: int(after[key] - before[key]) for key in after}
     if d["drafts"] <= 0 or d["draft_tokens"] <= 0:
         return None
-    return {"spec": "measured", "source": "server_metrics", **d,
-            "accept_rate": d["accepted_tokens"] / d["draft_tokens"],
-            "accept_len": 1 + d["accepted_tokens"] / d["drafts"], "n": d["drafts"]}
+    return {
+        "spec": "measured",
+        "source": "server_metrics",
+        **d,
+        "accept_rate": d["accepted_tokens"] / d["draft_tokens"],
+        "accept_len": 1 + d["accepted_tokens"] / d["drafts"],
+        "n": d["drafts"],
+    }
 
 
 def crossval_sections(pairs, duration, mode, server_spec=None):
@@ -272,15 +290,24 @@ def crossval_sections(pairs, duration, mode, server_spec=None):
     s = out["serve"] = summarize_serve(records, duration, "nearest")
     if mode.sla_ttft_ms or mode.sla_tpot_ms:
         bound = sla_verdict(s, mode.sla_ttft_ms, mode.sla_tpot_ms)
-        out["sla"] = {"verdict": "FAIL" if bound else "PASS", "bound": bound,
-                      "ttft_p99": s["ttft_ms"]["p99"],
-                      "tpot_p99": s["tpot_ms"]["p99"] if s["tpot_ms"] else None,
-                      "rate_req_s": s["req_s"], "percentile_method": s["percentile_method"],
-                      "sla_ttft_ms": mode.sla_ttft_ms, "sla_tpot_ms": mode.sla_tpot_ms}
+        out["sla"] = {
+            "verdict": "FAIL" if bound else "PASS",
+            "bound": bound,
+            "ttft_p99": s["ttft_ms"]["p99"],
+            "tpot_p99": s["tpot_ms"]["p99"] if s["tpot_ms"] else None,
+            "rate_req_s": s["req_s"],
+            "percentile_method": s["percentile_method"],
+            "sla_ttft_ms": mode.sla_ttft_ms,
+            "sla_tpot_ms": mode.sla_tpot_ms,
+        }
     if mode.sla_ttft_ms:
         recovery, peak = burst_recovery(records, mode.sla_ttft_ms)
-        out["burst"] = {"peak_ttft_p99": peak, "recovery_s": recovery,
-                        "target_ms": mode.sla_ttft_ms, "percentile_method": "nearest"}
+        out["burst"] = {
+            "peak_ttft_p99": peak,
+            "recovery_s": recovery,
+            "target_ms": mode.sla_ttft_ms,
+            "percentile_method": "nearest",
+        }
     return out
 
 
@@ -310,15 +337,22 @@ def sweep(trace, driver, mode, writer, workload, request_id):
     speed = next(gen)
     while True:
         probe_mode = mode if not probes else dataclasses.replace(mode, warmup=0)
-        out = asyncio.run(measure(trace, driver, probe_mode, emitter(mode, writer, len(probes)),
-                                  dataclasses.replace(workload, speed=speed), request_id))
+        out = asyncio.run(
+            measure(
+                trace,
+                driver,
+                probe_mode,
+                emitter(mode, writer, len(probes)),
+                dataclasses.replace(workload, speed=speed),
+                request_id,
+            )
+        )
         section = {"max_req_s": None, "speed": None, "fail_bound": fail_bound, "probes": probes}
         if not identity(trace, served(out[2]))["match"]:
             return out, {**section, "iterations": len(probes) + 1}
         s = summarize_serve(serve_records(out[2], True), out[3], "nearest")
         bound = sla_verdict(s, mode.sla_ttft_ms, mode.sla_tpot_ms)
-        probe = {"speed": speed, "verdict": "FAIL" if bound else "PASS", "bound": bound,
-                 "req_s": s["req_s"]}
+        probe = {"speed": speed, "verdict": "FAIL" if bound else "PASS", "bound": bound, "req_s": s["req_s"]}
         print(goodprobe_line(probe), flush=True)
         probes.append(probe)
         if not bound and (best is None or s["req_s"] > best["req_s"]):
@@ -329,8 +363,13 @@ def sweep(trace, driver, mode, writer, workload, request_id):
             speed = gen.send(not bound)
         except StopIteration:
             break
-    return out, {"max_req_s": best and best["req_s"], "speed": best and best["speed"],
-                 "fail_bound": fail_bound, "iterations": len(probes), "probes": probes}
+    return out, {
+        "max_req_s": best and best["req_s"],
+        "speed": best and best["speed"],
+        "fail_bound": fail_bound,
+        "iterations": len(probes),
+        "probes": probes,
+    }
 
 
 def stop(writer, summary, status, reason, code):
@@ -356,8 +395,13 @@ def served(pairs):
 def identity(trace, served) -> dict:
     """The served requests hashed the way the trace hashes itself."""
     expected, replayed = trace.workload_hash(), workload_hash(served)
-    return {"expected": expected, "replayed": replayed, "match": expected == replayed,
-            "n": len(served), "of": len(trace.requests())}
+    return {
+        "expected": expected,
+        "replayed": replayed,
+        "match": expected == replayed,
+        "n": len(served),
+        "of": len(trace.requests()),
+    }
 
 
 def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
@@ -372,16 +416,16 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
     def request_id(session, turn, index):
         if not mode.trace_request_ids:
             return None
-        return make_trace_request_id(profile_name=name, concurrency=mode.concurrency,
-                                     session_id=session, turn_index=turn, request_index=index)
+        return make_trace_request_id(
+            profile_name=name, concurrency=mode.concurrency, session_id=session, turn_index=turn, request_index=index
+        )
 
     goodput = None
     try:
         if mode.goodput_sweep:
             measured, goodput = sweep(trace, driver, mode, writer, workload, request_id)
         else:
-            measured = asyncio.run(measure(trace, driver, mode, emitter(mode, writer), workload,
-                                           request_id))
+            measured = asyncio.run(measure(trace, driver, mode, emitter(mode, writer), workload, request_id))
     except PrefixCacheResetError as e:
         # Going on would measure the warm cache the reset exists to prevent.
         print(f"ABORT: prefix cache reset failed: {e}")
@@ -392,11 +436,15 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
     results, by_turn, pairs, duration, server_spec = measured
 
     core = aggregate(
-        results=[r for r in results if r is not None], duration_s=duration,
-        model=driver.model or "", profile=name, concurrency=mode.concurrency,
+        results=[r for r in results if r is not None],
+        duration_s=duration,
+        model=driver.model or "",
+        profile=name,
+        concurrency=mode.concurrency,
         load_mode=f"{mode.load}-loop",
         target_rate=offered_rate(workload.arrival) if mode.load == "open" else 0.0,
-        warmup_concurrency=(mode.warmup_concurrency or mode.concurrency) if mode.warmup else 0)
+        warmup_concurrency=(mode.warmup_concurrency or mode.concurrency) if mode.warmup else 0,
+    )
     summary = Summary(core, results)
     if by_turn is not None:
         summary.turns = aggregate_per_turn(by_turn)
@@ -408,8 +456,7 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
     enforce(usage_gate(core, mode.allow_missing_usage), writer, summary)
 
     ident = summary.sections["workload"] = identity(trace, served(pairs))
-    summary.sections.update({"goodput": goodput} if goodput else
-                            crossval_sections(pairs, duration, mode, server_spec))
+    summary.sections.update({"goodput": goodput} if goodput else crossval_sections(pairs, duration, mode, server_spec))
     print_legacy_lines(summary.sections)
     if not ident["match"]:
         stop(writer, summary.to_dict(), "failed", "workload identity", IDENTITY_EXIT)
@@ -429,9 +476,11 @@ def model_dir(model):
     try:
         return snapshot_download(model, local_files_only=True)
     except (HFValidationError, LocalEntryNotFoundError):
-        raise ConfigError(f"engine.model={model!r} is no local dir and not in the Hugging Face cache; "
-                          f"download it (huggingface-cli download {model}) or set engine.model to "
-                          "its snapshot dir") from None
+        raise ConfigError(
+            f"engine.model={model!r} is no local dir and not in the Hugging Face cache; "
+            f"download it (huggingface-cli download {model}) or set engine.model to "
+            "its snapshot dir"
+        ) from None
 
 
 def kv_bytes_per_token(engine):
@@ -453,13 +502,23 @@ def graph_mode(engine):
 def meta(cfg, gpu, version, eval_pos, steps):
     """META key -> value, in the grid log's order; expert_parallel only when on."""
     e, h = cfg.engine, cfg.hardware
-    out = {"gpu": gpu, "vllm": version, "model": e.model_name, "dtype": e.dtype,
-           "grid": cfg.mode.grid, "mode": graph_mode(e), "eval_pos": eval_pos,
-           "step_points": list(steps),
-           "nccl_algo": h.collective.get("NCCL_ALGO") or "auto",
-           "nccl_proto": h.collective.get("NCCL_PROTO") or "auto",
-           "link_profile": h.link_profile, "prompt_mode": cfg.workload.prompt_mode,
-           "tp": e.tp, "pp": e.pp, "quant": e.quant or e.dtype}
+    out = {
+        "gpu": gpu,
+        "vllm": version,
+        "model": e.model_name,
+        "dtype": e.dtype,
+        "grid": cfg.mode.grid,
+        "mode": graph_mode(e),
+        "eval_pos": eval_pos,
+        "step_points": list(steps),
+        "nccl_algo": h.collective.get("NCCL_ALGO") or "auto",
+        "nccl_proto": h.collective.get("NCCL_PROTO") or "auto",
+        "link_profile": h.link_profile,
+        "prompt_mode": cfg.workload.prompt_mode,
+        "tp": e.tp,
+        "pp": e.pp,
+        "quant": e.quant or e.dtype,
+    }
     if e.ep:
         out["expert_parallel"] = 1
     return out
@@ -474,10 +533,10 @@ def capacity(engine, gpu_bytes, kv_b):
 
 def measure_cell(driver, writer, mode, steps, prompts, cell):
     """The cell's batches in order: text run when asked, warm run at max(steps), then the fit passes; returns the fit rows."""
+
     def batch(step, phase, attempt=None, **extra):
         requests = [Request(ids, len(ids), output_length=step) for ids in prompts]
-        rows = list(driver.run(requests, cell={**cell, "step_point": step, "phase": phase,
-                                               "attempt": attempt}))
+        rows = list(driver.run(requests, cell={**cell, "step_point": step, "phase": phase, "attempt": attempt}))
         for r in rows:
             r.excluded_from_summary = phase != "fit"
             writer.append(r, **{k: f(r) for k, f in extra.items()})
@@ -485,8 +544,12 @@ def measure_cell(driver, writer, mode, steps, prompts, cell):
 
     if mode.returns == "text":
         # Routing-parity audit: greedy ids must match the engine's DS_TOKEN_TRACE.
-        batch(TEXT_TOKENS, "text", token_ids=lambda r: r.generated_token_ids[:TEXT_TOKENS],
-              text=lambda r: r.generated_text)
+        batch(
+            TEXT_TOKENS,
+            "text",
+            token_ids=lambda r: r.generated_token_ids[:TEXT_TOKENS],
+            text=lambda r: r.generated_text,
+        )
     if mode.returns == "logits":
         score(driver, writer, prompts, cell)
     batch(max(steps), "warm")
@@ -505,8 +568,9 @@ def measure_cell(driver, writer, mode, steps, prompts, cell):
 def score(driver, writer, prompts, cell):
     """One scoring pass over the cell's prompts; rows carry logits, no time."""
     requests = [Request(ids, len(ids)) for ids in prompts]
-    for r in driver.run(requests, cell={**cell, "step_point": None, "phase": "logits",
-                                        "attempt": None}, returns="logits"):
+    for r in driver.run(
+        requests, cell={**cell, "step_point": None, "phase": "logits", "attempt": None}, returns="logits"
+    ):
         r.excluded_from_summary = True
         writer.append(r)
 
@@ -520,8 +584,7 @@ def score_grid(trace, driver, cfg, writer):
             record["events"].append(event)
             print(grid_event_line(record, event), flush=True)
         else:
-            score(driver, writer, trace.cell_prompts(ctx, bs)[0],
-                  {"ctx": ctx, "bs": bs, "tp": cfg.engine.tp})
+            score(driver, writer, trace.cell_prompts(ctx, bs)[0], {"ctx": ctx, "bs": bs, "tp": cfg.engine.tp})
     return record, None, []
 
 
@@ -566,15 +629,24 @@ def run_grid(trace, driver, cfg, writer):
     run = {"meta": meta(cfg, gpu, driver.version, eval_pos, steps), "kv": kv_label, "events": []}
     if trace.trace is not None:
         reqs = trace.trace
-        run["trace"] = {"path": cfg.workload.source, "reqs": len(reqs.requests()),
-                        "workload_hash": reqs.workload_hash()}
+        run["trace"] = {
+            "path": cfg.workload.source,
+            "reqs": len(reqs.requests()),
+            "workload_hash": reqs.workload_hash(),
+        }
     shown = print_legacy_grid_lines(run)
 
     kv_b = kv_bytes_per_token(engine)
     # amd-smi, neuron-ls and tpu report no memory size, so those grids skip the KV SKIP.
     free_gib, cap = capacity(engine, gpu_bytes, kv_b) if gpu_bytes else (None, 0)
-    run["capacity"] = {"mode": graph_mode(engine), "tp": engine.tp, "dtype": engine.dtype,
-                       "kv_bytes": kv_b, "free_gib": free_gib, "kv_tokens": cap}
+    run["capacity"] = {
+        "mode": graph_mode(engine),
+        "tp": engine.tp,
+        "dtype": engine.dtype,
+        "kv_bytes": kv_b,
+        "free_gib": free_gib,
+        "kv_tokens": cap,
+    }
     shown = print_legacy_grid_lines(run, shown)
     driver.warmup()
     run["warm_ok"] = True
@@ -586,8 +658,7 @@ def run_grid(trace, driver, cfg, writer):
         if (ctx, bs) in over:
             run["events"].append({"event": "skip_maxlen", "ctx": ctx, "bs": bs})
         elif cap and need > mode.cap_frac * cap:
-            run["events"].append({"event": "skip_kv", "ctx": ctx, "bs": bs, "need": need,
-                                  "cap": cap})
+            run["events"].append({"event": "skip_kv", "ctx": ctx, "bs": bs, "need": need, "cap": cap})
         else:
             # Checked at the first cell that needs it, so an all-SKIP run never asks.
             if trace.prompt_mode == "corpus" and not trace.corpus_path:
@@ -598,8 +669,7 @@ def run_grid(trace, driver, cfg, writer):
             if cycled:
                 run["events"].append({"event": "cycled", "ctx": ctx, "bs": bs})
                 shown = print_legacy_grid_lines(run, shown)
-            cell_rows = measure_cell(driver, writer, mode, steps, prompts,
-                                     {"ctx": ctx, "bs": bs, "tp": engine.tp})
+            cell_rows = measure_cell(driver, writer, mode, steps, prompts, {"ctx": ctx, "bs": bs, "tp": engine.tp})
             rows += cell_rows
             (step,) = fit_run(cell_rows, eval_pos, kv_b, engine.weights_gib)
             run["events"].append({"event": "result", "ctx": ctx, "bs": bs, "step": step})
@@ -622,15 +692,14 @@ class SessionDispatcher:
 
     def announce(self):
         if not self.open_loop and self.pacing.pacing == "interleaved":
-            print("WARNING: --turn-pacing interleaved is a turn-aligned herd "
-                  "(global barrier per turn).")
-            print("         TTFT/TPOT spikes at turn boundaries are schedule "
-                  "artifacts, not production traffic.")
-            print("         Default is per-session. Inter-turn waits are ignored "
-                  "under interleaved.")
+            print("WARNING: --turn-pacing interleaved is a turn-aligned herd (global barrier per turn).")
+            print("         TTFT/TPOT spikes at turn boundaries are schedule artifacts, not production traffic.")
+            print("         Default is per-session. Inter-turn waits are ignored under interleaved.")
             if self.pacing.use_recorded_arrivals:
-                print("WARNING: --use-recorded-arrivals is ignored under "
-                      "--turn-pacing interleaved (everyone starts turn 0 together).")
+                print(
+                    "WARNING: --use-recorded-arrivals is ignored under "
+                    "--turn-pacing interleaved (everyone starts turn 0 together)."
+                )
 
     async def run(self):
         """(results in turn order, results_by_turn, [(request, result)] served, start)."""
@@ -661,21 +730,28 @@ class SessionDispatcher:
             return time.perf_counter() - self.start
 
         dispatched = elapsed()
-        async with (no_limit() if self.open_loop else self.slots):
+        async with no_limit() if self.open_loop else self.slots:
             granted = elapsed()
-            result = await self.send(request, capture_text=True,
-                                     request_id=self.request_id(sid, turn, index))
+            result = await self.send(request, capture_text=True, request_id=self.request_id(sid, turn, index))
         annotate_request_observability(
-            result, request_index=index, request=request, scheduled_at_s=scheduled_at_s,
-            dispatch_started_at_s=dispatched, semaphore_acquired_at_s=granted,
-            completed_at_s=elapsed())
+            result,
+            request_index=index,
+            request=request,
+            scheduled_at_s=scheduled_at_s,
+            dispatch_started_at_s=dispatched,
+            semaphore_acquired_at_s=granted,
+            completed_at_s=elapsed(),
+        )
         annotate_multi_turn_cache_estimate(
-            result, session_id=sid, turn_index=turn,
+            result,
+            session_id=sid,
+            turn_index=turn,
             previous_context_tokens=self.prev_context.get(sid, 0),
             cache_block_size=self.mode.prefix_cache_block_size,
             previous_output_tokens=self.prev_output.get(sid, 0),
             # Placeholders mean the engine reply is spliced into later prompts.
-            reply_in_cache=bool(self.trace.replies.get(sid)))
+            reply_in_cache=bool(self.trace.replies.get(sid)),
+        )
         self.served.append((request, result))
         self.emit(request, result)
         return result
@@ -696,32 +772,36 @@ class SessionDispatcher:
         if not replies:
             if not self.warned:
                 self.warned = True
-                print("WARNING: this dataset has no assistant placeholders; "
-                      "replies are not fed back (trace replay keeps recorded "
-                      "assistant turns).", flush=True)
+                print(
+                    "WARNING: this dataset has no assistant placeholders; "
+                    "replies are not fed back (trace replay keeps recorded "
+                    "assistant turns).",
+                    flush=True,
+                )
             return
         if result.generated_text and turn < len(replies):
             replies[turn]["content"] = result.generated_text
 
     def _wait_s(self, request):
         p = self.pacing
-        return inter_turn_wait_s(request, tool_wait_ms=p.tool_wait_ms,
-                                 human_wait_ms=p.human_wait_ms,
-                                 use_recorded_waits=p.use_recorded_waits)
+        return inter_turn_wait_s(
+            request, tool_wait_ms=p.tool_wait_ms, human_wait_ms=p.human_wait_ms, use_recorded_waits=p.use_recorded_waits
+        )
 
     def _print_waits(self):
         p = self.pacing
         if p.tool_wait_ms or p.human_wait_ms or p.use_recorded_waits:
-            print(f"  Inter-turn waits: tool_wait_ms={p.tool_wait_ms:g} "
-                  f"human_wait_ms={p.human_wait_ms:g} "
-                  f"recorded={'on' if p.use_recorded_waits else 'off'}")
+            print(
+                f"  Inter-turn waits: tool_wait_ms={p.tool_wait_ms:g} "
+                f"human_wait_ms={p.human_wait_ms:g} "
+                f"recorded={'on' if p.use_recorded_waits else 'off'}"
+            )
 
     async def _turns(self, turns, index_of, arrive_at_s=None):
         """One session's turns in order; stop at the first failure."""
         last = len(turns) - 1
         for request in turns:
-            result = await self._dispatch(request, index_of(request),
-                                          arrive_at_s if request.turn == 0 else None)
+            result = await self._dispatch(request, index_of(request), arrive_at_s if request.turn == 0 else None)
             self._record(request, result)
             if not result.success:
                 break
@@ -733,15 +813,17 @@ class SessionDispatcher:
         n = len(self.sessions)
         if self.pacing.use_recorded_arrivals:
             arrivals = [s[0].arrival_ts or 0.0 for s in self.sessions]
-            print(f"  Open loop: {n} sessions at recorded "
-                  f"arrival_time_ms; turns sequential within a session, no barrier")
+            print(
+                f"  Open loop: {n} sessions at recorded arrival_time_ms; turns sequential within a session, no barrier"
+            )
         else:
             spec = self.workload.arrival
-            arrivals = [t / self.workload.speed
-                        for t in parse_arrival(spec, n, self.workload.seed)]
-            print(f"  Open loop: {n} sessions arriving at "
-                  f"{offered_rate(spec)} sess/s ({spec.partition(':')[0]}); "
-                  f"turns sequential within a session, no barrier")
+            arrivals = [t / self.workload.speed for t in parse_arrival(spec, n, self.workload.seed)]
+            print(
+                f"  Open loop: {n} sessions arriving at "
+                f"{offered_rate(spec)} sess/s ({spec.partition(':')[0]}); "
+                f"turns sequential within a session, no barrier"
+            )
         self._print_waits()
         counter = itertools.count()
 
@@ -752,20 +834,19 @@ class SessionDispatcher:
         await asyncio.gather(*[session(s, t) for s, t in zip(self.sessions, arrivals)])
         done = [r for v in self.by_turn.values() for r in v if r is not None]
         if done and not any(r.success for r in done):
-            raise RunAborted(f"ABORT: all {len(done)} requests failed. First error: "
-                             f"{first_error(done)}")
+            raise RunAborted(f"ABORT: all {len(done)} requests failed. First error: {first_error(done)}")
 
     async def _per_session(self):
-        index = {(r.session_id, r.turn): i
-                 for i, r in enumerate(r for s in self.sessions for r in s)}
-        print(f"  Per-session pacing: {len(self.sessions)} sessions, "
-              f"{len(index)} requests, up to {self.mode.concurrency} in flight "
-              f"(no cross-session turn barrier)")
+        index = {(r.session_id, r.turn): i for i, r in enumerate(r for s in self.sessions for r in s)}
+        print(
+            f"  Per-session pacing: {len(self.sessions)} sessions, "
+            f"{len(index)} requests, up to {self.mode.concurrency} in flight "
+            f"(no cross-session turn barrier)"
+        )
         self._print_waits()
         recorded = self.pacing.use_recorded_arrivals
         if recorded:
-            print("  Session starts: recorded arrival_time_ms "
-                  "(wait is outside the concurrency slot)")
+            print("  Session starts: recorded arrival_time_ms (wait is outside the concurrency slot)")
 
         async def session(turns):
             if recorded:
@@ -775,21 +856,20 @@ class SessionDispatcher:
         await asyncio.gather(*[session(s) for s in self.sessions])
         results = [r for v in self.by_turn.values() for r in v]
         if results and not any(r is not None and r.success for r in results):
-            raise RunAborted(f"ABORT: All {len(results)} requests failed. First error: "
-                             f"{first_error(results)}")
+            raise RunAborted(f"ABORT: All {len(results)} requests failed. First error: {first_error(results)}")
 
     async def _interleaved(self):
         for turn in range(self.max_turns):
-            batch = [s[turn] for s in self.sessions
-                     if s[0].session_id not in self.dead and turn < len(s)]
+            batch = [s[turn] for s in self.sessions if s[0].session_id not in self.dead and turn < len(s)]
             if not batch:
                 continue
             print(f"  Turn {turn + 1}/{self.max_turns}: dispatching {len(batch)} requests...")
             offset = sum(len(v) for v in self.by_turn.values())
-            completed = await asyncio.gather(*[
-                self._dispatch(r, offset + i) for i, r in enumerate(batch)])
+            completed = await asyncio.gather(*[self._dispatch(r, offset + i) for i, r in enumerate(batch)])
             if not any(r is not None and r.success for r in completed):
-                raise RunAborted(f"ABORT: All {len(completed)} requests in turn {turn + 1} "
-                                 f"failed. First error: {first_error(completed)}")
+                raise RunAborted(
+                    f"ABORT: All {len(completed)} requests in turn {turn + 1} "
+                    f"failed. First error: {first_error(completed)}"
+                )
             for request, result in zip(batch, completed):
                 self._record(request, result)

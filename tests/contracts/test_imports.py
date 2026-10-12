@@ -14,8 +14,9 @@ import quettabench
 
 ROOT = Path(__file__).resolve().parents[2]
 STUBS = ROOT / "tests" / "_stubs"
-MODULES = sorted(m.name for m in pkgutil.walk_packages(quettabench.__path__, "quettabench.")
-                 if not m.name.endswith(".__main__"))
+MODULES = sorted(
+    m.name for m in pkgutil.walk_packages(quettabench.__path__, "quettabench.") if not m.name.endswith(".__main__")
+)
 
 
 def fresh_import(code):
@@ -47,6 +48,7 @@ def test_every_module_imports_alone():
 
 
 PACKAGE = Path(__file__).resolve().parents[2] / "quettabench"
+
 
 def imported_modules(tree):
     for node in ast.walk(tree):

@@ -3,6 +3,7 @@
 
 The `new` tail is randomized per trial so warmup cannot turn a miss into a hit.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -20,11 +21,13 @@ import aiohttp
 from quettabench.probes.base import launch_vllm, run_recorded
 
 # Words are ~1 Llama token each, so a prompt of N words is ~N tokens.
-_VOCAB = ("the of and to in a is that for it as was with on be at by this had not are but from or "
-          "have an they which one you were her all she there would their we him been has when who "
-          "will more no if out so up said what its about into than them can only other new some "
-          "could time these two may then do first any my now such like our over man me even most "
-          "made after also did many before must through back years where much your way well down").split()
+_VOCAB = (
+    "the of and to in a is that for it as was with on be at by this had not are but from or "
+    "have an they which one you were her all she there would their we him been has when who "
+    "will more no if out so up said what its about into than them can only other new some "
+    "could time these two may then do first any my now such like our over man me even most "
+    "made after also did many before must through back years where much your way well down"
+).split()
 _RNG = random.Random(0)
 _WORDS = [_RNG.choice(_VOCAB) for _ in range(40000)]
 _TAIL = random.Random(777)
@@ -40,12 +43,12 @@ def fresh_tail(new: int) -> str:
 
 # vLLM v1 exposes per-request timings only as histograms; at concurrency 1 the _sum delta across one request is that request's value.
 _PROM_METRICS = {
-    "queue_span_s":   "vllm:request_queue_time_seconds",
+    "queue_span_s": "vllm:request_queue_time_seconds",
     # Scheduled to first token: forward wall including Python dispatch.
     "prefill_span_s": "vllm:request_prefill_time_seconds",
-    "e2e_s":          "vllm:e2e_request_latency_seconds",
-    "prompt_tokens":  "vllm:request_prompt_tokens",
-    "ttft_s":         "vllm:time_to_first_token_seconds",
+    "e2e_s": "vllm:e2e_request_latency_seconds",
+    "prompt_tokens": "vllm:request_prompt_tokens",
+    "ttft_s": "vllm:time_to_first_token_seconds",
 }
 
 
@@ -88,9 +91,14 @@ def _sub(after, before):
 
 
 async def ttft_once(session, url, model, content, request_id=None):
-    payload = {"model": model, "messages": [{"role": "user", "content": content}],
-               "max_tokens": 1, "temperature": 0.0, "stream": True,
-               "stream_options": {"include_usage": True}}
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": content}],
+        "max_tokens": 1,
+        "temperature": 0.0,
+        "stream": True,
+        "stream_options": {"include_usage": True},
+    }
     headers = {"Content-Type": "application/json"}
     if request_id is not None:
         headers["X-Request-Id"] = request_id
@@ -105,7 +113,7 @@ async def ttft_once(session, url, model, content, request_id=None):
             line = raw.decode("utf-8").strip()
             if not line.startswith("data:"):
                 continue
-            ds = line[len("data:"):].strip()
+            ds = line[len("data:") :].strip()
             if ds == "[DONE]":
                 break
             ch = json.loads(ds)
@@ -132,22 +140,23 @@ async def measure(session, base_url, model, cached, new, trials):
         tail = fresh_tail(new)
         content = (prefix + " " + tail) if cached > 0 else tail
         before = await scrape_metrics(session, base_url)
-        res = await ttft_once(session, chat_url, model, content,
-                              request_id=f"sss-{cached}-{new}-{i}")
+        res = await ttft_once(session, chat_url, model, content, request_id=f"sss-{cached}-{new}-{i}")
         after = await scrape_metrics(session, base_url)
         queue_span = _sub(after["queue_span_s"], before["queue_span_s"])
         prefill_span = _sub(after["prefill_span_s"], before["prefill_span_s"])
         e2e_span = _sub(after["e2e_s"], before["e2e_s"])
         ttft_prom = _sub(after["ttft_s"], before["ttft_s"])
-        samples.append({
-            "ttft_ms": res["ttft_ms"],
-            "client_connect_ms": res["client_connect_ms"],
-            "prompt_tokens": res["prompt_tokens"],
-            "queue_span_ms": None if queue_span is None else queue_span * 1000.0,
-            "prefill_span_ms": None if prefill_span is None else prefill_span * 1000.0,
-            "e2e_span_ms": None if e2e_span is None else e2e_span * 1000.0,
-            "ttft_prom_ms": None if ttft_prom is None else ttft_prom * 1000.0,
-        })
+        samples.append(
+            {
+                "ttft_ms": res["ttft_ms"],
+                "client_connect_ms": res["client_connect_ms"],
+                "prompt_tokens": res["prompt_tokens"],
+                "queue_span_ms": None if queue_span is None else queue_span * 1000.0,
+                "prefill_span_ms": None if prefill_span is None else prefill_span * 1000.0,
+                "e2e_span_ms": None if e2e_span is None else e2e_span * 1000.0,
+                "ttft_prom_ms": None if ttft_prom is None else ttft_prom * 1000.0,
+            }
+        )
 
     body = samples[1:]
 
@@ -167,7 +176,9 @@ async def measure(session, base_url, model, cached, new, trials):
     prompt_tokens_actual = st.median(pt) if pt else None
 
     return {
-        "new": new, "cached": cached, "n": trials,
+        "new": new,
+        "cached": cached,
+        "n": trials,
         "prompt_tokens_actual": prompt_tokens_actual,
         "ttft_ms": ttft_ms,
         "client_connect_ms": med("client_connect_ms"),
@@ -181,18 +192,30 @@ async def measure(session, base_url, model, cached, new, trials):
 
 def launch_server(model, port, gpu_mem, max_model_len, api_key, hash_algo, run_dir, tp=1):
     # sha256 vs builtin hashing isolates the block-hash cost inside the frontend residual.
-    flags = {"served_model_name": "llama", "host": "127.0.0.1", "api_key": api_key,
-             # Stats must stay on (no disable_log_stats) or /metrics is empty.
-             "no_enable_log_requests": True}
+    flags = {
+        "served_model_name": "llama",
+        "host": "127.0.0.1",
+        "api_key": api_key,
+        # Stats must stay on (no disable_log_stats) or /metrics is empty.
+        "no_enable_log_requests": True,
+    }
     if hash_algo:
         flags["prefix_caching_hash_algo"] = hash_algo
-    return launch_vllm(run_dir, model, port=port, tp=tp, gpu_util=gpu_mem,
-                       max_model_len=max_model_len, prefix_caching=True, vllm_flags=flags,
-                       timeout_s=420)
+    return launch_vllm(
+        run_dir,
+        model,
+        port=port,
+        tp=tp,
+        gpu_util=gpu_mem,
+        max_model_len=max_model_len,
+        prefix_caching=True,
+        vllm_flags=flags,
+        timeout_s=420,
+    )
 
 
 # Printed, never run, so the profiled wall stays apart from the client and /metrics lanes.
-_WORKER_EXT_HINT = r'''
+_WORKER_EXT_HINT = r"""
 # --- LANE B worker-side hook (save as a module on the GPU host) ---
 # Inject via:  vllm serve ... --worker-extension-cls my_ext.NvtxForwardTimer
 # Check on your vLLM version that --worker-extension-cls injects into the worker subprocess and which entrypoint to wrap:
@@ -215,7 +238,7 @@ _WORKER_EXT_HINT = r'''
 #     _RING.append((s, e, host_wall))   # elapsed_time read OFF the hot path (sync on flush)
 #     return out
 # GPUModelRunner.execute_model = timed_execute_model
-'''
+"""
 
 
 def emit_nsys_cmd(model, port, gpu_mem, max_model_len, out_sqlite):
@@ -247,7 +270,10 @@ def emit_nsys_cmd(model, port, gpu_mem, max_model_len, out_sqlite):
 
 
 _CSV_FIELDS = [
-    "new", "cached", "n", "prompt_tokens_actual",
+    "new",
+    "cached",
+    "n",
+    "prompt_tokens_actual",
     "ttft_ms",
     "client_connect_ms",
     "queue_span_ms",
@@ -267,18 +293,23 @@ async def run_sweep(base_url, model, news, cacheds, trials, out_path, api_key):
         present = [k for k, v in probe.items() if v is not None]
         print(f"/metrics reachable; histograms present at start: {present}", flush=True)
         if "prefill_span_s" not in present:
-            print("[warn] vllm:request_prefill_time_seconds_sum NOT found -- LANE A prefill_span "
-                  "will be blank. VERIFY the metric name / that stats are enabled on 0.19.0.",
-                  flush=True)
+            print(
+                "[warn] vllm:request_prefill_time_seconds_sum NOT found -- LANE A prefill_span "
+                "will be blank. VERIFY the metric name / that stats are enabled on 0.19.0.",
+                flush=True,
+            )
         for cached in cacheds:
             for new in news:
                 r = await measure(s, base_url, model, cached, new, trials)
                 rows.append(r)
                 pt = r["prompt_tokens_actual"]
-                print(f"  new={new:>5} cached={cached:>6}  ttft={_f(r['ttft_ms']):>8}  "
-                      f"queue={_f(r['queue_span_ms']):>7}  prefill={_f(r['prefill_span_ms']):>8}  "
-                      f"frontend={_f(r['frontend_residual_ms']):>8}  "
-                      f"pt={pt if pt is not None else '?'}", flush=True)
+                print(
+                    f"  new={new:>5} cached={cached:>6}  ttft={_f(r['ttft_ms']):>8}  "
+                    f"queue={_f(r['queue_span_ms']):>7}  prefill={_f(r['prefill_span_ms']):>8}  "
+                    f"frontend={_f(r['frontend_residual_ms']):>8}  "
+                    f"pt={pt if pt is not None else '?'}",
+                    flush=True,
+                )
 
     out = Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -302,31 +333,47 @@ def _round(x):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description=__doc__, allow_abbrev=False,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--model", default=None,
-                    help="model dir (Llama-3.1-8B-Instruct); needed unless --no-launch")
-    ap.add_argument("--served-model-name", default="llama",
-                    help="model name sent in the OpenAI payload (matches --served-model-name)")
+    ap = argparse.ArgumentParser(
+        description=__doc__, allow_abbrev=False, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument("--model", default=None, help="model dir (Llama-3.1-8B-Instruct); needed unless --no-launch")
+    ap.add_argument(
+        "--served-model-name",
+        default="llama",
+        help="model name sent in the OpenAI payload (matches --served-model-name)",
+    )
     ap.add_argument("--port", type=int, default=8771)
     ap.add_argument("--api-key", default="test")
     ap.add_argument("--gpu-mem", type=float, default=0.90)
     ap.add_argument("--max-model-len", type=int, default=32768)
-    ap.add_argument("--tensor-parallel-size", type=int, default=1,
-                    help="tp for the launched server (G3 like-for-like pair: run tp1 AND tp2 "
-                         "with THIS same script/stack; needs tp GPUs in CUDA_VISIBLE_DEVICES)")
-    ap.add_argument("--hash", default="sha256", choices=["sha256", "builtin", ""],
-                    help="prefix_caching_hash_algo for the launched server (block-hash attribution)")
+    ap.add_argument(
+        "--tensor-parallel-size",
+        type=int,
+        default=1,
+        help="tp for the launched server (G3 like-for-like pair: run tp1 AND tp2 "
+        "with THIS same script/stack; needs tp GPUs in CUDA_VISIBLE_DEVICES)",
+    )
+    ap.add_argument(
+        "--hash",
+        default="sha256",
+        choices=["sha256", "builtin", ""],
+        help="prefix_caching_hash_algo for the launched server (block-hash attribution)",
+    )
     ap.add_argument("--news", default="8,128,512,1024,2048", help="fresh-token counts to sweep")
     ap.add_argument("--cacheds", default="0,2000,8000,16000", help="cached-prefix token counts")
     ap.add_argument("--trials", type=int, default=5)
-    ap.add_argument("--out", required=True,
-                    help="the stage-split CSV; its dir also gets run.json "
-                         "(e.g. results/probes/<gpu>/serving_stage_split/<date>/serving_stage_split_<gpu>.csv)")
-    ap.add_argument("--no-launch", action="store_true",
-                    help="server already running (e.g. the nsys-wrapped LANE B server)")
-    ap.add_argument("--emit-nsys-cmd", action="store_true",
-                    help="print the LANE B nsys wrapper command + worker hook and exit")
+    ap.add_argument(
+        "--out",
+        required=True,
+        help="the stage-split CSV; its dir also gets run.json "
+        "(e.g. results/probes/<gpu>/serving_stage_split/<date>/serving_stage_split_<gpu>.csv)",
+    )
+    ap.add_argument(
+        "--no-launch", action="store_true", help="server already running (e.g. the nsys-wrapped LANE B server)"
+    )
+    ap.add_argument(
+        "--emit-nsys-cmd", action="store_true", help="print the LANE B nsys wrapper command + worker hook and exit"
+    )
     a = ap.parse_args(argv)
     if a.model is None and (a.emit_nsys_cmd or not a.no_launch):
         ap.error("--model is required to launch the server or print its nsys command")
@@ -334,8 +381,7 @@ def main(argv=None):
     base_url = f"http://127.0.0.1:{a.port}"
 
     if a.emit_nsys_cmd:
-        emit_nsys_cmd(a.model, a.port, a.gpu_mem, a.max_model_len,
-                      out_sqlite="serving_stage_split_nsys")
+        emit_nsys_cmd(a.model, a.port, a.gpu_mem, a.max_model_len, out_sqlite="serving_stage_split_nsys")
         return False  # no measurement, so no run.json
 
     news = [int(x) for x in a.news.split(",")]
@@ -343,15 +389,20 @@ def main(argv=None):
 
     server = None
     if not a.no_launch:
-        server = launch_server(a.model, a.port, a.gpu_mem, a.max_model_len, a.api_key,
-                               a.hash or None, Path(a.out).parent / "server",
-                               tp=a.tensor_parallel_size)
+        server = launch_server(
+            a.model,
+            a.port,
+            a.gpu_mem,
+            a.max_model_len,
+            a.api_key,
+            a.hash or None,
+            Path(a.out).parent / "server",
+            tp=a.tensor_parallel_size,
+        )
     try:
         print("server healthy; starting c1 stage-split sweep", flush=True)
-        asyncio.run(run_sweep(base_url, a.served_model_name, news, cacheds, a.trials, a.out,
-                              api_key=a.api_key))
-        emit_nsys_cmd(a.model, a.port, a.gpu_mem, a.max_model_len,
-                      out_sqlite="serving_stage_split_nsys")
+        asyncio.run(run_sweep(base_url, a.served_model_name, news, cacheds, a.trials, a.out, api_key=a.api_key))
+        emit_nsys_cmd(a.model, a.port, a.gpu_mem, a.max_model_len, out_sqlite="serving_stage_split_nsys")
         print("Next: parse the nsys sqlite (CUPTI kernels inside the vllm_prefill_step NVTX range).", flush=True)
     finally:
         if server is not None:

@@ -35,8 +35,15 @@ def _fit(rows):
 def _emit(table: str, rows: list[dict]) -> None:
     """Emit this run's rows as table, sorted by heads per rank, layout and tokens."""
     for r in sorted(rows, key=lambda r: (r["kv_heads_per_rank"], r["layout"], r["tokens"])):
-        emit(ProbeRow("kv_transfer", table, {c: r.get(c) for c in KEY},
-                      {c: r.get(c) for c in COLS if c not in KEY}, "host_wallclock"))
+        emit(
+            ProbeRow(
+                "kv_transfer",
+                table,
+                {c: r.get(c) for c in KEY},
+                {c: r.get(c) for c in COLS if c not in KEY},
+                "host_wallclock",
+            )
+        )
 
 
 def _on_sigterm(signum, frame):
@@ -45,22 +52,35 @@ def _on_sigterm(signum, frame):
 
 
 def main(argv=None) -> bool:
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     add_output_args(ap)
     ap.add_argument("--layers", type=int, default=94, help="one KV tensor and one descriptor per layer and block")
     ap.add_argument("--block-size", type=int, default=16)
     ap.add_argument("--head-dim", type=int, default=128)
-    ap.add_argument("--kv-heads-per-rank", type=int, nargs="+", default=[1, 2],
-                    help="4 kv heads / tp: tp4 -> 1, tp2 -> 2")
-    ap.add_argument("--tokens", type=int, nargs="+", help="context lengths to transfer",
-                    default=[16, 1024, 4096, 8192, 16384, 32768, 65536, 131072])
-    ap.add_argument("--scattered-max-tokens", type=int, default=16384,
-                    help="cap the fully-scattered sweep (it runs at ~20 us/descriptor)")
+    ap.add_argument(
+        "--kv-heads-per-rank", type=int, nargs="+", default=[1, 2], help="4 kv heads / tp: tp4 -> 1, tp2 -> 2"
+    )
+    ap.add_argument(
+        "--tokens",
+        type=int,
+        nargs="+",
+        help="context lengths to transfer",
+        default=[16, 1024, 4096, 8192, 16384, 32768, 65536, 131072],
+    )
+    ap.add_argument(
+        "--scattered-max-tokens",
+        type=int,
+        default=16384,
+        help="cap the fully-scattered sweep (it runs at ~20 us/descriptor)",
+    )
     ap.add_argument("--iters", type=int, default=11, help="timed transfers per cell, after one warm-up")
-    ap.add_argument("--layouts", nargs="+", default=["contig", "runs64", "runs8", "scattered"],
-                    help="block placement: contig (consecutive ids, NIXL merges descriptors), runsN (runs of N blocks "
-                         "with gaps), scattered (nothing merges)")
+    ap.add_argument(
+        "--layouts",
+        nargs="+",
+        default=["contig", "runs64", "runs8", "scattered"],
+        help="block placement: contig (consecutive ids, NIXL merges descriptors), runsN (runs of N blocks "
+        "with gaps), scattered (nothing merges)",
+    )
     a = ap.parse_args(argv)
 
     rank = int(os.environ["RANK"])
@@ -74,9 +94,9 @@ def main(argv=None) -> bool:
 
     # Only hosts with nixl can import it.
     from nixl._api import nixl_agent, nixl_agent_config
+
     os.environ.setdefault("UCX_RCACHE_MAX_UNRELEASED", "1024")
-    agent = nixl_agent(f"{'P' if rank == 0 else 'D'}{rank}",
-                       nixl_agent_config(backends=["UCX"]))
+    agent = nixl_agent(f"{'P' if rank == 0 else 'D'}{rank}", nixl_agent_config(backends=["UCX"]))
 
     # Twice the largest request, so `scattered` never degenerates into `contig`.
     max_blocks = 2 * (-(-max(a.tokens) // a.block_size))
@@ -84,8 +104,7 @@ def main(argv=None) -> bool:
     for heads in a.kv_heads_per_rank:
         # FlashAttention HND layout: a block's K and V are adjacent, one descriptor per (layer, block).
         page_bytes = 2 * a.block_size * heads * a.head_dim * 2
-        pool = [torch.empty(max_blocks * page_bytes, dtype=torch.uint8, device=dev)
-                for _ in range(a.layers)]
+        pool = [torch.empty(max_blocks * page_bytes, dtype=torch.uint8, device=dev) for _ in range(a.layers)]
         if rank == 0:
             for t in pool:
                 t.fill_(1)
@@ -108,14 +127,15 @@ def main(argv=None) -> bool:
                 parts = []
                 for base in bases:
                     addrs = np.uint64(base) + blocks * np.uint64(page_bytes)
-                    parts.append(np.stack([addrs, np.full_like(addrs, page_bytes),
-                                           np.full_like(addrs, d)], axis=1))
+                    parts.append(np.stack([addrs, np.full_like(addrs, page_bytes), np.full_like(addrs, d)], axis=1))
                 return np.concatenate(parts)
 
-            local_side = agent.prep_xfer_dlist("NIXL_INIT_AGENT",
-                                               agent.get_xfer_descs(_descs([t.data_ptr() for t in pool], dev_id), "VRAM"))
-            remote_side = agent.prep_xfer_dlist(remote_name,
-                                                agent.get_xfer_descs(_descs(remote_bases, remote_dev), "VRAM"))
+            local_side = agent.prep_xfer_dlist(
+                "NIXL_INIT_AGENT", agent.get_xfer_descs(_descs([t.data_ptr() for t in pool], dev_id), "VRAM")
+            )
+            remote_side = agent.prep_xfer_dlist(
+                remote_name, agent.get_xfer_descs(_descs(remote_bases, remote_dev), "VRAM")
+            )
             rng = np.random.default_rng(0)
             perm = rng.permutation(max_blocks)
             region_ids = np.arange(a.layers, dtype=np.int64)[:, None]
@@ -125,7 +145,7 @@ def main(argv=None) -> bool:
                 if layout == "contig":
                     return np.arange(nb) + side * nb
                 if layout == "scattered":
-                    return np.sort(perm[side * nb:(side + 1) * nb])
+                    return np.sort(perm[side * nb : (side + 1) * nb])
                 run = int(layout[4:])
                 n_runs = -(-nb // run)
                 # A one-run gap keeps runs from touching.
@@ -154,17 +174,28 @@ def main(argv=None) -> bool:
                             prep.append((t1 - t0) * 1e3)
                             xfer.append((t2 - t1) * 1e3)
                     nbytes = int(len(ids)) * page_bytes
-                    row = {"gpu": a.gpu_label, "kv_heads_per_rank": heads, "head_dim": a.head_dim,
-                           "block_size": a.block_size, "layers": a.layers, "layout": layout,
-                           "tokens": tokens, "n_descs": int(len(ids)), "bytes": nbytes,
-                           "prep_ms": round(float(np.median(prep)), 3),
-                           "xfer_ms": round(float(np.median(xfer)), 3)}
+                    row = {
+                        "gpu": a.gpu_label,
+                        "kv_heads_per_rank": heads,
+                        "head_dim": a.head_dim,
+                        "block_size": a.block_size,
+                        "layers": a.layers,
+                        "layout": layout,
+                        "tokens": tokens,
+                        "n_descs": int(len(ids)),
+                        "bytes": nbytes,
+                        "prep_ms": round(float(np.median(prep)), 3),
+                        "xfer_ms": round(float(np.median(xfer)), 3),
+                    }
                     row["total_ms"] = round(row["prep_ms"] + row["xfer_ms"], 3)
                     row["eff_gbps"] = round(nbytes / (row["total_ms"] / 1e3) / 1e9, 2)
                     out_rows.append(row)
-                    print(f"heads={heads} {layout:9s} tokens={tokens:>6} descs={len(ids):>8} "
-                          f"{nbytes / 1e9:7.3f} GB  prep {row['prep_ms']:8.2f} ms  xfer {row['xfer_ms']:8.2f} ms"
-                          f"  -> {row['eff_gbps']:6.1f} GB/s per GPU pair", flush=True)
+                    print(
+                        f"heads={heads} {layout:9s} tokens={tokens:>6} descs={len(ids):>8} "
+                        f"{nbytes / 1e9:7.3f} GB  prep {row['prep_ms']:8.2f} ms  xfer {row['xfer_ms']:8.2f} ms"
+                        f"  -> {row['eff_gbps']:6.1f} GB/s per GPU pair",
+                        flush=True,
+                    )
             agent.release_dlist_handle(local_side)
             agent.release_dlist_handle(remote_side)
             agent.remove_remote_agent(remote_name)
@@ -183,12 +214,17 @@ def main(argv=None) -> bool:
         print("\nfit total_ms = floor + bytes/bw   (per GPU pair; system YAML links.intra_node)")
         for heads in a.kv_heads_per_rank:
             for layout in a.layouts:
-                rows = [r for r in out_rows if r["kv_heads_per_rank"] == heads and r["layout"] == layout
-                        and r["tokens"] >= 1024]
+                rows = [
+                    r
+                    for r in out_rows
+                    if r["kv_heads_per_rank"] == heads and r["layout"] == layout and r["tokens"] >= 1024
+                ]
                 if len(rows) >= 2:
                     floor, bw = _fit(rows)
-                    print(f"  kv_heads_per_rank={heads} ({2 * a.block_size * heads * a.head_dim * 2 // 1024} KB/desc) "
-                          f"{layout:9s}: floor {floor:7.2f} ms   bw {bw / 1e9:6.1f} GB/s")
+                    print(
+                        f"  kv_heads_per_rank={heads} ({2 * a.block_size * heads * a.head_dim * 2 // 1024} KB/desc) "
+                        f"{layout:9s}: floor {floor:7.2f} ms   bw {bw / 1e9:6.1f} GB/s"
+                    )
     dist.destroy_process_group()
     return rank == 0
 

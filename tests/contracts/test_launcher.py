@@ -63,10 +63,14 @@ class LocalLauncher(unittest.TestCase):
         self.fail("no free port in 5 tries")
 
     def spec(self, **kw):
-        return LaunchSpec(adapter="fake", port=self.port, health_path="/health",
-                          server_argv=(sys.executable, str(FAKE), str(self.port), str(self.state)),
-                          env={"FAKE_MARK": "from-spec", "HF_TOKEN": "secret",
-                               "DB_SECRET": "secret"}, **kw)
+        return LaunchSpec(
+            adapter="fake",
+            port=self.port,
+            health_path="/health",
+            server_argv=(sys.executable, str(FAKE), str(self.port), str(self.state)),
+            env={"FAKE_MARK": "from-spec", "HF_TOKEN": "secret", "DB_SECRET": "secret"},
+            **kw,
+        )
 
     def test_engine_json_holds_no_engine_kwarg_or_argv_secret(self):
         handle = self.start(engine_kwargs={"api_key": "sk-live"})
@@ -84,9 +88,9 @@ class LocalLauncher(unittest.TestCase):
         self.assertEqual(record["endpoint"], f"http://127.0.0.1:{self.port}")
         self.assertEqual(record["pid"], handle.pid)
         self.assertEqual(record["instrumentation"], "none")
-        self.assertEqual(record["launch_spec"]["env"],
-                         {"FAKE_MARK": "from-spec", "HF_TOKEN": "REDACTED",
-                          "DB_SECRET": "REDACTED"})  # the results.redact rule
+        self.assertEqual(
+            record["launch_spec"]["env"], {"FAKE_MARK": "from-spec", "HF_TOKEN": "REDACTED", "DB_SECRET": "REDACTED"}
+        )  # the results.redact rule
         self.assertNotIn("secret", (self.dir / "run" / "engine.json").read_text())
         self.assertTrue(alive(state["child_pid"]))
         handle.stop(grace_s=5)
@@ -94,8 +98,7 @@ class LocalLauncher(unittest.TestCase):
         self.assertFalse(alive(state["child_pid"]))
 
     def test_server_that_dies_fails_fast(self):
-        spec = LaunchSpec(adapter="fake", port=self.port,
-                          server_argv=(sys.executable, "-c", "raise SystemExit(4)"))
+        spec = LaunchSpec(adapter="fake", port=self.port, server_argv=(sys.executable, "-c", "raise SystemExit(4)"))
         with self.assertRaisesRegex(RuntimeError, "exited with 4"):
             launcher.start(spec, self.dir / "dead", timeout_s=30, poll_s=0.1)
 
@@ -109,9 +112,11 @@ DOCKER_YAML = launcher.REPO / "configs" / "runs" / "llama-tp1-docker.yaml"
 
 def docker_spec(*sets):
     """(cfg, spec) for the example docker run yaml on a pinned host."""
-    (cfg,) = loader.load(DOCKER_YAML, ["engine.model=/hf/llama", "hardware.backend=cuda",
-                                       "hardware.link_profile=nvlink", *sets],
-                         env={"HF_HOME": "/hf"})
+    (cfg,) = loader.load(
+        DOCKER_YAML,
+        ["engine.model=/hf/llama", "hardware.backend=cuda", "hardware.link_profile=nvlink", *sets],
+        env={"HF_HOME": "/hf"},
+    )
     return cfg, vllm.ADAPTER.translate(cfg)
 
 
@@ -141,16 +146,56 @@ class DockerArgv(unittest.TestCase):
     def test_example_yaml_argv(self):
         cfg, spec = docker_spec()
         repo = str(launcher.REPO)
-        self.assertEqual(launcher.docker_argv(spec, cfg, "2", "/r/run"), [
-            "docker", "run", "-d", "--pull=never", "--init", "--name", NAME,
-            "--gpus", '"device=2"', "--ipc=host", "--shm-size=16g", "-p", "8000:8000",
-            "-v", "/hf:/hf:ro", "-v", f"{repo}:{repo}:ro", "-v", "/r/run:/r/run",
-            "-e", "VLLM_SERVER_DEV_MODE=1", "-e", "VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1",
-            "-e", "NCCL_IB_DISABLE=1", "-e", "HF_HOME=/hf",
-            "--entrypoint", "vllm", "vllm/vllm-openai:v0.26.0",
-            "serve", "/hf/llama", "--port", "8000", "--tensor-parallel-size", "1",
-            "--dtype", "float16", "--max-model-len", "9216", "--gpu-memory-utilization", "0.9",
-            "--no-enable-prefix-caching", "--enable-chunked-prefill", "--trust-remote-code"])
+        self.assertEqual(
+            launcher.docker_argv(spec, cfg, "2", "/r/run"),
+            [
+                "docker",
+                "run",
+                "-d",
+                "--pull=never",
+                "--init",
+                "--name",
+                NAME,
+                "--gpus",
+                '"device=2"',
+                "--ipc=host",
+                "--shm-size=16g",
+                "-p",
+                "8000:8000",
+                "-v",
+                "/hf:/hf:ro",
+                "-v",
+                f"{repo}:{repo}:ro",
+                "-v",
+                "/r/run:/r/run",
+                "-e",
+                "VLLM_SERVER_DEV_MODE=1",
+                "-e",
+                "VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1",
+                "-e",
+                "NCCL_IB_DISABLE=1",
+                "-e",
+                "HF_HOME=/hf",
+                "--entrypoint",
+                "vllm",
+                "vllm/vllm-openai:v0.26.0",
+                "serve",
+                "/hf/llama",
+                "--port",
+                "8000",
+                "--tensor-parallel-size",
+                "1",
+                "--dtype",
+                "float16",
+                "--max-model-len",
+                "9216",
+                "--gpu-memory-utilization",
+                "0.9",
+                "--no-enable-prefix-caching",
+                "--enable-chunked-prefill",
+                "--trust-remote-code",
+            ],
+        )
 
     def test_shm_size_and_collective_pins_come_from_hardware(self):
         cfg, spec = docker_spec("hardware.shm_size=64g", "hardware.link_profile=pcie")
@@ -162,11 +207,13 @@ class DockerArgv(unittest.TestCase):
     def test_provisioned_model_dir_is_mounted(self):
         cfg, spec = docker_spec("engine.model=/cache/models/llama")
         argv = launcher.docker_argv(spec, cfg, "0", "/r/run")
-        self.assertIn("/cache/models/llama:/cache/models/llama:ro",
-                      [argv[i + 1] for i, a in enumerate(argv) if a == "-v"])
+        self.assertIn(
+            "/cache/models/llama:/cache/models/llama:ro", [argv[i + 1] for i, a in enumerate(argv) if a == "-v"]
+        )
         cfg, spec = docker_spec("engine.model=meta-llama/Llama-3.1-8B")
-        self.assertNotIn("meta-llama/Llama-3.1-8B:meta-llama/Llama-3.1-8B:ro",
-                         launcher.docker_argv(spec, cfg, "0", "/r/run"))
+        self.assertNotIn(
+            "meta-llama/Llama-3.1-8B:meta-llama/Llama-3.1-8B:ro", launcher.docker_argv(spec, cfg, "0", "/r/run")
+        )
 
     def test_a_secret_env_goes_by_name_only(self):
         """docker run -e NAME (no value) takes NAME from the docker client's
@@ -195,6 +242,7 @@ class DockerStart(unittest.TestCase):
             if argv[:2] == ["docker", "run"]:
                 return mock.Mock(returncode=docker_rc, stdout=created, stderr="no such image")
             return mock.Mock(returncode=0, stdout="", stderr="")
+
         return mock.patch.object(launcher.subprocess, "run", side_effect=run)
 
     @staticmethod
@@ -208,35 +256,36 @@ class DockerStart(unittest.TestCase):
     def test_start_logs_engine_json_and_stop(self):
         cfg, spec = docker_spec()
         proc = mock.Mock(pid=4242, **{"poll.return_value": None})
-        with self.run_mock() as run, \
-                mock.patch.object(launcher.subprocess, "Popen", return_value=proc) as popen, \
-                mock.patch.object(launcher, "wait_healthy") as healthy:
+        with (
+            self.run_mock() as run,
+            mock.patch.object(launcher.subprocess, "Popen", return_value=proc) as popen,
+            mock.patch.object(launcher, "wait_healthy") as healthy,
+        ):
             handle = self.start(cfg, spec)
-            self.assertEqual(run.call_args_list[0].args[0],
-                             launcher.docker_argv(spec, cfg, "0", self.dir / "run"))
-            self.assertEqual(popen.call_args.args[0],
-                             ["docker", "logs", "-f", NAME])
-            self.assertEqual(popen.call_args.kwargs["stdout"].name,
-                             str(self.dir / "run" / "server.log"))
+            self.assertEqual(run.call_args_list[0].args[0], launcher.docker_argv(spec, cfg, "0", self.dir / "run"))
+            self.assertEqual(popen.call_args.args[0], ["docker", "logs", "-f", NAME])
+            self.assertEqual(popen.call_args.kwargs["stdout"].name, str(self.dir / "run" / "server.log"))
             healthy.assert_called_once_with(proc, "http://127.0.0.1:8000/health", 1800, 1.0)
             record = json.loads((self.dir / "run" / "engine.json").read_text())
-            self.assertEqual((record["pid"], record["container"], record["container_id"],
-                              record["image"]),
-                             (proc.pid, NAME, "c0ffee",
-                              "vllm/vllm-openai:v0.26.0"))
+            self.assertEqual(
+                (record["pid"], record["container"], record["container_id"], record["image"]),
+                (proc.pid, NAME, "c0ffee", "vllm/vllm-openai:v0.26.0"),
+            )
             self.assertEqual((handle.pid, handle.container_id), (proc.pid, "c0ffee"))
             handle.stop(grace_s=5)
-            self.assertEqual(self.docker_calls(run),
-                             [["docker", "stop", "-t", "5", NAME],
-                              ["docker", "rm", "-f", NAME]])
+            self.assertEqual(
+                self.docker_calls(run), [["docker", "stop", "-t", "5", NAME], ["docker", "rm", "-f", NAME]]
+            )
             proc.wait.assert_called_once_with(timeout=15)
 
     def test_docker_run_gets_the_secret_in_its_env(self):
         cfg, spec = keyed_docker_spec("sk-live")
         proc = mock.Mock(pid=4242, **{"poll.return_value": None})
-        with self.run_mock() as run, mock.patch.object(launcher.subprocess, "Popen",
-                                                       return_value=proc), \
-                mock.patch.object(launcher, "wait_healthy"):
+        with (
+            self.run_mock() as run,
+            mock.patch.object(launcher.subprocess, "Popen", return_value=proc),
+            mock.patch.object(launcher, "wait_healthy"),
+        ):
             self.start(cfg, spec)
         docker_run = run.call_args_list[0]
         self.assertEqual(docker_run.kwargs["env"]["VLLM_API_KEY"], "sk-live")
@@ -245,11 +294,12 @@ class DockerStart(unittest.TestCase):
 
     def test_stop_kills_a_log_stream_that_does_not_end(self):
         cfg, spec = docker_spec()
-        proc = mock.Mock(pid=4242, **{"wait.side_effect": [launcher.subprocess.TimeoutExpired("logs", 15),
-                                                 0]})
-        with self.run_mock() as run, \
-                mock.patch.object(launcher.subprocess, "Popen", return_value=proc), \
-                mock.patch.object(launcher, "wait_healthy"):
+        proc = mock.Mock(pid=4242, **{"wait.side_effect": [launcher.subprocess.TimeoutExpired("logs", 15), 0]})
+        with (
+            self.run_mock() as run,
+            mock.patch.object(launcher.subprocess, "Popen", return_value=proc),
+            mock.patch.object(launcher, "wait_healthy"),
+        ):
             self.start(cfg, spec).stop(grace_s=5)
         proc.kill.assert_called_once_with()
         self.assertEqual(run.call_args.args[0], ["docker", "rm", "-f", NAME])
@@ -261,33 +311,33 @@ class DockerStart(unittest.TestCase):
 
     def test_unhealthy_container_is_stopped(self):
         cfg, spec = docker_spec()
-        with self.run_mock() as run, mock.patch.object(launcher.subprocess, "Popen"), \
-                mock.patch.object(launcher, "wait_healthy", side_effect=TimeoutError("late")):
+        with (
+            self.run_mock() as run,
+            mock.patch.object(launcher.subprocess, "Popen"),
+            mock.patch.object(launcher, "wait_healthy", side_effect=TimeoutError("late")),
+        ):
             with self.assertRaises(TimeoutError):
                 self.start(cfg, spec)
-        self.assertEqual([argv[:2] for argv in self.docker_calls(run)],
-                         [["docker", "stop"], ["docker", "rm"]])
+        self.assertEqual([argv[:2] for argv in self.docker_calls(run)], [["docker", "stop"], ["docker", "rm"]])
 
     def test_failed_docker_run_and_missing_image(self):
         cfg, spec = docker_spec()
-        with self.run_mock(docker_rc=125) as run, \
-                mock.patch.object(launcher.subprocess, "Popen") as popen:
+        with self.run_mock(docker_rc=125) as run, mock.patch.object(launcher.subprocess, "Popen") as popen:
             with self.assertRaisesRegex(RuntimeError, "docker run exited with 125: no such image"):
                 self.start(cfg, spec)
         popen.assert_not_called()
-        self.assertEqual(self.docker_calls(run),
-                         [["docker", "logs", NAME], ["docker", "rm", "-f", NAME]])
-        self.assertEqual(run.call_args_list[1].kwargs["stdout"].name,
-                         str(self.dir / "run" / "server.log"))
+        self.assertEqual(self.docker_calls(run), [["docker", "logs", NAME], ["docker", "rm", "-f", NAME]])
+        self.assertEqual(run.call_args_list[1].kwargs["stdout"].name, str(self.dir / "run" / "server.log"))
         self.assertEqual((self.dir / "run" / "server.log").read_text(), "no such image")
 
     def test_a_docker_run_that_printed_no_id_is_still_cleaned_by_name(self):
         cfg, spec = docker_spec()
-        with self.run_mock(docker_rc=125, created="") as run, \
-                self.assertRaisesRegex(RuntimeError, "docker run exited with 125"):
+        with (
+            self.run_mock(docker_rc=125, created="") as run,
+            self.assertRaisesRegex(RuntimeError, "docker run exited with 125"),
+        ):
             self.start(cfg, spec)
-        self.assertEqual(self.docker_calls(run),
-                         [["docker", "logs", NAME], ["docker", "rm", "-f", NAME]])
+        self.assertEqual(self.docker_calls(run), [["docker", "logs", NAME], ["docker", "rm", "-f", NAME]])
         cfg, spec = docker_spec("engine.image=null")
         with self.run_mock() as run, self.assertRaisesRegex(ConfigError, "needs engine.image"):
             self.start(cfg, spec)
@@ -298,10 +348,13 @@ class NoProxy(unittest.TestCase):
     """An http_proxy in the environment never carries engine traffic."""
 
     def test_endpoints_are_reached_directly(self):
-        dead_proxy = {"http_proxy": "http://127.0.0.1:9", "HTTP_PROXY": "http://127.0.0.1:9",
-                      "no_proxy": "", "NO_PROXY": ""}
-        with helpers.serve() as (endpoint, _), \
-                mock.patch.dict(os.environ, dead_proxy):
+        dead_proxy = {
+            "http_proxy": "http://127.0.0.1:9",
+            "HTTP_PROXY": "http://127.0.0.1:9",
+            "no_proxy": "",
+            "NO_PROXY": "",
+        }
+        with helpers.serve() as (endpoint, _), mock.patch.dict(os.environ, dead_proxy):
             self.assertIn("process_open_fds", native.scrape_metrics(endpoint))
             with launcher.urlopen(endpoint + "/metrics", timeout=5) as resp:
                 self.assertEqual(resp.status, 200)
@@ -314,8 +367,7 @@ class IdleGpus(unittest.TestCase):
 
     def test_cuda_picks_gpus_under_1000_mib(self):
         smi = "0, 70000 MiB\n1, 3 MiB\n2, 999 MiB\n3, 1000 MiB\n"
-        with mock.patch.object(launcher.subprocess, "run",
-                               return_value=mock.Mock(stdout=smi)):
+        with mock.patch.object(launcher.subprocess, "run", return_value=mock.Mock(stdout=smi)):
             self.assertEqual(launcher.idle_gpus(2, "cuda"), "1,2")
             with self.assertRaisesRegex(RuntimeError, "NEED 3 FREE GPUS, have: 1 2"):
                 launcher.idle_gpus(3, "cuda")
@@ -333,28 +385,49 @@ def tools_on_path(td, **outputs):
 class Backends(unittest.TestCase):
     def test_visible_env_per_backend(self):
         self.assertEqual(launcher.visible_env("cuda", "0,1"), ({"CUDA_VISIBLE_DEVICES": "0,1"}, ()))
-        self.assertEqual(launcher.visible_env("rocm", "2"),
-                         ({"HIP_VISIBLE_DEVICES": "2", "CUDA_VISIBLE_DEVICES": "2"}, ()))
-        self.assertEqual(launcher.visible_env("tpu", "0,1,2,3"),
-                         ({"TPU_VISIBLE_CHIPS": "0,1,2,3", "TPU_CHIPS_PER_PROCESS_BOUNDS": "1,4,1",
-                           "TPU_PROCESS_BOUNDS": "1,1,1"}, ()))
-        self.assertEqual(launcher.visible_env("neuron", "0,1"),
-                         ({"NEURON_VISIBLE_DEVICES": "0,1"}, ("NEURON_RT_VISIBLE_CORES",)))
+        self.assertEqual(
+            launcher.visible_env("rocm", "2"), ({"HIP_VISIBLE_DEVICES": "2", "CUDA_VISIBLE_DEVICES": "2"}, ())
+        )
+        self.assertEqual(
+            launcher.visible_env("tpu", "0,1,2,3"),
+            (
+                {
+                    "TPU_VISIBLE_CHIPS": "0,1,2,3",
+                    "TPU_CHIPS_PER_PROCESS_BOUNDS": "1,4,1",
+                    "TPU_PROCESS_BOUNDS": "1,1,1",
+                },
+                (),
+            ),
+        )
+        self.assertEqual(
+            launcher.visible_env("neuron", "0,1"), ({"NEURON_VISIBLE_DEVICES": "0,1"}, ("NEURON_RT_VISIBLE_CORES",))
+        )
 
     def test_rocm_is_detected_from_rocm_smi_or_amd_smi(self):
         for tool in ("rocm-smi", "amd-smi"):
-            with self.subTest(tool=tool), tempfile.TemporaryDirectory() as td, \
-                    tools_on_path(td, **{tool: ""}):
+            with self.subTest(tool=tool), tempfile.TemporaryDirectory() as td, tools_on_path(td, **{tool: ""}):
                 self.assertEqual(loader.detect_backend(None), "rocm")
 
     def child_spec(self, backend, *sets):
         """The spec runner.serve_one hands launcher.start for a serve run on backend."""
-        (cfg,) = loader.load(DOCKER_YAML, ["engine.model=/w", f"hardware.backend={backend}",
-                                           "engine.dtype=bfloat16", "mode.grid=null",
-                                           "hardware.visible_devices=0,1", *sets], env={})
-        with mock.patch.object(runner.launcher, "start") as start, \
-                mock.patch.object(runner, "build_trace"), mock.patch.object(runner.serve, "run"), \
-                tempfile.TemporaryDirectory() as td:
+        (cfg,) = loader.load(
+            DOCKER_YAML,
+            [
+                "engine.model=/w",
+                f"hardware.backend={backend}",
+                "engine.dtype=bfloat16",
+                "mode.grid=null",
+                "hardware.visible_devices=0,1",
+                *sets,
+            ],
+            env={},
+        )
+        with (
+            mock.patch.object(runner.launcher, "start") as start,
+            mock.patch.object(runner, "build_trace"),
+            mock.patch.object(runner.serve, "run"),
+            tempfile.TemporaryDirectory() as td,
+        ):
             runner.serve_one(cfg, Path(td), set(), mock.Mock(provenance={}))
         return start.call_args.args[0]
 
@@ -369,30 +442,55 @@ class Backends(unittest.TestCase):
 
     def test_docker_device_flags_per_backend(self):
         fixed_name(self)
-        flags = {"rocm": ["--group-add=video", "--cap-add=SYS_PTRACE", "--security-opt",
-                          "seccomp=unconfined", "--device", "/dev/kfd", "--device", "/dev/dri"],
-                 "tpu": ["--privileged", "--net=host"],
-                 "neuron": ["--device=/dev/neuron0", "--device=/dev/neuron1", "--device=/dev/neuron10",
-                            "--cap-add", "SYS_ADMIN", "--cap-add", "IPC_LOCK"]}
+        flags = {
+            "rocm": [
+                "--group-add=video",
+                "--cap-add=SYS_PTRACE",
+                "--security-opt",
+                "seccomp=unconfined",
+                "--device",
+                "/dev/kfd",
+                "--device",
+                "/dev/dri",
+            ],
+            "tpu": ["--privileged", "--net=host"],
+            "neuron": [
+                "--device=/dev/neuron0",
+                "--device=/dev/neuron1",
+                "--device=/dev/neuron10",
+                "--cap-add",
+                "SYS_ADMIN",
+                "--cap-add",
+                "IPC_LOCK",
+            ],
+        }
         devices = ["/dev/neuron10", "/dev/neuron1", "/dev/neuron0"]
         for backend, want in flags.items():
-            with self.subTest(backend=backend), \
-                    mock.patch.object(launcher.glob, "glob", return_value=devices):
+            with self.subTest(backend=backend), mock.patch.object(launcher.glob, "glob", return_value=devices):
                 cfg, spec = docker_spec(f"hardware.backend={backend}", "engine.dtype=bfloat16")
                 argv = launcher.docker_argv(spec, cfg, "0,1", "/r/run")
-                self.assertEqual(argv[7:7 + len(want)], want)
+                self.assertEqual(argv[7 : 7 + len(want)], want)
                 self.assertNotIn("--gpus", argv)
                 self.assertEqual("-p" in argv, backend != "tpu")
         cfg, spec = docker_spec("hardware.backend=neuron")
-        with mock.patch.object(launcher.glob, "glob", return_value=[]), \
-                self.assertRaisesRegex(ConfigError, "no /dev/neuron"):
+        with (
+            mock.patch.object(launcher.glob, "glob", return_value=[]),
+            self.assertRaisesRegex(ConfigError, "no /dev/neuron"),
+        ):
             launcher.docker_argv(spec, cfg, "0", "/r/run")
 
     def test_accelerator_identity_per_backend(self):
-        with tempfile.TemporaryDirectory() as td, tools_on_path(
-                td, **{"nvidia-smi": "NVIDIA H200, 143771\n",
-                       "amd-smi": "ASIC:\n    MARKET_NAME: AMD Instinct MI300X\n",
-                       "neuron-ls": "instance-type: trn2.48xlarge\ninstance-id: i-0\n"}):
+        with (
+            tempfile.TemporaryDirectory() as td,
+            tools_on_path(
+                td,
+                **{
+                    "nvidia-smi": "NVIDIA H200, 143771\n",
+                    "amd-smi": "ASIC:\n    MARKET_NAME: AMD Instinct MI300X\n",
+                    "neuron-ls": "instance-type: trn2.48xlarge\ninstance-id: i-0\n",
+                },
+            ),
+        ):
             self.assertEqual(launcher.accelerator("cuda"), ("NVIDIA H200", 143771 << 20))
             self.assertEqual(launcher.accelerator("rocm"), ("AMD Instinct MI300X", None))
             self.assertEqual(launcher.accelerator("neuron"), ("trn2.48xlarge", None))
@@ -401,8 +499,7 @@ class Backends(unittest.TestCase):
             for backend in ("cuda", "rocm", "neuron", "tpu", "cpu"):
                 self.assertEqual(launcher.accelerator(backend), ("", None))
         handle = launcher.NoServer(Path("r"), endpoint="http://127.0.0.1:1", backend="rocm")
-        (cfg,) = loader.load(DOCKER_YAML, ["engine.model=/w", "hardware.backend=rocm",
-                                           "mode.grid=null"], env={})
+        (cfg,) = loader.load(DOCKER_YAML, ["engine.model=/w", "hardware.backend=rocm", "mode.grid=null"], env={})
         driver = vllm.ADAPTER.driver(vllm.ADAPTER.translate(cfg), handle)
         with mock.patch.object(drivers.launcher, "accelerator", return_value=("MI300X", None)) as acc:
             self.assertEqual(driver.device(), ("MI300X", None))
@@ -411,6 +508,7 @@ class Backends(unittest.TestCase):
     def test_cuda_only_refusals(self):
         def load(*sets):
             return loader.load(DOCKER_YAML.with_name("llama.yaml"), ["engine.model=/w", *sets], env={})
+
         with self.assertRaisesRegex(ConfigError, "TPU has no fp16; set engine.dtype=bfloat16"):
             load("hardware.backend=tpu")
         for backend in ("rocm", "neuron", "tpu"):

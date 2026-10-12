@@ -19,14 +19,19 @@ RUN_STATUSES = ("ok", "partial", "aborted", "failed")
 # Files only a run dir holds; a dir with one of them is a run dir.
 RUN_MARKERS = ("run.json", "requests.jsonl", "engine.json")
 # A name whose value is a secret, read after camelCase is split into words (authToken as auth_Token): one of these words anywhere in it, between _ . - or the ends ...
-SECRET_WORD = (r"secrets?|password|passwd|pass|passphrase|credentials?|bearer|auth|oauth"
-               r"|authorization|cookie")
+SECRET_WORD = (
+    r"secrets?|password|passwd|pass|passphrase|credentials?|bearer|auth|oauth"
+    r"|authorization|cookie"
+)
 # ... or one of these as its last word, so num_key_value_heads and prompt_token_ids are not secrets while HF_TOKEN is ...
 SECRET_LAST = r"token|apikey|pat"
 # ... or key(s) as its last word after one of these, so OPENAI_API_KEY and private_key are secrets while cache_keys and --num-keys are not.
 KEY_OWNER = r"api|secret|private|access|auth|ssh|encryption|signing"
-SECRET_NAME = re.compile(rf"(?:^|[_.-])(?:{SECRET_WORD})(?:$|[_.-])|(?:^|[_.-])(?:{SECRET_LAST})$"
-                         rf"|(?:^|[_.-])(?:{KEY_OWNER})[_.-]keys?$", re.IGNORECASE)
+SECRET_NAME = re.compile(
+    rf"(?:^|[_.-])(?:{SECRET_WORD})(?:$|[_.-])|(?:^|[_.-])(?:{SECRET_LAST})$"
+    rf"|(?:^|[_.-])(?:{KEY_OWNER})[_.-]keys?$",
+    re.IGNORECASE,
+)
 # ... except a tokenizer's special tokens, which name a vocabulary entry.
 SPECIAL_TOKEN = re.compile(r"(?:eos|bos|pad|unk|sep|cls|mask)[_.-]token", re.IGNORECASE)
 CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
@@ -171,8 +176,9 @@ def stamp_pulled(path):
 def bench_sha(repo=REPO):
     """This checkout's commit, else QBENCH_SHA (set in the image), else empty; never raises."""
     try:
-        sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True,
-                             check=False).stdout.strip()
+        sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=False
+        ).stdout.strip()
     except OSError:
         sha = ""
     return sha or env_map.read_env(only=("QBENCH_SHA",)).get("detect.bench_sha", "")
@@ -188,15 +194,34 @@ def _ms(seconds, digits=2):
 
 # RequestResult field -> jsonl key, written only when not None.
 # Seconds become milliseconds; rates keep four digits.
-OPTIONAL_MS = ("scheduled_at", "dispatch_started_at", "semaphore_acquired_at", "completed_at",
-               "client_schedule_delay", "client_queue_wait", "client_request_wall")
+OPTIONAL_MS = (
+    "scheduled_at",
+    "dispatch_started_at",
+    "semaphore_acquired_at",
+    "completed_at",
+    "client_schedule_delay",
+    "client_queue_wait",
+    "client_request_wall",
+)
 OPTIONAL_PLAIN = ("request_index", "max_tokens_requested", "message_count", "prompt_chars")
-OPTIONAL_CACHE = ("session_id", "turn_index", "previous_context_tokens", "total_context_tokens",
-                  "new_prefill_tokens", "cached_context_tokens", "cache_hit_rate",
-                  "cache_estimate_source", "cache_block_size",
-                  "block_aligned_cached_context_tokens", "block_aligned_new_prefill_tokens",
-                  "block_aligned_cache_hit_rate", "uncached_prefix_tail_tokens",
-                  "total_context_blocks", "cached_context_blocks", "new_prefill_blocks")
+OPTIONAL_CACHE = (
+    "session_id",
+    "turn_index",
+    "previous_context_tokens",
+    "total_context_tokens",
+    "new_prefill_tokens",
+    "cached_context_tokens",
+    "cache_hit_rate",
+    "cache_estimate_source",
+    "cache_block_size",
+    "block_aligned_cached_context_tokens",
+    "block_aligned_new_prefill_tokens",
+    "block_aligned_cache_hit_rate",
+    "uncached_prefix_tail_tokens",
+    "total_context_blocks",
+    "cached_context_blocks",
+    "new_prefill_blocks",
+)
 RATES = ("cache_hit_rate", "block_aligned_cache_hit_rate")
 # Fields written as they are when set.
 NEW_FIELDS = ("ttft_basis", "ttft_rule", "accepted_tokens", "cell", "batch_wall_s", "logits")
@@ -268,8 +293,7 @@ class RunWriter:
     results_dir None writes nothing. exclusive (a probe run) creates the dir and raises FileExistsError if it exists.
     """
 
-    def __init__(self, results_dir, cfg, *, handle=None, driver=None, launch_env=None,
-                 exclusive=False):
+    def __init__(self, results_dir, cfg, *, handle=None, driver=None, launch_env=None, exclusive=False):
         self.dir = Path(results_dir) if results_dir else None
         self.cfg = cfg
         self.provenance = provenance(cfg, handle, driver, launch_env)
@@ -357,13 +381,14 @@ PCTS = (50, 90, 95, 99)
 
 
 def workload_line(w):
-    return (f"WORKLOADSUM expected={w['expected']} replayed={w['replayed']} "
-            f"match={int(w['match'])} n={w['n']}/{w['of']}")
+    return f"WORKLOADSUM expected={w['expected']} replayed={w['replayed']} match={int(w['match'])} n={w['n']}/{w['of']}"
 
 
 def goodprobe_line(p):
-    return (f"GOODPROBE speed={p['speed']:g} verdict={p['verdict']} "
-            f"bound={','.join(p['bound']) or 'none'} req_s={p['req_s']:.3f}")
+    return (
+        f"GOODPROBE speed={p['speed']:g} verdict={p['verdict']} "
+        f"bound={','.join(p['bound']) or 'none'} req_s={p['req_s']:.3f}"
+    )
 
 
 def legacy_lines(summary):
@@ -380,10 +405,11 @@ def legacy_lines(summary):
         tp = s["tpot_ms"]
         lines.append(
             f"SERVESUM n={s['n']} "
-            + " ".join(f"ttft_ms_p{q}={s['ttft_ms'][f'p{q}']:.1f}" for q in PCTS) + " "
-            + (" ".join(f"tpot_ms_p{q}={tp[f'p{q}']:.3f}" for q in PCTS) + " "
-               if tp else "tpot_ms_p50=- ")
-            + f"req_s={s['req_s']:.3f} tok_s={s['tok_s']:.1f}")
+            + " ".join(f"ttft_ms_p{q}={s['ttft_ms'][f'p{q}']:.1f}" for q in PCTS)
+            + " "
+            + (" ".join(f"tpot_ms_p{q}={tp[f'p{q}']:.3f}" for q in PCTS) + " " if tp else "tpot_ms_p50=- ")
+            + f"req_s={s['req_s']:.3f} tok_s={s['tok_s']:.1f}"
+        )
     sla = summary.get("sla")
     if sla is not None:
         tpot = "-" if sla["tpot_p99"] is None else f"{sla['tpot_p99']:.3f}"
@@ -391,30 +417,37 @@ def legacy_lines(summary):
             f"SLASUM verdict={sla['verdict']} bound={','.join(sla['bound']) or 'none'} "
             f"ttft_p99={sla['ttft_p99']:.1f}/{sla['sla_ttft_ms'] or '-'} "
             f"tpot_p99={tpot}/{sla['sla_tpot_ms'] or '-'} "
-            f"rate_req_s={sla['rate_req_s']:.3f}")
+            f"rate_req_s={sla['rate_req_s']:.3f}"
+        )
     b = summary.get("burst")
     if b is not None and b["peak_ttft_p99"] is not None:
         rec = "na" if b["recovery_s"] is None else f"{b['recovery_s']:.1f}"
-        lines.append(f"BURSTSUM peak_ttft_p99={b['peak_ttft_p99']:.1f} "
-                     f"recovery_s={rec} target_ms={b['target_ms']}")
+        lines.append(f"BURSTSUM peak_ttft_p99={b['peak_ttft_p99']:.1f} recovery_s={rec} target_ms={b['target_ms']}")
     spec = summary.get("spec")
     if spec is not None and spec.get("source") == "server_metrics":
-        lines.append(f"SPECSUM spec=measured source=server_metrics "
-                     f"accept_len={spec['accept_len']:.2f} accept_rate={spec['accept_rate']:.3f} "
-                     f"drafts={spec['drafts']} draft_tokens={spec['draft_tokens']} "
-                     f"accepted_tokens={spec['accepted_tokens']}")
+        lines.append(
+            f"SPECSUM spec=measured source=server_metrics "
+            f"accept_len={spec['accept_len']:.2f} accept_rate={spec['accept_rate']:.3f} "
+            f"drafts={spec['drafts']} draft_tokens={spec['draft_tokens']} "
+            f"accepted_tokens={spec['accepted_tokens']}"
+        )
     elif spec is not None:
-        lines.append(f"SPECSUM spec=measured accept_len={spec['accept_len']:.2f} "
-                     f"accept_rate={spec['accept_rate']:.3f} n={spec['n']}"
-                     if spec["spec"] == "measured" else "SPECSUM spec=off note=needs-real-text-trace")
+        lines.append(
+            f"SPECSUM spec=measured accept_len={spec['accept_len']:.2f} "
+            f"accept_rate={spec['accept_rate']:.3f} n={spec['n']}"
+            if spec["spec"] == "measured"
+            else "SPECSUM spec=off note=needs-real-text-trace"
+        )
     g = summary.get("goodput")
     if g is not None and (w is None or w["match"]):
         bound = ",".join(g["fail_bound"])
-        lines.append(f"GOODPUTSUM max_req_s={g['max_req_s']:.3f} speed={g['speed']:g} "
-                     f"bound={bound or 'none-within-range'} iterations={g['iterations']}"
-                     if g["max_req_s"] is not None else
-                     f"GOODPUTSUM max_req_s=none bound={bound or 'na'} "
-                     f"iterations={g['iterations']} note=no-passing-speed-within-budget")
+        lines.append(
+            f"GOODPUTSUM max_req_s={g['max_req_s']:.3f} speed={g['speed']:g} "
+            f"bound={bound or 'none-within-range'} iterations={g['iterations']}"
+            if g["max_req_s"] is not None
+            else f"GOODPUTSUM max_req_s=none bound={bound or 'na'} "
+            f"iterations={g['iterations']} note=no-passing-speed-within-budget"
+        )
     return lines
 
 
@@ -435,11 +468,13 @@ def grid_event_line(run, event):
     if event["event"] == "cycled":
         return f"NOTE ctx={ctx} bs={bs} trace cycled (fewer reqs than bs)"
     s = event["step"]
-    return (f"RESULT mode={run['meta']['mode']} tp={s['tp']} kv={run['kv']} ctx={ctx} bs={bs} "
-            f"ms_per_step={s['ms_per_step']:.3f} ms_at_eval={s['ms_at_eval']:.3f} "
-            f"eval_pos={s['eval_pos']} mean_steps={s['mean_steps']:.0f} r2={s['r2']:.5f} "
-            f"prefill_s={s['prefill_s']:.2f} kv_gib={s['kv_gib']:.1f} "
-            f"attn_share={s['attn_share']:.3f} raw={[round(y, 2) for y in s['raw']]}")
+    return (
+        f"RESULT mode={run['meta']['mode']} tp={s['tp']} kv={run['kv']} ctx={ctx} bs={bs} "
+        f"ms_per_step={s['ms_per_step']:.3f} ms_at_eval={s['ms_at_eval']:.3f} "
+        f"eval_pos={s['eval_pos']} mean_steps={s['mean_steps']:.0f} r2={s['r2']:.5f} "
+        f"prefill_s={s['prefill_s']:.2f} kv_gib={s['kv_gib']:.1f} "
+        f"attn_share={s['attn_share']:.3f} raw={[round(y, 2) for y in s['raw']]}"
+    )
 
 
 def legacy_grid_lines(run):
@@ -451,9 +486,11 @@ def legacy_grid_lines(run):
     lines += [f"META {k}={v}" for k, v in run["meta"].items()]
     c = run.get("capacity")
     if c is not None:
-        lines.append(f"CAPACITY mode={c['mode']} tp={c['tp']} dtype={c['dtype']} "
-                     f"kv_bytes_per_token={c['kv_bytes']} free_gib={'-' if c['free_gib'] is None else format(c['free_gib'], '.0f')} "
-                     f"kv_tokens={c['kv_tokens']}")
+        lines.append(
+            f"CAPACITY mode={c['mode']} tp={c['tp']} dtype={c['dtype']} "
+            f"kv_bytes_per_token={c['kv_bytes']} free_gib={'-' if c['free_gib'] is None else format(c['free_gib'], '.0f')} "
+            f"kv_tokens={c['kv_tokens']}"
+        )
     if run.get("warm_ok"):
         lines.append("WARM_OK")
     lines += [grid_event_line(run, e) for e in run.get("events", ())]

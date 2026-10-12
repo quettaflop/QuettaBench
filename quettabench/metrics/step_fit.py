@@ -39,14 +39,14 @@ def fit_run(rows, eval_pos, kv_bytes, weights_gib):
         key = (cell["ctx"], cell["bs"], cell["tp"])
         measured = _get(row, "measured_ms_per_step")
         if measured is not None:
-            cells[key] = {"ctx": key[0], "bs": key[1], "tp": key[2],
-                          "ms_per_step": measured, "measured": True}
+            cells[key] = {"ctx": key[0], "bs": key[1], "tp": key[2], "ms_per_step": measured, "measured": True}
         elif cell.get("phase") == "fit":
             walls = cells.setdefault(key, {}).setdefault(cell["attempt"], {})
             walls.setdefault(cell["step_point"], _get(row, "batch_wall_s"))
-    return [cell if cell.get("measured") else
-            _fit_cell(key, cell, eval_pos, kv_bytes, weights_gib)
-            for key, cell in cells.items()]
+    return [
+        cell if cell.get("measured") else _fit_cell(key, cell, eval_pos, kv_bytes, weights_gib)
+        for key, cell in cells.items()
+    ]
 
 
 def _fit_cell(key, attempts, eval_pos, kv_bytes, weights_gib):
@@ -62,7 +62,19 @@ def _fit_cell(key, attempts, eval_pos, kv_bytes, weights_gib):
     kv_gib = ctx * bs * kv_bytes / GIB
     attn = kv_gib / (kv_gib + weights_gib)
     ms = slope * 1e3
-    return {"ctx": ctx, "bs": bs, "tp": tp, "ms_per_step": ms,
-            "ms_at_eval": ms_at_eval(ms, attn, eval_pos, mean_steps, ctx), "eval_pos": eval_pos,
-            "mean_steps": mean_steps, "r2": r2, "prefill_s": inter, "kv_gib": kv_gib,
-            "attn_share": attn, "step_points": xs, "raw": ys, "attempts": len(attempts)}
+    return {
+        "ctx": ctx,
+        "bs": bs,
+        "tp": tp,
+        "ms_per_step": ms,
+        "ms_at_eval": ms_at_eval(ms, attn, eval_pos, mean_steps, ctx),
+        "eval_pos": eval_pos,
+        "mean_steps": mean_steps,
+        "r2": r2,
+        "prefill_s": inter,
+        "kv_gib": kv_gib,
+        "attn_share": attn,
+        "step_points": xs,
+        "raw": ys,
+        "attempts": len(attempts),
+    }

@@ -51,16 +51,19 @@ def succeeds(argv):
 def compute_capability():
     """Major compute capability of GPU 0, or None without nvidia-smi."""
     try:
-        out = subprocess.run(["nvidia-smi", "--query-gpu=compute_cap", "--format=csv,noheader"],
-                             capture_output=True, text=True, check=False).stdout
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=compute_cap", "--format=csv,noheader"],
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout
     except OSError:
         return None
     return int(float(out.split()[0])) if out.strip() else None
 
 
 def nccl_version(py):
-    out = subprocess.run([py, "-c", NCCL_VERSION], capture_output=True, text=True,
-                         check=False).stdout.strip()
+    out = subprocess.run([py, "-c", NCCL_VERSION], capture_output=True, text=True, check=False).stdout.strip()
     return tuple(int(p) for p in out.split(".")[:2]) if out else None
 
 
@@ -88,9 +91,15 @@ def machine(plan, prov, docker=False, backend="cuda"):
     else:
         for d in CACHE_DIRS:
             (cache / d).mkdir(parents=True, exist_ok=True)
-    plan.env.update({"VLLM_CACHE_ROOT": cache / "vllm", "XDG_CACHE_HOME": cache / "vllm",
-                     "TORCHINDUCTOR_CACHE_DIR": cache / "torch", "HF_HOME": cache / "hf",
-                     "TMPDIR": cache / "tmp"})
+    plan.env.update(
+        {
+            "VLLM_CACHE_ROOT": cache / "vllm",
+            "XDG_CACHE_HOME": cache / "vllm",
+            "TORCHINDUCTOR_CACHE_DIR": cache / "torch",
+            "HF_HOME": cache / "hf",
+            "TMPDIR": cache / "tmp",
+        }
+    )
 
     py = prov.get("py") or "python3"
     plan.env["PYTHON_BIN"] = py
@@ -99,11 +108,14 @@ def machine(plan, prov, docker=False, backend="cuda"):
     elif succeeds([py, "-m", "pip", "show", "vllm"]):
         plan.log(f"vllm python ok: {py}")
     elif prov.get("vllm_spec"):
-        plan.act([py, "-m", "pip", "install", *shlex.split(prov["vllm_spec"])],
-                 f"pip install {prov['vllm_spec']!r} failed")
+        plan.act(
+            [py, "-m", "pip", "install", *shlex.split(prov["vllm_spec"])], f"pip install {prov['vllm_spec']!r} failed"
+        )
     else:
-        plan.need(f"no vllm in {py!r}; set hardware.provision.py to a vllm python or "
-                  "hardware.provision.vllm_spec to install one")
+        plan.need(
+            f"no vllm in {py!r}; set hardware.provision.py to a vllm python or "
+            "hardware.provision.vllm_spec to install one"
+        )
 
     lib = prov.get("nccl_lib")
     if backend in OTHER_ACCELERATORS:
@@ -117,15 +129,16 @@ def machine(plan, prov, docker=False, backend="cuda"):
             plan.need(f"hardware.provision.nccl_lib {lib!r} does not exist")
         plan.env["LD_LIBRARY_PATH"] = lib
     elif (compute_capability() or 0) >= 10 and (nccl_version(py) or (0,)) < NCCL_FLOOR:
-        plan.need(f"Blackwell needs NCCL >= 2.28 and {py} has {nccl_version(py)}; set "
-                  "hardware.provision.nccl_lib to a newer NCCL's lib dir")
+        plan.need(
+            f"Blackwell needs NCCL >= 2.28 and {py} has {nccl_version(py)}; set "
+            "hardware.provision.nccl_lib to a newer NCCL's lib dir"
+        )
 
     qs = Path(prov.get("qs_dir") or cache / "QuettaServe")
     if not (qs / ".git").is_dir() and prov.get("qs_repo"):
         plan.act(["git", "clone", prov["qs_repo"], str(qs)], f"git clone {prov['qs_repo']} failed")
         if prov.get("qs_commit"):
-            plan.act(["git", "-C", str(qs), "checkout", prov["qs_commit"]],
-                     f"git checkout {prov['qs_commit']} failed")
+            plan.act(["git", "-C", str(qs), "checkout", prov["qs_commit"]], f"git checkout {prov['qs_commit']} failed")
     return py, qs
 
 
@@ -138,13 +151,18 @@ def bench_binary(plan, name, bench, prov, qs):
     if plan.dry:
         return plan.log(f"would: build {crate}/{test} in {qs}")
     if not (qs / crate / "Cargo.toml").exists():
-        return plan.need(f"{name} engine: set {name}:hardware.provision.bench_bin, or "
-                         "hardware.provision.qs_repo, or hardware.provision.qs_dir to a "
-                         "QuettaServe checkout")
-    plan.act(["cargo", "test", "-p", crate, "--test", test, "--release", "--no-run"],
-             f"{name}: cargo build failed", cwd=qs)
-    built = sorted((p for p in (qs / "target/release/deps").glob(f"{test}-*")
-                    if p.suffix not in (".d", ".o")), key=lambda p: p.stat().st_mtime)
+        return plan.need(
+            f"{name} engine: set {name}:hardware.provision.bench_bin, or "
+            "hardware.provision.qs_repo, or hardware.provision.qs_dir to a "
+            "QuettaServe checkout"
+        )
+    plan.act(
+        ["cargo", "test", "-p", crate, "--test", test, "--release", "--no-run"], f"{name}: cargo build failed", cwd=qs
+    )
+    built = sorted(
+        (p for p in (qs / "target/release/deps").glob(f"{test}-*") if p.suffix not in (".d", ".o")),
+        key=lambda p: p.stat().st_mtime,
+    )
     if not built:
         return plan.need(f"{name}: no {test} binary after build")
     plan.log(f"{name}: built {built[-1]}")
@@ -169,19 +187,35 @@ def run(plan, name, cfg, py, qs):
         if weights.is_dir() and any(weights.iterdir()):
             plan.log(f"{name}: weights {weights}")
         else:
-            plan.act([py, "-m", "huggingface_hub.commands.huggingface_cli", "download",
-                      prov["hf_id"], "--local-dir", str(weights)],
-                     f"{name}: hf download {prov['hf_id']} failed (HF_TOKEN set?)")
+            plan.act(
+                [
+                    py,
+                    "-m",
+                    "huggingface_hub.commands.huggingface_cli",
+                    "download",
+                    prov["hf_id"],
+                    "--local-dir",
+                    str(weights),
+                ],
+                f"{name}: hf download {prov['hf_id']} failed (HF_TOKEN set?)",
+            )
     elif not weights:
-        plan.need(f"{name} weights: set {name}:hardware.provision.weights=<dir> or "
-                  f"{name}:hardware.provision.hf_id=<hf-repo-id>")
+        plan.need(
+            f"{name} weights: set {name}:hardware.provision.weights=<dir> or "
+            f"{name}:hardware.provision.hf_id=<hf-repo-id>"
+        )
     yaml_path = f"configs/runs/{name}.yaml"
     lines = [shlex.join(["qbench", "run", yaml_path, "--set", f"engine.model={weights}"])]
     if bench:
-        qs_sets = [("engine.name", "quettaserve"), ("engine.model", prov.get("qs_ckpt")),
-                   ("engine.extra.bench_bin", binary), ("engine.extra.qs_cfg", prov.get("qs_cfg"))]
-        lines.append(shlex.join(["qbench", "run", yaml_path, *[a for k, v in qs_sets if v
-                                                               for a in ("--set", f"{k}={v}")]]))
+        qs_sets = [
+            ("engine.name", "quettaserve"),
+            ("engine.model", prov.get("qs_ckpt")),
+            ("engine.extra.bench_bin", binary),
+            ("engine.extra.qs_cfg", prov.get("qs_cfg")),
+        ]
+        lines.append(
+            shlex.join(["qbench", "run", yaml_path, *[a for k, v in qs_sets if v for a in ("--set", f"{k}={v}")]])
+        )
     return lines
 
 
@@ -199,15 +233,24 @@ def split_sets(items):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="just provision", description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        prog="just provision", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("run_yaml", nargs="+", help="configs/runs/<name>.yaml to provision for")
-    ap.add_argument("--set", dest="overrides", action="append", default=[],
-                    metavar="[RUN:]K=V",
-                    help="override a Config path; a RUN: prefix scopes it to the run yaml of that stem")
-    ap.add_argument("--backend", choices=("local", "docker"),
-                    help="sets hardware.launcher for every run; docker skips the vLLM and NCCL steps "
-                         "and only checks that each engine.image exists locally")
+    ap.add_argument(
+        "--set",
+        dest="overrides",
+        action="append",
+        default=[],
+        metavar="[RUN:]K=V",
+        help="override a Config path; a RUN: prefix scopes it to the run yaml of that stem",
+    )
+    ap.add_argument(
+        "--backend",
+        choices=("local", "docker"),
+        help="sets hardware.launcher for every run; docker skips the vLLM and NCCL steps "
+        "and only checks that each engine.image exists locally",
+    )
     ap.add_argument("--dry-run", action="store_true", help="print the plan; write nothing")
     ap.add_argument("--env-file", default=str(REPO / ".env"), help="where a complete pass writes the environment")
     a = ap.parse_args(argv)
@@ -224,8 +267,9 @@ def main(argv=None):
             plan.need(str(e))
             continue
         if len(points) > 1:
-            plan.need(f"{path}: a matrix of {len(points)} points; provision a run yaml "
-                      "without matrix: for the same model")
+            plan.need(
+                f"{path}: a matrix of {len(points)} points; provision a run yaml without matrix: for the same model"
+            )
             continue
         configs[name] = points[0]
     if not configs:

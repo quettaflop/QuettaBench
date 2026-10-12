@@ -43,8 +43,16 @@ MLA_CONFIG = {
     "qk_rope_head_dim": 64,
     "kv_lora_rank": 512,
 }
-MLA_MODEL = {"name": "mla-probe", "dtype": "bfloat16", "weights_gib": 10, "max_model_len": 9216,
-             "tp": 1, "kv_dtype": "fp8_ds_mla", "verified": True, "attention": "mla"}
+MLA_MODEL = {
+    "name": "mla-probe",
+    "dtype": "bfloat16",
+    "weights_gib": 10,
+    "max_model_len": 9216,
+    "tp": 1,
+    "kv_dtype": "fp8_ds_mla",
+    "verified": True,
+    "attention": "mla",
+}
 MLA_RUN = {"model": "mla_probe", "workload": {"kind": "grid"}, "mode": {"grid": "smoke"}}
 
 
@@ -73,32 +81,40 @@ def _error(fn, *args, **kwargs):
 def resolve(name, env, *sets):
     """The loader's Config for one run yaml under exactly `env`, no tooling on
     PATH; qwen as vmin_fit sized it (dense)."""
-    with mock.patch.dict(os.environ, env, clear=True), \
-            mock.patch("shutil.which", return_value=None):
-        (cfg,) = loader.load(RUNS / f"{name}.yaml",
-                             ["allow_unverified=true", *AS_VMIN_FIT.get(name, []), *sets])
+    with mock.patch.dict(os.environ, env, clear=True), mock.patch("shutil.which", return_value=None):
+        (cfg,) = loader.load(RUNS / f"{name}.yaml", ["allow_unverified=true", *AS_VMIN_FIT.get(name, []), *sets])
     return cfg
 
 
 def check_record(case, cfg, old, env):
     """cfg holds every value xval_config resolved for the workload."""
     wl, e, m = old["workload"], cfg.engine, cfg.mode
-    case.assertEqual((e.model_name, e.dtype, e.weights_gib, e.max_model_len),
-                     (wl["name"], wl["dtype"], wl["weights_gib"], wl["maxlen"]))
+    case.assertEqual(
+        (e.model_name, e.dtype, e.weights_gib, e.max_model_len),
+        (wl["name"], wl["dtype"], wl["weights_gib"], wl["maxlen"]),
+    )
     case.assertEqual((e.tp, e.pp), (int(wl.get("tp", 1)), int(env.get("XVAL_PP", wl.get("pp", 1)))))
-    case.assertEqual((e.ep, e.kv_dtype, e.kv_bytes, e.quant, e.verified),
-                     (bool(wl.get("expert_parallel")), wl.get("kv_dtype") or "auto",
-                      wl.get("kv_bytes"), wl.get("quant"), wl["verified"]))
+    case.assertEqual(
+        (e.ep, e.kv_dtype, e.kv_bytes, e.quant, e.verified),
+        (
+            bool(wl.get("expert_parallel")),
+            wl.get("kv_dtype") or "auto",
+            wl.get("kv_bytes"),
+            wl.get("quant"),
+            wl["verified"],
+        ),
+    )
     case.assertEqual(e.gpu_util, float(env.get("GPU_UTIL", wl.get("gpu_util", 0.90))))
     bench = wl.get("bench")
-    case.assertEqual(e.extra.get("quettaserve"), bench and {
-        "crate": bench["crate"], "test": bench["test"],
-        "env_prefix": bench["env"], "family": bench["family"]})
+    case.assertEqual(
+        e.extra.get("quettaserve"),
+        bench
+        and {"crate": bench["crate"], "test": bench["test"], "env_prefix": bench["env"], "family": bench["family"]},
+    )
     case.assertEqual(cfg.crossval.get("comm_bound_bs"), wl.get("comm_bound_bs"))
     for key in ("engine_commit", "checkpoint"):
         case.assertEqual(cfg.provenance.get(key), wl.get(key))
-    case.assertEqual(cfg.workload.prompt_mode,
-                     env.get("PROMPT_MODE", wl.get("prompt_mode", "distinct")))
+    case.assertEqual(cfg.workload.prompt_mode, env.get("PROMPT_MODE", wl.get("prompt_mode", "distinct")))
     case.assertEqual((m.grid, cfg.grid.cells), (wl["grid"], tuple(map(tuple, old["grid_cells"]))))
     case.assertEqual(parse_serving_style(e.serving_style), old["serving_style"])
 
@@ -119,13 +135,13 @@ def resolve_global(env):
     grids, step_points = loader._read_grids(REPO / "configs")
     h = cfg.hardware
     default = env.get("XVAL_LINK_PROFILE", "pcie")
-    by_profile = {p: dict(resolve("llama", env, f"hardware.link_profile={p}").hardware.collective)
-                  for p in ("pcie", "nvlink")}
+    by_profile = {
+        p: dict(resolve("llama", env, f"hardware.link_profile={p}").hardware.collective) for p in ("pcie", "nvlink")
+    }
     return {
         "grids": {k: v for k, v in grids.items() if k not in ADDED_GRIDS},
         "step_points": step_points,
-        "run_params": {"world": h.world, "timing_steps": h.timing_steps,
-                       "max_seq_headroom": h.max_seq_headroom},
+        "run_params": {"world": h.world, "timing_steps": h.timing_steps, "max_seq_headroom": h.max_seq_headroom},
         "provision": dict(h.provision),
         "backend": h.backend,
         "link_profile": h.link_profile,
@@ -147,9 +163,11 @@ class ConfigResolutionGolden(unittest.TestCase):
                 old = WORKLOADS[name][s]["xval_config"]
                 with self.subTest(workload=name, env=s):
                     check_record(self, resolve(name, env), old, env)
-                record[name][s] = {"xval_config": {k: v for k, v in old.items() if k != "cli"},
-                                   "vmin_fit": resolve_vmin_fit(name, env),
-                                   "dry_run": resolve_dry_run(name, env)}
+                record[name][s] = {
+                    "xval_config": {k: v for k, v in old.items() if k != "cli"},
+                    "vmin_fit": resolve_vmin_fit(name, env),
+                    "dry_run": resolve_dry_run(name, env),
+                }
         check_json(self, "config_workloads", record)
 
     def test_qwen_needs_the_dense_override(self):
@@ -161,34 +179,40 @@ class ParseTimeFailuresGolden(unittest.TestCase):
     def test_failures_keep_type_and_message(self):
         link = _error(resolve, "llama", {}, "hardware.link_profile=infiniband")
         failures = {
-            "serving_style": {spec: _error(parse_serving_style, spec) for spec in
-                              ("disagg:0p1d", "disagg:2p", "ep4", "aggregate",
-                               "disagg:1p1d:x", "EP8DP2")},
-            "ep_degree": {f"ep{ep}_experts{n}": _error(check_ep_legal, ep, n)
-                          for ep, n in ((3, 256), (7, 288), (8, 256), (16, 288))},
+            "serving_style": {
+                spec: _error(parse_serving_style, spec)
+                for spec in ("disagg:0p1d", "disagg:2p", "ep4", "aggregate", "disagg:1p1d:x", "EP8DP2")
+            },
+            "ep_degree": {
+                f"ep{ep}_experts{n}": _error(check_ep_legal, ep, n)
+                for ep, n in ((3, 256), (7, 288), (8, 256), (16, 288))
+            },
             "link_profile": {**link, "message": loader_message(link["message"])},
             "engine_unknown": _error(base.get, "tgi"),
         }
-        unverified = [n for n in WORKLOAD_NAMES
-                      if not WORKLOADS[n]["cleared"]["xval_config"]["workload"].get("verified")]
+        unverified = [
+            n for n in WORKLOAD_NAMES if not WORKLOADS[n]["cleared"]["xval_config"]["workload"].get("verified")
+        ]
         failures["vmin_fit_unverified"] = {
-            n: loader_message(run_grid_cli(grid_argv(n), {})["exit"]) for n in unverified}
-        failures["run_yaml_missing"] = run_grid_cli(grid_argv("nope"), {})["exit"].replace(
-            str(REPO), "<REPO>")
+            n: loader_message(run_grid_cli(grid_argv(n), {})["exit"]) for n in unverified
+        }
+        failures["run_yaml_missing"] = run_grid_cli(grid_argv("nope"), {})["exit"].replace(str(REPO), "<REPO>")
         # the message lists every grid; drop the ones added after the capture
-        unknown_grid = loader_message(run_grid_cli(
-            grid_argv("llama", "--set", "mode.grid=nope"), {})["exit"])
+        unknown_grid = loader_message(run_grid_cli(grid_argv("llama", "--set", "mode.grid=nope"), {})["exit"])
         for added in ADDED_GRIDS:
             unknown_grid = unknown_grid.replace(f", {added}", "")
         failures["vmin_fit_unknown_grid"] = unknown_grid
-        failures["vmin_fit_unknown_prompt_mode"] = loader_message(run_grid_cli(
-            grid_argv("llama"), {"PROMPT_MODE": "random"})["exit"])
+        failures["vmin_fit_unknown_prompt_mode"] = loader_message(
+            run_grid_cli(grid_argv("llama"), {"PROMPT_MODE": "random"})["exit"]
+        )
         with mla_run_yaml() as run_yaml:
-            refused = run_grid_cli(["run", str(run_yaml), "--set", "engine.model=<MODEL>"], {},
-                                   model_config=MLA_CONFIG)
+            refused = run_grid_cli(["run", str(run_yaml), "--set", "engine.model=<MODEL>"], {}, model_config=MLA_CONFIG)
             self.assertIn("attention=mla needs kv_bytes", refused["exit"])
-            mla = run_grid_cli(["run", str(run_yaml), "--set", "engine.model=<MODEL>",
-                                "--set", "engine.attention=dense"], {}, model_config=MLA_CONFIG)
+            mla = run_grid_cli(
+                ["run", str(run_yaml), "--set", "engine.model=<MODEL>", "--set", "engine.attention=dense"],
+                {},
+                model_config=MLA_CONFIG,
+            )
         failures["mla_without_kv_bytes"] = {
             "exit": mla["exit"],
             "capacity": [line for line in mla["stdout"] if line.startswith("CAPACITY")],
@@ -196,8 +220,7 @@ class ParseTimeFailuresGolden(unittest.TestCase):
         check_json(self, "config_failures", failures)
 
     def test_malformed_serving_style_is_refused_at_load(self):
-        err = _error(loader.load, RUNS / "llama.yaml",
-                     ["engine.model=m", "engine.serving_style=disagg:2p"], env={})
+        err = _error(loader.load, RUNS / "llama.yaml", ["engine.model=m", "engine.serving_style=disagg:2p"], env={})
         check_json(self, "config_trace_serve_style_error", err)
 
 

@@ -40,7 +40,9 @@ except OSError as e:
 child = subprocess.Popen([sys.executable, __file__, "--child"])
 tmp = state + ".tmp"
 with open(tmp, "w") as fh:
-    json.dump({"pid": os.getpid(), "child_pid": child.pid,
-               "mark": os.environ.get("FAKE_MARK"), "port": server.server_port}, fh)
+    json.dump(
+        {"pid": os.getpid(), "child_pid": child.pid, "mark": os.environ.get("FAKE_MARK"), "port": server.server_port},
+        fh,
+    )
 os.replace(tmp, state)
 server.serve_forever()

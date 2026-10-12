@@ -2,6 +2,7 @@
 
 Graph replay matches vLLM's graphed decode (no per-launch CPU dispatch) and works where NCU counters are locked (RmProfilingAdminOnly=1). NCU sums the op's kernels per invocation and drops the `at::` tensor-setup kernels.
 """
+
 from __future__ import annotations
 
 import csv
@@ -64,8 +65,17 @@ def graph_median_us(fn, **kw) -> float:
 
 def ncu_kernel_durations(inner: str, ncu_bin: str) -> list[tuple[str, float]]:
     """[(kernel_name, us)] for every profiled kernel launch, in launch order."""
-    cmd = [ncu_bin, "--csv", "--metrics", "gpu__time_duration.sum",
-           "--target-processes", "all", sys.executable, "-c", inner]
+    cmd = [
+        ncu_bin,
+        "--csv",
+        "--metrics",
+        "gpu__time_duration.sum",
+        "--target-processes",
+        "all",
+        sys.executable,
+        "-c",
+        inner,
+    ]
     out = subprocess.run(cmd, capture_output=True, text=True).stdout
     lines = out.splitlines()
     hdr = next((i for i, line in enumerate(lines) if line.startswith('"ID"')), None)
@@ -81,13 +91,11 @@ def ncu_kernel_durations(inner: str, ncu_bin: str) -> list[tuple[str, float]]:
     return res
 
 
-def ncu_op_us(inner: str, ncu_bin: str, reps: int,
-              exclude: tuple[str, ...] = ("at::",)) -> float | None:
+def ncu_op_us(inner: str, ncu_bin: str, reps: int, exclude: tuple[str, ...] = ("at::",)) -> float | None:
     """Kernel us of one op call: the snippet calls the op `reps` times; the op's kernels (minus `exclude`) are summed per invocation and the min taken. None when NCU gave no table or the kernel count is not a multiple of reps (an autotune leak)."""
-    durs = [us for kn, us in ncu_kernel_durations(inner, ncu_bin)
-            if not any(t in kn for t in exclude)]
+    durs = [us for kn, us in ncu_kernel_durations(inner, ncu_bin) if not any(t in kn for t in exclude)]
     if not durs or reps <= 0 or len(durs) % reps != 0:
         return None
     n = len(durs) // reps  # kernels per invocation
-    groups = [sum(durs[i * n:(i + 1) * n]) for i in range(reps)]
+    groups = [sum(durs[i * n : (i + 1) * n]) for i in range(reps)]
     return min(groups)

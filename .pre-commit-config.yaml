@@ -12,6 +12,8 @@ repos:
     args: [--output-format, github]
     # Same scope as `just lint`; analysis/ and data/ are one-off studies.
     files: ^(quettabench|tests|tools)/
+  - id: ruff-format
+    files: ^(quettabench|tests|tools)/
 - repo: https://github.com/crate-ci/typos
   rev: v1.43.5
   hooks:

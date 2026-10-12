@@ -1,4 +1,5 @@
 """The translation boundary: an adapter turns one Config into one LaunchSpec, the only description of how an engine is started and driven."""
+
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
@@ -21,8 +22,7 @@ class UnsupportedField(ValueError):
 
     def __init__(self, engine, field_name, why=""):
         self.engine, self.field = engine, field_name
-        super().__init__(f"{engine}: {field_name} has no launch flag in use today"
-                         + (f" ({why})" if why else ""))
+        super().__init__(f"{engine}: {field_name} has no launch flag in use today" + (f" ({why})" if why else ""))
 
 
 @dataclass(frozen=True)
@@ -31,6 +31,7 @@ class LaunchSpec:
 
     server_argv is empty when the adapter has no server. env is added to the child's inherited environment; env_drop names inherited variables to remove.
     """
+
     adapter: str
     server_argv: tuple = ()
     engine_kwargs: Mapping = field(default_factory=dict)
@@ -42,10 +43,10 @@ class LaunchSpec:
     port: int = 8000
     instrumentation: str = "none"
     image: str | None = None
-    ok_pattern: str | None = None     # bench stdout line that marks a finished cell
-    log_header: str = ""              # the bench log's `>>> ctx= bs= ...` line for this cell
-    cells: tuple = ()                 # ((ctx, bs, per-cell spec), ...): one bench run each
-    timeout_s: int = 120              # client timeout per request, from mode.timeout
+    ok_pattern: str | None = None  # bench stdout line that marks a finished cell
+    log_header: str = ""  # the bench log's `>>> ctx= bs= ...` line for this cell
+    cells: tuple = ()  # ((ctx, bs, per-cell spec), ...): one bench run each
+    timeout_s: int = 120  # client timeout per request, from mode.timeout
 
     def child_argv(self, argv):
         """argv run under `env`, so the child gets env and env_drop applied on top of what it inherits without this process reading os.environ."""
@@ -54,15 +55,15 @@ class LaunchSpec:
 
 
 # EngineCfg fields that describe the model or pick the adapter; no adapter carries them.
-FACTS = frozenset({"name", "model_name", "kv_bytes", "weights_gib", "attention", "num_experts",
-                   "verified"})
+FACTS = frozenset({"name", "model_name", "kv_bytes", "weights_gib", "attention", "num_experts", "verified"})
 
 
 class EngineAdapter(ABC):
     """One engine: which Config fields it can express, and how."""
+
     name = ""
     supports: frozenset = frozenset()
-    benchmarked = True   # False: a scoring side only (reference), not offered as an engine
+    benchmarked = True  # False: a scoring side only (reference), not offered as an engine
 
     def refuse_unsupported(self, cfg):
         """UnsupportedField for an engine field the run, env or --set moves off its default when this adapter is not in its supports: no silent drop. A model yaml value describes the checkpoint and is not refused."""
@@ -72,11 +73,13 @@ class EngineAdapter(ABC):
             if f.name in FACTS or f.name in self.supports or value == getattr(defaults, f.name):
                 continue
             path = f"engine.{f.name}"
-            asked = [o for p, o in cfg.origins.items()
-                     if (p == path or p.startswith(path + ".")) and o not in NOT_ASKED]
+            asked = [
+                o for p, o in cfg.origins.items() if (p == path or p.startswith(path + ".")) and o not in NOT_ASKED
+            ]
             if asked:
-                raise UnsupportedField(self.name, f"{f.name}={value}",
-                                       f"set by {asked[0]}; this engine has no way to carry it")
+                raise UnsupportedField(
+                    self.name, f"{f.name}={value}", f"set by {asked[0]}; this engine has no way to carry it"
+                )
 
     @abstractmethod
     def translate(self, cfg, run_dir=None) -> LaunchSpec:

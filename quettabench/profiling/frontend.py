@@ -1,6 +1,7 @@
 """Live-server profiler sources that price against QuettaSim: the device-YAML frontend and serving blocks, and a PD pair's host cost.
 
 Imports QuettaSim's engine package, so native.py loads it only when one of these sources is asked for. Standalone: python -m quettabench.profiling.frontend {frontend|pd_host} --device-yaml <yaml> ..."""
+
 from __future__ import annotations
 
 import argparse
@@ -33,16 +34,19 @@ _SAMPLES = 3  # repeats per point, median taken
 _DECODE_TOKENS = 64  # enough output tokens for a stable TPOT
 
 
-def _stream_once(base_url: str, model: str, prompt: str,
-                 out_tokens: int = 8) -> tuple[float, float, int]:
+def _stream_once(base_url: str, model: str, prompt: str, out_tokens: int = 8) -> tuple[float, float, int]:
     """(ttft_ms, tpot_ms, prompt_tokens) for one streamed completion."""
-    body = json.dumps({
-        "model": model, "prompt": prompt, "max_tokens": out_tokens,
-        "stream": True, "temperature": 0.0,
-        "stream_options": {"include_usage": True},
-    }).encode()
-    req = urllib.request.Request(f"{base_url}/completions", data=body,
-                                 headers={"Content-Type": "application/json"})
+    body = json.dumps(
+        {
+            "model": model,
+            "prompt": prompt,
+            "max_tokens": out_tokens,
+            "stream": True,
+            "temperature": 0.0,
+            "stream_options": {"include_usage": True},
+        }
+    ).encode()
+    req = urllib.request.Request(f"{base_url}/completions", data=body, headers={"Content-Type": "application/json"})
     t0 = time.perf_counter()
     first_at = None
     n = 0
@@ -83,6 +87,7 @@ def _conc_sweep(a, cost, model):
     """Concurrent herds of unique ~512-token prompts; returns (mult_curve points, rows).
 
     mult is (measured median - sim frontend-off median) over the c=1 residual. Each point runs an unmeasured herd first because a new batch shape triggers one-time autotune work."""
+
     def herd(c: int) -> list[tuple[float, float, int]]:
         prompts = [_prompt(512) for _ in range(c)]
         with ThreadPoolExecutor(max_workers=c) as ex:
@@ -100,15 +105,18 @@ def _conc_sweep(a, cost, model):
         pred_ttfts, _ = predict_cell(cost, [turn], c)
         pred = pred_ttfts[0] if pred_ttfts else 0.0
         conc_rows.append((c, meas, pred, meas - pred))
-        print(f"  c={c:3d}  measured={meas:8.1f}ms  sim(frontend-off)={pred:8.1f}ms  "
-              f"resid={meas - pred:7.1f}ms", flush=True)
+        print(
+            f"  c={c:3d}  measured={meas:8.1f}ms  sim(frontend-off)={pred:8.1f}ms  resid={meas - pred:7.1f}ms",
+            flush=True,
+        )
     base_resid = max(1e-6, conc_rows[0][3])
-    mult_pts = [(c, max(1.0, round(resid / base_resid, 2)))
-                for c, _m, _p, resid in conc_rows]
+    mult_pts = [(c, max(1.0, round(resid / base_resid, 2))) for c, _m, _p, resid in conc_rows]
     if a.only_conc:
         print(f"\n  mult_curve: {[[c, m] for c, m in mult_pts]}  # measured resid ratio; lanes flat")
-        print(f"  # measured (c, median ttft ms, sim frontend-off ms): "
-              f"{[(c, round(m, 1), round(p, 1)) for c, m, p, _ in conc_rows]}")
+        print(
+            f"  # measured (c, median ttft ms, sim frontend-off ms): "
+            f"{[(c, round(m, 1), round(p, 1)) for c, m, p, _ in conc_rows]}"
+        )
     return mult_pts, conc_rows
 
 
@@ -128,14 +136,17 @@ def frontend_parser():
     ap.add_argument("--gpu-label", required=True)
     ap.add_argument("--model", required=True, help="served model name (OpenAI 'model' field)")
     ap.add_argument("--model-yaml", required=True, help="engine model YAML for the compute prediction")
-    ap.add_argument("--device-yaml", required=True,
-                    help="QuettaSim's device_spec/<gpu>.yaml, e.g. ../QuettaSim/device_spec/h200.yaml")
+    ap.add_argument(
+        "--device-yaml",
+        required=True,
+        help="QuettaSim's device_spec/<gpu>.yaml, e.g. ../QuettaSim/device_spec/h200.yaml",
+    )
     ap.add_argument("--base-url", default="http://localhost:8000/v1")
     ap.add_argument("--tp", type=int, default=1)
-    ap.add_argument("--skip-conc", action="store_true",
-                    help="skip the concurrent herd sweep (parts 1-2 only)")
-    ap.add_argument("--only-conc", action="store_true",
-                    help="run only the concurrent herd sweep (parts 1-2 already collected)")
+    ap.add_argument("--skip-conc", action="store_true", help="skip the concurrent herd sweep (parts 1-2 only)")
+    ap.add_argument(
+        "--only-conc", action="store_true", help="run only the concurrent herd sweep (parts 1-2 already collected)"
+    )
     ap.add_argument("--out", default=None, help="write frontend_probe()'s dict here as JSON")
     return ap
 
@@ -146,10 +157,15 @@ def frontend_probe(a):
     Each value is measured latency minus the compute-only prediction."""
     gpu = load_kernel_gpu(Path(a.device_yaml))
     # Strip the host terms the yaml already carries, or the residual counts them twice.
-    gpu = dataclasses.replace(gpu, frontend=FrontendParams(),
-                              kernel_ttft_overhead_ms=0.0, kernel_step_overhead_ms=0.0,
-                              kernel_step_overlap_per_ms=0.0,
-                              decode_overhead_ms=0.0, decode_overhead_ms_per_layer=0.0)
+    gpu = dataclasses.replace(
+        gpu,
+        frontend=FrontendParams(),
+        kernel_ttft_overhead_ms=0.0,
+        kernel_step_overhead_ms=0.0,
+        kernel_step_overlap_per_ms=0.0,
+        decode_overhead_ms=0.0,
+        decode_overhead_ms_per_layer=0.0,
+    )
     model = load_kernel_model(Path(a.model_yaml))
     cost = KernelComposedCost(model, gpu, tp=a.tp)
 
@@ -157,23 +173,28 @@ def frontend_probe(a):
 
     if a.only_conc:
         mult_pts, conc_rows = _conc_sweep(a, cost, model)
-        return {"frontend": {"mult_curve": [[c, m] for c, m in mult_pts]},
-                "conc": [[c, m, p] for c, m, p, _ in conc_rows]}
+        return {
+            "frontend": {"mult_curve": [[c, m] for c, m in mult_pts]},
+            "conc": [[c, m, p] for c, m, p, _ in conc_rows],
+        }
 
     X, y_ttft, step_resid = [], [], []
     print("# single-stream sweep (miss)", flush=True)
     for p in _SWEEP_PROMPTS:
-        tt, tp_, ptoks = zip(*[
-            _stream_once(a.base_url, a.model, _prompt(p), out_tokens=_DECODE_TOKENS)
-            for _ in range(_SAMPLES)])
+        tt, tp_, ptoks = zip(
+            *[_stream_once(a.base_url, a.model, _prompt(p), out_tokens=_DECODE_TOKENS) for _ in range(_SAMPLES)]
+        )
         ttft, tpot, ptok = st.median(tt), st.median(tp_), int(st.median(ptoks))
         compute_prefill = cost.prefill_step_ms([ptok])
         compute_decode = cost.decode_step_ms([ptok])
         y_ttft.append(ttft - compute_prefill)
         X.append(float(ptok))
         step_resid.append(tpot - compute_decode)
-        print(f"  p={ptok:5d}  ttft={ttft:8.1f}ms (compute {compute_prefill:7.1f})  "
-              f"tpot={tpot:6.2f}ms (compute {compute_decode:5.2f})", flush=True)
+        print(
+            f"  p={ptok:5d}  ttft={ttft:8.1f}ms (compute {compute_prefill:7.1f})  "
+            f"tpot={tpot:6.2f}ms (compute {compute_decode:5.2f})",
+            flush=True,
+        )
     intercept, slope = _linfit(X, y_ttft)
     floor, rate_n = max(0.0, intercept), max(0.0, slope)
     step_over = max(0.0, st.median(step_resid))
@@ -184,9 +205,7 @@ def frontend_probe(a):
     for p in _SWEEP_PROMPTS:
         prompt = _prompt(p)
         _stream_once(a.base_url, a.model, prompt)
-        tt, _tp, ptoks = zip(*[
-            _stream_once(a.base_url, a.model, _prompt(0, reuse=prompt))
-            for _ in range(_SAMPLES)])
+        tt, _tp, ptoks = zip(*[_stream_once(a.base_url, a.model, _prompt(0, reuse=prompt)) for _ in range(_SAMPLES)])
         ttft, ptok = st.median(tt), int(st.median(ptoks))
         # vLLM re-prefills the last block of a full hit.
         compute_hit = cost.prefill_step_ms([max(1, int(model.cache_block_size))])
@@ -209,24 +228,35 @@ def frontend_probe(a):
     print(f"  cached_ms_per_token: {round(rate_c, 6)}")
     print(f"  mult_curve: {[[c, m] for c, m in mult_pts]}  # measured resid ratio; lanes flat")
     print("  lanes_curve: []   # not separable from mult in this probe; leave flat")
-    print(f"  # measured (c, median ttft ms, sim frontend-off ms): "
-          f"{[(c, round(m, 1), round(p, 1)) for c, m, p, _ in conc_rows]}")
+    print(
+        f"  # measured (c, median ttft ms, sim frontend-off ms): "
+        f"{[(c, round(m, 1), round(p, 1)) for c, m, p, _ in conc_rows]}"
+    )
     print("serving:")
-    print(f"  decode_overhead_ms_per_layer: {round(dov, 5)}   # = step residual {round(step_over, 3)}ms / {model.n_layers} layers")
+    print(
+        f"  decode_overhead_ms_per_layer: {round(dov, 5)}   # = step residual {round(step_over, 3)}ms / {model.n_layers} layers"
+    )
     print(f"  ttft_overhead_ms: {round(floor, 2)}")
     print("  max_concurrent_prefills: 2")
     print(f"  kernel_ttft_overhead_ms: {round(floor, 2)}   # per-request first-token host floor")
     print(f"  kernel_step_overhead_ms: {round(step_over, 3)}   # per-step host floor (whole step)")
     print("  kernel_step_overlap_per_ms: 0.0   # measure with a high-conc TPOT sweep before setting")
     return {
-        "frontend": {"floor_ms": round(floor, 2), "new_ms_per_token": round(rate_n, 6),
-                     "cached_ms_per_token": round(rate_c, 6),
-                     "mult_curve": [[c, m] for c, m in mult_pts], "lanes_curve": []},
-        "serving": {"decode_overhead_ms_per_layer": round(dov, 5),
-                    "ttft_overhead_ms": round(floor, 2), "max_concurrent_prefills": 2,
-                    "kernel_ttft_overhead_ms": round(floor, 2),
-                    "kernel_step_overhead_ms": round(step_over, 3),
-                    "kernel_step_overlap_per_ms": 0.0},
+        "frontend": {
+            "floor_ms": round(floor, 2),
+            "new_ms_per_token": round(rate_n, 6),
+            "cached_ms_per_token": round(rate_c, 6),
+            "mult_curve": [[c, m] for c, m in mult_pts],
+            "lanes_curve": [],
+        },
+        "serving": {
+            "decode_overhead_ms_per_layer": round(dov, 5),
+            "ttft_overhead_ms": round(floor, 2),
+            "max_concurrent_prefills": 2,
+            "kernel_ttft_overhead_ms": round(floor, 2),
+            "kernel_step_overhead_ms": round(step_over, 3),
+            "kernel_step_overlap_per_ms": 0.0,
+        },
         "conc": [[c, m, p] for c, m, p, _ in conc_rows],
     }
 
@@ -238,9 +268,22 @@ def frontend_main(argv=None):
         Path(a.out).write_text(json.dumps(out, indent=2) + "\n")
 
 
-COLS = ("gpu", "phase", "conc", "tokens_total", "tokens_new_p", "tokens_cached_d",
-        "prefill_ms", "sim_prefill_ms", "p_resid_ms",
-        "d_first_ms", "sim_d_step_ms", "sim_pull_ms", "d_resid_ms", "client_ttft_ms")
+COLS = (
+    "gpu",
+    "phase",
+    "conc",
+    "tokens_total",
+    "tokens_new_p",
+    "tokens_cached_d",
+    "prefill_ms",
+    "sim_prefill_ms",
+    "p_resid_ms",
+    "d_first_ms",
+    "sim_d_step_ms",
+    "sim_pull_ms",
+    "d_resid_ms",
+    "client_ttft_ms",
+)
 
 
 class Prompter:
@@ -248,6 +291,7 @@ class Prompter:
 
     def __init__(self, tokenizer_name: str, seed: int = 1234):
         from transformers import AutoTokenizer  # imported here: optional dependency
+
         self.tok = AutoTokenizer.from_pretrained(tokenizer_name)
         self.rng = random.Random(seed)
         # Single-token alphabetic words.
@@ -274,17 +318,25 @@ class Prompter:
         got = self.count([{"role": "user", "content": text}])
         while got > target_tokens and len(text) > 64:
             cut = int(len(text) * (1 - (got - target_tokens) / got * 0.9)) - 8
-            text = text[:max(64, cut)]
+            text = text[: max(64, cut)]
             got = self.count([{"role": "user", "content": text}])
         return text
 
 
 def chat_stream(proxy_url: str, model: str, text: str, rid: str, max_tokens: int = 4) -> dict:
-    body = json.dumps({"model": model, "messages": [{"role": "user", "content": text}],
-                       "max_tokens": max_tokens, "temperature": 0.0, "stream": True,
-                       "stream_options": {"include_usage": True}}).encode()
-    req = urllib.request.Request(f"{proxy_url}/v1/chat/completions", data=body,
-                                 headers={"Content-Type": "application/json", "X-Request-Id": rid})
+    body = json.dumps(
+        {
+            "model": model,
+            "messages": [{"role": "user", "content": text}],
+            "max_tokens": max_tokens,
+            "temperature": 0.0,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        }
+    ).encode()
+    req = urllib.request.Request(
+        f"{proxy_url}/v1/chat/completions", data=body, headers={"Content-Type": "application/json", "X-Request-Id": rid}
+    )
     t0 = time.perf_counter()
     first = None
     with launcher.urlopen(req, timeout=3600) as r:
@@ -354,18 +406,25 @@ def pd_host_parser() -> argparse.ArgumentParser:
     ap.add_argument("--model", default="qwen3-235b", help="served model name")
     ap.add_argument("--tokenizer", default="Qwen/Qwen3-235B-A22B-Instruct-2507-FP8")
     ap.add_argument("--model-yaml", default="qwen3-235b-a22b-fp8")
-    ap.add_argument("--device-yaml", required=True,
-                    help="QuettaSim's device_spec/<gpu>.yaml, e.g. ../QuettaSim/device_spec/h200.yaml")
+    ap.add_argument(
+        "--device-yaml",
+        required=True,
+        help="QuettaSim's device_spec/<gpu>.yaml, e.g. ../QuettaSim/device_spec/h200.yaml",
+    )
     ap.add_argument("--tp", type=int, default=4)
-    ap.add_argument("--lengths", type=int, nargs="+",
-                    default=[2048, 8192, 16384, 32768, 49152, 65536, 98304, 122880])
+    ap.add_argument("--lengths", type=int, nargs="+", default=[2048, 8192, 16384, 32768, 49152, 65536, 98304, 122880])
     ap.add_argument("--repeats", type=int, default=2)
-    ap.add_argument("--turns", type=int, default=0,
-                    help="growing-context multi-turn session length (0 = skip). Each turn "
-                         "appends --turn-new new tokens, so the prefix grows and is unique -- "
-                         "the faithful per-cached-token host cost.")
-    ap.add_argument("--turn-new", type=int, default=1800,
-                    help="new tokens appended per turn in --turns mode (E6's median new)")
+    ap.add_argument(
+        "--turns",
+        type=int,
+        default=0,
+        help="growing-context multi-turn session length (0 = skip). Each turn "
+        "appends --turn-new new tokens, so the prefix grows and is unique -- "
+        "the faithful per-cached-token host cost.",
+    )
+    ap.add_argument(
+        "--turn-new", type=int, default=1800, help="new tokens appended per turn in --turns mode (E6's median new)"
+    )
     ap.add_argument("--herd", type=int, default=16)
     ap.add_argument("--herd-tokens", type=int, default=32768)
     ap.add_argument("--link", default="2.2e11,0,25", help="bw_bytes_per_s,latency_us,per_desc_us of the pull")
@@ -396,16 +455,28 @@ def pd_host_probe(a) -> list[dict]:
         sp = sim.prefill_ms(new_p, cached_p)
         sd = sim.d_step_ms(total)
         spull = sim.pull_ms(pulled)
-        r = {"gpu": a.gpu_label, "phase": phase, "conc": conc, "tokens_total": total,
-             "tokens_new_p": new_p, "tokens_cached_d": cached_d if phase != "cold" else 0,
-             "prefill_ms": round(prefill_ms, 1), "sim_prefill_ms": round(sp, 1),
-             "p_resid_ms": round(prefill_ms - sp, 1),
-             "d_first_ms": round(d_first, 1), "sim_d_step_ms": round(sd, 1),
-             "sim_pull_ms": round(spull, 1), "d_resid_ms": round(d_first - sd - spull, 1),
-             "client_ttft_ms": round(client["client_ttft_ms"], 1)}
-        print(f"  {phase:5s} c{conc:<3} total={total:>7} new_p={new_p:>7} | P {prefill_ms:8.1f} ms "
-              f"(sim {sp:7.1f}, resid {r['p_resid_ms']:8.1f}) | D-first {d_first:8.1f} ms "
-              f"(step {sd:5.1f} + pull {spull:5.1f}, resid {r['d_resid_ms']:8.1f})", flush=True)
+        r = {
+            "gpu": a.gpu_label,
+            "phase": phase,
+            "conc": conc,
+            "tokens_total": total,
+            "tokens_new_p": new_p,
+            "tokens_cached_d": cached_d if phase != "cold" else 0,
+            "prefill_ms": round(prefill_ms, 1),
+            "sim_prefill_ms": round(sp, 1),
+            "p_resid_ms": round(prefill_ms - sp, 1),
+            "d_first_ms": round(d_first, 1),
+            "sim_d_step_ms": round(sd, 1),
+            "sim_pull_ms": round(spull, 1),
+            "d_resid_ms": round(d_first - sd - spull, 1),
+            "client_ttft_ms": round(client["client_ttft_ms"], 1),
+        }
+        print(
+            f"  {phase:5s} c{conc:<3} total={total:>7} new_p={new_p:>7} | P {prefill_ms:8.1f} ms "
+            f"(sim {sp:7.1f}, resid {r['p_resid_ms']:8.1f}) | D-first {d_first:8.1f} ms "
+            f"(step {sd:5.1f} + pull {spull:5.1f}, resid {r['d_resid_ms']:8.1f})",
+            flush=True,
+        )
         return r
 
     # Unscored warmup: NIXL handshake and cudagraph paths.
@@ -422,8 +493,9 @@ def pd_host_probe(a) -> list[dict]:
             rows.append(score("cold", 1, c, px[-1]))
             cold_total = int(px[-1]["prefill_usage"]["prompt_tokens"])
             since = len(_loglines(log))
-            c = chat_stream(a.proxy_url, a.model, text + " Now reply with the single word OK.",
-                            f"probe-warm-L{L}-r{rep}")
+            c = chat_stream(
+                a.proxy_url, a.model, text + " Now reply with the single word OK.", f"probe-warm-L{L}-r{rep}"
+            )
             time.sleep(0.3)
             px = proxy_rows(log, since)
             px[-1]["_cached_d"] = cold_total + 4  # cold prompt plus its 4 generated tokens
@@ -455,9 +527,12 @@ def pd_host_probe(a) -> list[dict]:
             totals.append(int(proxy_rows(log, since)[-1]["prefill_usage"]["prompt_tokens"]))
         since = len(_loglines(log))
         results: list[dict] = [None] * a.herd
+
         def fire(i):
-            results[i] = chat_stream(a.proxy_url, a.model, texts[i] + " Now reply with the single word OK.",
-                                     f"probe-herd-{i}")
+            results[i] = chat_stream(
+                a.proxy_url, a.model, texts[i] + " Now reply with the single word OK.", f"probe-herd-{i}"
+            )
+
         th = [threading.Thread(target=fire, args=(i,)) for i in range(a.herd)]
         for t in th:
             t.start()
@@ -488,11 +563,14 @@ def pd_host_main(argv=None) -> None:
     print(f"\nwrote {out} ({len(rows)} rows)")
 
     print("\nresidual fits (ms = floor + slope * tokens), c1:")
-    for phase, xkey, label in (("cold", "tokens_total", "P cold  (all new)"),
-                               ("warm", "tokens_total", "P warm  (identical resend)"),
-                               ("turn", "tokens_cached_d", "P turn  (growing prefix)"),
-                               ("cold", "tokens_total", "D cold"), ("warm", "tokens_total", "D warm"),
-                               ("turn", "tokens_cached_d", "D turn  (growing prefix)")):
+    for phase, xkey, label in (
+        ("cold", "tokens_total", "P cold  (all new)"),
+        ("warm", "tokens_total", "P warm  (identical resend)"),
+        ("turn", "tokens_cached_d", "P turn  (growing prefix)"),
+        ("cold", "tokens_total", "D cold"),
+        ("warm", "tokens_total", "D warm"),
+        ("turn", "tokens_cached_d", "D turn  (growing prefix)"),
+    ):
         sel = [r for r in rows if r["phase"] == phase and r["conc"] == 1]
         if len(sel) < 3:
             continue
@@ -500,13 +578,19 @@ def pd_host_main(argv=None) -> None:
         f0, sl = lstsq([r[xkey] for r in sel], [r[ykey] for r in sel])
         print(f"  {label:<22} floor {f0:8.1f} ms   {sl * 1e3:7.2f} us/token   (n={len(sel)})")
     herd = [r for r in rows if r["phase"] == "herd"]
-    warm = [r for r in rows if r["phase"] == "warm" and r["conc"] == 1
-            and abs(r["tokens_total"] - a.herd_tokens) < 0.15 * a.herd_tokens]
+    warm = [
+        r
+        for r in rows
+        if r["phase"] == "warm" and r["conc"] == 1 and abs(r["tokens_total"] - a.herd_tokens) < 0.15 * a.herd_tokens
+    ]
     if herd and warm:
-        print(f"\nherd c{a.herd} at ~{a.herd_tokens} tokens (warm): P resid median "
-              f"{st.median(r['p_resid_ms'] for r in herd):.0f} ms vs c1 {st.median(r['p_resid_ms'] for r in warm):.0f} ms; "
-              f"D resid median {st.median(r['d_resid_ms'] for r in herd):.0f} ms vs c1 "
-              f"{st.median(r['d_resid_ms'] for r in warm):.0f} ms")
+        print(
+            f"\nherd c{a.herd} at ~{a.herd_tokens} tokens (warm): P resid median "
+            f"{st.median(r['p_resid_ms'] for r in herd):.0f} ms vs c1 {st.median(r['p_resid_ms'] for r in warm):.0f} ms; "
+            f"D resid median {st.median(r['d_resid_ms'] for r in herd):.0f} ms vs c1 "
+            f"{st.median(r['d_resid_ms'] for r in warm):.0f} ms"
+        )
+
 
 MAINS = {"frontend": frontend_main, "pd_host": pd_host_main}
 

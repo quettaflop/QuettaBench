@@ -47,6 +47,7 @@ class _Resp:
         async def gen():
             for line in self._lines:
                 yield line
+
         return gen()
 
     async def text(self):
@@ -74,24 +75,33 @@ class _Session:
 
 def send(endpoint, chunks, **kw):
     session = _Session(chunks)
-    result = asyncio.run(HttpDriver(endpoint).send_request(
-        session=session, url="http://stub/v1/x", model="m",
-        messages=[{"role": "user", "content": "hi"}], max_tokens=4, **kw))
+    result = asyncio.run(
+        HttpDriver(endpoint).send_request(
+            session=session,
+            url="http://stub/v1/x",
+            model="m",
+            messages=[{"role": "user", "content": "hi"}],
+            max_tokens=4,
+            **kw,
+        )
+    )
     return result, session.posts[0][1]
 
 
 class TtftRules(unittest.TestCase):
     def test_chat_fires_on_a_reasoning_chunk(self):
-        r, payload = send("chat", [{"choices": [{"delta": {"reasoning": "r"}}]},
-                                   {"choices": [{"delta": {"content": "a"}}]}])
+        r, payload = send(
+            "chat", [{"choices": [{"delta": {"reasoning": "r"}}]}, {"choices": [{"delta": {"content": "a"}}]}]
+        )
         self.assertEqual((r.ttft_rule, len(r.itl)), ("first_payload_chunk", 1))
         self.assertEqual(payload["messages"][0]["content"], "hi")
 
     def test_completions_skips_empty_text(self):
-        r, payload = send("completions", [{"choices": [{"text": ""}]},
-                                          {"choices": [{"text": "a"}]},
-                                          {"choices": [{"text": "b"}]}],
-                          prompt_token_ids=[1, 2])
+        r, payload = send(
+            "completions",
+            [{"choices": [{"text": ""}]}, {"choices": [{"text": "a"}]}, {"choices": [{"text": "b"}]}],
+            prompt_token_ids=[1, 2],
+        )
         self.assertEqual((r.ttft_rule, len(r.itl)), ("first_nonempty_text", 1))
         self.assertEqual(payload["prompt"], [1, 2])
 
@@ -100,10 +110,10 @@ class TtftRules(unittest.TestCase):
             send("completions", [], capture_text=True)
 
     def test_completions_without_a_prompt_is_a_client_error(self):
-        r = asyncio.run(HttpDriver("completions").send_request(
-            session=None, url="u", model="m", messages=[], max_tokens=1))
-        self.assertEqual((r.success, r.error_kind, r.ttft_rule),
-                         (False, "client_error", "first_nonempty_text"))
+        r = asyncio.run(
+            HttpDriver("completions").send_request(session=None, url="u", model="m", messages=[], max_tokens=1)
+        )
+        self.assertEqual((r.success, r.error_kind, r.ttft_rule), (False, "client_error", "first_nonempty_text"))
 
 
 class Reset(unittest.TestCase):
@@ -120,23 +130,26 @@ class Reset(unittest.TestCase):
         with self.assertRaisesRegex(PrefixCacheResetError, "VLLM_SERVER_DEV_MODE=1"):
             asyncio.run(HttpDriver("chat", "vllm").reset(_Session([], status=404), "http://h:1/v1/x"))
 
-
     def test_a_bad_url_is_not_a_reset_error(self):
         with self.assertRaisesRegex(ValueError, "'nowhere'"):
             asyncio.run(HttpDriver("chat", "vllm").reset(_Session([]), "nowhere"))
 
     def test_a_refused_connection_raises_with_the_url(self):
         with self.assertRaisesRegex(ConnectionError, "POST http://127.0.0.1:9/reset_prefix_cache"):
-            asyncio.run(HttpDriver("chat", "vllm", url="http://127.0.0.1:9/v1/x").reset(
-                _Session([], error=aiohttp.ClientConnectionError("refused"))))
+            asyncio.run(
+                HttpDriver("chat", "vllm", url="http://127.0.0.1:9/v1/x").reset(
+                    _Session([], error=aiohttp.ClientConnectionError("refused"))
+                )
+            )
 
 
 class BoundDriver(unittest.TestCase):
     """send/run/reset against the server the driver was built for."""
 
     def driver(self, endpoint="completions", chunks=({"choices": [{"text": "a"}]},)):
-        drv = HttpDriver(endpoint, "vllm-completions", url="http://h:8000/v1/completions",
-                         model="m", api_key="k", timeout=9)
+        drv = HttpDriver(
+            endpoint, "vllm-completions", url="http://h:8000/v1/completions", model="m", api_key="k", timeout=9
+        )
         self.stub = _Session(list(chunks))
 
         @asynccontextmanager
@@ -159,14 +172,24 @@ class BoundDriver(unittest.TestCase):
 
         async def go():
             async with session(1):
-                return await drv.send(Request([5, 6], 2, output_length=3), ignore_eos=True,
-                                      seed=7, min_tokens=3, request_id="r1")
+                return await drv.send(
+                    Request([5, 6], 2, output_length=3), ignore_eos=True, seed=7, min_tokens=3, request_id="r1"
+                )
 
         result = asyncio.run(go())
         url, body = self.stub.posts[0]
         self.assertEqual(url, "http://h:8000/v1/completions")
-        self.assertEqual((body["prompt"], body["max_tokens"], body["seed"], body["min_tokens"],
-                          body["ignore_eos"], body["request_id"]), ([5, 6], 3, 7, 3, True, "r1"))
+        self.assertEqual(
+            (
+                body["prompt"],
+                body["max_tokens"],
+                body["seed"],
+                body["min_tokens"],
+                body["ignore_eos"],
+                body["request_id"],
+            ),
+            ([5, 6], 3, 7, 3, True, "r1"),
+        )
         self.assertEqual(result.ttft_rule, "first_nonempty_text")
 
     def test_chat_send_uses_messages_and_captures_text_when_asked(self):
@@ -175,8 +198,7 @@ class BoundDriver(unittest.TestCase):
 
         async def go():
             async with session(1):
-                return await drv.send(Request([], 0, output_length=2, messages=msgs),
-                                      capture_text=True)
+                return await drv.send(Request([], 0, output_length=2, messages=msgs), capture_text=True)
 
         result = asyncio.run(go())
         self.assertEqual(self.stub.posts[0][1]["messages"], msgs)
@@ -185,8 +207,7 @@ class BoundDriver(unittest.TestCase):
     def test_run_yields_in_request_order(self):
         drv, session = self.driver()
         with mock.patch.object(drv, "session", session):
-            out = list(drv.run([Request([i], 1, output_length=1) for i in range(5)],
-                               concurrency=2))
+            out = list(drv.run([Request([i], 1, output_length=1) for i in range(5)], concurrency=2))
         self.assertEqual(len(out), 5)
         self.assertEqual(sorted(b["prompt"] for _, b in self.stub.posts), [[i] for i in range(5)])
         self.assertTrue(all(r.success for r in out))
@@ -198,8 +219,7 @@ class BoundDriver(unittest.TestCase):
             async with session(1):
                 return await drv.reset()
 
-        self.assertEqual(asyncio.run(go()),
-                         "prefix cache reset via http://h:8000/reset_prefix_cache")
+        self.assertEqual(asyncio.run(go()), "prefix cache reset via http://h:8000/reset_prefix_cache")
 
 
 class GridOverHttp(unittest.TestCase):
@@ -209,8 +229,7 @@ class GridOverHttp(unittest.TestCase):
         return HttpDriver("completions", url=endpoint + "/v1/completions", model="m", timeout=9)
 
     def cell(self, ctx, bs, step, attempt=0):
-        return {"ctx": ctx, "bs": bs, "tp": 1, "step_point": step, "phase": "fit",
-                "attempt": attempt}
+        return {"ctx": ctx, "bs": bs, "tp": 1, "step_point": step, "phase": "fit", "attempt": attempt}
 
     def batch(self, drv, ctx, bs, step):
         requests = [Request([i] * ctx, ctx, output_length=step) for i in range(bs)]
@@ -222,12 +241,15 @@ class GridOverHttp(unittest.TestCase):
         sent = [b for path, b in posts if path == "/v1/completions"]
         self.assertEqual(len(sent), 3)
         for body in sent:
-            self.assertEqual((body["max_tokens"], body["ignore_eos"], body["temperature"],
-                              len(body["prompt"])), (5, True, 0.0, 4))
+            self.assertEqual(
+                (body["max_tokens"], body["ignore_eos"], body["temperature"], len(body["prompt"])), (5, True, 0.0, 4)
+            )
         self.assertEqual(len(rows), 3)
         for r in rows:
-            self.assertEqual((r.success, r.e2el, r.ttft, r.output_tokens, r.input_tokens,
-                              r.ttft_basis), (True, r.batch_wall_s, None, 5, 4, "batch"))
+            self.assertEqual(
+                (r.success, r.e2el, r.ttft, r.output_tokens, r.input_tokens, r.ttft_basis),
+                (True, r.batch_wall_s, None, 5, 4, "batch"),
+            )
             self.assertEqual(r.cell, self.cell(4, 3, 5))
         self.assertEqual(len({r.batch_wall_s for r in rows}), 1)
 
@@ -238,9 +260,16 @@ class GridOverHttp(unittest.TestCase):
             for ctx, bs, step in ((4, 2, 3), (4, 2, 6), (8, 1, 3)):
                 self.batch(drv, ctx, bs, step)
         paths = [path for path, _ in posts]
-        self.assertEqual(paths, ["/v1/completions", "/reset_prefix_cache",
-                                 *["/v1/completions"] * 4, "/reset_prefix_cache",
-                                 "/v1/completions"])
+        self.assertEqual(
+            paths,
+            [
+                "/v1/completions",
+                "/reset_prefix_cache",
+                *["/v1/completions"] * 4,
+                "/reset_prefix_cache",
+                "/v1/completions",
+            ],
+        )
 
     def test_step_fit_reads_the_rows_unchanged(self):
         with helpers.serve() as (endpoint, _):
@@ -248,8 +277,7 @@ class GridOverHttp(unittest.TestCase):
             rows = [r for step in (3, 6, 9) for r in self.batch(drv, 4, 2, step)]
         (step,) = fit_run(rows, 4, 131072, 15.0)
         self.assertEqual((step["ctx"], step["bs"], step["step_points"]), (4, 2, [3, 6, 9]))
-        self.assertEqual(step["raw"], [rows[0].batch_wall_s, rows[2].batch_wall_s,
-                                       rows[4].batch_wall_s])
+        self.assertEqual(step["raw"], [rows[0].batch_wall_s, rows[2].batch_wall_s, rows[4].batch_wall_s])
 
     def test_a_short_decode_fails_the_batch(self):
         with helpers.serve() as (endpoint, _):
@@ -307,6 +335,7 @@ class _ChatResp:
             async def gen():
                 for line in self._lines:
                     yield line
+
             return gen()
 
     async def text(self):
@@ -332,11 +361,16 @@ class _ChatSession:
 
 
 def _run(session):
-    return asyncio.run(send_request(
-        session=session, url="http://stub/v1/chat/completions", model="m",
-        messages=[{"role": "user", "content": "hi"}], max_tokens=8,
-        capture_text=True,
-    ))
+    return asyncio.run(
+        send_request(
+            session=session,
+            url="http://stub/v1/chat/completions",
+            model="m",
+            messages=[{"role": "user", "content": "hi"}],
+            max_tokens=8,
+            capture_text=True,
+        )
+    )
 
 
 class PinnedOutputTests(unittest.TestCase):
@@ -344,48 +378,79 @@ class PinnedOutputTests(unittest.TestCase):
 
     def test_min_tokens_is_sent_when_given(self):
         session = _ChatSession(_chat_sse([_delta("a")]))
-        asyncio.run(send_request(
-            session=session, url="http://stub/v1/chat/completions", model="m",
-            messages=[{"role": "user", "content": "hi"}], max_tokens=120,
-            min_tokens=120))
+        asyncio.run(
+            send_request(
+                session=session,
+                url="http://stub/v1/chat/completions",
+                model="m",
+                messages=[{"role": "user", "content": "hi"}],
+                max_tokens=120,
+                min_tokens=120,
+            )
+        )
         self.assertEqual(session.payload["min_tokens"], 120)
         self.assertEqual(session.payload["max_tokens"], 120)
 
     def test_absent_unless_asked(self):
         session = _ChatSession(_chat_sse([_delta("a")]))
-        asyncio.run(send_request(
-            session=session, url="http://stub/v1/chat/completions", model="m",
-            messages=[{"role": "user", "content": "hi"}], max_tokens=120))
+        asyncio.run(
+            send_request(
+                session=session,
+                url="http://stub/v1/chat/completions",
+                model="m",
+                messages=[{"role": "user", "content": "hi"}],
+                max_tokens=120,
+            )
+        )
         self.assertNotIn("min_tokens", session.payload)
 
     def test_each_turn_keeps_its_own_length(self):
         """Pinning removes the early stop, not the variation between turns."""
         for planned in (37, 204, 91):
             session = _ChatSession(_chat_sse([_delta("a")]))
-            asyncio.run(send_request(
-                session=session, url="http://stub/v1/chat/completions", model="m",
-                messages=[{"role": "user", "content": "hi"}], max_tokens=planned,
-                min_tokens=planned))
+            asyncio.run(
+                send_request(
+                    session=session,
+                    url="http://stub/v1/chat/completions",
+                    model="m",
+                    messages=[{"role": "user", "content": "hi"}],
+                    max_tokens=planned,
+                    min_tokens=planned,
+                )
+            )
             self.assertEqual(session.payload["min_tokens"], planned)
 
 
 class CaptureTextTests(unittest.TestCase):
     def test_content_deltas_are_joined(self):
-        r = _run(_ChatSession(_chat_sse([
-            _delta("Hel"), _delta("lo"), _delta(" there"),
-            {"choices": [{"delta": {}}], "usage": {"prompt_tokens": 4,
-                                                   "completion_tokens": 3}},
-        ])))
+        r = _run(
+            _ChatSession(
+                _chat_sse(
+                    [
+                        _delta("Hel"),
+                        _delta("lo"),
+                        _delta(" there"),
+                        {"choices": [{"delta": {}}], "usage": {"prompt_tokens": 4, "completion_tokens": 3}},
+                    ]
+                )
+            )
+        )
         self.assertTrue(r.success, msg=r.error)
         self.assertEqual(r.generated_text, "Hello there")
 
     def test_reasoning_and_tool_calls_are_not_transcript_content(self):
         """Reasoning/tool_calls count as token events but are not transcript content."""
-        r = _run(_ChatSession(_chat_sse([
-            _delta(None, reasoning_content="thinking"),
-            _delta("answer"),
-            _delta(None, tool_calls=[{"index": 0}]),
-        ])))
+        r = _run(
+            _ChatSession(
+                _chat_sse(
+                    [
+                        _delta(None, reasoning_content="thinking"),
+                        _delta("answer"),
+                        _delta(None, tool_calls=[{"index": 0}]),
+                    ]
+                )
+            )
+        )
         self.assertTrue(r.success, msg=r.error)
         self.assertEqual(r.generated_text, "answer")
         # three payload-bearing chunks: one ttft plus two inter-token gaps
@@ -393,10 +458,15 @@ class CaptureTextTests(unittest.TestCase):
 
     def test_capture_off_returns_none_and_still_measures(self):
         session = _ChatSession(_chat_sse([_delta("a"), _delta("b")]))
-        r = asyncio.run(send_request(
-            session=session, url="http://stub/v1/chat/completions", model="m",
-            messages=[{"role": "user", "content": "hi"}], max_tokens=8,
-        ))
+        r = asyncio.run(
+            send_request(
+                session=session,
+                url="http://stub/v1/chat/completions",
+                model="m",
+                messages=[{"role": "user", "content": "hi"}],
+                max_tokens=8,
+            )
+        )
         self.assertTrue(r.success, msg=r.error)
         self.assertIsNone(r.generated_text)
         self.assertIsNotNone(r.ttft)
@@ -418,6 +488,7 @@ class CaptureTextTests(unittest.TestCase):
 try:
     import aiohttp
     from aiohttp import web
+
     HAVE_AIOHTTP = True
 except ModuleNotFoundError:
     HAVE_AIOHTTP = False
@@ -426,28 +497,24 @@ except ModuleNotFoundError:
 class TestTpotCoverageGuard(unittest.TestCase):
     def test_full_coverage_keeps_mean_itl(self):
         # Healthy stream: one ITL entry per token after the first.
-        r = RequestResult(success=True, ttft=0.05, e2el=1.05,
-                          itl=[0.01] * 99, output_tokens=100)
+        r = RequestResult(success=True, ttft=0.05, e2el=1.05, itl=[0.01] * 99, output_tokens=100)
         self.assertAlmostEqual(r.tpot, 0.01)
 
     def test_sparse_coverage_falls_back_to_wall_clock(self):
         # gpt-oss-on-vllm signature: 54 chunks for 269 tokens, one giant gap.
         itl = [2.505] + [0.0104] * 53
-        r = RequestResult(success=True, ttft=0.25, e2el=3.32,
-                          itl=itl, output_tokens=269)
+        r = RequestResult(success=True, ttft=0.25, e2el=3.32, itl=itl, output_tokens=269)
         # Old definition: mean(itl) ~ 57 ms/token. Corrected: ~11.5 ms/token.
         self.assertAlmostEqual(r.tpot, (3.32 - 0.25) / 268)
         self.assertLess(r.tpot, 0.013)
 
     def test_short_outputs_keep_mean_itl(self):
         # len(itl) == output_tokens - 1 exactly: correct, must not trip guard.
-        r = RequestResult(success=True, ttft=0.05, e2el=0.10,
-                          itl=[0.011, 0.012], output_tokens=3)
+        r = RequestResult(success=True, ttft=0.05, e2el=0.10, itl=[0.011, 0.012], output_tokens=3)
         self.assertAlmostEqual(r.tpot, (0.011 + 0.012) / 2)
 
     def test_no_itl_falls_back(self):
-        r = RequestResult(success=True, ttft=0.4, e2el=2.4,
-                          itl=[], output_tokens=201)
+        r = RequestResult(success=True, ttft=0.4, e2el=2.4, itl=[], output_tokens=201)
         self.assertAlmostEqual(r.tpot, 2.0 / 200)
 
     def test_no_itl_no_ttft_is_none(self):
@@ -465,19 +532,18 @@ def _sse(payload) -> bytes:
 
 
 def _chunk(delta, finish_reason=None):
-    return {"choices": [{"index": 0, "delta": delta,
-                         "finish_reason": finish_reason}]}
+    return {"choices": [{"index": 0, "delta": delta, "finish_reason": finish_reason}]}
 
 
 async def _serve_and_request(chunks):
     """Stream the given SSE chunk payloads from a local server through
     send_request and return the RequestResult."""
     from quettabench.engines.drivers import HttpDriver
+
     send_request = HttpDriver("chat", "openai").send_request
 
     async def handler(request):
-        resp = web.StreamResponse(
-            headers={"Content-Type": "text/event-stream"})
+        resp = web.StreamResponse(headers={"Content-Type": "text/event-stream"})
         await resp.prepare(request)
         for c in chunks:
             await resp.write(_sse(c))
@@ -496,7 +562,8 @@ async def _serve_and_request(chunks):
             return await send_request(
                 session,
                 f"http://127.0.0.1:{port}/v1/chat/completions",
-                model="m", messages=[{"role": "user", "content": "hi"}],
+                model="m",
+                messages=[{"role": "user", "content": "hi"}],
                 max_tokens=16,
             )
     finally:
@@ -512,9 +579,8 @@ class TestReasoningChunksCounted(unittest.TestCase):
             [_chunk({"role": "assistant", "content": ""})]
             + [_chunk({"reasoning_content": "r"}) for _ in range(3)]
             + [_chunk({"content": "t"}) for _ in range(4)]
-            + [_chunk({}, finish_reason="stop")]        # must NOT count
-            + [{"choices": [],
-                "usage": {"prompt_tokens": 10, "completion_tokens": 8}}]
+            + [_chunk({}, finish_reason="stop")]  # must NOT count
+            + [{"choices": [], "usage": {"prompt_tokens": 10, "completion_tokens": 8}}]
         )
         r = asyncio.run(_serve_and_request(chunks))
         self.assertTrue(r.success)
@@ -528,8 +594,7 @@ class TestReasoningChunksCounted(unittest.TestCase):
         chunks = (
             [_chunk({"role": "assistant", "content": ""})]
             + [_chunk({"reasoning": "r"}) for _ in range(2)]
-            + [_chunk({"tool_calls": [{"index": 0, "function":
-                                       {"arguments": "{"}}]}) for _ in range(2)]
+            + [_chunk({"tool_calls": [{"index": 0, "function": {"arguments": "{"}}]}) for _ in range(2)]
             + [_chunk({"content": "t"})]
         )
         r = asyncio.run(_serve_and_request(chunks))
@@ -553,9 +618,13 @@ FAKE = Path(__file__).with_name("fake_bench.py")
 
 def cell_spec(ctx, bs, **env):
     return LaunchSpec(
-        adapter="quettaserve", bench_argv=(sys.executable, str(FAKE)), cwd=".",
+        adapter="quettaserve",
+        bench_argv=(sys.executable, str(FAKE)),
+        cwd=".",
         env={"QW_BENCH_PROMPT": str(ctx), "QW_BATCH": str(bs), "QW_WORLD": "1", **env},
-        ok_pattern=r"^LOOP ", log_header=f">>> ctx={ctx} bs={bs} world=1")
+        ok_pattern=r"^LOOP ",
+        log_header=f">>> ctx={ctx} bs={bs} world=1",
+    )
 
 
 def alive(pid):
@@ -567,8 +636,10 @@ def alive(pid):
 
 
 def as_points(rows):
-    return {(r["cell"]["ctx"], r["cell"]["bs"], r["cell"]["tp"]):
-            (r["measured_ms_per_step"], r["group"], r["kv"]) for r in rows}
+    return {
+        (r["cell"]["ctx"], r["cell"]["bs"], r["cell"]["tp"]): (r["measured_ms_per_step"], r["group"], r["kv"])
+        for r in rows
+    }
 
 
 class GoldenLogs(unittest.TestCase):
@@ -588,26 +659,24 @@ class CellLoop(unittest.TestCase):
         self.log = Path(tempfile.mkdtemp()) / "bench.log"
 
     def test_two_cells_log_and_rows(self):
-        rows = list(BenchDriver(self.log).run([(1024, 1, cell_spec(1024, 1)),
-                                               (1024, 16, cell_spec(1024, 16))]))
-        self.assertEqual(as_points(rows), {(1024, 1, 1): (3.5, "decode_loop", "fp16"),
-                                           (1024, 16, 1): (3.5, "decode_loop", "fp16")})
+        rows = list(BenchDriver(self.log).run([(1024, 1, cell_spec(1024, 1)), (1024, 16, cell_spec(1024, 16))]))
+        self.assertEqual(
+            as_points(rows), {(1024, 1, 1): (3.5, "decode_loop", "fp16"), (1024, 16, 1): (3.5, "decode_loop", "fp16")}
+        )
         lines = self.log.read_text().splitlines()
         self.assertEqual(lines[0], ">>> ctx=1024 bs=1 world=1")
         self.assertIn("bench chatter", lines)
 
     def test_missing_result_line_fails_after_all_cells(self):
         with self.assertRaisesRegex(BenchFailed, r"1 cell\(s\) failed"):
-            list(BenchDriver(self.log).run([(1, 1, cell_spec(1, 1, FAKE_BENCH_SILENT="1")),
-                                            (2, 1, cell_spec(2, 1))]))
+            list(BenchDriver(self.log).run([(1, 1, cell_spec(1, 1, FAKE_BENCH_SILENT="1")), (2, 1, cell_spec(2, 1))]))
         text = self.log.read_text()
         self.assertIn("FAIL ctx=1 bs=1 (no bench result line", text)
         self.assertIn("LOOP ctx=2 bs=1", text)
 
     def test_nonzero_exit_stops_the_sweep(self):
         with self.assertRaisesRegex(BenchFailed, "exited 3"):
-            list(BenchDriver(self.log).run([(1, 1, cell_spec(1, 1, FAKE_BENCH_EXIT="3")),
-                                            (2, 1, cell_spec(2, 1))]))
+            list(BenchDriver(self.log).run([(1, 1, cell_spec(1, 1, FAKE_BENCH_EXIT="3")), (2, 1, cell_spec(2, 1))]))
         self.assertNotIn("ctx=2", self.log.read_text())
 
     def test_an_interrupted_cell_kills_its_bench(self):
@@ -617,9 +686,11 @@ class CellLoop(unittest.TestCase):
             started.append(real(*args, **kwargs))
             return started[-1]
 
-        with mock.patch.object(drivers.subprocess, "Popen", side_effect=popen), \
-                mock.patch.object(drivers.sys, "stdout") as out, \
-                self.assertRaises(KeyboardInterrupt):
+        with (
+            mock.patch.object(drivers.subprocess, "Popen", side_effect=popen),
+            mock.patch.object(drivers.sys, "stdout") as out,
+            self.assertRaises(KeyboardInterrupt),
+        ):
             out.write.side_effect = KeyboardInterrupt
             list(BenchDriver(self.log).run([(1, 1, cell_spec(1, 1, FAKE_BENCH_SLEEP="60"))]))
         (proc,) = started
@@ -641,8 +712,7 @@ class CellLoop(unittest.TestCase):
         """A bench that exits on its own can leave a child (cargo's bench
         binary) holding the GPUs; its group is killed all the same."""
         pid_file = self.log.with_name("child.pid")
-        rows = list(BenchDriver(self.log).run(
-            [(1, 1, cell_spec(1, 1, FAKE_BENCH_CHILD=str(pid_file)))]))
+        rows = list(BenchDriver(self.log).run([(1, 1, cell_spec(1, 1, FAKE_BENCH_CHILD=str(pid_file)))]))
         self.assertEqual(len(rows), 1)
         pid = int(pid_file.read_text())
         deadline = time.monotonic() + 5
@@ -676,8 +746,7 @@ class Builders(unittest.TestCase):
     def test_spec_env_is_in_the_process_before_llm(self):
         env = {"VLLM_SERVER_DEV_MODE": "1", "VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS": "1"}
         seen = {}
-        with crossval_path(stubs=True), \
-                mock.patch.dict(os.environ, {"VLLM_SERVER_DEV_MODE": "0"}, clear=True):
+        with crossval_path(stubs=True), mock.patch.dict(os.environ, {"VLLM_SERVER_DEV_MODE": "0"}, clear=True):
             vllm = fresh_import("vllm")
             vllm.reset()
             real = vllm.LLM
@@ -731,8 +800,7 @@ class Halves(unittest.TestCase):
         vllm = fresh_import("vllm")
         vllm.reset()
         driver = InProcessDriver(LaunchSpec(adapter="vllm", engine_kwargs={"model": "m"}))
-        with mock.patch.object(vllm.LLM, "generate", autospec=True,
-                               side_effect=vllm.LLM.generate) as generate:
+        with mock.patch.object(vllm.LLM, "generate", autospec=True, side_effect=vllm.LLM.generate) as generate:
             rows = list(driver.run(requests(), cell=LOGITS_CELL, returns="logits"))
         (_, prompts, params), kwargs = generate.call_args
         self.assertEqual(params.kwargs, {"temperature": 0, "max_tokens": 1, "prompt_logprobs": 2})
@@ -744,13 +812,20 @@ class Halves(unittest.TestCase):
         transformers = fresh_import("transformers")
         torch = fresh_import("torch")
         transformers.CALLS.clear()
-        driver = ReferenceDriver(LaunchSpec(adapter="reference",
-                                            engine_kwargs={"model": "/w", "dtype": "bfloat16"}))
+        driver = ReferenceDriver(LaunchSpec(adapter="reference", engine_kwargs={"model": "/w", "dtype": "bfloat16"}))
         rows = list(driver.run(requests(), cell=LOGITS_CELL))
-        self.assertEqual(transformers.CALLS, [
-            ("AutoModelForCausalLM.from_pretrained", "/w", {"torch_dtype": torch.bfloat16,
-                                                     "trust_remote_code": True}),
-            ("to", "cuda:0"), ("eval",)])
+        self.assertEqual(
+            transformers.CALLS,
+            [
+                (
+                    "AutoModelForCausalLM.from_pretrained",
+                    "/w",
+                    {"torch_dtype": torch.bfloat16, "trust_remote_code": True},
+                ),
+                ("to", "cuda:0"),
+                ("eval",),
+            ],
+        )
         return rows
 
     def test_layers_cut_the_config_as_slice_truncate_did(self):
@@ -758,18 +833,18 @@ class Halves(unittest.TestCase):
             transformers = fresh_import("transformers")
             torch = fresh_import("torch")
             transformers.CALLS.clear()
-            driver = ReferenceDriver(LaunchSpec(adapter="reference", engine_kwargs={
-                "model": "/w", "dtype": "float32", "layers": 2}))
+            driver = ReferenceDriver(
+                LaunchSpec(adapter="reference", engine_kwargs={"model": "/w", "dtype": "float32", "layers": 2})
+            )
             list(driver.run(requests(), cell=LOGITS_CELL))
             (_, path, kwargs) = transformers.CALLS[1]
-            self.assertEqual(transformers.CALLS[0], ("AutoConfig.from_pretrained", "/w",
-                                                         {"trust_remote_code": True}))
+            self.assertEqual(transformers.CALLS[0], ("AutoConfig.from_pretrained", "/w", {"trust_remote_code": True}))
             self.assertEqual((path, kwargs["torch_dtype"]), ("/w", torch.float32))
-            self.assertEqual((kwargs["config"].num_hidden_layers, kwargs["config"].layer_types),
-                             (2, ["a", "b"]))
+            self.assertEqual((kwargs["config"].num_hidden_layers, kwargs["config"].layer_types), (2, ["a", "b"]))
             self.assertEqual(len(driver.model().model.layers), 2)
-            deep = ReferenceDriver(LaunchSpec(adapter="reference", engine_kwargs={
-                "model": "/w", "dtype": "float32", "layers": 5}))
+            deep = ReferenceDriver(
+                LaunchSpec(adapter="reference", engine_kwargs={"model": "/w", "dtype": "float32", "layers": 5})
+            )
             with self.assertRaisesRegex(ValueError, "exceeds the checkpoint's 4 layers"):
                 deep.model()
 
@@ -781,36 +856,45 @@ class Halves(unittest.TestCase):
             self.assertEqual(o.logits["argmax"], [t + 1 for t in ids[:-1]])
             self.assertEqual(r.logits["argmax"], o.logits["argmax"])
             self.assertEqual(len(r.logits["logprob"]), len(ids) - 1)
-            for a, b in zip(o.logits["logprob"] + o.logits["top2_gap"],
-                            r.logits["logprob"] + r.logits["top2_gap"]):
+            for a, b in zip(o.logits["logprob"] + o.logits["top2_gap"], r.logits["logprob"] + r.logits["top2_gap"]):
                 self.assertAlmostEqual(a, b, places=12)
-        summary = crossval.logit([{"cell": LOGITS_CELL, "logits": o.logits} for o in ours],
-                                  [{"cell": LOGITS_CELL, "logits": r.logits} for r in ref])[-1]
-        self.assertEqual((summary["positions"], summary["argmax_agree"], summary["verdict"]),
-                         (8, 8, "PASS"))
+        summary = crossval.logit(
+            [{"cell": LOGITS_CELL, "logits": o.logits} for o in ours],
+            [{"cell": LOGITS_CELL, "logits": r.logits} for r in ref],
+        )[-1]
+        self.assertEqual((summary["positions"], summary["argmax_agree"], summary["verdict"]), (8, 8, "PASS"))
 
 
 class Recipe(unittest.TestCase):
     def test_run_run_crossval_is_fidelity_and_band_pass(self):
         sets = ["--set", "mode.grid=smoke"]
         with tempfile.TemporaryDirectory() as td:
-            for name, extra in (("ours", ["--set", "mode.returns=logits"]),
-                                ("ref", ["--set", "engine.name=reference"]),
-                                ("slice", ["--set", "engine.name=reference",
-                                           "--set", "engine.layers=2"])):
-                run = run_grid_cli(grid_argv("llama", *sets, *extra, "--set", f"run_name={name}",
-                                             "--results-dir", td), {})
+            for name, extra in (
+                ("ours", ["--set", "mode.returns=logits"]),
+                ("ref", ["--set", "engine.name=reference"]),
+                ("slice", ["--set", "engine.name=reference", "--set", "engine.layers=2"]),
+            ):
+                run = run_grid_cli(
+                    grid_argv("llama", *sets, *extra, "--set", f"run_name={name}", "--results-dir", td), {}
+                )
                 self.assertIsNone(run["exit"])
             from quettabench import crossval
+
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
-                crossval.main([str(Path(td, "ours")), str(Path(td, "ref")),
-                               "--floor", str(Path(td, "slice")),
-                               "--json", str(Path(td, "x.json"))])
+                crossval.main(
+                    [
+                        str(Path(td, "ours")),
+                        str(Path(td, "ref")),
+                        "--floor",
+                        str(Path(td, "slice")),
+                        "--json",
+                        str(Path(td, "x.json")),
+                    ]
+                )
         self.assertIn("SUMMARY positions=99 argmax_agree=99 (100.00%)", out.getvalue())
         self.assertIn("FIDELITY verdict=PASS hard_disagreements=0", out.getvalue())
-        self.assertIn("BAND verdict=PASS flips=0 floor=0 floor_runs=0 positions=99",
-                      out.getvalue())
+        self.assertIn("BAND verdict=PASS flips=0 floor=0 floor_runs=0 positions=99", out.getvalue())
 
 
 RUNS = REPO / "configs" / "runs"
@@ -837,8 +921,7 @@ class VllmDriver(unittest.TestCase):
         handle = launcher.NoServer(Path("/r"), endpoint="http://127.0.0.1:8000")
         driver = vllm_adapter.ADAPTER.driver(spec, handle)
         self.assertIsInstance(driver, HttpDriver)
-        self.assertEqual((driver.url, driver.model, driver.timeout),
-                         ("http://127.0.0.1:8000/v1/completions", "/w", 7))
+        self.assertEqual((driver.url, driver.model, driver.timeout), ("http://127.0.0.1:8000/v1/completions", "/w", 7))
 
 
 class QuettaServeBenchRun(unittest.TestCase):
@@ -852,48 +935,73 @@ class QuettaServeBenchRun(unittest.TestCase):
 
     def test_serve_run_writes_measured_rows(self):
         cfg = config("llama", "engine.model=/w", "mode.grid=smoke")
-        cells = tuple((ctx, bs, LaunchSpec(
-            adapter="quettaserve", bench_argv=(sys.executable, str(FAKE)), cwd=".",
-            env={"QW_BENCH_PROMPT": str(ctx), "QW_BATCH": str(bs), "QW_WORLD": "1"},
-            ok_pattern=r"^LOOP ", log_header=f">>> ctx={ctx} bs={bs} world=1"))
-            for ctx, bs in ((1024, 1), (1024, 16)))
+        cells = tuple(
+            (
+                ctx,
+                bs,
+                LaunchSpec(
+                    adapter="quettaserve",
+                    bench_argv=(sys.executable, str(FAKE)),
+                    cwd=".",
+                    env={"QW_BENCH_PROMPT": str(ctx), "QW_BATCH": str(bs), "QW_WORLD": "1"},
+                    ok_pattern=r"^LOOP ",
+                    log_header=f">>> ctx={ctx} bs={bs} world=1",
+                ),
+            )
+            for ctx, bs in ((1024, 1), (1024, 16))
+        )
         with tempfile.TemporaryDirectory() as td:
             driver = BenchDriver(Path(td) / "bench.log", cells)
             serve.run(None, driver, cfg.mode, RunWriter(td, cfg))
             doc = json.loads((Path(td) / "run.json").read_text())
-            rows = [json.loads(line) for line in
-                    (Path(td) / "requests.jsonl").read_text().splitlines()]
-        self.assertEqual(doc["steps"], [
-            {"ctx": 1024, "bs": 1, "tp": 1, "ms_per_step": 3.5, "measured": True},
-            {"ctx": 1024, "bs": 16, "tp": 1, "ms_per_step": 3.5, "measured": True}])
-        self.assertEqual([(r["cell"]["bs"], r["measured_ms_per_step"]) for r in rows],
-                         [(1, 3.5), (16, 3.5)])
+            rows = [json.loads(line) for line in (Path(td) / "requests.jsonl").read_text().splitlines()]
+        self.assertEqual(
+            doc["steps"],
+            [
+                {"ctx": 1024, "bs": 1, "tp": 1, "ms_per_step": 3.5, "measured": True},
+                {"ctx": 1024, "bs": 16, "tp": 1, "ms_per_step": 3.5, "measured": True},
+            ],
+        )
+        self.assertEqual([(r["cell"]["bs"], r["measured_ms_per_step"]) for r in rows], [(1, 3.5), (16, 3.5)])
         self.assertNotIn("meta", doc["summary"]["grid"])
 
 
 class QuettaServeThroughCli(unittest.TestCase):
     """qwen3's 16 cells on the fake bench: max_model_len 10000 drops the four
     ctx=16384 cells, a 141 GiB GPU at cap_frac 0.3 drops (8192, 64)."""
-    SETS = [*PINNED, "engine.name=quettaserve", "engine.model=/ckpt/qw", "engine.tp=1",
-            f"engine.extra.bench_bin={FAKE}", "engine.max_model_len=10000", "mode.cap_frac=0.3"]
+
+    SETS = [
+        *PINNED,
+        "engine.name=quettaserve",
+        "engine.model=/ckpt/qw",
+        "engine.tp=1",
+        f"engine.extra.bench_bin={FAKE}",
+        "engine.max_model_len=10000",
+        "mode.cap_frac=0.3",
+    ]
 
     def qbench(self, *argv):
-        args = ["run", str(RUNS / "qwen3.yaml"), *(a for s in self.SETS for a in ("--set", s)),
-                *argv]
+        args = ["run", str(RUNS / "qwen3.yaml"), *(a for s in self.SETS for a in ("--set", s)), *argv]
         out = io.StringIO()
-        with contextlib.redirect_stdout(out), mock.patch.dict(os.environ, {}, clear=True), \
-                mock.patch.object(BenchDriver, "device", return_value=("H200", 141 * 2**30)):
+        with (
+            contextlib.redirect_stdout(out),
+            mock.patch.dict(os.environ, {}, clear=True),
+            mock.patch.object(BenchDriver, "device", return_value=("H200", 141 * 2**30)),
+        ):
             self.assertEqual(cli.main(args), 0)
         return out.getvalue()
 
     def test_dry_run_prints_each_cells_shell_line(self):
-        lines = [line for line in self.qbench("--dry-run").splitlines()
-                 if line.startswith("cell ")]
+        lines = [line for line in self.qbench("--dry-run").splitlines() if line.startswith("cell ")]
         self.assertEqual(len(lines), 16)
-        self.assertEqual(lines[0], (
-            "cell ctx=1024 bs=1 = env XVAL_LINK_PROFILE=nvlink NCCL_IB_DISABLE=1 QS_KERNELS=rust QW_MODE=graph "
-            "QW_CKPT=/ckpt/qw QW_WORLD=1 QW_TIMING_STEPS=100 QW_BATCH=1 QW_BENCH_PROMPT=1024 "
-            f"QW_MAX_SEQ=1152 {FAKE} --nocapture"))
+        self.assertEqual(
+            lines[0],
+            (
+                "cell ctx=1024 bs=1 = env XVAL_LINK_PROFILE=nvlink NCCL_IB_DISABLE=1 QS_KERNELS=rust QW_MODE=graph "
+                "QW_CKPT=/ckpt/qw QW_WORLD=1 QW_TIMING_STEPS=100 QW_BATCH=1 QW_BENCH_PROMPT=1024 "
+                f"QW_MAX_SEQ=1152 {FAKE} --nocapture"
+            ),
+        )
 
     def test_run_skips_then_measures_the_rest(self):
         with tempfile.TemporaryDirectory() as td:
@@ -904,8 +1012,13 @@ class QuettaServeThroughCli(unittest.TestCase):
         skips = [line for line in out.splitlines() if line.startswith("SKIP")]
         # cap: (141 * 0.9 - 54 weights - 5 reserve) GiB / 65536 B per token;
         # need: (8192 + 100 timing steps + 28 headroom) * 64 > 0.3 * cap.
-        self.assertEqual(skips, ["SKIP ctx=8192 bs=64 need_kv=532480 cap=1112473",
-                                 *(f"SKIP ctx=16384 bs={bs} reason=maxlen" for bs in (1, 4, 16, 64))])
+        self.assertEqual(
+            skips,
+            [
+                "SKIP ctx=8192 bs=64 need_kv=532480 cap=1112473",
+                *(f"SKIP ctx=16384 bs={bs} reason=maxlen" for bs in (1, 4, 16, 64)),
+            ],
+        )
         self.assertEqual(len(rows), 11)
         self.assertEqual({r["measured_ms_per_step"] for r in rows}, {3.5})
         self.assertNotIn((8192, 64), {(r["cell"]["ctx"], r["cell"]["bs"]) for r in rows})

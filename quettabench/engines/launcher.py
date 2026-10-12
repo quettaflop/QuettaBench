@@ -46,8 +46,7 @@ class Handle:
     def stop(self, grace_s=30):
         """SIGTERM the process group and SIGKILL what is left after grace_s; a container gets `docker stop`, then its log stream is ended and the container removed."""
         if self.container:
-            subprocess.run(["docker", "stop", "-t", str(grace_s), self.container],
-                           capture_output=True, check=False)
+            subprocess.run(["docker", "stop", "-t", str(grace_s), self.container], capture_output=True, check=False)
             try:
                 self.proc.wait(timeout=grace_s + 10)
             except subprocess.TimeoutExpired:
@@ -75,6 +74,7 @@ class Handle:
 @dataclass
 class NoServer:
     """Handle for a driver that starts the engine itself (in-process vLLM, the cargo bench): no endpoint, nothing to stop."""
+
     results_dir: Path
     endpoint: str | None = None
     backend: str = "cuda"
@@ -91,8 +91,11 @@ def visible_env(backend, devices):
     if backend == "tpu":
         # tpu-inference examples/external_lb/run_dp_external_lb.sh:203-205 (v0.30.0)
         chips = len(devices.split(","))
-        return {"TPU_VISIBLE_CHIPS": devices, "TPU_CHIPS_PER_PROCESS_BOUNDS": f"1,{chips},1",
-                "TPU_PROCESS_BOUNDS": "1,1,1"}, ()
+        return {
+            "TPU_VISIBLE_CHIPS": devices,
+            "TPU_CHIPS_PER_PROCESS_BOUNDS": f"1,{chips},1",
+            "TPU_PROCESS_BOUNDS": "1,1,1",
+        }, ()
     if backend == "neuron":
         # vllm-neuron picks cores from NEURON_VISIBLE_DEVICES and refuses NEURON_RT_VISIBLE_CORES (neuron_worker.py:527-532)
         return {"NEURON_VISIBLE_DEVICES": devices}, ("NEURON_RT_VISIBLE_CORES",)
@@ -103,14 +106,22 @@ def device_flags(backend, gpus):
     """docker run flags that give the container the accelerator, from each vendor's vLLM container docs."""
     if backend == "rocm":
         # vllm docs/getting_started/installation/gpu.rocm.inc.md:359-370 (v0.30.0)
-        return ["--group-add=video", "--cap-add=SYS_PTRACE", "--security-opt", "seccomp=unconfined",
-                "--device", "/dev/kfd", "--device", "/dev/dri"]
+        return [
+            "--group-add=video",
+            "--cap-add=SYS_PTRACE",
+            "--security-opt",
+            "seccomp=unconfined",
+            "--device",
+            "/dev/kfd",
+            "--device",
+            "/dev/dri",
+        ]
     if backend == "tpu":
         # tpu-inference docs/mkdocs/javascripts/interactive.js:26 (v0.30.0)
         return ["--privileged", "--net=host"]
     if backend == "neuron":
         # awsdocs-neuron v2.32.0 deploy/environments/quickstart-deploy-dlc.rst:66-84
-        devices = sorted(glob.glob("/dev/neuron[0-9]*"), key=lambda d: int(d[len("/dev/neuron"):]))
+        devices = sorted(glob.glob("/dev/neuron[0-9]*"), key=lambda d: int(d[len("/dev/neuron") :]))
         if not devices:
             raise ConfigError("hardware.backend=neuron: no /dev/neuron* device on this host")
         return [*(f"--device={d}" for d in devices), "--cap-add", "SYS_ADMIN", "--cap-add", "IPC_LOCK"]
@@ -123,9 +134,11 @@ def idle_gpus(n, backend):
         return ",".join(str(i) for i in range(n))
     rows = subprocess.run(
         ["nvidia-smi", "--query-gpu=index,memory.used", "--format=csv,noheader"],
-        capture_output=True, text=True, check=True).stdout.splitlines()
-    ids = [index for index, used in (row.split(", ") for row in rows if row)
-           if float(used.split()[0]) < 1000]
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.splitlines()
+    ids = [index for index, used in (row.split(", ") for row in rows if row) if float(used.split()[0]) < 1000]
     if len(ids) < n:
         raise RuntimeError(f"NEED {n} FREE GPUS, have: {' '.join(ids) or 'none'}")
     return ",".join(ids[:n])
@@ -134,7 +147,10 @@ def idle_gpus(n, backend):
 NVIDIA_SMI = ["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"]
 # backend -> (tool argv, the line prefix that carries the name)
 IDENTITY = {
-    "rocm": (["amd-smi", "static", "-g", "0", "-a"], "MARKET_NAME:"),  # vllm .buildkite/performance-benchmarks/scripts/run-performance-benchmarks.sh:44
+    "rocm": (
+        ["amd-smi", "static", "-g", "0", "-a"],
+        "MARKET_NAME:",
+    ),  # vllm .buildkite/performance-benchmarks/scripts/run-performance-benchmarks.sh:44
     "neuron": (["neuron-ls"], "instance-type:"),  # awsdocs-neuron tools/neuron-sys-tools/neuron-ls.rst:45
 }
 
@@ -152,7 +168,7 @@ def accelerator(backend="cuda"):
     """(name, total bytes) of device 0: nvidia-smi on cuda, the name only from amd-smi or neuron-ls; ("", None) when unavailable, never raises."""
     if backend in IDENTITY:
         argv, prefix = IDENTITY[backend]
-        names = [line[len(prefix):].strip() for line in tool_lines(argv) if line.startswith(prefix)]
+        names = [line[len(prefix) :].strip() for line in tool_lines(argv) if line.startswith(prefix)]
         return (names[0] if names else ""), None
     if backend in ("tpu", "cpu"):
         return "", None
@@ -201,21 +217,37 @@ def docker_argv(spec, cfg, gpus, results_dir):
         raise ConfigError(f"{cfg.run_name}: hardware.launcher=docker needs engine.image")
     mounts = [hw.hf_home] if hw.hf_home else []
     model = spec.engine_kwargs.get("model") or cfg.engine.model
-    if model and Path(model).is_absolute() and not any(
-            Path(model).is_relative_to(m) for m in [*mounts, REPO]):
+    if model and Path(model).is_absolute() and not any(Path(model).is_relative_to(m) for m in [*mounts, REPO]):
         mounts.append(model)
-    env = {**spec.env, **{k: v for k, v in hw.collective.items() if v},
-           **({"HF_HOME": hw.hf_home} if hw.hf_home else {})}
+    env = {
+        **spec.env,
+        **{k: v for k, v in hw.collective.items() if v},
+        **({"HF_HOME": hw.hf_home} if hw.hf_home else {}),
+    }
     hidden = docker_secrets(spec)
     devices = device_flags(hw.backend, gpus)
     ports = [] if "--net=host" in devices else ["-p", f"{spec.port}:{spec.port}"]
-    return ["docker", "run", "-d", "--pull=never", "--init",
-            "--name", container_name(cfg.run_name),
-            *devices, "--ipc=host", f"--shm-size={hw.shm_size}", *ports,
-            *(a for path in [*mounts, REPO] for a in ("-v", f"{path}:{path}:ro")),
-            "-v", f"{run_dir}:{run_dir}",
-            *(a for k, v in env.items() for a in ("-e", k if k in hidden else f"{k}={v}")),
-            "--entrypoint", spec.server_argv[0], spec.image, *spec.server_argv[1:]]
+    return [
+        "docker",
+        "run",
+        "-d",
+        "--pull=never",
+        "--init",
+        "--name",
+        container_name(cfg.run_name),
+        *devices,
+        "--ipc=host",
+        f"--shm-size={hw.shm_size}",
+        *ports,
+        *(a for path in [*mounts, REPO] for a in ("-v", f"{path}:{path}:ro")),
+        "-v",
+        f"{run_dir}:{run_dir}",
+        *(a for k, v in env.items() for a in ("-e", k if k in hidden else f"{k}={v}")),
+        "--entrypoint",
+        spec.server_argv[0],
+        spec.image,
+        *spec.server_argv[1:],
+    ]
 
 
 def docker_secrets(spec):
@@ -223,8 +255,7 @@ def docker_secrets(spec):
     return {k: v for k, v in spec.env.items() if secret(k)}
 
 
-def start(spec, results_dir, *, backend="local", cfg=None, gpus="", timeout_s=1800,
-          poll_s=1.0):
+def start(spec, results_dir, *, backend="local", cfg=None, gpus="", timeout_s=1800, poll_s=1.0):
     """Launch spec.server_argv, wait for health, write engine.json; return a Handle. backend docker runs it in a container built by docker_argv(spec, cfg, gpus, results_dir)."""
     if not spec.server_argv:
         raise ValueError(f"{spec.adapter}: the spec has no server to launch")
@@ -235,15 +266,15 @@ def start(spec, results_dir, *, backend="local", cfg=None, gpus="", timeout_s=18
         argv = docker_argv(spec, cfg, gpus, results_dir)
         container = argv[argv.index("--name") + 1]
         secrets = docker_secrets(spec)
-        run = subprocess.run(argv, capture_output=True, text=True, check=False,
-                             env=env_map.with_env(secrets) if secrets else None)
+        run = subprocess.run(
+            argv, capture_output=True, text=True, check=False, env=env_map.with_env(secrets) if secrets else None
+        )
         if run.returncode != 0:
             # The name is this run's own (container_name), so whatever docker left under it is logged and removed.
             with (results_dir / "server.log").open("w") as log:
                 log.write(run.stderr)
                 log.flush()
-                subprocess.run(["docker", "logs", container], stdout=log,
-                               stderr=subprocess.STDOUT, check=False)
+                subprocess.run(["docker", "logs", container], stdout=log, stderr=subprocess.STDOUT, check=False)
             remove(container)
             raise RuntimeError(f"docker run exited with {run.returncode}: {run.stderr.strip()}")
         container_id, server = run.stdout.strip(), ["docker", "logs", "-f", container]
@@ -251,16 +282,16 @@ def start(spec, results_dir, *, backend="local", cfg=None, gpus="", timeout_s=18
         server = spec.child_argv(spec.server_argv)
     try:
         with (results_dir / "server.log").open("w") as log:
-            proc = subprocess.Popen(server, stdout=log, stderr=subprocess.STDOUT,
-                                    start_new_session=True)
+            proc = subprocess.Popen(server, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
     except BaseException:
         if container:
             remove(container)
         raise
     endpoint = f"http://127.0.0.1:{spec.port}"
     accel = cfg.hardware.backend if cfg else "cuda"
-    handle = Handle(spec.adapter, endpoint, proc.pid, results_dir, proc, accelerator(accel)[0],
-                    container, container_id, accel)
+    handle = Handle(
+        spec.adapter, endpoint, proc.pid, results_dir, proc, accelerator(accel)[0], container, container_id, accel
+    )
     try:
         wait_healthy(proc, endpoint + spec.health_path, timeout_s, poll_s)
         record = {
@@ -273,8 +304,7 @@ def start(spec, results_dir, *, backend="local", cfg=None, gpus="", timeout_s=18
         }
         if container:
             record.update(container=container, container_id=container_id, image=spec.image)
-        (results_dir / "engine.json").write_text(json.dumps(record, indent=2, sort_keys=True)
-                                                 + "\n")
+        (results_dir / "engine.json").write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
     except BaseException:
         handle.stop()
         raise

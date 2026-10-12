@@ -39,11 +39,30 @@ OTHER_ACCELERATORS = ("rocm", "neuron", "tpu")
 # Keys each dict-valued field accepts; None means free-form.
 DICT_KEYS = {
     "engine.extra": None,
-    "hardware.collective": ("NCCL_ALGO", "NCCL_PROTO", "NCCL_P2P_LEVEL", "NCCL_IB_DISABLE",
-                            "NCCL_SOCKET_IFNAME", "LLMSRV_NO_NVLS", "LLMSRV_TWOSHOT_MIN_BYTES"),
+    "hardware.collective": (
+        "NCCL_ALGO",
+        "NCCL_PROTO",
+        "NCCL_P2P_LEVEL",
+        "NCCL_IB_DISABLE",
+        "NCCL_SOCKET_IFNAME",
+        "LLMSRV_NO_NVLS",
+        "LLMSRV_TWOSHOT_MIN_BYTES",
+    ),
     # provision.py's inputs; the last six are usually per run (`--set <run>:...`)
-    "hardware.provision": ("cache_root", "py", "vllm_spec", "qs_repo", "qs_commit", "nccl_lib",
-                           "qs_dir", "bench_bin", "qs_ckpt", "qs_cfg", "weights", "hf_id"),
+    "hardware.provision": (
+        "cache_root",
+        "py",
+        "vllm_spec",
+        "qs_repo",
+        "qs_commit",
+        "nccl_lib",
+        "qs_dir",
+        "bench_bin",
+        "qs_ckpt",
+        "qs_cfg",
+        "weights",
+        "hf_id",
+    ),
     "provenance": ("engine_sha", "engine_commit", "checkpoint"),
     "crossval": ("comm_bound_bs", "allow_method_mismatch"),
 }
@@ -52,26 +71,26 @@ DICT_KEYS = {
 @dataclass(frozen=True)
 class EngineCfg:
     name: str = "vllm"
-    model: str | None = None       # weights dir or HF id
-    model_name: str = ""              # display name: grid META model=, crossval comm_bound_bs match
+    model: str | None = None  # weights dir or HF id
+    model_name: str = ""  # display name: grid META model=, crossval comm_bound_bs match
     tp: int = 1
     pp: int = 1
-    ep: bool = False                  # model yaml ep, ENABLE_EP
+    ep: bool = False  # model yaml ep, ENABLE_EP
     dtype: str = "auto"
     kv_dtype: str = "auto"
     quant: str | None = None
     max_model_len: int | None = None
-    layers: int | None = None         # first N decoder layers only: a slice run (slice_truncate.py)
+    layers: int | None = None  # first N decoder layers only: a slice run (slice_truncate.py)
     gpu_util: float = 0.9
     prefix_caching: bool = False
     serving_style: str = "aggregated"
-    cudagraph: bool = True            # false: --enforce-eager
+    cudagraph: bool = True  # false: --enforce-eager
     port: int = 8000
-    instrumentation: str = "none"     # armed at launch: none | nsys | torch
-    image: str | None = None          # the server's docker image; required by hardware.launcher=docker
+    instrumentation: str = "none"  # armed at launch: none | nsys | torch
+    image: str | None = None  # the server's docker image; required by hardware.launcher=docker
     extra: Mapping[str, Any] = field(default_factory=dict)  # quettaserve bench block lives here
     # Facts the capacity gate needs (grid CAPACITY line).
-    kv_bytes: int | None = None    # per token; None allowed only for dense
+    kv_bytes: int | None = None  # per token; None allowed only for dense
     weights_gib: float | None = None
     attention: str = "dense"
     num_experts: int | None = None
@@ -81,15 +100,15 @@ class EngineCfg:
 @dataclass(frozen=True)
 class WorkloadCfg:
     kind: str = "live"
-    source: str = ""                  # trace path, profile name, or XVAL_CORPUS/XVAL_TRACE file
+    source: str = ""  # trace path, profile name, or XVAL_CORPUS/XVAL_TRACE file
     # steady | trace | poisson:<rate> | ramp:<start>:<end> | burst:<n>x<size>@<gap_s>
     arrival: str = "steady"
     speed: float = 1.0
-    prompt_mode: str = "distinct"     # grid runs only
+    prompt_mode: str = "distinct"  # grid runs only
     seed: int = 42
     num_requests: int = 100
     # kind sessions only (workloads/sessions.py TurnPacing)
-    pacing: str = "per-session"       # interleaved: a barrier after every turn index
+    pacing: str = "per-session"  # interleaved: a barrier after every turn index
     tool_wait_ms: float = 0.0
     human_wait_ms: float = 0.0
     use_recorded_waits: bool = False
@@ -114,24 +133,24 @@ class ModeCfg:
     min_success_rate: float = 0.75
     reset_prefix_cache: bool = False  # POST the engine's prefix-cache reset after warmup
     allow_missing_usage: bool = False
-    trace_request_ids: bool = False   # stable request ids for engine tracing
+    trace_request_ids: bool = False  # stable request ids for engine tracing
     prefix_cache_block_size: int | None = 16  # block-aligned cache estimates (multi-turn)
     sla_ttft_ms: float | None = None
     sla_tpot_ms: float | None = None
     goodput_sweep: bool = False
-    returns: str = "none"             # none | text | logits
-    grid: str | None = None        # name in grids.yaml; set => step metrics
-    vmin_attempts: int = 4         # grid: fit passes per cell, best r2 kept
-    fit_r2_stop: float = 0.999     # grid: a pass fitting at least this r2 ends the cell
-    eval_pos: int | None = None    # None => hardware.timing_steps // 2
+    returns: str = "none"  # none | text | logits
+    grid: str | None = None  # name in grids.yaml; set => step metrics
+    vmin_attempts: int = 4  # grid: fit passes per cell, best r2 kept
+    fit_r2_stop: float = 0.999  # grid: a pass fitting at least this r2 ends the cell
+    eval_pos: int | None = None  # None => hardware.timing_steps // 2
     cap_frac: float = 0.80
-    probe: str | None = None       # mode=probe: module under quettabench/probes/
-    probe_args: str = ""           # mode=probe: that probe's own flags, shell-quoted
+    probe: str | None = None  # mode=probe: module under quettabench/probes/
+    probe_args: str = ""  # mode=probe: that probe's own flags, shell-quoted
 
 
 @dataclass(frozen=True)
 class GridCfg:
-    cells: tuple = ()                 # ((ctx, bs), ...)
+    cells: tuple = ()  # ((ctx, bs), ...)
     step_points: tuple = ()
     # Cells where ctx + max(step_points) + 2 > max_model_len; serve SKIPs them.
     cells_over_maxlen: tuple = ()
@@ -147,10 +166,10 @@ class HardwareCfg:
     collective: Mapping[str, str] = field(default_factory=dict)
     provision: Mapping[str, str] = field(default_factory=dict)
     visible_devices: str | None = None  # CUDA_VISIBLE_DEVICES; rocm/tpu/neuron runs must set it
-    ready_timeout_s: int = 1800         # seconds the launcher waits for the server health check
-    launcher: str = "local"             # local: a host process | docker: engine.image in a container
-    shm_size: str = "16g"               # docker --shm-size
-    hf_home: str | None = None          # HF cache; docker mounts it at the same path
+    ready_timeout_s: int = 1800  # seconds the launcher waits for the server health check
+    launcher: str = "local"  # local: a host process | docker: engine.image in a container
+    shm_size: str = "16g"  # docker --shm-size
+    hf_home: str | None = None  # HF cache; docker mounts it at the same path
 
 
 @dataclass(frozen=True)
@@ -162,7 +181,7 @@ class Config:
     grid: GridCfg | None = None
     run_name: str = ""
     provenance: Mapping[str, Any] = field(default_factory=dict)  # engine_sha
-    crossval: Mapping[str, Any] = field(default_factory=dict)    # crossval comm_bound_bs
+    crossval: Mapping[str, Any] = field(default_factory=dict)  # crossval comm_bound_bs
     origins: Mapping[str, str] = field(default_factory=dict)
 
     def to_dict(self):
@@ -247,8 +266,7 @@ def parse_serving_style(spec):
         if ep < 1 or dp < 1:
             raise ValueError(f"ep_dp needs >=1 expert-parallel and >=1 data-parallel: {spec!r}")
         return {"mode": "ep_dp", "ep": ep, "dp": dp}
-    raise ValueError(f"unknown serving_style {spec!r}; use aggregated, "
-                     "disagg:<P>p<D>d, afd:<A>a<F>f, or ep<N>dp<M>")
+    raise ValueError(f"unknown serving_style {spec!r}; use aggregated, disagg:<P>p<D>d, afd:<A>a<F>f, or ep<N>dp<M>")
 
 
 def device_count(engine):
