@@ -1,15 +1,6 @@
-"""Recorded traces: the replay JSONL schema, the Mooncake production trace,
-the real-text profile sources (prompt JSONL, ShareGPT, a smoke prompt), and
-the workload profiles registry over configs/workloads.yaml.
+"""Recorded traces (replay JSONL, Mooncake), the real-text profile sources and the workload profile registry over configs/workloads.yaml.
 
-One reader for the replay schema and Mooncake. A line carries prompt_token_ids, or prompt_len, or the
-Mooncake fields (input_length, output_length, timestamp in ms, hash_ids).
-Mooncake hash_ids name 512-token prefix blocks; each id expands to the same
-seeded block every time, so requests that share a hash id share those tokens
-byte for byte and prefix sharing survives the replay. A Mooncake line with no
-hash_ids falls back to synth_ids(input_length, line index).
-
-Trace format reference: https://github.com/kvcache-ai/Mooncake
+Mooncake hash_ids name 512-token prefix blocks; each id expands to the same seeded block, so requests sharing a hash id share those tokens.
 """
 
 import dataclasses
@@ -24,7 +15,7 @@ from .base import DrawnTrace, Request, Trace, synth_ids
 
 BLOCK_SIZE = 512
 
-# Range avoids low special token ids and stays under small vocabs.
+# Avoids low special token ids and stays under small vocabs.
 TOKEN_ID_LOW = 1000
 TOKEN_ID_HIGH = 20000
 
@@ -87,9 +78,7 @@ def fill_tail(record_index, length, seed):
 
 
 def mooncake_prompt_ids(record, seed=42, block_cache=None):
-    """Exactly input_length ids: hash blocks in order, tail filled per request,
-    truncated when the blocks overrun (the common case in the published trace).
-    No hash_ids: synth_ids(input_length, line index)."""
+    """Exactly input_length ids: hash blocks in order, tail filled per request, truncated when the blocks overrun; no hash_ids gives synth_ids(input_length, line index)."""
     if not record.hash_ids:
         return synth_ids(record.input_length, record.index)
     tokens = []
@@ -121,7 +110,7 @@ def _carry_meta(req, row):
 
 
 def _mooncake_request(row, index, seed, block_cache):
-    """A Mooncake line keeps output_length 0: it is the trace's own number."""
+    """A Mooncake line keeps its own output_length, even 0."""
     rec = mooncake_record(row, index)
     ids = mooncake_prompt_ids(rec, seed, block_cache)
     req = Request(ids, rec.input_length, order=index, output_length=rec.output_length)
@@ -135,8 +124,7 @@ def _line_request(path, row, index, seed, block_cache):
         req = Request(ids, len(ids), order=index)
         if row.get("output_length"):
             req.output_length = int(row["output_length"])
-        # Reference tokens for acceptance scoring (SPECSUM); must survive load
-        # or the replay has nothing to compare the engine's output against.
+        # Reference tokens for acceptance scoring.
         if row.get("output_token_ids"):
             req.output_token_ids = list(row["output_token_ids"])
         return _carry_meta(req, row)
@@ -152,8 +140,7 @@ def _line_request(path, row, index, seed, block_cache):
 
 
 class RealTrace(Trace):
-    """Requests read from a file. supports_spec when any request carries the
-    trace's real assistant tokens (output_token_ids)."""
+    """Requests read from a file; supports_spec when any request carries real assistant tokens (output_token_ids)."""
 
     def __init__(self, requests, path, reader):
         if not requests:
@@ -194,15 +181,9 @@ class RealTrace(Trace):
 
 
 class MooncakeTrace(DrawnTrace):
-    """Mooncake records in file order with expanded token ids, wrapping at
-    the end and rewinding after warmup. Requests carry prompt_token_ids, so
-    no chat template can disturb block boundaries; metadata names the record
-    (request_index) and its block count (num_hash_blocks). arrival_ts is the
-    record's timestamp in seconds, so workload.arrival=trace replays it; a
-    wrapped draw's lap k is shifted by k * (span + mean gap) of the file's
-    timestamps, so laps follow one another at the trace's own pace. With a
-    span of 0 there is no pace; runner.build_trace refuses such a wrap under
-    workload.arrival=trace."""
+    """Mooncake records in file order with expanded token ids, wrapping at the end and rewinding after warmup.
+
+    Requests carry prompt_token_ids so no chat template disturbs block boundaries. arrival_ts is the record's timestamp in seconds; lap k of a wrapped draw is shifted by k * (span + mean gap) of the timestamps. A span of 0 has no pace, and runner.build_trace refuses such a wrap under workload.arrival=trace."""
 
     rewinds = True
 
@@ -234,8 +215,7 @@ class MooncakeTrace(DrawnTrace):
 
 
 def reshuffled(samples, rng):
-    """(messages, max_tokens) samples popped from the end; once used up they
-    are refilled and reshuffled with rng."""
+    """Yields (messages, max_tokens) samples; when used up they are refilled and reshuffled with rng."""
     available = list(samples)
     while True:
         if not available:
@@ -245,8 +225,7 @@ def reshuffled(samples, rng):
 
 
 class SampledChatTrace(DrawnTrace):
-    """Chat prompts sampled from a fixed set: shuffled once with the seed,
-    then drawn by reshuffled() with a second generator on the same seed."""
+    """Chat prompts drawn from a fixed set, shuffled with the seed and reshuffled by reshuffled() when used up."""
 
     def __init__(self, samples, seed):
         super().__init__()
@@ -259,8 +238,7 @@ class SampledChatTrace(DrawnTrace):
 
 
 class PromptJsonlTrace(SampledChatTrace):
-    """Real prompts, one per line: {"system", "user", "osl_tokens"}; max
-    tokens per request from osl_tokens."""
+    """Real prompts, one per line: {"system", "user", "osl_tokens"}; osl_tokens is the max tokens."""
 
     def __init__(self, path, seed=42):
         samples = []
@@ -291,8 +269,7 @@ def prompt_token_count(tokenizer, messages):
 
 
 def load_chat_tokenizer(name):
-    """The model's tokenizer for prompt counts; None without a name. A
-    tokenizer that fails to load raises."""
+    """The model's tokenizer for prompt counts; None without a name, raises if it fails to load."""
     if not name:
         return None
     from transformers import AutoTokenizer  # optional dependency
@@ -300,13 +277,9 @@ def load_chat_tokenizer(name):
 
 
 class ShareGPTTrace(SampledChatTrace):
-    """The first user and assistant pair of ShareGPT conversations. max tokens
-    is the estimated length of the recorded reply, so the server sees
-    ShareGPT's own ISL/OSL spread. Pairs outside the ISL/OSL bounds are
-    skipped, and with max_total_tokens so is a pair whose prompt (counted by
-    tokenizer_name's tokenizer when given, else estimated), reply and safety
-    margin overflow it. Loads
-    up to 3x num_prompts pairs, shuffles, keeps num_prompts."""
+    """The first user and assistant pair of ShareGPT conversations; max tokens is the estimated length of the recorded reply.
+
+    Pairs outside the input and output bounds are skipped, and with max_total_tokens so is a pair whose prompt (counted by tokenizer_name, else estimated), reply and safety margin overflow it. Loads up to 3x num_prompts pairs, shuffles, keeps num_prompts."""
 
     def __init__(self, num_prompts=1000, seed=42, system_prompt="You are a helpful assistant.",
                  max_isl_tokens=8192, max_osl_tokens=2048, min_osl_tokens=50,
@@ -401,7 +374,7 @@ def load_profiles(path=WORKLOADS):
 
 PROFILES: dict[str, WorkloadProfile] = load_profiles()
 
-# Historical names accepted for archived result ingestion and old command lines.
+# Old profile names, accepted for archived results and old command lines.
 PROFILE_ALIASES: dict[str, str] = {
     "chat-long": "chat-singleturn",
     "coding-agent": "coding-singleturn",

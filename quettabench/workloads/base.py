@@ -1,9 +1,4 @@
-"""Request, the Trace base class, and the workload identity hash.
-
-A Trace is a fixed list of Requests. workload_hash() names that list so two
-engines can prove they ran identical work: serve gates on it, crossval joins
-on it.
-"""
+"""Request, the Trace base class, and workload_hash, which names a request list so two engines can prove they ran identical work."""
 
 import hashlib
 import json
@@ -23,8 +18,7 @@ def synth_ids(n, seed):
 
 @dataclass
 class Request:
-    """One request as the replay schema writes it. None means the field is
-    absent from the line, which is not the same as zero for the hash."""
+    """One request as the replay schema writes it; None means absent from the line, which the hash treats differently from zero."""
 
     prompt_token_ids: list
     prompt_len: int
@@ -37,9 +31,7 @@ class Request:
     seed: int | None = None
     image_tokens: int | None = None
     source: str | None = None
-    # A workload profile's chat request: its messages and metadata objects,
-    # shared with its session so a later turn sees replies written into them.
-    # Not part of the replay schema; hashed only when there are no token ids.
+    # Chat messages and metadata shared with the session so later turns see replies; not in the replay schema, hashed only without token ids.
     messages: list | None = None
     metadata: dict | None = None
 
@@ -54,8 +46,7 @@ class Request:
 
 
 def messages_digest(messages):
-    """sha256 of the messages as canonical JSON, assistant content left out:
-    in a live session serve writes the engine's reply there during the run."""
+    """sha256 of the messages as canonical JSON, assistant content left out because a live run writes replies there."""
     plain = [{k: v for k, v in m.items() if not (m.get("role") == "assistant" and k == "content")}
              for m in messages]
     return hashlib.sha256(json.dumps(plain, sort_keys=True, separators=(",", ":"))
@@ -63,10 +54,7 @@ def messages_digest(messages):
 
 
 def request_digest(r):
-    """Identity of one request over deterministic inputs only (seed, order, arrival,
-    prompt content, requested output), never generated tokens or timings, so two
-    engines doing identical work hash the same. A chat request without token ids
-    adds its messages' digest; a token-id request hashes as it always has."""
+    """sha256 of one request's deterministic inputs (seed, order, arrival, prompt, requested output), never generated tokens or timings; a chat request without token ids adds its messages digest."""
     messages = r.messages if isinstance(r, Request) else r.get("messages")
     if isinstance(r, Request):
         r = r.to_dict()
@@ -87,10 +75,7 @@ def request_digest(r):
 
 
 def workload_hash(reqs):
-    """Order-independent identity of the whole workload: first 16 hex of sha256
-    over the request count and the sorted per-request digests. Completion order
-    does not move it; a dropped or altered request does. Takes Requests or the
-    equivalent dicts."""
+    """First 16 hex of a sha256 over the request count and sorted per-request digests; independent of order, changed by a dropped or altered request. Takes Requests or dicts."""
     digs = sorted(request_digest(r) for r in reqs)
     h = hashlib.sha256()
     h.update(str(len(digs)).encode())
@@ -101,8 +86,7 @@ def workload_hash(reqs):
 
 
 class Trace(ABC):
-    """A fixed request list plus where it came from. supports_spec says whether
-    requests carry real assistant tokens to score speculative acceptance against."""
+    """A fixed request list plus its source; supports_spec says whether requests carry real assistant tokens to score speculative acceptance against."""
 
     supports_spec: bool = False
 
@@ -124,11 +108,7 @@ class Trace(ABC):
 
 
 class DrawnTrace(Trace):
-    """A trace drawn from a source that serves one request at a time and
-    wraps around at its end, in the order the old runner drew its datasets.
-    draw() fixes what a run sends: `warmup` draws, a rewind when the source
-    replays a file in order (rewinds), then `num_requests` draws, each
-    numbered from zero. The profile it was built from names it in source_meta."""
+    """A trace drawn one request at a time from a source that wraps around; draw() takes `warmup` draws, rewinds if the source replays a file in order, then takes `num_requests` draws numbered from zero."""
 
     rewinds = False
 
@@ -174,12 +154,7 @@ def load_tokenizer(name):
 
 
 class RandomTokenTrace(DrawnTrace):
-    """InferenceX's random-token workload (SemiAnalysisAI/InferenceX
-    utils/bench_serving/benchmark_serving.py) for cross-validation: prompt i
-    is ids (offset_i + i + j) % vocab decoded to text, re-encoded and trimmed
-    or padded to its target length, sent as one user message. Random tokens
-    trigger EOS early, so output lengths are unreliable; not a production
-    workload. The prompts cycle."""
+    """InferenceX's random-token workload for cross-validation: ids (offset_i + i + j) % vocab decoded, re-encoded and trimmed or padded to the target length, sent as one user message. Random tokens trigger early EOS, so output lengths are unreliable."""
 
     def __init__(self, tokenizer_name, input_len=1024, output_len=1024, num_prompts=500,
                  range_ratio=1.0, seed=0):
@@ -219,10 +194,7 @@ class RandomTokenTrace(DrawnTrace):
 
 
 class LegacyRandomTokenTrace(RandomTokenTrace):
-    """The same prompts drawn the way InferenceX's sample_random_requests
-    draws them: np.random.seed then legacy randint, an optional shared prefix,
-    up to ten re-encode passes. Matching TTFT here and not with
-    RandomTokenTrace pins a TTFT gap on RNG-driven prefix cache hits."""
+    """The prompts drawn as InferenceX's sample_random_requests does: np.random.seed with legacy randint, an optional shared prefix, up to ten re-encode passes."""
 
     def __init__(self, tokenizer_name, input_len=1024, output_len=1024, num_prompts=500,
                  range_ratio=1.0, prefix_len=0, seed=0):
@@ -260,10 +232,7 @@ class LegacyRandomTokenTrace(RandomTokenTrace):
 
 
 class DoubleWrapRandomTokenTrace(RandomTokenTrace):
-    """InferenceX's double chat template: with --backend openai-chat
-    --use-chat-template it applies the template itself and sends the result
-    as user content, which the server templates again. Kept to measure the
-    TTFT that costs against the single wrap."""
+    """InferenceX's double chat template: the client applies the template and the server applies it again to the user content."""
 
     def content(self, prompt):
         return self.tokenizer.apply_chat_template(

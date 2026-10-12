@@ -1,10 +1,4 @@
-"""Multi-turn traces: sessions of ordered turns and how the next turn waits.
-
-SessionTrace groups a RealTrace's requests into sessions and carries the
-per-turn pacing policy as data. LoadedSessionTrace builds one from sessions
-a profile's data yields: ShareGPT conversations or agent trajectories. The
-dispatch that feeds engine replies into later turns stays in modes/serve.py.
-"""
+"""Multi-turn traces: sessions of ordered turns built from ShareGPT conversations or agent trajectories, plus the per-turn wait policy."""
 
 import asyncio
 import itertools
@@ -20,11 +14,7 @@ from .live import RealTrace, Request, est_tokens, load_sharegpt
 
 @dataclass(frozen=True)
 class TurnPacing:
-    """per-session runs a session's turns back to back; interleaved puts a
-    barrier after every turn index across sessions. Waits are added after
-    each turn: fixed tool and human gaps, plus each turn's recorded gaps when
-    use_recorded_waits. use_recorded_arrivals starts each session at its
-    recorded arrival instead of t=0 or a generated schedule."""
+    """per-session runs a session's turns back to back; interleaved waits at a barrier after every turn index. Tool and human waits follow each turn, plus recorded gaps when use_recorded_waits; use_recorded_arrivals starts each session at its recorded arrival."""
 
     pacing: str = "per-session"
     tool_wait_ms: float = 0.0
@@ -34,13 +24,9 @@ class TurnPacing:
 
 
 class SessionTrace(RealTrace):
-    """A RealTrace whose requests are turns: sessions() groups them by
-    session_id in first-appearance order, each ordered by turn.
+    """A RealTrace whose requests are turns; sessions() groups them by session_id in first-appearance order, each ordered by turn.
 
-    replies maps a session id to its assistant placeholder dicts: serve
-    writes each turn's engine reply into them, and later turns' messages
-    hold the same dicts. Empty for a trace that keeps its recorded replies.
-    """
+    replies maps a session id to its assistant placeholder dicts, which later turns' messages share; empty when recorded replies are kept."""
 
     pacing = TurnPacing()
     replies: Mapping = MappingProxyType({})
@@ -58,12 +44,7 @@ class SessionTrace(RealTrace):
 
 
 def turn_wait_metadata(turn: dict) -> dict:
-    """Copy optional inter-turn wait fields from a trajectory turn.
-
-    Accepts the names used by claw-eval conversion (`tool_ms`) and the
-    TraceLab-style aliases (`tool_wait_after_ms`, `human_wait_after_ms`).
-    Missing fields are 0.
-    """
+    """The inter-turn wait fields of a trajectory turn (tool_wait_after_ms, human_wait_after_ms), accepting the `*_ms` and `*_wait_ms` aliases; missing is 0."""
     def _ms(*keys: str) -> float:
         for key in keys:
             if key in turn and turn[key] is not None:
@@ -82,7 +63,7 @@ def turn_wait_metadata(turn: dict) -> dict:
 
 
 def session_arrival_ms(entry: dict) -> float:
-    """Session start offset in milliseconds. Missing / invalid -> 0."""
+    """Session start offset in milliseconds; missing or invalid is 0."""
     for key in ("arrival_time_ms", "arrival_time"):
         if key in entry and entry[key] is not None:
             try:
@@ -94,9 +75,7 @@ def session_arrival_ms(entry: dict) -> float:
 
 @dataclass
 class MultiTurnSession:
-    """One loaded conversation: its turns as Requests with growing history.
-    assistant_messages are the live dicts later turns hold; empty for a
-    trajectory, which keeps its recorded assistant text."""
+    """One conversation as Requests with growing history; assistant_messages are the dicts later turns share, empty for a trajectory."""
 
     session_id: int
     turns: list
@@ -105,12 +84,7 @@ class MultiTurnSession:
 
 
 class LoadedSessionTrace(SessionTrace):
-    """Sessions shuffled with the seed, first num_sessions kept: every
-    session's turns up to max_turn_index, turn 0 carrying the session's
-    recorded arrival. max_turns is the longest session as loaded, before that
-    cut. Warmup draws cycle the sessions turn-major (A1, B1, A2, B2, ...),
-    repeating their own turns. The profile it was built from names it in
-    source_meta."""
+    """Sessions shuffled with the seed and cut to num_sessions, turns up to max_turn_index, turn 0 carrying the recorded arrival. max_turns is the longest session before the cut; warmup draws cycle the sessions turn-major."""
 
     def __init__(self, sessions, path, reader, seed=42, num_sessions=100, warmup=0,
                  max_turn_index=None, pacing=None, profile=None):
@@ -150,14 +124,9 @@ class LoadedSessionTrace(SessionTrace):
 
 
 class ShareGPTSessionTrace(LoadedSessionTrace):
-    """ShareGPT conversations as growing-history turns:
-      turn 1: [system, human1]                              max tokens osl1
-      turn 2: [system, human1, assistant1, human2]          max tokens osl2
-    Pairs stop at the first reply outside the OSL bounds and turns at the
-    first that overflows max_isl_tokens; conversations with fewer than
-    min_turns are skipped, longer ones cut at max_turns. Loads up to 3x
-    num_sessions. Later turns share the assistant dicts, so serve can replace
-    ShareGPT's recorded reply with the engine's."""
+    """ShareGPT conversations as growing-history turns, loading up to 3x num_sessions.
+
+    Pairs stop at the first reply outside the output length bounds and turns at the first that overflows max_isl_tokens; conversations under min_turns are skipped, longer ones cut at max_turns."""
 
     def __init__(self, min_turns=3, max_turns=10, num_sessions=200, seed=42,
                  system_prompt="You are a helpful assistant.", max_isl_tokens=8192,
@@ -204,13 +173,9 @@ class ShareGPTSessionTrace(LoadedSessionTrace):
 
 
 class TrajectorySessionTrace(LoadedSessionTrace):
-    """Agent trajectories (SWE-bench, TerminalBench, OSWorld), one session per
-    line: {"session_id", "turns": [{"messages", "osl_tokens"}, ...]}.
-    Sessions shorter than min_turns are skipped, longer ones cut at
-    max_turns; a session stops at the first turn whose estimated prompt
-    exceeds max_isl_tokens less its output and the safety margin. Turn
-    metadata records the source ids, the planned token budget and the
-    recorded inter-turn waits."""
+    """Agent trajectories, one session per JSONL line: {"session_id", "turns": [{"messages", "osl_tokens"}, ...]}.
+
+    Sessions under min_turns are skipped, longer ones cut at max_turns; a session stops at the first turn whose estimated prompt exceeds max_isl_tokens less its output and the safety margin."""
 
     def __init__(self, path, min_turns=3, max_turns=30, num_sessions=100, seed=42,
                  max_isl_tokens=131072, max_osl_tokens=2000, context_safety_margin_tokens=0,
@@ -258,12 +223,7 @@ def inter_turn_wait_s(
     human_wait_ms: float = 0.0,
     use_recorded_waits: bool = False,
 ) -> float:
-    """Seconds to sleep after a turn before the next turn in the same session.
-
-    Defaults are zero (auto-mode: no human approval pause, ignore recorded
-    tool gaps). ``--use-recorded-waits`` adds ``tool_wait_after_ms`` and
-    ``human_wait_after_ms`` from the turn metadata when present.
-    """
+    """Seconds to sleep after a turn: the fixed tool and human waits, plus the recorded waits in the turn metadata when use_recorded_waits."""
     recorded_tool = 0.0
     recorded_human = 0.0
     if use_recorded_waits and request is not None:

@@ -123,8 +123,7 @@ class NoEnviron(unittest.TestCase):
         self.assertEqual(stale, [], "no longer reads env: drop it from ALLOWLIST")
 
     def test_agents_law_6_names_every_variable_the_allowlist_reads(self):
-        """AGENTS.md law 6 lists the env vars the allowlisted files read; a
-        new one read without being named there fails."""
+        """AGENTS.md law 6 names every env var the allowlisted files read."""
         law = (REPO / "AGENTS.md").read_text().split("6. No module outside", 1)[1].split("\n7. ", 1)[0]
         for path in sorted(ALLOWLIST):
             for name in env_names(REPO / path):

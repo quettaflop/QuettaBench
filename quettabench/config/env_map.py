@@ -1,39 +1,32 @@
-# Every env var the pre-refactor code reads, mapped to the Config field it
-# sets, so old habits keep working. read_env() and export() are the
-# package's own reads and writes of os.environ; tests/contracts/test_env_map.py
-# enforces it, with an allowlist of older readers that only shrinks.
+"""Maps environment variables to Config fields; read_env() and export() are the only reads and writes of os.environ."""
 import os
 
 from quettabench.config.schema import ConfigError
 
 
 def _truthy(raw):
-    """serve.py's ENABLE_EP rule: 1/true/on/yes."""
+    """True for 1, true, on or yes, in any case."""
     return raw.strip().lower() in {"1", "true", "on", "yes"}
 
 
 def _nonempty(raw):
-    """crossval's XVAL_ALLOW_METHOD_MISMATCH rule (old table.py): any non-empty value."""
+    """True for any non-empty value."""
     return bool(raw)
 
 
 def _attn_ffn(raw):
-    """xval_config.afd's XVAL_AFD='attn=N,ffn=M' as the serving style afd:<N>a<M>f.
-    A missing or extra key raises instead of being ignored."""
+    """'attn=N,ffn=M' as the serving style afd:<N>a<M>f; a missing or extra key raises ValueError."""
     pools = dict(part.split("=", 1) for part in raw.split(","))
     if set(pools) != {"attn", "ffn"}:
         raise ValueError(raw)
     return f"afd:{int(pools['attn'])}a{int(pools['ffn'])}f"
 
 
-# A second var that names the same field as an earlier one is refused when
-# their values differ, instead of the first silently winning.
+# Two vars for one field with different values are refused instead of the first winning.
 CLASHES = {"XVAL_TRACE": "XVAL_CORPUS", "XVAL_AFD": "XVAL_SERVING_STYLE"}
 
 
-# env var -> (Config path, converter, old reader). The old reader is where
-# the pre-refactor code read the var, as file:line at 8bd8bd6; every one of
-# those files has since retired.
+# env var -> (Config path, converter, old reader as file:line).
 ENV_MAP = {
     "XVAL_LINK_PROFILE": ("hardware.link_profile", str, "xval_config.py:79,283 vmin_fit.py:27,151"),
     "XVAL_BACKEND": ("hardware.backend", str, "xval_config.py:182"),
@@ -51,8 +44,7 @@ ENV_MAP = {
     "ENABLE_EP": ("engine.ep", _truthy, "serve.py:1323"),
     "NCCL_ALGO": ("hardware.collective.NCCL_ALGO", str, "vmin_fit.py:30,149 table.py:119"),
     "NCCL_PROTO": ("hardware.collective.NCCL_PROTO", str, "vmin_fit.py:30,150 table.py:120"),
-    # The other five collective pins: the caller's value beat the hardware
-    # yaml in bench.sh:41-45 and vmin_fit.py:28-30 (as of 8bd8bd6).
+    # The caller's value beats the hardware yaml for the collective pins.
     "NCCL_P2P_LEVEL": ("hardware.collective.NCCL_P2P_LEVEL", str, "bench.sh:42 vmin_fit.py:30"),
     "NCCL_IB_DISABLE": ("hardware.collective.NCCL_IB_DISABLE", str, "bench.sh:42 vmin_fit.py:30"),
     "NCCL_SOCKET_IFNAME": ("hardware.collective.NCCL_SOCKET_IFNAME", str,
@@ -64,7 +56,7 @@ ENV_MAP = {
     "DS_ENGINE_SHA": ("provenance.engine_sha", str, "cache.py:46, used when QS_SHA is unset"),
     "CUDA_VISIBLE_DEVICES": ("hardware.visible_devices", str, "trace_serve.py:111,491"),
     "HF_HOME": ("hardware.hf_home", str, "provision.py writes it to .env; just loads it"),
-    # Not a field: an input to backend auto-detection (xval_config.py:191).
+    # Not a field: an input to backend auto-detection.
     "TPU_NAME": ("detect.tpu_name", str, "xval_config.py:191"),
 }
 
@@ -72,14 +64,7 @@ ENV_MAP = {
 def read_env(env=None, only=None):
     """{Config path: value} for every mapped var that is set and non-empty.
 
-    env=None reads the process environment; only, when given, limits the
-    read to those var names. Where two vars feed one field the
-    first in ENV_MAP order wins (QS_SHA over DS_ENGINE_SHA, as cache.py did),
-    except the pairs in CLASHES: XVAL_CORPUS and XVAL_TRACE both set to
-    different files is refused, since the source a grid run reads would
-    depend on prompt_mode silently, and so is XVAL_AFD beside a different
-    XVAL_SERVING_STYLE.
-    """
+    env=None reads os.environ; only limits the read to those var names. The first var in ENV_MAP order wins a shared field, except the CLASHES pairs, which raise ConfigError when their values differ."""
     if env is None:
         env = os.environ
     out = {}
@@ -108,16 +93,12 @@ def torchrun_rank():
 
 
 def with_env(values):
-    """This process's environment with values added: the env of a child that
-    must get a secret through its environment rather than its argv."""
+    """A copy of os.environ with values added, for a child that takes a secret through its environment rather than argv."""
     return {**os.environ, **{k: str(v) for k, v in values.items()}}
 
 
 def export(values):
-    """Put each non-empty value into the process environment, replacing what
-    is there: the Config already resolved env against yaml and --set, so its
-    value is the one that holds. An in-process engine reads its NCCL settings
-    and CUDA_VISIBLE_DEVICES there. Returns the names exported."""
+    """Set each non-empty value in os.environ, replacing what is there, and return the names set."""
     names = []
     for var, value in values.items():
         if value:

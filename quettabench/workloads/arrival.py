@@ -1,10 +1,4 @@
-"""Request arrival schedules, one spec syntax for every caller.
-
-parse_arrival turns a spec string (trace | steady | poisson:<r> |
-ramp:<a>:<b> | burst:<n>x<size>@<gap>) into offsets in seconds from the
-start of the run. serve.py's --arrival/--target-rate pair is translated into
-that syntax by arrival_spec.
-"""
+"""Arrival schedules: parse_arrival turns a spec (trace, steady, poisson:<r>, ramp:<a>:<b>, burst:<n>x<size>@<gap>) into offsets in seconds from the start of the run."""
 
 import math
 import random
@@ -13,22 +7,11 @@ ARRIVAL_PATTERNS = ["steady", "poisson", "ramp"]
 
 
 def poisson_arrivals(num_requests: int, target_rate: float, seed: int = 42) -> list[float]:
-    """
-    Poisson process: inter-arrival times are exponentially distributed.
-
-    Args:
-        num_requests: total number of requests to schedule
-        target_rate: average requests per second
-        seed: random seed for reproducibility
-
-    Returns:
-        List of cumulative arrival times (seconds from t=0)
-    """
+    """Cumulative arrival times in seconds of a Poisson process at target_rate requests per second."""
     rng = random.Random(seed)
     times = []
     t = 0.0
     for _ in range(num_requests):
-        # Exponential inter-arrival time: mean = 1/rate
         inter_arrival = -math.log(1.0 - rng.random()) / target_rate
         t += inter_arrival
         times.append(t)
@@ -36,12 +19,7 @@ def poisson_arrivals(num_requests: int, target_rate: float, seed: int = 42) -> l
 
 
 def ramp_arrivals(num_requests: int, start_rate: float, end_rate: float, seed: int = 42) -> list[float]:
-    """
-    Linearly increasing arrival rate from start_rate to end_rate.
-    Useful for finding saturation point.
-
-    Returns list of cumulative arrival times.
-    """
+    """Cumulative arrival times with the rate rising linearly from start_rate to end_rate."""
     rng = random.Random(seed)
     times = []
     t = 0.0
@@ -55,16 +33,7 @@ def ramp_arrivals(num_requests: int, start_rate: float, end_rate: float, seed: i
 
 
 def burst_arrivals(num_requests: int, n_bursts: int, burst_size: int, gap_s: float) -> list[float]:
-    """
-    Injected bursts: n_bursts groups of burst_size requests land at the same
-    instant, gap_s seconds apart. Deterministic (no randomness).
-
-    The spec must cover the trace: raises ValueError when num_requests exceeds
-    n_bursts * burst_size, because silently spilling extra requests into a tail
-    would blur the recovery window the burst exists to measure.
-
-    Returns list of cumulative arrival times.
-    """
+    """Arrival times for n_bursts groups of burst_size requests, gap_s seconds apart; raises ValueError when num_requests exceeds n_bursts * burst_size."""
     if num_requests > n_bursts * burst_size:
         raise ValueError(
             f"burst spec covers {n_bursts * burst_size} requests but the trace has "
@@ -86,9 +55,7 @@ def positive(rate, spec):
 
 
 def parse_arrival(spec: str, n: int, seed: int = 42) -> list[float] | None:
-    """Arrival offsets in seconds for n requests from one spec string:
-    trace (None: keep the trace's own times), steady (all at t=0),
-    poisson:<rate>, ramp:<start>:<end>, burst:<n>x<size>@<gap_s>."""
+    """Arrival offsets in seconds for n requests from a spec; trace returns None to keep the trace's own times, steady is all at 0."""
     if spec == "trace":
         return None
     if spec == "steady":
@@ -120,8 +87,7 @@ def offered_rate(spec: str) -> float:
 
 
 def arrival_spec(pattern: str, target_rate: float) -> str:
-    """serve.py's --arrival/--target-rate pair as a parse_arrival spec; ramp
-    climbs from a tenth of the rate to the rate."""
+    """The --arrival/--target-rate pair as a parse_arrival spec; ramp climbs from a tenth of the rate to the rate."""
     if pattern == "steady":
         return "steady"
     if pattern == "poisson":
@@ -138,15 +104,12 @@ def make_arrival_times(
     target_rate: float = 10.0,
     seed: int = 42,
 ) -> list[float]:
-    """serve.py's entry: translate the pair, then parse_arrival. concurrency
-    is unused (steady paces by semaphore, not by schedule)."""
+    """Arrival offsets for a pattern and rate; concurrency is unused because steady paces by semaphore."""
     return parse_arrival(arrival_spec(pattern, target_rate), num_requests, seed)
 
 
 def rebase_arrivals(ts: list, speed: float) -> list[float]:
-    """Submission offsets: arrival times shifted by the earliest and divided by
-    speed. A missing time takes part in the shift as 0 and submits at once;
-    no times at all gives all 0 (trace_serve's plan_arrivals, unchanged)."""
+    """Arrival times shifted by the earliest and divided by speed; a missing time counts as 0 and submits at once, no times at all gives all 0."""
     if all(t is None for t in ts):
         return [0.0] * len(ts)
     t0 = min(0.0 if t is None else t for t in ts)

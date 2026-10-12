@@ -1,5 +1,4 @@
-"""Traces, arrivals, grid prompts, the profile registry, profile sources and real-trace datasets,
-and every runnable profile's pinned content hash."""
+"""Traces, arrivals, grid prompts, the profile registry, profile sources, real-trace datasets and every runnable profile's pinned content hash."""
 
 import contextlib
 import dataclasses
@@ -605,8 +604,7 @@ def write_fixtures(root):
 
 
 class FakeTokenizer:
-    """Lossy on purpose: encode drops ids divisible by 7, so the random-token
-    profiles pad with their rng."""
+    """Lossy on purpose: encode drops ids divisible by 7, so the random-token profiles pad with their rng."""
 
     vocab_size = 1000
 

@@ -1,5 +1,4 @@
-# yaml + env + --set -> Config. Precedence, highest first: --set (cli), env
-# (via env_map), run yaml, model yaml, hardware yaml, schema defaults.
+"""Builds Configs from yaml, env and --set; precedence high to low is --set, env, run yaml, model yaml, hardware yaml, schema defaults."""
 import itertools
 import re
 import shutil
@@ -38,10 +37,7 @@ RUN_KEYS = ("model", "engine", "workload", "mode", "hardware", "matrix")
 HARDWARE_FILE_KEYS = ("world", "timing_steps", "max_seq_headroom", "collective", "provision")
 GRIDS_KEYS = ("grids", "step_points")
 RATE_ARRIVALS = ("poisson", "ramp", "burst")
-# run_name is the dir results/<run_name>/, which --overwrite empties: one plain
-# name, never a path, and none of the dirs other writers own under results/.
-# At most 200 chars, so clear_run_dir's hidden sibling name fits in 255, and
-# no trailing '.'.
+# run_name names results/<run_name>/: one plain name of at most 200 chars (so clear_run_dir's sibling name fits in 255), no trailing '.'.
 RUN_NAME = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._-]{0,198}[A-Za-z0-9_-])?")
 RESERVED_RUN_NAMES = ("probes", "xval", "baselines")
 # path -> (lowest, highest) allowed; None is no bound
@@ -135,8 +131,7 @@ def parse_set(item):
 
 
 def arrival_kind(spec, num_requests=0):
-    """The arrival's kind, the spec checked by workloads.arrival.parse_arrival
-    for num_requests requests, so a burst that does not cover them fails here."""
+    """The arrival kind of spec; raises if parse_arrival rejects it for num_requests requests."""
     try:
         arrival.parse_arrival(str(spec), num_requests)
     except ValueError as e:
@@ -146,8 +141,7 @@ def arrival_kind(spec, num_requests=0):
 
 
 def detect_backend(tpu_name):
-    """The accelerator from the tooling on PATH: nvidia-smi cuda, rocm-smi rocm,
-    neuron-ls neuron, libtpu (or TPU_NAME) tpu, else cpu."""
+    """The accelerator from the tooling on PATH: nvidia-smi cuda, rocm-smi rocm, neuron-ls neuron, libtpu (or TPU_NAME) tpu, else cpu."""
     for tool, backend in (("nvidia-smi", "cuda"), ("rocm-smi", "rocm"), ("neuron-ls", "neuron")):
         if shutil.which(tool):
             return backend
@@ -157,8 +151,7 @@ def detect_backend(tpu_name):
 
 
 def detect_link_profile(backend):
-    """nvlink when nvidia-smi topo shows an NV* link, else pcie; non-cuda
-    backends take nvlink, the profile without NCCL pins."""
+    """nvlink when nvidia-smi topo shows an NV* link, else pcie; non-cuda backends take nvlink, the profile without NCCL pins."""
     if backend != "cuda":
         return "nvlink"
     try:
@@ -189,10 +182,7 @@ def _force(values, origins, path, value, by, where):
 
 
 def _profile_prefix_caching(values, origins, where):
-    """A serve run on a workload profile with prefix_caching_required gets
-    engine.prefix_caching true (origin "profile"), as the old sweeps passed
-    --enable-prefix-caching; a false the run asked for (run yaml, env,
-    --set) is refused, one from a default, model or hardware yaml is not."""
+    """Sets engine.prefix_caching true (origin "profile") for a serve run on a profile that requires it; a false from the run yaml, env or --set is refused."""
     source = values["workload.source"]
     if values["mode.grid"] is not None or (source not in live.PROFILES
                                            and source not in live.PROFILE_ALIASES):
@@ -337,9 +327,7 @@ def check_run_name(name, where):
 def load(run_yaml, overrides=(), env=None):
     """Configs for one run yaml: one, or one per point of its `matrix:`.
 
-    env=None reads the process environment through env_map.read_env.
-    The configs/ root is the run yaml's grandparent (configs/runs/<name>.yaml).
-    """
+    env=None reads os.environ. The configs/ root is the run yaml's grandparent (configs/runs/<name>.yaml)."""
     run_path = Path(run_yaml)
     configs = run_path.resolve().parents[1]
     raw = _read_yaml(run_path)

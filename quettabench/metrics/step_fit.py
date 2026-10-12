@@ -1,18 +1,10 @@
-"""Per-cell step fit: decode cost per step from timings at a few step counts.
-
-A grid cell is timed at each step point (tokens generated); the slope of
-time vs steps is the marginal decode cost, the intercept the fixed cost
-(prefill and launch). fit_run derives a run's step section from its rows.
-"""
+"""Per-cell step fit: the slope of batch time against step count is the decode cost per step, the intercept the fixed cost (prefill and launch)."""
 
 GIB = 1 << 30
 
 
 def fit(xs, ys):
-    """Least-squares line through (xs, ys): (slope, intercept, r2).
-
-    r2 is 0.0 when ys has no spread.
-    """
+    """Least-squares line through (xs, ys) as (slope, intercept, r2); r2 is 0.0 when ys has no spread."""
     n = len(xs)
     mx, my = sum(xs) / n, sum(ys) / n
     sxx = sum((x - mx) ** 2 for x in xs)
@@ -26,12 +18,7 @@ def fit(xs, ys):
 
 
 def ms_at_eval(ms_slope, attn_share, eval_pos, mean_steps, ctx):
-    """Slope moved from the fit centroid (ctx + mean_steps) to ctx + eval_pos.
-
-    Only the KV-bound share of a step (attn_share) grows with KV length, so
-    the shift is attn_share * (eval_pos - mean_steps) / (ctx + mean_steps):
-    a sub-2% correction that vanishes as ctx grows.
-    """
+    """Slope moved from the fit centroid (ctx + mean_steps) to ctx + eval_pos; only the KV-bound share (attn_share) of a step grows with KV length."""
     return ms_slope * (1 + attn_share * (eval_pos - mean_steps) / (ctx + mean_steps))
 
 
@@ -41,17 +28,9 @@ def _get(row, name):
 
 
 def fit_run(rows, eval_pos, kv_bytes, weights_gib):
-    """The step section: one entry per grid cell, in the order cells first appear.
+    """One step entry per grid cell, in order of first appearance.
 
-    A row with measured_ms_per_step (a bench LOOP line) is already a per-step
-    number and passes through as {ctx, bs, tp, ms_per_step, measured: True}.
-    Other rows count only in phase "fit": per attempt, the batch wall at each
-    step point (first row of the batch, in run order) is fit against the step
-    points, and the attempt with the highest r2 is kept, the earliest on a tie.
-    ms_per_step is that slope in ms at the fit centroid; kv_gib is the cell's
-    prompt KV (ctx * bs * kv_bytes) and attn_share its fraction of
-    KV + weights, the share ms_at_eval moves to eval_pos.
-    """
+    A row with measured_ms_per_step passes through as {ctx, bs, tp, ms_per_step, measured: True}. Other rows count only in phase "fit": per attempt the first row's batch wall at each step point is fit against the step points, and the highest r2 wins, the earliest on a tie."""
     cells = {}
     for row in rows:
         cell = _get(row, "cell")

@@ -1,10 +1,4 @@
-"""
-Metrics aggregation for benchmark results.
-
-Computes p50/p90/p99 for TTFT, TPOT, ITL, E2EL.
-Tracks successful vs failed requests separately.
-Reports input tok/s and output tok/s separately (not just total).
-"""
+"""Aggregates request results into BenchmarkSummary: TTFT, TPOT, ITL and E2EL percentiles over successful requests, failures counted separately, input and output token throughput reported apart."""
 
 import json
 import re
@@ -14,7 +8,7 @@ from dataclasses import dataclass, field
 
 @dataclass
 class RequestResult:
-    """Per-request benchmark result. Shared across all backends."""
+    """Per-request benchmark result, shared by every backend."""
     success: bool
     ttft: float | None = None          # seconds to first token
     itl: list = field(default_factory=list)  # inter-token latencies (seconds)
@@ -22,42 +16,31 @@ class RequestResult:
     input_tokens: int = 0
     output_tokens: int = 0
     error: str | None = None
-    # Failure taxonomy. "timeout" specifically means the client cut the stream
-    # off, which truncates the SLOWEST requests -- the ones that carry the tail
-    # of the latency distribution. Aggregates stay success-only, but a run whose
-    # failures are timeouts has a censored tail and must not be read as clean.
+    # A timeout means the client cut the stream, so the slowest requests are missing from the latency tail.
     error_kind: str | None = None      # "timeout" | "http_error" | "client_error"
-    # True once the server sent a usage block. Without it input/output token
-    # counts are 0 and every throughput number is meaningless.
+    # Without a usage block the token counts are 0 and throughputs are meaningless.
     usage_reported: bool = False
-    # Set for requests held out of the summary via --discard-first. They stay in
-    # per_request for inspection; they just do not feed the percentiles.
+    # Held out of the summary by --discard-first; still kept in per_request.
     excluded_from_summary: bool = False
 
-    # Captured only when asked; used to splice the engine reply into later turns.
-    # Not written to the result JSON.
+    # Captured only when asked, to splice the engine reply into later turns; not written to the result JSON.
     generated_text: str | None = None
-    # Which first-token rule timed this request: HttpDriver's chat endpoint
-    # ("first_payload_chunk") or completions ("first_nonempty_text").
+    # First-token rule: the chat endpoint's "first_payload_chunk" or completions' "first_nonempty_text".
     ttft_rule: str | None = None
-    # What TTFT is measured from: "slot" (closed loop, the concurrency slot
-    # grant) or "arrival" (open loop, the scheduled arrival).
+    # TTFT start: "slot" (closed loop, the concurrency slot grant) or "arrival" (open loop, the scheduled arrival).
     ttft_basis: str | None = None
-    # Leading generated tokens equal to the trace's reference reply (SPECSUM);
-    # None unless the trace has output_token_ids and the driver returned tokens.
+    # Leading generated tokens equal to the trace's reference reply; None without output_token_ids and returned tokens.
     accepted_tokens: int | None = None
     # Generated token ids, when the driver returns them. Not written.
     generated_token_ids: list | None = None
     # {ctx, bs, tp, step_point, phase, attempt} for grid runs, else None.
     cell: dict | None = None
-    # Grid runs: wall time of the one generate() the whole batch ran in; every
-    # row of the batch carries the same value (InProcessDriver.run).
+    # Wall time of the one generate() the whole batch ran in; every row of the batch carries it.
     batch_wall_s: float | None = None
     # mode.returns=logits: {argmax, top2_gap, logprob}, entry i scoring prompt token i + 1.
     logits: dict | None = None
 
-    # Client-side request shape/timing. These do not replace TTFT/TPOT/E2EL;
-    # they explain scheduler pressure and workload shape for later predictors.
+    # Client-side request shape and timing.
     request_index: int | None = None
     max_tokens_requested: int | None = None
     message_count: int | None = None
@@ -73,10 +56,7 @@ class RequestResult:
     turn_index: int | None = None      # multi-turn: which turn (0-indexed)
     session_id: int | None = None      # multi-turn: conversation/session id
 
-    # Multi-turn cache estimate fields. These are inferred from exact
-    # per-session prompt-token deltas observed by the benchmark runner. They are
-    # not engine-reported prefix-cache hits, but they are much better than
-    # reconstructing cache state from per-turn averages after the fact.
+    # Multi-turn cache estimate from per-session prompt-token deltas, not engine-reported prefix-cache hits.
     previous_context_tokens: int | None = None
     total_context_tokens: int | None = None
     new_prefill_tokens: int | None = None
@@ -95,22 +75,12 @@ class RequestResult:
 
     @property
     def tpot(self) -> float | None:
-        """Time per output token (mean ITL), excluding first token.
-
-        mean(ITL) is only inter-TOKEN when the stream delivered ~one counted
-        chunk per token. When coverage is incomplete (a server streaming
-        channels the client didn't count, or multi-token chunks), mean(ITL)
-        is inter-CHUNK and can be inflated by an order of magnitude -- in
-        that case, and when ITL is missing entirely (models that don't
-        stream token-by-token), fall back to the wall-clock formula
-        (e2el - ttft) / (output_tokens - 1).
-        """
+        """Mean ITL, excluding the first token; falls back to (e2el - ttft) / (output_tokens - 1) when ITL is missing or covers under 80% of the tokens (multi-token chunks make it inter-chunk)."""
         wall_clock_ok = (
             self.e2el is not None and self.ttft is not None
             and self.output_tokens > 1
         )
         if self.itl:
-            # Coverage guard: expect ~(output_tokens - 1) ITL entries.
             incomplete = (
                 self.output_tokens > 1
                 and len(self.itl) < 0.8 * (self.output_tokens - 1)
@@ -118,7 +88,6 @@ class RequestResult:
             if incomplete and wall_clock_ok:
                 return (self.e2el - self.ttft) / (self.output_tokens - 1)
             return sum(self.itl) / len(self.itl)
-        # Fallback: compute from e2el and ttft
         if wall_clock_ok:
             decode_time = self.e2el - self.ttft
             return decode_time / (self.output_tokens - 1)
@@ -169,13 +138,7 @@ def annotate_multi_turn_cache_estimate(
     previous_output_tokens: int = 0,
     reply_in_cache: bool = False,
 ) -> RequestResult:
-    """Attach per-session cache-estimate metadata to a multi-turn result.
-
-    Client-side estimate from observed prompt-token deltas, not engine telemetry.
-    If ``reply_in_cache``, the previous turn's output is treated as reusable
-    prefix (engine-generated reply spliced into later prompts); otherwise the
-    reusable prefix stops at the previous prompt.
-    """
+    """Attach the cache estimate to a multi-turn result; with reply_in_cache the previous turn's output counts as reusable prefix, otherwise the prefix stops at the previous prompt."""
     result.session_id = session_id
     result.turn_index = turn_index
     result.previous_context_tokens = max(0, int(previous_context_tokens or 0))
@@ -223,17 +186,12 @@ def annotate_multi_turn_cache_estimate(
 class BenchmarkSummary:
     """Aggregated metrics for a benchmark run."""
 
-    # Run config
     model: str = ""
     profile: str = ""
     concurrency: int = 0
-    # Load model this run was driven under. The diagnostics below mean different
-    # things per mode: under closed loop `concurrency` is a real in-flight cap,
-    # under open loop it caps nothing and only sizes warmup.
+    # Closed loop caps in flight at `concurrency`; open loop only sizes warmup with it.
     load_mode: str = ""
-    # Open-loop offered rate. UNITS DEPEND ON MODE: sessions/s for multi-turn
-    # (where the arrival process drives sessions, not turns), requests/s for
-    # single-turn. Compare against the matching served rate, never across.
+    # Open-loop offered rate: sessions/s for multi-turn, requests/s for single-turn.
     target_rate: float = 0.0
     sessions_completed: int = 0
     session_throughput: float = 0.0
@@ -241,87 +199,63 @@ class BenchmarkSummary:
     num_requests: int = 0
     duration_s: float = 0.0
 
-    # Wall-clock window the summary actually describes. Equals duration_s
-    # normally; with --discard-first it is the span of the KEPT requests, so
-    # throughput is not divided by time belonging to held-out warmup.
+    # duration_s, or the span of the kept requests under --discard-first.
     measured_window_s: float = 0.0
-    # Requests held out of the summary by --discard-first.
     excluded_requests: int = 0
 
-    # Request counts
     successful_requests: int = 0
     failed_requests: int = 0
-    # Failure taxonomy. timeout_requests > 0 means the latency tail is censored:
-    # the client killed the slowest requests and they are absent from every
-    # percentile below. Treat such a cell as suspect regardless of success rate.
+    # Above 0 means the latency tail is censored: the slowest requests were cut off and are in no percentile.
     timeout_requests: int = 0
     error_kinds: dict = field(default_factory=dict)
-    # Requests whose failure still yielded a usable TTFT before the stream died.
     failed_with_partial_ttft: int = 0
-    # Successful requests that carried a usage block. If this is 0, all token
-    # counts and throughputs below are zero-filled, not measured.
+    # 0 means every token count and throughput is zero-filled, not measured.
     usage_reported_requests: int = 0
 
-    # Throughput over total wall clock. For schedules with idle stretches (an
-    # open-loop run below saturation) this measures the offered rate, not what
-    # the server could sustain.
+    # Over total wall clock; an open-loop run below saturation measures the offered rate here.
     request_throughput: float = 0.0     # req/s
     input_token_throughput: float = 0.0  # input tok/s
     output_token_throughput: float = 0.0  # output tok/s
     total_token_throughput: float = 0.0   # (input + output) tok/s
 
-    # Throughput over busy time (union of in-flight intervals), which excludes
-    # genuinely idle wall clock. Prefer these when asking what the server did
-    # rather than what the schedule asked of it.
+    # Over busy time (union of in-flight intervals), excluding idle wall clock.
     busy_time_s: float = 0.0
     busy_request_throughput: float = 0.0
     busy_input_token_throughput: float = 0.0
     busy_output_token_throughput: float = 0.0
     busy_total_token_throughput: float = 0.0
 
-    # Time-weighted in-flight request count over the busy window. This is the
-    # load the server actually saw. When it sits well below the nominal
-    # concurrency the run spent much of its time draining (the multi-turn
-    # per-turn barrier does exactly this), and every throughput figure above
-    # describes the schedule rather than the hardware.
+    # Time-weighted in-flight count over the busy window; far below concurrency means the run mostly drained.
     mean_inflight_requests: float = 0.0
     max_inflight_requests: int = 0
-    # Stationarity: mean in-flight over the first vs second half of the run.
-    # Rising => the queue is growing and the averages above depend on when the
-    # run was stopped. Unlike Little's Law (an identity given how
-    # mean_inflight_requests is computed), this can actually fail.
+    # Mean in-flight over each half of the run; rising means the queue is growing.
     mean_inflight_first_half: float = 0.0
     mean_inflight_second_half: float = 0.0
 
-    # Token counts
     total_input_tokens: int = 0
     total_output_tokens: int = 0
 
-    # TTFT (ms)
     mean_ttft_ms: float = 0.0
     median_ttft_ms: float = 0.0
     p90_ttft_ms: float = 0.0
     p99_ttft_ms: float = 0.0
 
-    # TPOT / mean ITL (ms) -- time per output token excluding first
     mean_tpot_ms: float = 0.0
     median_tpot_ms: float = 0.0
     p90_tpot_ms: float = 0.0
     p99_tpot_ms: float = 0.0
 
-    # ITL (ms) -- individual inter-token latencies (all tokens pooled)
+    # Every inter-token latency pooled across requests.
     mean_itl_ms: float = 0.0
     median_itl_ms: float = 0.0
     p90_itl_ms: float = 0.0
     p99_itl_ms: float = 0.0
 
-    # E2EL (ms)
     mean_e2el_ms: float = 0.0
     median_e2el_ms: float = 0.0
     p90_e2el_ms: float = 0.0
     p99_e2el_ms: float = 0.0
 
-    # Errors
     errors: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -334,23 +268,7 @@ class BenchmarkSummary:
 
 
 def _busy_time_and_load(results) -> tuple[float, float, int]:
-    """Return (busy_time_s, mean_inflight_requests, max_inflight_requests).
-
-    busy_time is the union of the in-flight intervals -- wall-clock time during
-    which at least one request was outstanding. Dividing throughput by this
-    instead of total duration removes genuinely idle stretches, which matters
-    for open-loop runs whose arrival rate leaves the server waiting.
-
-    It does NOT rescue the multi-turn per-turn barrier. During a turn's drain
-    the server is busy, just underutilized, so the interval union still covers
-    it. mean_inflight is the metric that exposes that: since the integral of
-    the concurrency step function equals the sum of request durations,
-    mean_inflight = sum(durations) / busy_time. A cell whose mean_inflight sits
-    far below its nominal concurrency spent much of the run draining, and its
-    throughput is a property of the schedule rather than of the server.
-
-    Failed requests are included -- a timed-out request occupied the server.
-    """
+    """(busy_time_s, mean_inflight_requests, max_inflight_requests); busy time is the union of the in-flight intervals and mean in-flight is sum(durations) / busy_time. Failed requests count because they occupied the server."""
     intervals = [
         (r.semaphore_acquired_at_s, r.completed_at_s)
         for r in results
@@ -365,7 +283,7 @@ def _busy_time_and_load(results) -> tuple[float, float, int]:
     busy = 0.0
     cur_start, cur_end = intervals[0]
     for start, end in intervals[1:]:
-        if start > cur_end:          # genuine idle gap
+        if start > cur_end:  # idle gap
             busy += cur_end - cur_start
             cur_start, cur_end = start, end
         else:
@@ -375,7 +293,6 @@ def _busy_time_and_load(results) -> tuple[float, float, int]:
     total_request_time = sum(end - start for start, end in intervals)
     mean_inflight = total_request_time / busy if busy > 0 else 0.0
 
-    # Sweep line for the peak.
     events = [(s, 1) for s, _ in intervals] + [(e, -1) for _, e in intervals]
     events.sort(key=lambda ev: (ev[0], ev[1]))
     inflight = 0
@@ -388,19 +305,7 @@ def _busy_time_and_load(results) -> tuple[float, float, int]:
 
 
 def _inflight_halves(results) -> tuple[float, float]:
-    """Return time-weighted mean in-flight over the first and second half of the run.
-
-    This is the stationarity test that mean_inflight alone cannot provide.
-    mean_inflight is defined as sum(durations)/busy_time, which makes
-    "busy_throughput x mean_duration == mean_inflight" an algebraic identity --
-    Little's Law is satisfied by construction and validates nothing. Splitting
-    the window uses the TIME ORDERING that mean_inflight discards, so it can
-    actually fail.
-
-    Rising in-flight means arrivals are outrunning departures: the queue is
-    growing, the run never reached steady state, and its averages depend on when
-    you stopped measuring. Falling in-flight means the run is drain-dominated.
-    """
+    """Time-weighted mean in-flight over the first and second half of the run; rising means the queue is growing, falling means the run is drain-dominated."""
     intervals = [
         (r.semaphore_acquired_at_s, r.completed_at_s)
         for r in results
@@ -421,7 +326,6 @@ def _inflight_halves(results) -> tuple[float, float]:
         span = b - a
         if span <= 0:
             return 0.0
-        # Integral of the concurrency step function == summed interval overlap.
         area = sum(max(0.0, min(e, b) - max(s, a)) for s, e in intervals)
         return area / span
 
@@ -432,15 +336,9 @@ PERCENTILE_METHODS = ("nearest", "linear")
 
 
 def percentile(values, p: float, method: str) -> float:
-    """p-th percentile (0-100) of values, sorted here.
+    """p-th percentile (0-100) of values.
 
-    "nearest": sorted[min(n - 1, int(p / 100 * n))], a floor nearest rank;
-    the crossval SERVESUM numbers. Raises ValueError on no values.
-    "linear": interpolate between ranks at p / 100 * (n - 1); the runner
-    summaries. Returns 0.0 on no values.
-    The two disagree on most inputs (tests/golden/REPORT.md, STOP item 4), so
-    every caller names its method.
-    """
+    "nearest" is sorted[min(n - 1, int(p / 100 * n))] and raises ValueError on no values; "linear" interpolates between ranks at p / 100 * (n - 1) and returns 0.0 on no values. The two disagree on most inputs, so every caller names its method."""
     if method not in PERCENTILE_METHODS:
         raise ValueError(f"unknown percentile method {method!r}; expected one of {PERCENTILE_METHODS}")
     sorted_data = sorted(values)
@@ -502,8 +400,7 @@ def sla_verdict(summary: dict, sla_ttft_ms, sla_tpot_ms) -> list[str]:
 
 
 def acceptance(reference_ids, generated_ids) -> tuple[int, float]:
-    """Matched leading-token length and rate between the trace's real assistant
-    tokens and what the engine generated (legacy/trace_serve.py _acceptance)."""
+    """Matched leading-token length and rate between the trace's real assistant tokens and what the engine generated."""
     n = 0
     for a, b in zip(reference_ids, generated_ids):
         if a != b:
@@ -515,11 +412,7 @@ def acceptance(reference_ids, generated_ids) -> tuple[int, float]:
 def burst_recovery(records, sla_ttft_ms, window_s: float = 5.0):
     """(recovery_s, peak_p99) over arrival windows of window_s seconds.
 
-    Records ({arrival_s, ttft_ms}) are bucketed by arrival from the first one;
-    each bucket's p99 TTFT is nearest-rank, as SERVESUM reports. recovery_s is
-    the time from the worst bucket to the first later bucket back at or under
-    the SLA, None if none is. (None, None) with no records or no SLA.
-    """
+    Records ({arrival_s, ttft_ms}) are bucketed by arrival from the first one, each bucket's p99 TTFT nearest-rank. recovery_s is the time from the worst bucket to the first later one at or under the SLA, None if none is; (None, None) with no records or no SLA."""
     if not records or sla_ttft_ms is None:
         return None, None
     rs = sorted(records, key=lambda r: r["arrival_s"])
@@ -545,20 +438,7 @@ def aggregate(
     target_rate: float = 0.0,
     warmup_concurrency: int = 0,
 ) -> BenchmarkSummary:
-    """
-    Aggregate a list of RequestResult into a BenchmarkSummary.
-
-    Args:
-        results: list of RequestResult from client.py
-        duration_s: total wall-clock time for the benchmark run
-        model: model name for labeling
-        profile: workload profile name for labeling
-        concurrency: concurrency level used
-    """
-    # Held-out requests (--discard-first) are excluded from every statistic
-    # below, including busy time: they are warmup by declaration, so letting
-    # their intervals into the denominator would credit the server with work
-    # the summary does not count in the numerator.
+    """Aggregate RequestResults into a BenchmarkSummary; requests held out by --discard-first are left out of every statistic, busy time included."""
     excluded = sum(1 for r in results if r.excluded_from_summary)
     results = [r for r in results if not r.excluded_from_summary]
 
@@ -576,7 +456,7 @@ def aggregate(
 
     ttfts = []
     tpots = []
-    itls = []   # all individual inter-token latencies pooled across requests
+    itls = []
     e2els = []
 
     for r in results:
@@ -588,17 +468,15 @@ def aggregate(
                 summary.usage_reported_requests += 1
 
             if r.ttft is not None:
-                ttfts.append(r.ttft * 1000)  # convert to ms
+                ttfts.append(r.ttft * 1000)  # ms
             if r.tpot is not None:
                 tpots.append(r.tpot * 1000)
             if r.itl:
-                itls.extend(t * 1000 for t in r.itl)  # convert to ms
+                itls.extend(t * 1000 for t in r.itl)
             if r.e2el is not None:
                 e2els.append(r.e2el * 1000)
         else:
-            # Failed requests stay out of every percentile -- their timings are
-            # partial by definition. They are counted and classified here so a
-            # censored tail is visible instead of silently missing.
+            # Failed requests stay out of every percentile; they are counted by kind so a censored tail shows.
             summary.failed_requests += 1
             kind = r.error_kind or "unknown"
             summary.error_kinds[kind] = summary.error_kinds.get(kind, 0) + 1
@@ -609,8 +487,7 @@ def aggregate(
             if r.error:
                 summary.errors.append(r.error)
 
-    # With held-out requests, total duration covers work the numerator no
-    # longer counts, so measure the span of what is actually being summarised.
+    # With held-out requests the window is the span of the kept ones.
     window_s = duration_s
     if excluded:
         spans = [
@@ -622,10 +499,7 @@ def aggregate(
             window_s = max(e for _, e in spans) - min(s for s, _ in spans)
     summary.measured_window_s = window_s
 
-    # Multi-turn open loop offers SESSIONS, so the like-for-like served rate is
-    # session completions, not turn completions. Comparing turns/s against
-    # sessions/s overstates throughput by the turns-per-session factor (~29x on
-    # swebench), which made a correctly arrival-limited run print "13.12 ~= 0.50".
+    # Multi-turn open loop offers sessions, so the served rate to compare is session completions, not turns.
     session_ids = {r.session_id for r in results if r.session_id is not None}
     summary.sessions_completed = len(session_ids)
     if session_ids and window_s > 0:
@@ -817,9 +691,7 @@ def aggregate_per_turn(results_by_turn: dict[int, list]) -> list[TurnSummary]:
     return summaries
 
 
-# Run gates. Each returns (verdict, message): verdict is "pass", "warn" or
-# "abort"; message is the text to print, None on pass. The caller prints and
-# decides the exit, so the gates themselves never end the process.
+# Run gates return (verdict, message): verdict is "pass", "warn" or "abort", message is None on pass.
 
 def success_rate_gate(summary, min_rate: float) -> tuple[str, str | None]:
     """Abort when no request completed or the success rate is below min_rate."""
@@ -834,12 +706,7 @@ def success_rate_gate(summary, min_rate: float) -> tuple[str, str | None]:
 
 
 def usage_gate(summary, allow_missing: bool) -> tuple[str, str | None]:
-    """Abort (warn with allow_missing) when no successful response carried usage.
-
-    Without usage, input_tokens/output_tokens stay 0 for every request, so the
-    summary records 0 tok/s and 0 total tokens while still looking like a valid
-    run. That silently poisons any downstream ISL/OSL or throughput comparison.
-    """
+    """Abort (warn with allow_missing) when no successful response carried usage, since every token count and throughput would read 0."""
     if summary.successful_requests == 0 or summary.usage_reported_requests > 0:
         return "pass", None
     if allow_missing:
@@ -852,14 +719,7 @@ def usage_gate(summary, allow_missing: bool) -> tuple[str, str | None]:
 
 
 def transient_gate(num_requests: int, concurrency: int) -> tuple[str, str | None]:
-    """Warn when a closed-loop run has under 4 requests per concurrency slot.
-
-    A closed-loop run is one synchronized wave of `concurrency` requests, then
-    backfill as each completes, then a drain to zero. Settling takes several
-    generations of turnover (one generation == `concurrency` completions).
-    Below ~4 the run is all startup convoy and drain, and -- importantly --
-    discarding cannot fix it, because there is no settled middle left to keep.
-    """
+    """Warn when a closed-loop run has under 4 requests per concurrency slot: it is all startup wave and drain, and --discard-first cannot fix it."""
     if concurrency <= 1 or num_requests <= 0:
         return "pass", None
     per_slot = num_requests / concurrency
@@ -927,34 +787,13 @@ def print_summary(s: BenchmarkSummary) -> None:
           f"(busy: {s.busy_output_token_throughput:.0f})")
     print(f" Total token throughput:   {s.total_token_throughput:.0f} tok/s "
           f"(busy: {s.busy_total_token_throughput:.0f})")
-    # Mode-aware load diagnosis. Comparing mean in-flight against --concurrency
-    # is only meaningful under closed loop, where it IS the in-flight cap. Under
-    # open loop it caps nothing (it only sizes warmup), so the honest question
-    # there is whether the server kept up with the offered arrival rate.
+    # Mean in-flight against --concurrency only means something under closed loop; open loop asks whether the server kept up with the offered rate.
     if s.load_mode == "open-loop" and s.target_rate > 0:
-        # Match units to what the arrival process actually offered.
         if s.sessions_completed:
             served, unit = s.session_throughput, "sess/s"
         else:
             served, unit = s.request_throughput, "req/s"
-        # Whether the server kept up is a question about BACKLOG, not about the
-        # served/offered ratio. That ratio divides completions by total
-        # duration, which always includes the post-arrival drain, so a healthy
-        # run reads low by roughly one session-duration -- enough to cross any
-        # fixed tolerance on a short run. Growing in-flight is the real signal.
-        # TWO signals, because each is blind to a case the other catches.
-        #
-        # Backlog growth catches sustained overload, but ONLY while arrivals
-        # continue: with a finite session population, in-flight necessarily
-        # falls once the last one has arrived, however far behind the server
-        # is. A 2.0 sess/s swebench rung that took 984s to drain an 80s arrival
-        # window showed in-flight 125.6 -> 91.7 and looked "bounded".
-        #
-        # The served/offered ratio catches that, and is only biased by the
-        # drain -- which costs at most about one session duration, so it reads
-        # slightly low rather than wildly low. A tolerance near 0.75 separates
-        # a healthy rung (0.82-0.89) from a saturated one (0.08) with room to
-        # spare; 0.9 was tight enough to trip on the drain alone.
+        # Two signals: in-flight growth catches overload only while arrivals continue, and the served/offered ratio reads slightly low from the final drain, so 0.75 leaves room for a healthy run.
         growing = (s.mean_inflight_first_half > 0.5
                    and s.mean_inflight_second_half > 1.5 * s.mean_inflight_first_half)
         rate_short = served < 0.75 * s.target_rate
@@ -980,9 +819,7 @@ def print_summary(s: BenchmarkSummary) -> None:
         print("       The server was idle or draining for much of the run, so the")
         print("       throughput above reflects the schedule, not its capacity.")
 
-    # Stationarity. A growing in-flight population means arrivals outran
-    # departures for the whole run, so every average above is a function of when
-    # measurement stopped rather than a property of the server.
+    # Growing in-flight means arrivals outran departures, so the averages depend on when measurement stopped.
     _f, _s2 = s.mean_inflight_first_half, s.mean_inflight_second_half
     if _f > 0.5 and _s2 > 1.5 * _f:
         print(f" WARNING: in-flight grew {_f:.1f} -> {_s2:.1f} across the run "
@@ -991,10 +828,7 @@ def print_summary(s: BenchmarkSummary) -> None:
         print("          length and are not a steady-state measurement. Lower the")
         print("          offered load, or run long enough to reach equilibrium.")
 
-    # Stall detector. Steady decode gives TPOT mean ~= median. A mean well above
-    # the median means most tokens were fast but something intermittently froze
-    # the engine -- kernel JIT, preemption, host hiccups. Measured on DeepSeek
-    # V4: 91.6/15.1 ms (JIT mid-run) vs 10.1/10.3 ms once warm.
+    # Steady decode has TPOT mean near median; a mean well above it means intermittent stalls.
     if s.median_tpot_ms > 0 and s.mean_tpot_ms > 2.0 * s.median_tpot_ms:
         print(f" WARNING: TPOT mean ({s.mean_tpot_ms:.1f} ms) is "
               f"{s.mean_tpot_ms / s.median_tpot_ms:.1f}x its median "
@@ -1003,9 +837,7 @@ def print_summary(s: BenchmarkSummary) -> None:
         print("          Usual causes: kernel JIT at an unwarmed batch shape, scheduler")
         print("          preemption, or host stalls. The median is the reliable figure.")
 
-    # Kernel JIT (e.g. DeepSeek V4's TileLang MHC kernels) compiles per batch
-    # shape. Any width beyond what warmup exercised compiles DURING measurement,
-    # which shows up as huge TTFT and a TPOT mean far above its median.
+    # Kernel JIT compiles per batch shape, so a width beyond what warmup exercised compiles during measurement.
     if s.warmup_concurrency and s.max_inflight_requests > s.warmup_concurrency:
         print(f" WARNING: peak in-flight ({s.max_inflight_requests}) exceeded the warmup "
               f"width ({s.warmup_concurrency}).")
@@ -1041,10 +873,7 @@ def print_summary(s: BenchmarkSummary) -> None:
         print()
 
 
-# vLLM's speculative-decoding counters, named as the H200 campaign's own
-# /metrics scrape recorded them (v4bench_backup_20260928/sweep_results.jsonl,
-# spec_metrics: vllm:spec_decode_num_drafts_total, ..._draft_tokens_total,
-# ..._accepted_tokens_total). They exist only on a server with spec decoding.
+# vLLM's speculative-decoding counters; they exist only on a server with spec decoding.
 SPEC_COUNTERS = {"accepted_tokens": "vllm:spec_decode_num_accepted_tokens",
                  "draft_tokens": "vllm:spec_decode_num_draft_tokens",
                  "drafts": "vllm:spec_decode_num_drafts"}
@@ -1055,10 +884,7 @@ LABEL = re.compile(r'([a-zA-Z_][a-zA-Z0-9_]*)="((?:[^"\\]|\\.)*)"')
 
 
 def parse_prometheus(text):
-    """{name: value} for unlabeled samples, {(name, ((label, value), ...)): value}
-    for labeled ones, labels sorted. Comments and blank lines are skipped;
-    a line that does not parse is skipped too, since one odd exporter line
-    should not cost the whole scrape."""
+    """{name: value} for unlabeled samples, {(name, ((label, value), ...)): value} for labeled ones with labels sorted; comments, blank lines and lines that do not parse are skipped."""
     out = {}
     for line in text.splitlines():
         line = line.strip()
@@ -1078,15 +904,13 @@ def parse_prometheus(text):
 
 
 def counter_total(metrics, name):
-    """Sum of a counter over every label set; prometheus_client exposes
-    counter X as X_total, so both spellings count. None when absent."""
+    """Sum of a counter over every label set, counting both X and X_total; None when absent."""
     names = (name, name + "_total")
     vals = [v for k, v in metrics.items() if (k[0] if isinstance(k, tuple) else k) in names]
     return sum(vals) if vals else None
 
 
 def spec_counts(metrics):
-    """{accepted_tokens, draft_tokens, drafts} from parsed /metrics, each
-    summed over engines; None when a counter is missing (spec decoding off)."""
+    """{accepted_tokens, draft_tokens, drafts} from parsed /metrics, each summed over engines; None when a counter is missing."""
     counts = {key: counter_total(metrics, name) for key, name in SPEC_COUNTERS.items()}
     return None if None in counts.values() else counts

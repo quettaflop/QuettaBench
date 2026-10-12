@@ -86,9 +86,7 @@ class ServeSummaryTest(unittest.TestCase):
     def test_nearest(self):
         s = summarize_serve(self.RECORDS, 2.0, method="nearest")
         self.assertEqual(s["n"], 3)
-        # n=3: int(0.5*3)=1 -> 20; int(0.9*3)=2 -> 30
         self.assertEqual(s["ttft_ms"], {"p50": 20.0, "p90": 30.0, "p95": 30.0, "p99": 30.0})
-        # tpot over [5, 7]: int(0.5*2)=1 -> 7
         self.assertEqual(s["tpot_ms"], {"p50": 7.0, "p90": 7.0, "p95": 7.0, "p99": 7.0})
         self.assertEqual(s["req_s"], 1.5)
         self.assertEqual(s["tok_s"], 3.5)
@@ -127,7 +125,7 @@ class BurstRecoveryTest(unittest.TestCase):
         recs = ([{"arrival_s": t, "ttft_ms": 100.0} for t in range(0, 5)]
                 + [{"arrival_s": t, "ttft_ms": 9000.0} for t in range(5, 10)]
                 + [{"arrival_s": t, "ttft_ms": 100.0} for t in range(15, 20)])
-        # buckets 0, 1 (peak), 3 (back under): recovery = (3 - 1) * 5 s
+        # peak in bucket 1, back under the SLA in bucket 3: (3 - 1) * 5 s
         self.assertEqual(burst_recovery(recs, 1000.0, 5.0), (10.0, 9000.0))
 
     def test_never_recovers(self):
@@ -135,7 +133,7 @@ class BurstRecoveryTest(unittest.TestCase):
         self.assertEqual(burst_recovery(recs, 1000.0, 5.0), (None, 9000.0))
 
     def test_bucket_p99_is_nearest_rank(self):
-        # one bucket of [1..10]: nearest p99 = sorted[int(0.99 * 10)] = 10, linear would be 9.91
+        # nearest p99 of [1..10] is 10; linear would give 9.91
         recs = [{"arrival_s": 0.0, "ttft_ms": float(v)} for v in range(1, 11)]
         self.assertEqual(burst_recovery(recs, 1.0, 5.0), (None, 10.0))
 
@@ -248,7 +246,7 @@ class TestBusyTime(unittest.TestCase):
         self.assertEqual(peak, 1)
 
     def test_idle_gap_excluded_from_busy_time(self):
-        # 0-1 busy, 1-5 idle, 5-6 busy. Wall clock is 6s; only 2s were worked.
+        # 0-1 busy, 1-5 idle, 5-6 busy
         busy, mean, peak = _busy_time_and_load([_req(0, 1), _req(5, 6)])
         self.assertAlmostEqual(busy, 2.0)
         self.assertAlmostEqual(mean, 1.0)
@@ -261,13 +259,7 @@ class TestBusyTime(unittest.TestCase):
         self.assertEqual(peak, 3)
 
     def test_drain_is_busy_but_underutilized(self):
-        """The multi-turn barrier case: busy time cannot detect a drain.
-
-        Four requests start together and finish at 1s/2s/3s/10s. The server is
-        never idle, so busy == wall clock and the denominator is unchanged.
-        mean_inflight (1.6 against a peak of 4) is the only signal that most of
-        the run was spent with the machine nearly empty.
-        """
+        """Four requests finishing at 1s, 2s, 3s and 10s never leave the server idle, so only mean in-flight (1.6 against a peak of 4) shows the drain."""
         busy, mean, peak = _busy_time_and_load(
             [_req(0, 1), _req(0, 2), _req(0, 3), _req(0, 10)]
         )
@@ -287,13 +279,12 @@ class TestBusyTime(unittest.TestCase):
 
 class TestBusyThroughput(unittest.TestCase):
     def test_busy_throughput_exceeds_wall_clock_when_idle(self):
-        # Two 1s requests inside a 10s window: 8s of the wall clock is idle.
+        # Two 1s requests inside a 10s window.
         results = [_req(0, 1), _req(9, 10)]
         s = aggregate(results, duration_s=10.0, concurrency=1)
         self.assertAlmostEqual(s.busy_time_s, 2.0)
         self.assertAlmostEqual(s.request_throughput, 0.2)
         self.assertAlmostEqual(s.busy_request_throughput, 1.0)
-        # Token throughputs follow the same denominator swap.
         self.assertAlmostEqual(s.output_token_throughput, 1.0)
         self.assertAlmostEqual(s.busy_output_token_throughput, 5.0)
 
@@ -318,18 +309,13 @@ class TestFailureTaxonomy(unittest.TestCase):
         self.assertEqual(s.error_kinds, {"timeout": 1, "http_error": 1})
 
     def test_partial_ttft_on_failures_is_retained_but_not_aggregated(self):
-        """Failed requests keep their partial TTFT for diagnosis only.
-
-        Their e2el is an artifact of the timeout, so letting them into the
-        percentiles would be worse than dropping them. They must be counted.
-        """
+        """Failed requests keep their partial TTFT for diagnosis only; their e2el is a timeout artifact, so they stay out of the percentiles."""
         results = [
             _req(0, 1, ttft=0.010),
             _req(0, 30, success=False, error_kind="timeout", ttft=0.999),
         ]
         s = aggregate(results, duration_s=30.0)
         self.assertEqual(s.failed_with_partial_ttft, 1)
-        # Only the successful request's 10ms TTFT reaches the summary.
         self.assertAlmostEqual(s.mean_ttft_ms, 10.0)
 
     def test_unclassified_failure_falls_back_to_unknown(self):
@@ -354,10 +340,8 @@ class TestDiscardFirst(unittest.TestCase):
     def test_window_excludes_the_held_out_span(self):
         """Throughput must not be divided by time the numerator no longer counts."""
         s = aggregate(self._run(), duration_s=10.0, concurrency=1)
-        # Kept requests span t=3..t=10.
         self.assertAlmostEqual(s.measured_window_s, 7.0)
         self.assertAlmostEqual(s.request_throughput, 1.0)
-        # Against the full 10s duration this would have read 0.7 req/s.
         self.assertNotAlmostEqual(s.successful_requests / 10.0, s.request_throughput)
 
     def test_held_out_intervals_leave_busy_time(self):
@@ -371,13 +355,7 @@ class TestDiscardFirst(unittest.TestCase):
 
 
 class TestLoadModeDiagnostics(unittest.TestCase):
-    """`concurrency` means different things per mode, so diagnosis must too.
-
-    Under closed loop it is the in-flight cap, so mean-inflight << concurrency
-    means draining. Under open loop it caps nothing (it only sizes warmup), so
-    that comparison is meaningless -- the real question is whether the server
-    kept up with the offered arrival rate.
-    """
+    """Under closed loop concurrency is the in-flight cap; under open loop it only sizes warmup, so the question is whether the server kept up with the offered rate."""
 
     def test_open_loop_records_mode_and_offered_rate(self):
         s = aggregate([_req(i, i + 1) for i in range(10)], duration_s=10.0,
@@ -386,13 +364,11 @@ class TestLoadModeDiagnostics(unittest.TestCase):
         self.assertAlmostEqual(s.target_rate, 2.0)
 
     def test_open_loop_keeping_up_is_arrival_limited_not_draining(self):
-        """Regression: mean-inflight 5.8 vs concurrency 40 previously read as
-        'draining' even though the server was matching the offered rate."""
+        """Mean in-flight 5.8 against concurrency 40 is not a drain when the server matches the offered rate."""
         results = [_req(i * 0.5, i * 0.5 + 1) for i in range(20)]
         s = aggregate(results, duration_s=10.0, concurrency=40,
                       load_mode="open-loop", target_rate=2.0)
         self.assertAlmostEqual(s.request_throughput, 2.0)
-        # Well under concurrency=40, which under open loop implies nothing.
         self.assertLess(s.mean_inflight_requests, 40 * 0.7)
 
     def test_closed_loop_still_flags_draining(self):
@@ -403,12 +379,7 @@ class TestLoadModeDiagnostics(unittest.TestCase):
 
 
 class TestOpenLoopUnits(unittest.TestCase):
-    """--target-rate is sessions/s for multi-turn but requests/s for single-turn.
-
-    Regression: a correctly arrival-limited swebench run printed
-    "served 13.12 req/s ~= offered 0.50 req/s" because turn completions were
-    compared against a session arrival rate -- 26x apart at ~29 turns/session.
-    """
+    """--target-rate is sessions/s for multi-turn and requests/s for single-turn."""
 
     def _multi_turn(self, n_sessions=4, turns_each=5):
         out = []
@@ -424,7 +395,6 @@ class TestOpenLoopUnits(unittest.TestCase):
                       load_mode="open-loop", target_rate=0.4)
         self.assertEqual(s.sessions_completed, 4)
         self.assertAlmostEqual(s.session_throughput, 0.4)
-        # Turn-level throughput is 5x higher; comparing it to target would lie.
         self.assertAlmostEqual(s.request_throughput, 2.0)
 
     def test_single_turn_has_no_sessions_so_falls_back_to_requests(self):
@@ -435,17 +405,7 @@ class TestOpenLoopUnits(unittest.TestCase):
 
 
 class TestSaturationVerdict(unittest.TestCase):
-    """Saturation needs BOTH signals; each is blind to a case the other sees.
-
-    Real swebench rungs (Llama-3.1-8B tp1, 80s arrival window):
-      0.5 sess/s -> served 0.447, in-flight 9.8->4.4,   duration  89.5s  healthy
-      1.0 sess/s -> served 0.82,  in-flight 22.5->26.7, duration  98.0s  healthy
-      2.0 sess/s -> served 0.16,  in-flight 125.6->91.7, duration 984.5s SATURATED
-
-    The 2.0 rung is 12x behind, yet in-flight FELL -- with a finite session
-    population, in-flight always falls once the last session has arrived,
-    however far behind the server is. Only the rate ratio catches it.
-    """
+    """Saturation needs both signals: in-flight always falls once the last session has arrived, so only the served/offered rate ratio catches a server far behind. Cases are measured swebench rungs, 80s arrival window."""
 
     @staticmethod
     def _verdict(offered, served, first, second):
@@ -460,18 +420,17 @@ class TestSaturationVerdict(unittest.TestCase):
         self.assertTrue(self._verdict(2.0, 0.16, 125.6, 91.7))
 
     def test_growing_backlog_caught_even_when_rate_looks_fine(self):
-        """Sustained arrivals: rate can look healthy while backlog builds."""
+        """The rate can look healthy while the backlog builds."""
         self.assertTrue(self._verdict(1.0, 0.95, 10.0, 40.0))
 
     def test_drain_alone_does_not_trip_the_rate_check(self):
-        """A healthy run reads low by ~one session duration, not by 25%."""
+        """A healthy run reads low by about one session duration, not by 25%."""
         self.assertFalse(self._verdict(0.5, 0.447, 9.8, 4.4))
 
 
 class TestWarmupWidthCoverage(unittest.TestCase):
     def test_peak_inflight_beyond_warmup_width_is_recorded(self):
-        """The DeepSeek-V4 failure: warmup at width 8, run peaked at 39, so
-        unseen batch shapes JIT-compiled mid-measurement."""
+        """Warmup at width 8 with a peak of 39 leaves unseen batch shapes to compile mid-measurement."""
         results = [_req(0, 5) for _ in range(39)]
         s = aggregate(results, duration_s=5.0, concurrency=8,
                       load_mode="open-loop", target_rate=2.0, warmup_concurrency=8)
@@ -486,13 +445,7 @@ class TestWarmupWidthCoverage(unittest.TestCase):
 
 
 class TestStationarity(unittest.TestCase):
-    """Splitting the window is the only non-circular stationarity test we have.
-
-    Little's Law cannot serve: mean_inflight is defined as
-    sum(durations)/busy_time, so busy_throughput x mean_duration == mean_inflight
-    identically. Halving the window uses the time ordering that definition
-    discards, so it can actually fail.
-    """
+    """Halving the window is the stationarity test; Little's Law cannot fail because mean_inflight is defined as sum(durations) / busy_time."""
 
     def test_steady_run_shows_no_drift(self):
         results = [_req(i * 1.0, i * 1.0 + 2.0) for i in range(20)]
@@ -512,7 +465,7 @@ class TestStationarity(unittest.TestCase):
         self.assertLess(s.mean_inflight_second_half, s.mean_inflight_first_half * 0.6)
 
     def test_littles_law_is_an_identity_not_a_check(self):
-        """Pin the reason we do NOT ship a Little's Law validation."""
+        """busy_throughput x mean_duration equals mean_inflight by construction, so it checks nothing."""
         results = [_req(i * 0.5, i * 0.5 + 2.0) for i in range(30)]
         s = aggregate(results, duration_s=20.0)
         mean_duration = s.busy_time_s * s.mean_inflight_requests / s.successful_requests

@@ -1,19 +1,12 @@
 #!/usr/bin/env python3
-"""Tokenize a real agent-bench trace into the crossval request shape.
-
-Each session turn becomes one request: prompt_text -> prompt_token_ids and the
-assistant completion (reasoning_text + content_text) -> output_token_ids, so
-trace_serve can measure real acceptance (SPECSUM) against tokens a model actually
-produced. Needs the serving model's tokenizer.
-"""
+"""Tokenizes an agent-bench JSONL trace into replay requests: prompt_text becomes prompt_token_ids and reasoning_text + content_text becomes output_token_ids. Needs the serving model's tokenizer."""
 import argparse
 import json
 import sys
 
 
 def r2_to_requests(records, encode):
-    """Flatten agent-bench sessions to requests. encode(text) -> list[int] is the
-    model tokenizer; the assistant reference is reasoning_text + content_text."""
+    """One request per session turn with a prompt; encode(text) returns token ids."""
     reqs = []
     for rec in records:
         for t in rec.get("turns", []):
