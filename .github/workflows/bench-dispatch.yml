@@ -1,45 +1,25 @@
 name: bench-dispatch
 
-# Run-config-triggered benchmark dispatch. A push to main that touches a
-# configs/runs/*.yaml lists the changed files and runs `qbench run` on each.
-# GPU jobs need self-hosted runners (register runpod and gpu11 in a follow-up);
-# until then the matrix job also publishes the exact command checklist as an
-# artifact, so the trigger is exercised end to end without a fleet.
+# A push to main that touches configs/runs/*.yaml publishes the qbench run
+# command for each changed yaml as an artifact. No job runs them: a run needs
+# engine.model, a weights path that only a GPU host knows.
 
 on:
   push:
     branches: [main]
     paths: [configs/runs/*.yaml]
-  workflow_dispatch:
 
 jobs:
-  matrix:
+  checklist:
     runs-on: ubuntu-latest
-    outputs:
-      runs: ${{ steps.changed.outputs.runs }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - id: changed
-        run: |
-          git diff --name-only --diff-filter=AM "${{ github.event.before }}" "${{ github.sha }}" -- 'configs/runs/*.yaml' > changed.txt
-          echo "runs=$(jq -R . changed.txt | jq -sc .)" >> "$GITHUB_OUTPUT"
       - run: |
-          sed 's#^#python3 -m quettabench.cli run #' changed.txt > checklist.txt
+          git diff --name-only --diff-filter=AM "${{ github.event.before }}" "${{ github.sha }}" -- 'configs/runs/*.yaml' > changed.txt
+          sed 's#^#python3 -m quettabench.cli run #; s#$# --set engine.model=<weights>#' changed.txt > checklist.txt
       - uses: actions/upload-artifact@v4
         with:
           name: bench-checklist
           path: checklist.txt
-
-  run:
-    needs: matrix
-    if: needs.matrix.outputs.runs != '[]'
-    runs-on: [self-hosted, gpu]
-    strategy:
-      fail-fast: false
-      matrix:
-        yaml: ${{ fromJSON(needs.matrix.outputs.runs) }}
-    steps:
-      - uses: actions/checkout@v4
-      - run: python3 -m quettabench.cli run ${{ matrix.yaml }}

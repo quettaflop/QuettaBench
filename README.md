@@ -262,9 +262,9 @@ are withheld. glm53 and glm53flash have no engine bench yet: vLLM side only.
 
 | old | new |
 |---|---|
-| `scripts/crossval/oneshot.sh <wl>` | `just provision configs/runs/<wl>.yaml ...`, then the two `qbench run` lines it prints, then `just crossval` |
+| `scripts/crossval/oneshot.sh <wl>` | `just provision configs/runs/<wl>.yaml ...`, then the two `qbench run` lines it prints, then `just xval` |
 | `scripts/crossval/bootstrap.sh <wl>` (`XVAL_DRYRUN=1`) | `just provision configs/runs/<wl>.yaml [--dry-run]`; `XVAL_CKPT_<wl>`, `XVAL_WEIGHTS_<wl>`, `XVAL_HF_<wl>`, `XVAL_CFG_<wl>`, `<P>_BENCH_BIN` become `--set <wl>:hardware.provision.{qs_ckpt,weights,hf_id,qs_cfg,bench_bin}=...` |
-| `scripts/crossval/xval.sh <wl> <weights> <log>` | `just run configs/runs/<wl>.yaml --set engine.model=<weights>` (vLLM) and `... --set engine.name=quettaserve ...` (engine), then `just crossval` |
+| `scripts/crossval/xval.sh <wl> <weights> <log>` | `just run configs/runs/<wl>.yaml --set engine.model=<weights>` (vLLM) and `... --set engine.name=quettaserve ...` (engine), then `just xval` |
 | `scripts/crossval/vllm.sh <wl> [grid] <weights>` | `just run configs/runs/<wl>.yaml --set engine.model=<weights> [--set mode.grid=<grid> --set run_name=<wl>-<grid>]` |
 | `scripts/crossval/bench.sh <wl> [log]` (`<P>_CKPT`, `<P>_CFG`) | `just run configs/runs/<wl>.yaml --set engine.name=quettaserve --set engine.model=<ckpt> [--set engine.extra.qs_cfg=<cfg>]`; log in `results/<wl>/bench.log` |
 | `scripts/crossval/prof.sh <name> <cmd>` (`PROF=1`) | `--set engine.instrumentation=nsys` on the run |
@@ -354,7 +354,6 @@ Canonical data lives on the `agent-bench` R2 bucket:
 |---|---|
 | `data/` | raw trajectory datasets (fetched by `data/fetch.py`) |
 | `results/` | benchmark ground truth (synthetic_distributional, trace_replay, archived) |
-| `json/current/` | dashboard runtime JSONs |
 | `archive/` | pre-2026-05 result snapshots |
 
 ## Known open items

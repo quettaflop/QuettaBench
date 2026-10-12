@@ -50,15 +50,15 @@ vllm installed, no pin to check against).
 
 | # | test | fixtures | pins |
 |---|---|---|---|
-| 1 | `test_config_resolution.py` | `config_global.json`, `config_workloads.json`, `config_failures.json`, `config_trace_serve_style_error.json` | for all 11 workloads, env cleared and env overridden (`XVAL_LINK_PROFILE=pcie XVAL_PP=2 XVAL_BACKEND=cuda GPU_UTIL=0.85 PROMPT_MODE=clone VMIN_ATTEMPTS=2 XVAL_EVAL_POS=25`): merged workload record, grid cells, serving_style parse, `xval_config.py` cli output (`tp devices cells bench`), and vmin_fit's full stdout (META, CAPACITY, SKIP, RESULT, DONE) plus generate() count. Globally: grids, step_points, run_params, provision, backend, link profile, collective env per profile, cli output. Failures: type + message |
-| 2 | `test_engine_args.py` | `engine_args.json` | vmin_fit `LLM` kwargs per workload (cleared env, override env, `--nograph`), trace_serve `AsyncEngineArgs` kwargs per workload with xval.sh's argv, and the per-key diff |
-| 3 | `test_workload_hash.py` | `hash_trace.jsonl`, `workload_hash.json` | loaded requests, per-request digests, hash; equal under completion reorder; differs on one altered token, on injected `poisson:2.0` arrivals, and on reordered file lines |
-| 4 | `test_percentiles.py` | `percentiles.json` | `trace_serve._pct`, `_pcts` and `metrics._percentile` on empty, 1, 2, ties, 7, arange(1000) at p50/p90/p95/p99 |
-| 5 | `test_aggregate.py` | `aggregate_summary.json` | `aggregate()` summary dict and per-request tpot over normal, single-token, wall-clock-tpot, failed-with-partial-ttft, timeout and held-out requests |
-| 6 | `test_cache_packing.py` | `vmin_fit_llama.log`, `baseline_llama.json` | the log is byte-equal to what vmin_fit prints (vllm.sh filter); the baseline json cache.py writes, byte for byte (clock and git sha frozen) |
-| 7 | `test_table_text.py` | `bench_loop.log`, `bench_criterion.log`, `table_loop.txt`, `table_criterion.txt` | exact table.py stdout for both logs against item 6's baseline |
-| 8 | `test_bootstrap_plan.py` | `bootstrap_plan.json` | `XVAL_DRYRUN=1` plan text, exit code, and that no file is left behind, for a run with gaps and a complete run |
-| 9 | `test_mooncake_readers.py` | `mooncake_5.jsonl`, `mooncake_readers.json` | the one reader (`workloads/live.py`) through `RealTrace.from_jsonl`, `RealTrace.from_mooncake` and `MooncakeTraceDataset`, with and without `hash_ids` and with a zero `output_length` (resolved, see item 9 below) |
+| 1 | `golden/test_loader.py` | `config_global.json`, `config_workloads.json`, `config_failures.json`, `config_trace_serve_style_error.json` | for all 11 workloads, env cleared and env overridden (`XVAL_LINK_PROFILE=pcie XVAL_PP=2 XVAL_BACKEND=cuda GPU_UTIL=0.85 PROMPT_MODE=clone VMIN_ATTEMPTS=2 XVAL_EVAL_POS=25`): merged workload record, grid cells, serving_style parse, `xval_config.py` cli output (`tp devices cells bench`), and vmin_fit's full stdout (META, CAPACITY, SKIP, RESULT, DONE) plus generate() count. Globally: grids, step_points, run_params, provision, backend, link profile, collective env per profile, cli output. Failures: type + message |
+| 2 | `golden/test_engines.py` | `engine_args.json` | vmin_fit `LLM` kwargs per workload (cleared env, override env, `--nograph`), trace_serve `AsyncEngineArgs` kwargs per workload with xval.sh's argv, and the per-key diff |
+| 3 | `golden/test_workloads.py` | `hash_trace.jsonl`, `workload_hash.json` | loaded requests, per-request digests, hash; equal under completion reorder; differs on one altered token, on injected `poisson:2.0` arrivals, and on reordered file lines |
+| 4 | `golden/test_metrics_core.py` | `percentiles.json` | `trace_serve._pct`, `_pcts` and `metrics._percentile` on empty, 1, 2, ties, 7, arange(1000) at p50/p90/p95/p99 |
+| 5 | `golden/test_metrics_core.py` | `aggregate_summary.json` | `aggregate()` summary dict and per-request tpot over normal, single-token, wall-clock-tpot, failed-with-partial-ttft, timeout and held-out requests |
+| 6 | `golden/test_crossval.py` | `vmin_fit_llama.log`, `baseline_llama.json` | the log is byte-equal to what vmin_fit prints (vllm.sh filter); the baseline json cache.py writes, byte for byte (clock and git sha frozen) |
+| 7 | `golden/test_crossval.py` | `bench_loop.log`, `bench_criterion.log`, `table_loop.txt`, `table_criterion.txt` | exact table.py stdout for both logs against item 6's baseline |
+| 8 | `golden/test_provision.py` | `bootstrap_plan.json` | `XVAL_DRYRUN=1` plan text, exit code, and that no file is left behind, for a run with gaps and a complete run |
+| 9 | `golden/test_workloads.py` | `mooncake_5.jsonl`, `mooncake_readers.json` | the one reader (`workloads/live.py`) through `RealTrace.from_jsonl`, `RealTrace.from_mooncake` and `MooncakeTraceDataset`, with and without `hash_ids` and with a zero `output_length` (resolved, see item 9 below) |
 | 10 | this file | | SPECSUM/SERVESUM/WORKLOADSUM formats, below |
 
 ## Where the logs came from
