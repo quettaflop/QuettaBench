@@ -541,8 +541,6 @@ PINS = {
     "coding-singleturn": ("15384d696a4d7a1b", "0359e7a0be1623a2"),
     "mooncake-trace": ("a03be7b0ed268d81", "b5ed59cd7a0d7aff"),
     "random-1k": ("00740b698acbf0f7", "e90e87f402815bd2"),
-    "random-1k-random-doublewrap": ("633909c6f1f06765", "c4e5d1efa3c5ee45"),
-    "random-1k-random-legacy": ("1635e8cfbd8dcba8", "8cc8f5f07ec127ef"),
     "swebench-multiturn-short": ("9f0aa9d6f98e5bd3", "2e44a22e09c81ea1"),
     "test": ("7ae706bdf8eeae1d", "a5c809ace7fb7a08"),
     "cut": ("0e8b8a8de4442ecb", "c8f75cbcdd1e78dc"),
@@ -676,20 +674,13 @@ def runnable():
     return sorted(PROFILES)
 
 
-def variants():
-    """The two InferenceX random-token variants no shipped profile names."""
-    base = get_profile("random-1k")
-    return {f"random-1k-{d}": dataclasses.replace(base, name=f"random-1k-{d}", dataset=d)
-            for d in ("random-legacy", "random-doublewrap")}
-
-
 class ProfileHashPins(unittest.TestCase):
     def test_every_runnable_profile_is_pinned(self):
-        self.assertEqual(sorted(PINS), sorted(runnable() + list(variants()) + ["cut"]))
+        self.assertEqual(sorted(PINS), sorted(runnable() + ["cut"]))
 
     def test_profiles_build_the_pinned_traces(self):
-        with fixture_cwd(), mock.patch.dict(PROFILES, variants()):
-            got = {name: pinned_build(name) for name in runnable() + list(variants())}
+        with fixture_cwd():
+            got = {name: pinned_build(name) for name in runnable()}
             got["cut"] = pinned_build("swebench-multiturn-short", max_turn_index=3)
         for name, pin in PINS.items():
             with self.subTest(profile=name):

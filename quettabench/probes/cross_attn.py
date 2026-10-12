@@ -1,19 +1,6 @@
 #!/usr/bin/env python3
-"""Rectangular (chunked-prefill) attention grid -> fa3_cross/{gpu}.csv rows.
-
-A chunk of ``q_len`` new tokens attending ``resident`` already-cached tokens plus
-itself is ONE flash_attn_varlen_func call with q_len queries over kv_len =
-resident + q_len keys (causal). Neither existing grid covers this shape: decode
-grids are q=1, fa3_prefill grids are full-causal q == kv. On long-ISL traces
-(Mooncake: 14k avg, 8192-token chunks) the resident part dominates prefill
-attention FLOPs, so pricing it off the roofline left a ~20% under-estimate at
-16-32k prompts (H200 tp2 sweep, 2026-08-25).
-
-Eager cuda_event timing (prefill runs eager in vLLM). Rows are PER LAYER, one
-call; the loader multiplies by the model's full-attention layer count.
-
-  CUDA_VISIBLE_DEVICES=7 python3 -m quettabench.probes.cross_attn --gpu-label H200 \
-      --n-heads 16 --n-kv-heads 2 --head-dim 128 --out <dir>
+"""Chunked-prefill attention (q_len new tokens over resident cached tokens, one varlen call) -> fa3_cross/{gpu}.csv rows, per layer, eager.
+Neither the decode (q=1) nor the full-causal prefill grid covers this shape, which dominates prefill attention on long-ISL traces; --paged times vLLM's paged call (block_table, seqused_k), whose split-KV path is much faster at q << kv.
 """
 from __future__ import annotations
 

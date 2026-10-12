@@ -17,14 +17,13 @@ import re
 import shlex
 import shutil
 import statistics
-import subprocess
 import tempfile
 from collections import Counter
 from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 
-from quettabench.metrics.results import RUN_MARKERS, write_atomic
+from quettabench.metrics.results import RUN_MARKERS, bench_sha, write_atomic
 from quettabench.probes import serving_decode_grid as _client  # aiohttp is imported lazily there
 
 TP_DEGREES = (2, 4)
@@ -608,16 +607,8 @@ def _span_new_rate(path: Path) -> dict:
 
 def build_tpn(n: int, tpn_csv: Path, out_json: Path, tp1_csv: Path, gpu: str = "H100",
               host: str = "h100") -> None:
-    """L11 extension (2026-06-11): the SAME G3 like-for-like method at tp degree ``n`` --
-    comm_total = prefill_span.new(tpN) − span.new(tp1)/N (the TOTAL per-new-token cost the tpN
-    GPU prefill window carries above its 1/N GEMM share). Consumed per-config via the deployment
-    JSON key ``prefill_tp_comm_ms_per_token`` -> RooflineParams (None for every other config ->
-    the tp2-measured per-extra-rank fallback, byte-identical). The tp2 artifact is untouched.
-
-    L13 extension (2026-06-11): ``--gpu RTX3090`` runs the SAME estimator on the RTX3090's
-    OWN stage-split legs (cross-GPU transfer of the H100 tp1 leg is INVALID -- L11 proved the
-    per-extra-rank comm extrapolation fails even within one GPU family; the 3090 host is pure
-    PCIe, no NVLink). H100 default paths byte-untouched."""
+    """The like-for-like stage-split estimator at tp degree n: comm_total = prefill_span.new(tpN) - span.new(tp1)/N, the total per-new-token cost above the 1/N GEMM share, read per config through the deployment key prefill_tp_comm_ms_per_token.
+    Each GPU uses its own tp1 leg: a tp1 leg never transfers across GPUs."""
     for p in (tp1_csv, tpn_csv):
         if not p.exists():
             raise SystemExit(f"missing {p} -- pull both stage-split legs first")
@@ -706,8 +697,7 @@ TRACES = [
     "vllm_engine_step_trace_terminal_c80_t16_benchmark_serving_wall.jsonl",
 ]
 
-# Pre-registered thresholds (L6-utils.md). SCHED_PRIOR is an eligibility gate only --
-# it never enters the output arithmetic.
+# Pre-registered thresholds; SCHED_PRIOR is an eligibility gate only, never in the output arithmetic.
 SCHED_PRIOR_MS = 5.7
 FULL_BATCH_FRAC = 0.9
 WARMUP_STEP_ID = 5
@@ -809,7 +799,7 @@ def build_roofline_utils(gpu: str, params_path: Path, trace_paths: dict[str, Pat
         key = name.split("_benchmark")[0].replace("vllm_engine_step_trace_", "")
         tr: dict = {"steps": len(steps)}
 
-        # ---------------- util_bw candidates (rules 1-3), then trim (rule 4)
+        # util_bw candidates (rules 1-3), then trim (rule 4)
         max_batch = max((c["batch"] for c in ctxs if c), default=0)
         candidates = []
         excluded_unknown_ctx = 0
@@ -850,7 +840,6 @@ def build_roofline_utils(gpu: str, params_path: Path, trace_paths: dict[str, Pat
             "median": round(statistics.median(r for _, r in ratios), 4) if ratios else None,
         }
 
-        # ---------------- util_flops candidates
         fl_cand = []
         for s in steps:
             if not (_i(s.get("prefill_tokens")) >= PREFILL_MIN_TOKENS
@@ -878,7 +867,6 @@ def build_roofline_utils(gpu: str, params_path: Path, trace_paths: dict[str, Pat
             "median": round(statistics.median(fl_ratios), 4) if fl_ratios else None,
         }
 
-        # ---------------- scheduler overhead
         gaps = []
         for s in steps:
             if (_i(s.get("decode_batch")) == 1 and _i(s.get("prefill_tokens")) == 0
@@ -971,7 +959,7 @@ def read_run(path: Path) -> tuple[dict, dict[tuple[int, int], list[dict]]]:
     return meta, cells
 
 
-_LAG_UPGRADE_SPREAD = 0.005      # the L11 cross-pass reproducibility standard (<=0.5%)
+_LAG_UPGRADE_SPREAD = 0.005      # the cross-pass reproducibility standard (<=0.5%)
 _LAG_UPGRADE_HEADROOM = 1.5      # latest-pass p99 loop lag must be <= 1.5x the flag limit
 LAG_UPGRADE_FIELD = "lag_reproducibility_upgrade"
 
@@ -980,8 +968,7 @@ def build_decode_grid(inputs: list[Path], snap_tolerance: float = 0.02,
           lag_upgrade: bool = False) -> list[dict]:
     """Merge runs (latest wins per cell) and summarize.
 
-    ``snap_tolerance`` (L11 builder amendment, decided PRE-GATE on consumer-structure grounds,
-    no validation data consulted): the lattice's ``prompt = T - osl/2`` design targets an
+    ``snap_tolerance``: the lattice's ``prompt = T - osl/2`` design targets an
     effective context == nominal T at the steady-window middle, and the measured effectives land
     within ~1.5% of nominal -- but as raw floats they are UNIQUE per (B, T) cell, which makes
     every ``load_grid`` t-axis column single-B (ragged), so the consumer's bilinear corners mix
@@ -992,12 +979,8 @@ def build_decode_grid(inputs: list[Path], snap_tolerance: float = 0.02,
     A deviation beyond the tolerance means the steady window was asymmetric/disturbed: the cell
     keeps its measured effective AND is flagged ``check``.
 
-    ``lag_upgrade`` (L13 builder amendment, DEFAULT OFF -- every pre-L13 artifact regenerates
-    byte-identically; decided on consumer-structure grounds before the L13 grid wiring gate):
-    the p99-loop-lag ``check`` flag exists to catch CLIENT-side measurement distortion, and the
-    L11 pass-2 finding was that cross-topology reproducibility falsifies that distortion
-    ("values reproduce <=0.5% vs run 1 -> the flags are client-loop scheduling noise ... not
-    measurement distortion", L11-h100multi). ``load_grid`` drops non-``ok`` rows, so a
+    ``lag_upgrade`` (default off): the p99-loop-lag ``check`` flag exists to catch
+    client-side measurement distortion, which cross-topology reproducibility rules out. ``load_grid`` drops non-``ok`` rows, so a
     marginally-over-limit lag flag (e.g. 2.01 vs the 2.0 ms limit on a host whose CPUs also run
     the tensor-parallel server) silently replaces a reproducible MEASURED cell with the analytic
     fill the grid exists to correct. With ``lag_upgrade=True`` a flagged cell is upgraded to
@@ -1110,17 +1093,6 @@ BUILDERS = {
     "serving_decode_grid": run_serving_decode_grid,
     "kernel_tables": run_kernel_tables,
 }
-REPO_ROOT = Path(__file__).resolve().parents[2]
-
-
-def bench_sha() -> str:
-    """HEAD of this repo, empty when git cannot say."""
-    try:
-        done = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO_ROOT, check=True,
-                              capture_output=True, text=True)
-    except (OSError, subprocess.CalledProcessError):
-        return ""
-    return done.stdout.strip()
 
 
 def source_runs(results_dirs: list[Path]) -> list[dict]:

@@ -1,20 +1,5 @@
-"""qbench run: a run yaml to results/<run>/, the same sequence every time.
-
-load the yaml (+ --set, + env through env_map) into one Config per matrix
-point, then per Config: translate it to a LaunchSpec, add the collective
-pins and the GPUs (hardware.visible_devices, else the first idle
-device_count) to the child env of the server or each bench cell (docker
-gets the GPUs through --gpus instead), launch the server unless the
-adapter drives the engine itself (in-process grid, cargo bench), get the
-driver, build the Trace (before the launch when a server is launched, since
-its driver has no tokenizer), and let modes/serve.py run trace
-through driver into a RunWriter; the server is stopped whatever happens.
-mode: probe runs quettabench.probes.<name> on the same GPUs with --out
-results/<run>/ instead and records it in the same run.json. --dry-run prints each Config
-with its origins and its LaunchSpec, secrets redacted (a bench run: each cell's env and
-bench_argv as one shell line), and starts nothing. hardware.launcher=docker
-runs the server in engine.image and needs a launched server (a grid run sets
-engine.driver=http); --dry-run then also prints the docker command.
+"""qbench run: a run yaml to results/<run>/, the same sequence every time: one Config per matrix point, its LaunchSpec, the GPUs and collective pins in the child env, the server launched unless the adapter drives the engine itself, then modes/serve.py runs the Trace through the driver into a RunWriter; the server is stopped whatever happens.
+mode: probe runs quettabench.probes.<name> on the same GPUs into the run dir instead. --dry-run prints each Config with its origins and LaunchSpec (and the docker command when hardware.launcher=docker), secrets redacted, and starts nothing.
 """
 
 import ast
@@ -35,7 +20,7 @@ from quettabench.engines import base, launcher
 from quettabench.metrics.results import RUN_MARKERS, RunWriter, redact
 from quettabench.modes import serve
 from quettabench.probes import base as probes_base
-from quettabench.workloads.base import DoubleWrapRandomTokenTrace, LegacyRandomTokenTrace, RandomTokenTrace
+from quettabench.workloads.base import RandomTokenTrace
 from quettabench.workloads.grid import GridTrace
 from quettabench.workloads.live import (
     PROFILE_ALIASES,
@@ -60,8 +45,6 @@ TORCHRUN_PROBES = ("collective", "reparallel", "vllm_allreduce")
 FILE_OUT_PROBES = ("serving_decode_grid", "serving_stage_split")
 
 TRAJECTORY_DATASETS = ("swebench-multi-turn", "terminalbench-multi-turn", "osworld-multi-turn")
-RANDOM_TRACES = {"random": RandomTokenTrace, "random-legacy": LegacyRandomTokenTrace,
-                 "random-doublewrap": DoubleWrapRandomTokenTrace}
 
 # Room left between a trajectory turn's prompt plus output and the profile's isl_tokens window.
 CONTEXT_SAFETY_MARGIN = 256
@@ -80,9 +63,8 @@ def single_turn_trace(profile, seed):
         return ShareGPTTrace(num_prompts=1000, seed=seed, system_prompt=profile.system_prompt,
                              max_isl_tokens=profile.isl_tokens, max_osl_tokens=profile.osl_tokens,
                              context_safety_margin_tokens=CONTEXT_SAFETY_MARGIN)
-    if d in RANDOM_TRACES:
-        return RANDOM_TRACES[d](profile.tokenizer_name, profile.isl_tokens, profile.osl_tokens,
-                                seed=seed)
+    if d == "random":
+        return RandomTokenTrace(profile.tokenizer_name, profile.isl_tokens, profile.osl_tokens, seed=seed)
     if d == "sharegpt-multi-turn" or d in TRAJECTORY_DATASETS:
         raise ValueError(f"Profile '{profile.name}' is multi-turn; run it with "
                          "workload.kind=sessions")

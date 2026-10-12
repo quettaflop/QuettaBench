@@ -1,17 +1,6 @@
 #!/usr/bin/env python3
-"""c1 live-server prefill TTFT split vs (new, cached) tokens.
-
-Lanes: client SSE wall (0), Prometheus queue/prefill/frontend (A), nsys device
-split (B, printed via --emit-nsys-cmd). Run from a clean cwd so a stray
-flash_attn.py cannot shadow the pip package. Leave server stats ON (no
---disable-log-stats). Randomize the `new` tail per trial so warmup cannot
-turn every miss into a hit. c1 only: /metrics _sum deltas isolate one request.
-
-    python3 -m quettabench.probes.serving_stage_split \
-      --model /path/to/Llama-3.1-8B-Instruct --port 8771 \
-      --out results/probes/H100/serving_stage_split/<date>/serving_stage_split_H100.csv
-
-See docs/runbooks/serving_stage_split_plan.md.
+"""Concurrency-1 live-server prefill TTFT split by (new, cached) tokens: client SSE wall, the server's Prometheus queue/prefill/frontend deltas, and an nsys device split (--emit-nsys-cmd).
+Keep server stats on, and the `new` tail is randomized per trial so warmup cannot turn a miss into a hit; see docs/runbooks/serving_stage_split_plan.md.
 """
 from __future__ import annotations
 
@@ -25,19 +14,11 @@ import sys
 import time
 from pathlib import Path
 
-# --- defensive: strip our own dir from sys.path so a stray flash_attn.py can't shadow the pkg ---
-_SCRIPT_DIR = str(Path(__file__).resolve().parent)
-for _p in [e for e in sys.path if e == _SCRIPT_DIR]:
-    sys.path.remove(_p)
+import aiohttp
 
-import aiohttp  # noqa: E402  (after the sys.path scrub)
+from quettabench.probes.base import launch_vllm, run_recorded
 
-from quettabench.probes.base import launch_vllm, run_recorded  # noqa: E402
-
-# ------------------------------------------------------------------------------------------------
-# Prompt construction -- reused verbatim from live_ttft_probe.py so the wall TTFT reproduces the
-# banked prefill_live_ttft_H100.csv rates (new 29.4 / cached 5.89 ms/1k). Words are ~1 Llama token.
-# ------------------------------------------------------------------------------------------------
+# Words are ~1 Llama token each, so a prompt of N words is ~N tokens.
 _VOCAB = ("the of and to in a is that for it as was with on be at by this had not are but from or "
           "have an they which one you were her all she there would their we him been has when who "
           "will more no if out so up said what its about into than them can only other new some "
@@ -56,25 +37,7 @@ def fresh_tail(new: int) -> str:
     return " ".join(_TAIL.choice(_VOCAB) for _ in range(int(new * 0.96)))
 
 
-# ------------------------------------------------------------------------------------------------
-# Prometheus /metrics histogram _sum delta-scrape  (LANE A, no patch).
-#
-# vLLM v1 exposes per-request lifecycle timings ONLY as Prometheus histograms (and OTel spans),
-# NOT on the OpenAI HTTP response body. In particular RequestOutput.metrics (the old v0
-# RequestMetrics with arrival_time/first_scheduled_time/model_forward_time/time_in_queue) is
-# ALWAYS None on the v1 HTTP generate path in 0.19.0 -- the v0 object was removed; the v1 timestamps
-# live in engine-core RequestStateStats, aggregated into IterationStats, surfaced ONLY via /metrics.
-#   [VERIFY ON H100] RequestOutput.metrics is None on the v1 server path; do NOT build on it.
-#
-# Each histogram exposes a cumulative ``*_sum`` counter. At c1, between a scrape BEFORE send and a
-# scrape AFTER the SSE first token, exactly one request's value is added to each _sum, so
-# (sum_after - sum_before) isolates THAT request's value. This is the whole trick.
-#
-#   [VERIFY ON H100] the exact metric names below on vLLM 0.19.0. Names are stable across 0.8->0.19
-#   but request_prefill_time / request_queue_time are newer histograms -- confirm they EXIST and
-#   populate (server launched WITHOUT --disable-log-stats). If a name is absent the scrape just
-#   yields 0.0 for that span and the column is left blank (frontend_residual still computable).
-# ------------------------------------------------------------------------------------------------
+# vLLM v1 exposes per-request timings only as /metrics histograms; at concurrency 1 a histogram's _sum delta across one request is that request's value, and an absent name leaves its column blank.
 # metric_key -> (prometheus metric base name).  We scrape "<base>_sum".
 _PROM_METRICS = {
     # queued_ts -> scheduled_ts  (scheduler admit / queue wait). ~0 at c1.
@@ -137,11 +100,7 @@ def _sub(after, before):
     return after - before
 
 
-# ------------------------------------------------------------------------------------------------
-# Client SSE timing  (LANE 0, no patch) -- mirrors live_ttft_probe.ttft_once but ALSO splits the
-# client side into connect/send vs first-byte so stages 1 + 11 (HTTP recv + response-stream) are
-# not blindly lumped. ``stream_options.include_usage`` pins prompt_tokens (= new+cached actual).
-# ------------------------------------------------------------------------------------------------
+# The client side splits connect/send from first byte; stream_options.include_usage pins prompt_tokens (new + cached).
 async def ttft_once(session, url, model, content, request_id=None):
     payload = {"model": model, "messages": [{"role": "user", "content": content}],
                "max_tokens": 1, "temperature": 0.0, "stream": True,
@@ -180,9 +139,6 @@ async def ttft_once(session, url, model, content, request_id=None):
         }
 
 
-# ------------------------------------------------------------------------------------------------
-# One (new, cached) measurement at c1, wrapping each trial with a Prometheus before/after scrape.
-# ------------------------------------------------------------------------------------------------
 async def measure(session, base_url, model, cached, new, trials):
     chat_url = base_url + "/v1/chat/completions"
     prefix = cached_prefix(cached)
@@ -244,9 +200,7 @@ async def measure(session, base_url, model, cached, new, trials):
     }
 
 
-# ------------------------------------------------------------------------------------------------
-# Server lifecycle: probes.base.launch_vllm. Stats stay ON so /metrics populates for Lane A.
-# ------------------------------------------------------------------------------------------------
+# Stats stay on so /metrics populates.
 def launch_server(model, port, gpu_mem, max_model_len, api_key, hash_algo, run_dir, tp=1):
     # prefix_caching_hash_algo: toggling sha256 vs builtin attributes the block-hash cost to the
     # frontend/scheduler-admit residual (the external-lit SHA-256 lead). Guarded -- older/newer
@@ -261,12 +215,7 @@ def launch_server(model, port, gpu_mem, max_model_len, api_key, hash_algo, run_d
                        timeout_s=420)
 
 
-# ------------------------------------------------------------------------------------------------
-# LANE B emit -- print (do NOT run) the exact nsys wrapper command for the DEVICE split run, plus
-# the worker-side NVTX/CUDA-event monkeypatch the bench operator injects via --worker-extension-cls
-# (or a sitecustomize shim). We only EMIT it so the profiled wall stays separate from Lane 0/A.
-# Everything here is VERIFY-ON-H100 (paths vary across vLLM versions).
-# ------------------------------------------------------------------------------------------------
+# The nsys device split is printed, never run, so the profiled wall stays apart from the client and /metrics lanes.
 _WORKER_EXT_HINT = r'''
 # --- LANE B worker-side hook (emit-only; the operator drops this into a module on the H100) ---
 # Inject via:  vllm serve ... --worker-extension-cls my_ext.NvtxForwardTimer
@@ -325,9 +274,6 @@ def emit_nsys_cmd(model, port, gpu_mem, max_model_len, out_sqlite):
     print("=" * 96 + "\n")
 
 
-# ------------------------------------------------------------------------------------------------
-# CSV + driver
-# ------------------------------------------------------------------------------------------------
 _CSV_FIELDS = [
     "new", "cached", "n", "prompt_tokens_actual",
     "ttft_ms",              # LANE 0 client wall (ground truth, == live_ttft_probe)

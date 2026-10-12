@@ -377,8 +377,16 @@ class BenchSha(unittest.TestCase):
             self.assertEqual(results.bench_sha(td), "")
 
     def test_no_git_is_empty(self):
-        with mock.patch.object(results.subprocess, "run", side_effect=OSError("no git")):
+        with mock.patch.object(results.subprocess, "run", side_effect=OSError("no git")), \
+                mock.patch.object(results.env_map, "read_env", return_value={}):
             self.assertEqual(results.bench_sha(), "")
+
+    def test_without_a_repo_the_images_qbench_sha_stands_in(self):
+        with tempfile.TemporaryDirectory() as td, \
+                mock.patch.object(results.env_map, "read_env", return_value={"provenance.bench_sha": "abc123"}) as read:
+            self.assertEqual(results.bench_sha(td), "abc123")
+        read.assert_called_once_with(only=("QBENCH_SHA",))
+        self.assertRegex(results.bench_sha(), r"^[0-9a-f]{40}$")
 
 
 if __name__ == "__main__":

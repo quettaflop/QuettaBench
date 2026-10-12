@@ -1,39 +1,6 @@
 #!/usr/bin/env python3
-"""NVLink cost of switching tensor-parallel degree in place (TP reshard).
-
-A device-level engine that changes TP on the fly (tp2 <-> tp4) does NOT reload the
-weights from host/disk -- it re-shards what is already resident on the GPUs over
-NVLink. This probe measures the wall-time of that reshard so a cost model can price a
-``(tp_from -> tp_to)`` switch, the same way ``kv_transfer_probe`` measures the PD KV
-hand-off.
-
-WHAT MOVES (fixed GPU pool, dp compensates so ``tp * dp == world`` is constant,
-optimal GPU->new-rank relabelling that minimises movement):
-
-  * tp UP (q = k*p, dp DOWN):   each GPU's new 1/q-slice is a SUBSET of the 1/p-slice
-    it already holds, so a smart relabel places every GPU for free. Weight movement is
-    ZERO -- the switch just DISCARDS the unneeded weights. We still time the local
-    re-pack (a narrowing device copy) as the floor.
-  * tp DOWN (p = k*q, dp UP):   each GPU's new 1/q-slice is the UNION of k old
-    1/p-slices; it keeps one and fetches the other k-1. Partition the old ranks into
-    groups of k and ALL-GATHER within each group -- every member ends with the full
-    q-slice. Bytes received per GPU = (k-1) * (W/p) = W * (p-q)/(p*q).
-
-Unlike the paged-KV hand-off, a weight shard is a handful of large contiguous tensors,
-so the reshard runs near the NVLink asymptote (700-900 GB/s intra-node on this
-NVSwitch box) rather than the ~200 GB/s NIXL floor a fragmented KV pool sees. Pinning
-that number by measurement is the whole point: the analytic volume model above needs a
-per-byte rate and a launch floor, and those are what this probe fits.
-
-Run (all 8 GPUs of the node, over NVLink):
-
-    python3 -m torch.distributed.run --nproc_per_node=8 \
-        -m quettabench.probes.reparallel --gpu-label H200 --out <dir>
-
-Emits rows of reparallel/<gpu>_reshard.csv (this run's rows; the export unions
-every ok run's rows on the key columns) and prints,
-per (tp_from, tp_to), the floor + per-byte fit to paste into a device YAML's
-``reshard:`` block (see engine/reparallel.py::ReshardLink).
+"""Cost of switching parallelism in place over NVLink, under torchrun: tp reshard (all-gather within groups on tp down, a local re-pack floor on tp up), dp broadcast, ep restage, pp, kv, whole PD-plan and cross-node modes.
+Rank 0 emits reparallel/<gpu>_reshard[_<mode>].csv rows (host_wallclock, last row on a key wins, sorted on KEY) and prints the floor + per-byte fit per (tp_from, tp_to) for a device YAML's reshard: block.
 """
 from __future__ import annotations
 

@@ -100,7 +100,6 @@ def main(argv=None):
     prefill_ms_per_token = round(prefill_ms_per_token, 6)
 
     if rank == 0:
-        # ── Method B: the whole curve, as a grid ──────────────────────────────
         if a.out_dir != "-":  # --out - prints without writing
             table = f"collectives/{a.gpu_label}_tp{world}.csv"
             for op, wd, nbytes, t_us in rows:
@@ -109,7 +108,7 @@ def main(argv=None):
             got = sorted({op for op, _, _, _ in rows})
             print(f"{len(rows)} rows of {table}  (world={world}, ops={got})\n")
 
-        # ── legacy two-scalar block (tp-invariant; kept for refreshes) ────────
+        # The legacy tp_comm: scalars are tp-invariant, which the grid fixes.
         print(f"[{a.gpu_label}] all-reduce over {world} ranks, hidden={a.hidden} layers={a.layers}\n")
         print(f"# paste into device_spec/{a.gpu_label.lower()}.yaml (collective_probe.py):")
         print("tp_comm:")

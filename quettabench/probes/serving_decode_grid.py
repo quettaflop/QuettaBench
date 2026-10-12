@@ -1,16 +1,6 @@
 #!/usr/bin/env python3
-"""Live-server (batch, context) grid of steady-state mid-stream ITL.
-
-Isolated kernel stepping overstates per-step cost vs continuous serving (NCCL
-launch overlaps). This probe self-launches vLLM, fires B concurrent completion
-streams per cell, and records SSE timestamps. The authoritative CSV is built by
-``just export --only serving_decode_grid`` (imports summarize_cell
-from this module).
-
-    python3 -m quettabench.probes.serving_decode_grid \
-      --model /path/to/Llama-3.1-8B-Instruct --tensor-parallel-size 4 \
-      --port 8791 --out-raw results/probes/H100x4/serving_decode_grid/<date>/serving_decode_grid_H100x4.jsonl.gz \
-      --out-summary results/probes/H100x4/serving_decode_grid/<date>/serving_decode_grid_summary.csv
+"""Live-server (batch, context) grid of steady-state mid-stream ITL: launches vLLM, fires B concurrent completion streams per cell and records SSE timestamps to --out-raw.
+`just export --only serving_decode_grid` builds the grid CSV from the raw runs (it imports summarize_cell from here).
 """
 from __future__ import annotations
 
@@ -25,36 +15,23 @@ import multiprocessing as mp
 import os
 import random
 import statistics as st
-import sys
 import tempfile
 import time
 from pathlib import Path
 
-# --- defensive: strip our own dir from sys.path so a stray flash_attn.py can't shadow the pkg ---
-_SCRIPT_DIR = str(Path(__file__).resolve().parent)
-for _p in [e for e in sys.path if e == _SCRIPT_DIR]:
-    sys.path.remove(_p)
-
-from quettabench.probes.base import launch_vllm, run_recorded  # noqa: E402
+from quettabench.probes.base import launch_vllm, run_recorded
 
 # aiohttp is needed only at MEASUREMENT time (on the GPU host). The local builder/test import
 # of this module (for summarize_cell / the lattice) must work without it.
 
 
-# ------------------------------------------------------------------------------------------------
-# Pre-registered lattice (L11-h100multi.md). prompt/osl are an integer fixed point of
-#   prompt = T - osl//2 ;  osl = 384 + ceil(B*prompt/CHUNK_BUDGET)
-# starting from osl0 = 384 (deterministic; converges in < 10 iterations on all cells).
-# ------------------------------------------------------------------------------------------------
+# The pre-registered lattice: prompt/osl are the integer fixed point of prompt = T - osl//2, osl = 384 + ceil(B*prompt/CHUNK_BUDGET) from osl0 = 384 (converges in < 10 iterations on every cell).
 CHUNK_BUDGET = 8192          # vLLM --max-num-batched-tokens (the admission ramp rate)
 STEADY_MIN_STEPS = 384       # decode steps shared by ALL requests after the ramp
-KV_POOL_TOKENS_TP4 = 2_116_352   # live tp4 pool (L8-verified at these engine flags)
+KV_POOL_TOKENS_TP4 = 2_116_352   # the live tp4 pool at these engine flags
 CAP_FRAC = 0.95
 
-# B -> nominal T list. The 26 pre-registered cells (16 + 4 + 3 + 3); the B=256/320 rows are the
-# deterministic completion of the directive's truncated rows under its own cap rule
-# B*(T+osl/2) <= 0.95*pool over its own T menu (see L11-h100multi.md). (160, 12288) is named by
-# the directive ("~94.6% of pool"; strict fixed-point = 95.2%) and kept by name.
+# B -> nominal T: the 26 pre-registered cells, each under B*(T+osl/2) <= 0.95*pool except (160, 12288), kept by name at 95.2%.
 LATTICE_TP4: dict[int, tuple[int, ...]] = {
     1:   (512, 2048, 8192, 16384),
     8:   (512, 2048, 8192, 16384),
@@ -115,9 +92,6 @@ def build_lattice_for_pool(pool_tokens: int) -> dict[int, tuple[int, ...]]:
     return out
 
 
-# ------------------------------------------------------------------------------------------------
-# Deterministic per-request prompts: unique seeded random token IDs (exact token counts).
-# ------------------------------------------------------------------------------------------------
 TOKEN_ID_LO, TOKEN_ID_HI = 1000, 30000   # plain-text band of the Llama-3.1 vocab
 
 
@@ -127,12 +101,7 @@ def prompt_token_ids(cell_b: int, nominal_t: int, req_idx: int, n_tokens: int) -
     return [rng.randrange(TOKEN_ID_LO, TOKEN_ID_HI) for _ in range(n_tokens)]
 
 
-# ------------------------------------------------------------------------------------------------
-# Cell summary -- THE pre-registered post-processing (shared with the builder, which imports it).
-# Records: [{"req", "shard", "prompt_tokens", "osl", "t_first_wall", "deltas_ms": [...],
-#            "lag_p99_ms"}]  (t_first_wall = wall-anchored first-token ts; event k>0 arrives at
-#            t_first_wall + sum(deltas_ms[:k])/1e3).
-# ------------------------------------------------------------------------------------------------
+# A record's event k>0 arrives at t_first_wall + sum(deltas_ms[:k])/1e3; the export builder imports summarize_cell.
 def _p99(vals: list[float]) -> float:
     if not vals:
         return 0.0
@@ -205,9 +174,6 @@ SUMMARY_FIELDS = [
 ]
 
 
-# ------------------------------------------------------------------------------------------------
-# Async measurement worker (one OS process per shard; B < shard threshold -> a single shard).
-# ------------------------------------------------------------------------------------------------
 async def _stream_once(session, url: str, headers: dict, payload: dict) -> list[float]:
     """POST a streaming completion; perf_counter per SSE content delta (no per-event JSON parse:
     every completions data chunk is a text delta; the [DONE] sentinel ends the stream)."""
@@ -341,14 +307,11 @@ def run_cell(cell: dict, port: int, api_key: str, model_name: str, eos_mode: str
     return recs
 
 
-# ------------------------------------------------------------------------------------------------
-# Server lifecycle: probes.base.launch_vllm, flags per L11.
-# ------------------------------------------------------------------------------------------------
 def launch_server(model, port, gpu_mem, max_model_len, api_key, run_dir, tp,
                   max_num_seqs, max_num_batched_tokens):
     return launch_vllm(run_dir, model, port=port, tp=tp, gpu_util=gpu_mem,
                        max_model_len=max_model_len,
-                       prefix_caching=False,                  # measurement isolation (L11)
+                       prefix_caching=False,                  # each cell measures uncached prefill
                        vllm_flags={"served_model_name": "llama", "host": "127.0.0.1",
                                    "max_num_seqs": max_num_seqs,
                                    "max_num_batched_tokens": max_num_batched_tokens,
@@ -368,9 +331,6 @@ def kv_pool_from_log(log_path: str) -> int | None:
     return None
 
 
-# ------------------------------------------------------------------------------------------------
-# Warmup + ignore_eos verification (one unrecorded pass; L8/L3 first-cell outlier hygiene).
-# ------------------------------------------------------------------------------------------------
 def warmup_and_verify_eos(port: int, api_key: str, model_name: str) -> str:
     """8 short streams; returns the eos mode that yields the full requested osl."""
     for mode in ("ignore_eos", "min_tokens"):
@@ -388,9 +348,6 @@ def warmup_and_verify_eos(port: int, api_key: str, model_name: str) -> str:
     raise SystemExit("neither ignore_eos nor min_tokens produced the requested output length")
 
 
-# ------------------------------------------------------------------------------------------------
-# Driver
-# ------------------------------------------------------------------------------------------------
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(description=__doc__, allow_abbrev=False,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -459,10 +416,10 @@ def main(argv=None) -> None:
                 "lattice_pool_tokens": pool, "date": time.strftime("%Y-%m-%d"),
                 "n_cells": len(cells)}
 
-        tmp_dir = Path(tempfile.gettempdir()) / "serving_decode_grid_shards"
-        tmp_dir.mkdir(parents=True, exist_ok=True)
         out_raw = Path(a.out_raw)
         out_raw.parent.mkdir(parents=True, exist_ok=True)
+        # The request shards' results go under this run's dir, never a shared tmp.
+        tmp_dir = Path(tempfile.mkdtemp(dir=out_raw.parent, prefix="shards-"))
         rows = []
         with gzip.open(out_raw, "at") as raw_f:
             raw_f.write(json.dumps(meta) + "\n")

@@ -1,11 +1,6 @@
 #!/usr/bin/env python3
-"""Elementwise kernel affine fits -> elementwise/{gpu}.json entries, matching the
-kernel_composed ElementwiseTable model: latency_us = floor_us + bytes / eff_bw,
-bytes = elements * dtype_bytes * (reads + writes). For each kernel we CUDA-event
-time a torch equivalent across element counts and least-squares fit (floor_us,
-eff_bw_gb_s). eff_bw is *effective* (may exceed peak HBM: cache/fusion).
-
-  CUDA_VISIBLE_DEVICES=0 python3 -m quettabench.probes.elementwise --gpu-label A100 --out <dir>
+"""Elementwise kernel affine fits -> elementwise/{gpu}.json entries for kernel_composed's ElementwiseTable: latency_us = floor_us + bytes / eff_bw, bytes = elements x dtype_bytes x (reads + writes).
+Each kernel is timed across element counts (eager, or --graph replay) and least-squares fitted; --vllm times vLLM's fused kernels instead of torch-chain proxies.
 """
 from __future__ import annotations
 

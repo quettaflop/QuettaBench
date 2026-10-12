@@ -1,51 +1,7 @@
 #!/usr/bin/env python3
-"""Grouped-MoE expert-kernel grid -> moe/{gpu}.csv rows, plus the routing
-kernels -> moe/{gpu}_routing.json entries.
-
-WHY THIS PROBE EXISTS. Every other kernel family in `kernel_composed` prices off a
-measured table; the grouped MoE FFN does not. `sum_kernels._moe_ffn_us` is an
-analytic roofline over touched bytes/FLOPs, scaled by `util_bw`/`util_flops` --
-scalars fitted on DENSE Llama GEMMs. A roofline has no kernel-launch cost and no
-tile quantization, so it is optimistic exactly where a grouped MoE kernel is
-launch-bound: when 128 experts each receive ~1 token. Measured against the
-lss-valid H100 numbers, the roofline is -51% at a 1-token decode step, -14.5% at
-8 tokens, and converges to -4% by 64 (where each expert finally has enough rows
-to look like the dense GEMM the roofline assumes).
-
-That batch-dependent deficit is what the flat `_decode_host_floor_us` constant
-(decode_overhead_ms_per_layer x n_layers) currently patches -- which is why it
-cannot be right at more than one operating point. Measure the kernel and the
-floor can go.
-
-WHAT IT MEASURES
-
-  1. expert kernel  vLLM's own ``fused_experts`` over (tokens, E, top_k,
-                    intermediate, hidden) -> us. `intermediate` is the PER-EXPERT
-                    SwiGLU width ALREADY SHARDED by tp, so a tp sweep is just more
-                    intermediate values -- which is also what replaces the fitted
-                    `moe.shard_half_width` thinning curve.
-  2. routing        topk_softmax and the permute/unpermute pair, fitted to the same
-                    affine `floor_us + bytes / eff_bw` model the ElementwiseTable
-                    uses, so they drop straight into the `moe_topk` / `moe_permute`
-                    keys that today fall back to a roofline.
-  3. align floor    ``moe_align_block_size``, reported as a per-MoE-layer launch
-                    constant for the device YAML's ``moe.routing_launch_us``
-                    (currently commented out: "no NCU sweep of it exists yet").
-
-Routing weights are drawn from a real router GEMM + top-k, not synthesised, so the
-expert-row distribution (and therefore ``moe_align_block_size`` padding) is
-realistic rather than perfectly balanced.
-
-  CUDA_VISIBLE_DEVICES=0 python3 -m quettabench.probes.moe --gpu-label H100 --out <dir>
-  ... --geometries qwen3-30b-a3b,mixtral-8x7b --tp 1,2,4
-
---routing instead dumps one MoE block's exact input, output and routing decision
-from a transformers model, so an engine can diff its own block on the identical
-input (slice verification), to results/probes/<gpu>/moe_routing/<run-id>/<model>_layer<L>.safetensors:
-
-  CUDA_VISIBLE_DEVICES=0,1,2,3 python3 -m quettabench.probes.moe --routing \\
-      --gpu-label H100 --model <dir> --layers 13 --layer 1 --dtype float32 \\
-      --kda-mode fused_recurrent
+"""Grouped-MoE expert-kernel grid (vLLM fused_experts over tokens x (E, top_k, intermediate, hidden)) -> moe/{gpu}.csv rows, plus the routing kernels' affine fits -> moe/{gpu}_routing.json entries.
+The roofline has no launch cost, so it under-prices a grouped kernel exactly when each expert gets ~1 token; this grid replaces it. Use --graph for graphed decode (graph/), the eager default (eager/) includes dispatch.
+--routing instead dumps one MoE block's input, output and routing from a transformers model to results/probes/<gpu>/moe_routing/<run-id>/<model>_layer<L>.safetensors, for an engine-side diff.
 """
 from __future__ import annotations
 

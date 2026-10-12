@@ -1,33 +1,8 @@
 #!/usr/bin/env python3
-"""GEMM latency grid (M, N, K) -> us for the kernel_composed GemmTable
-(min-on-load semantics: a decode step runs its GEMMs warm). Two methods:
-
-  default  CUDA-event timed torch.matmul (bf16)         -- portable, no ncu
-  --ncu    NCU per-kernel gpu__time_duration (the STANDARD; matches the H100
-           tables) -- slower, so a curated shape grid; needs a working ncu
-  --graph  CUDA-graph-replay timing (dispatch-free, NCU-equivalent)
-
-PRECISION (--dtype). bf16 (default) times torch.matmul. fp8 times vLLM's OWN
-block-scaled FP8 linear op (`W8A8BlockFp8LinearOp`, weight blocks 128x128 +
-per-token-group activation scales) -- i.e. exactly the kernel a checkpoint with
-`quant_method: fp8, weight_block_size: [128,128]` (Qwen3-235B-A22B-FP8) runs. That
-op quantizes the activations itself, so the measured cell includes the runtime
-activation-quant kernels, which are a real and NON-negligible part of an FP8 step:
-at M=1 they make FP8 SLOWER than bf16 on H200 (30us vs 19us), while at M=4096 FP8
-wins 1.45x (264us vs 382us). A "2x the bf16 peak" assumption is wrong by ~2x in
-both directions, which is why this is measured rather than scaled.
-
-FP8 rows carry dtype_bytes=1 and go to a SEPARATE table (gemm/{gpu}_fp8.csv):
-a GemmTable is keyed on (M,N,K) only, so mixing precisions in one file would
-silently collapse two different kernels into one cell.
-
-Emits rows of gemm/{gpu}.csv (default) or gemm_wide/{gpu}.csv (--wide), which
-export puts under graph/ (--ncu, --graph) or eager/. M is the token count; (N, K) are
-(out_features, in_features) of each projection (qkv / o / gate_up / down /
-lm_head / router). The table interpolates off-grid.
-
-  CUDA_VISIBLE_DEVICES=0 python3 -m quettabench.probes.gemm --gpu-label A100 --out <dir>
-  NCU_BIN=/opt/nvidia/nsight-compute/2024.3.2/ncu python3 -m quettabench.probes.gemm --gpu-label A100 --ncu ...
+"""GEMM latency grid (M, N, K) -> gemm/{gpu}.csv rows (gemm_wide/ with --wide) for kernel_composed's GemmTable, which takes the min per cell.
+Timing: eager CUDA events by default, --ncu per-kernel NCU time on a curated grid, --graph CUDA-graph replay; the last two are dispatch-free and export to graph/, eager to eager/.
+--dtype fp8 times vLLM's block-scaled FP8 GEMM (quant timed apart) into its own {gpu}_fp8.csv, since a GemmTable keyed on (M,N,K) would merge two precisions into one cell.
+The quant kernel's affine fit goes to elementwise/{gpu}.json as fp8_act_quant.
 """
 from __future__ import annotations
 

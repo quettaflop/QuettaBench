@@ -1,19 +1,6 @@
 #!/usr/bin/env python3
-"""Gated-DeltaNet (Qwen3.5) kernel-cost grid on vLLM's vendored FLA ops (the same
-kernels vllm/sglang serve Qwen3.5 with):
-
-  prefill: fla.ops.chunk_gated_delta_rule        (q,k,v,g,beta -> o)   seq grid
-  decode:  fla.ops.fused_recurrent_gated_delta_rule (T=1 + state)      batch grid
-
-Method follows the serving reality (see kernel_data/PROVENANCE.md): decode is
-CUDA-graphed -> NCU faithful (`--ncu` -> graph/gdn/…_decode.csv); prefill is eager ->
-always cuda_event -> eager/gdn/…_prefill.csv (the multi-kernel dispatch floor
-is real). The delta-rule core is the GDN analog of the flash-attention grid;
-projections are GEMMs (gemm table) and conv/gating are elementwise. Emits per-call
-median us and us x n_linear (all-GDN-layers convention).
-
-  python3 -m quettabench.probes.gdn_grid --hv 32 --dk 128 --dv 128 --n-linear 24 --tag gdn-9b \
-      --mode smoke --out <dir>
+"""Gated-DeltaNet (Qwen3.5) kernel grid on vLLM's vendored FLA ops: prefill chunk_gated_delta_rule over seq -> gdn/{gpu}_{geom}_prefill.csv (always eager), decode fused_recurrent_gated_delta_rule over batch -> gdn/{gpu}_{geom}_decode.csv (NCU with --ncu, else eager).
+Rows hold per-call median us and us x n_linear (all-GDN-layers convention).
 """
 from __future__ import annotations
 

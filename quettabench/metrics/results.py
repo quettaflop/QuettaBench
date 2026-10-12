@@ -1,25 +1,6 @@
-"""The one results writer.
-
-RunWriter owns results/<run>/: requests.jsonl gets one line per request the
-moment it finishes (append-only, flushed, so a crash keeps every row
-already written) and run.json is written once at the end:
-
-  {schema_version, provenance, config, origins, summary, steps, run_status}
-
-A grid run writes no second file: its rows go to the same requests.jsonl,
-one per request of every batch, told apart by `cell` ({ctx, bs, tp,
-step_point, phase, attempt}) and `batch_wall_s`; steps is
-metrics.step_fit.fit_run over those rows (None for a run without cells).
-A driver that times a whole cell itself (BenchDriver) yields dict rows,
-{cell, measured_ms_per_step, group, kv, method}; append writes them with
-the RequestResult keys that apply to them, success and error.
-A probe run also gets rows.jsonl, one ProbeRow (probes/base.py) per line,
-appended as each is measured; export turns those rows into QuettaSim tables.
-run_status is {"status": ok | partial | aborted | failed, "reason": ...}.
-Secrets (redact) are written as REDACTED: in the provenance's launch env
-and in the config.
-Grid runs write no baselines/ file; crossval reads the run dir, and old
-baselines through its compat reader.
+"""The one results writer: RunWriter owns results/<run>/, appending requests.jsonl (and a probe run's rows.jsonl, one ProbeRow per line) as rows finish, flushed, and writing run.json once at the end: {schema_version, provenance, config, origins, summary, steps, run_status}.
+A grid run's rows carry `cell` and `batch_wall_s`, and steps is step_fit.fit_run over them; run_status is ok, partial, aborted or failed with a reason.
+Secrets (redact) are written as REDACTED in the provenance's launch env and the config.
 """
 
 import dataclasses
@@ -30,6 +11,8 @@ import shlex
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
+
+from quettabench.config import env_map
 
 RUN_SCHEMA_VERSION = 1
 RUN_STATUSES = ("ok", "partial", "aborted", "failed")
@@ -207,15 +190,15 @@ def stamp_pulled(path):
     write_atomic(path, json.dumps(doc, indent=2) + "\n")
 
 
-def bench_sha(repo=REPO, short=False):
-    """This checkout's commit; empty when there is no git or no repo (an rsync
-    copy), never a crash. Old baselines recorded the short form."""
+def bench_sha(repo=REPO):
+    """This checkout's commit, else QBENCH_SHA (set in the image), else empty
+    (no git, no repo, an rsync copy); never a crash."""
     try:
-        return subprocess.run(["git", "rev-parse", *(["--short"] if short else []), "HEAD"],
-                              cwd=repo, capture_output=True, text=True,
-                              check=False).stdout.strip()
+        sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True,
+                             check=False).stdout.strip()
     except OSError:
-        return ""
+        sha = ""
+    return sha or str(next(iter(env_map.read_env(only=("QBENCH_SHA",)).values()), ""))
 
 
 def _now():
