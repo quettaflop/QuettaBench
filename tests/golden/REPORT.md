@@ -605,3 +605,12 @@ quoted string and split again.
 abbreviated flags, so `--app` is refused instead of appending while
 export reads it as a reset. `serving_stage_split --emit-nsys-cmd`
 records no run.json; before, it wrote an ok run with no table.
+
+2026-10-11: no fixture changed. The `frontend` and `pd_host` profiler
+sources (`serving_frontend.py`, `pd_host.py`) take the GPU's QuettaSim
+`device_spec/<gpu>.yaml` as a required `--device-yaml`; `just
+serving-profile` passes `$QUETTASIM/device_spec/<gpu>.yaml`. Before,
+both loaded `device_spec/<gpu>.yaml` beside this repo, a file that does
+not exist, so neither could run. serving_frontend imports
+`engine.sim.closed_loop` and `kernel_composed.types` at the top, as
+QuettaSim main (d8503b8) has both.

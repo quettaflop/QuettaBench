@@ -169,7 +169,7 @@ _default_model_yaml := sim_root / "device_spec/models/qwen3.5-9b.yaml"
 # through qbench profile. GT-fit stays in QuettaSim:
 #   just -f $QUETTASIM/justfile serving-fit gpu=X model=...
 serving-profile run gpu=gpu model_yaml=_default_model_yaml tp="1" *args:
-    {{py}} -m quettabench.cli profile --run {{run}} --source frontend --frontend-args "--gpu-label {{gpu}} --model-yaml {{model_yaml}} --tp {{tp}}" {{args}}
+    {{py}} -m quettabench.cli profile --run {{run}} --source frontend --frontend-args "--gpu-label {{gpu}} --device-yaml {{sim_root}}/device_spec/{{lowercase(gpu)}}.yaml --model-yaml {{model_yaml}} --tp {{tp}}" {{args}}
 
 profile-gpu gpu=gpu:
     just gpu={{gpu}} gemm-ncu

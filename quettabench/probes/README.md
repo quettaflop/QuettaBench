@@ -141,7 +141,7 @@ PYTHON_BIN=/home/<user>/miniconda3/envs/vllm/bin/python \
 | `moe` | `cuda_event/moe/{gpu}.csv` + `cuda_event/moe/{gpu}_routing.json` (cuda_event **always**) | tokens × (n_experts, top_k, intermediate, hidden) |
 | `moe_routing` | `moe_routing/{model}_layer{L}.safetensors` | one MoE block's input, output, routing (topk_idx/topk_weight or router_logits) and stage tensors from one prefill, for an engine-side diff of routing, dispatch and combine; `--layers N` cuts the model like `engine.layers` (slice verification, see `crossval/agreement.py`) |
 | `reparallel` | `cuda_event/reparallel/{gpu}_reshard[_dp\|_ep].csv` | torchrun; NVLink cost of switching parallelism in place (tp reshard, dp replica broadcast, ep expert restage; `--mode xnode/plan` for cross-node, see the probe header) |
-| `kv_transfer` (now `quettabench/profiling/kv_transfer.py`; profiler source reads its CSV) | `cuda_event/kv_transfer/{gpu}.csv` | PD KV hand-off through NIXL/UCX, laid out as vLLM's NixlConnector issues it (descriptor list per (layer, block)) |
+| `kv_transfer` (now `quettabench/profiling/kv_transfer.py`; profiler source reads its CSV) | `cuda_event/kv_transfer/{gpu}_nixl.csv` | PD KV hand-off through NIXL/UCX, laid out as vLLM's NixlConnector issues it (descriptor list per (layer, block)) |
 | `pd_host` (now `quettabench/profiling/pd_host.py`, a profiler source) | `cuda_event/pd_host/{gpu}.csv` | per-request HOST cost of a PD pair by prompt length (parse/template/tokenize/hash, paid on P and again on D) |
 | `fused_block` | `validation/fused_block_profile_{model}_tp{N}_{gpu}.csv` | ONE real transformer-block forward, to check the additivity assumption in `fused_step_ms` without a checkpoint; model shapes from QuettaSim's `engine/device_spec/models/` (`--spec-dir`) |
 
@@ -155,7 +155,8 @@ the device-YAML `frontend:` + `serving:` blocks against a running `vllm serve`
 for GPUs with no GT yet. With GT, prefer the cheaper
 `just -f $QUETTASIM/justfile serving-fit`. It and `pd_host.py` are
 consumer-coupled like the two emitters: they import the sim's `engine` package,
-so run them from a QuettaSim checkout (or with QuettaSim on `PYTHONPATH`).
+so run them from a QuettaSim checkout (or with QuettaSim on `PYTHONPATH`), and both take
+the GPU's QuettaSim `device_spec/<gpu>.yaml` as the required `--device-yaml`.
 
 ### Why `moe` exists
 Every other kernel family here has a measured table; the grouped MoE FFN did not.

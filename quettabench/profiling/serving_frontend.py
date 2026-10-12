@@ -23,7 +23,8 @@ Start vLLM separately (the GT harness does the same), then point this at it:
 
   vllm serve <model> --tensor-parallel-size 1 --port 8000 &
   python -m quettabench.profiling.serving_frontend --gpu-label H200 --model Qwen/Qwen3-30B-A3B \
-      --model-yaml ../engine/device_spec/models/qwen3-30b-a3b.yaml \
+      --device-yaml ../QuettaSim/device_spec/h200.yaml \
+      --model-yaml ../QuettaSim/device_spec/models/qwen3-30b-a3b.yaml \
       --base-url http://localhost:8000/v1
 
 Prints the blocks; does NOT edit the YAML. UNVALIDATED without a live server --
@@ -48,10 +49,11 @@ from pathlib import Path
 
 from engine.backends.kernel_composed_cost import KernelComposedCost
 from engine.loaders.config_loader import load_kernel_gpu, load_kernel_model
+from engine.loaders.workload import Turn
+from engine.sim.closed_loop import predict_cell
+from kernel_composed.types import FrontendParams
 
 from quettabench.engines import launcher
-
-HERE = Path(__file__).resolve().parent
 
 _SWEEP_PROMPTS = [128, 256, 512, 1024, 2048]   # single-stream prompt lengths (tokens)
 _CONC_SWEEP = [1, 2, 5, 10, 20, 40]
@@ -115,11 +117,6 @@ def _conc_sweep(a, cost, model):
     measured herd: the first concurrent burst at a new batch shape triggers
     one-time work (triton/moe autotune, graph shapes) that contaminated the
     first version of this sweep by up to 50x at c=2-10."""
-    # Imported here: only this sweep needs them, and QuettaSim main has no engine.sim,
-    # so a top-level import would stop the single-stream sweeps too.
-    from engine.loaders.workload import Turn
-    from engine.sim.closed_loop import predict_cell
-
     def herd(c: int) -> list[tuple[float, float, int]]:
         prompts = [_prompt(512) for _ in range(c)]
         with ThreadPoolExecutor(max_workers=c) as ex:
@@ -166,6 +163,8 @@ def parser():
     ap.add_argument("--gpu-label", required=True)
     ap.add_argument("--model", required=True, help="served model name (OpenAI 'model' field)")
     ap.add_argument("--model-yaml", required=True, help="engine model YAML for the compute prediction")
+    ap.add_argument("--device-yaml", required=True,
+                    help="QuettaSim's device_spec/<gpu>.yaml, e.g. ../QuettaSim/device_spec/h200.yaml")
     ap.add_argument("--base-url", default="http://localhost:8000/v1")
     ap.add_argument("--tp", type=int, default=1)
     ap.add_argument("--out-dir", default=None, help="unused (kept for run_probe.sh parity)")
@@ -180,11 +179,7 @@ def parser():
 def probe(a):
     """Run the sweeps against a.base_url; prints the blocks and returns them as
     {frontend, serving, conc} (conc: [c, median ttft ms, sim frontend-off ms])."""
-
-    # Imported here: QuettaSim main has no kernel_composed.types, so a top-level
-    # import would stop main() and --help as well as this probe.
-    from kernel_composed.types import FrontendParams
-    gpu = load_kernel_gpu(HERE / ".." / ".." / "device_spec" / f"{a.gpu_label.lower()}.yaml")
+    gpu = load_kernel_gpu(Path(a.device_yaml))
     # The residual decomposition needs the COMPUTE-ONLY prediction: strip any
     # frontend block / host floors the YAML already carries (ported or measured),
     # or the sim side would double-count exactly the thing being measured.

@@ -224,6 +224,33 @@ class LiveProbes(unittest.TestCase):
                 if name != "kv_transfer":
                     self.assertTrue({"parser", "probe"} <= funcs)
 
+    def test_frontend_sources_take_quettasims_device_yaml(self):
+        """serving_frontend and pd_host load the GPU from --device-yaml, a
+        required path into QuettaSim's device_spec/; a default under this
+        repo named a file that does not exist. QuettaSim main has
+        engine.sim.closed_loop and kernel_composed.types, so they import at
+        the top."""
+        here = Path(native.__file__).parent
+        for name in ("serving_frontend", "pd_host"):
+            with self.subTest(name):
+                text = (here / f"{name}.py").read_text()
+                tree = ast.parse(text)
+                (call,) = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
+                           and getattr(n.func, "attr", "") == "add_argument"
+                           and any(getattr(x, "value", None) == "--device-yaml" for x in n.args)]
+                kw = {k.arg: getattr(k.value, "value", None) for k in call.keywords}
+                self.assertIs(kw.get("required"), True)
+                self.assertNotIn("default", kw)
+                self.assertIn("device_spec/", kw["help"])
+                self.assertIn("a.device_yaml", text)
+                self.assertIn("--device-yaml", ast.get_docstring(tree))
+                self.assertNotIn("HERE", text)
+        top = {n.module for n in ast.parse((here / "serving_frontend.py").read_text()).body
+               if isinstance(n, ast.ImportFrom)}
+        self.assertLessEqual({"engine.sim.closed_loop", "kernel_composed.types"}, top)
+        justfile = (here.parents[1] / "justfile").read_text()
+        self.assertIn("--device-yaml {{sim_root}}/device_spec/{{lowercase(gpu)}}.yaml", justfile)
+
 
 if __name__ == "__main__":
     unittest.main()

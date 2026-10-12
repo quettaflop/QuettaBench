@@ -197,7 +197,9 @@ def get_args(argv=None):
     ap.add_argument("--gsm8k-n", type=int)
     ap.add_argument("--tokenizer", help="gsm8k tokenizer; default config engine.model")
     ap.add_argument("--served-model", help="OpenAI model name; default config engine.model")
-    ap.add_argument("--frontend-args", default="", help='serving_frontend flags, e.g. "--gpu-label H200"')
+    ap.add_argument("--frontend-args", default="",
+                    help='serving_frontend flags, e.g. '
+                         '"--gpu-label H200 --device-yaml ../QuettaSim/device_spec/h200.yaml"')
     ap.add_argument("--pd-host-args", default="", help="pd_host flags")
     ap.add_argument("--kv-transfer-csv", help="the CSV kv_transfer's torchrun run wrote")
     ap.add_argument("--kernel-steps", type=int, help="decode steps the kernels window holds")

@@ -35,6 +35,7 @@ contention multiplier at that concurrency.
 
   # servers + proxy up (see scratchpad/pd_probe/launch.sh for the E6-shaped pair)
   /opt/vllm-local/bin/python -m quettabench.profiling.pd_host --gpu-label H200 \\
+      --device-yaml ../QuettaSim/device_spec/h200.yaml \\
       --proxy-log <dir>/proxy_requests.jsonl --out data/kernel_data/cuda_event/frontend/H200_pd_host.csv
 
 Prints per-row residuals and the least-squares floor + per-token slopes for P (cold /
@@ -62,8 +63,6 @@ from engine.factory import build_kernel_composed_cost
 from engine.sim.disagg import Link
 
 from quettabench.engines import launcher
-
-HERE = Path(__file__).resolve().parent
 
 COLS = ("gpu", "phase", "conc", "tokens_total", "tokens_new_p", "tokens_cached_d",
         "prefill_ms", "sim_prefill_ms", "p_resid_ms",
@@ -186,7 +185,8 @@ def parser() -> argparse.ArgumentParser:
     ap.add_argument("--model", default="qwen3-235b", help="served model name")
     ap.add_argument("--tokenizer", default="Qwen/Qwen3-235B-A22B-Instruct-2507-FP8")
     ap.add_argument("--model-yaml", default="qwen3-235b-a22b-fp8")
-    ap.add_argument("--device-yaml", default=str(HERE / ".." / ".." / "device_spec" / "h200.yaml"))
+    ap.add_argument("--device-yaml", required=True,
+                    help="QuettaSim's device_spec/<gpu>.yaml, e.g. ../QuettaSim/device_spec/h200.yaml")
     ap.add_argument("--tp", type=int, default=4)
     ap.add_argument("--lengths", type=int, nargs="+",
                     default=[2048, 8192, 16384, 32768, 49152, 65536, 98304, 122880])
