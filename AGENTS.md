@@ -21,7 +21,7 @@ QuettaBench is a measurement harness. It has one command, `qbench`, with four do
 - `quettabench/crossval.py`: reads run files; its only write is the report json (default `results/xval/`).
 - `quettabench/export/quettasim.py`: the only measurement code that writes outside the repo; its builders are `tp_comm`, `roofline_utils`, `serving_decode_grid` and `kernel_tables`; `provision.py` sets the box up outside it (below).
 - `configs/`: `models/` holds per-model facts, once. `runs/` reference a model and never restate its facts. `grids.yaml` holds the grids and step points, `hardware/` the link profiles, `workloads.yaml` every workload profile by name.
-- `data/` and `analysis/`: fetch scripts and one-off studies. Never imported by `quettabench/`, enforced by `tests/contracts/test_imports.py`.
+- `data/`: fetch scripts. Never imported by `quettabench/`, enforced by `tests/contracts/test_imports.py`.
 - `docs/runbooks/`: the probe guide and runbooks; with README.md and AGENTS.md the only docs.
 - `tests/golden/`: characterization fixtures captured from the pre-refactor code. Change a fixture only with a dated line in `tests/golden/REPORT.md` saying why.
 - `tests/contracts/`: one test module per package area, not per module: `test_workloads.py` covers `workloads/` (sessions included), `test_probes.py` `probes/`, `test_adapters.py` the adapters, `test_export.py` `export/`, `test_native.py` `profiling/`, `test_metrics_core.py` `metrics/core.py` and `metrics/step_fit.py`, and `config/schema.py` is tested through `test_loader.py`; `provision.py` is tested in `tests/golden/test_provision.py` only. Plus `test_crossval_contracts.py` (with `crossval.py`'s tests), `test_imports.py` and the GPU smoke module `test_probes_gpu.py`; `helpers.py` and the `fake_*.py` modules are their plumbing.
@@ -47,7 +47,6 @@ One line each; everything else follows section 2 "Target layout".
 - A run that measured no rows for a table exports no table for it; the per-probe CSVs wrote a header-only table, which replaced (or, without `--append`, reset) the earlier runs' rows.
 - `profiling/kv_transfer.py` stays its own module: it is a torchrun target (`-m quettabench.profiling.kv_transfer`) and the tool name in the kernel manifest.
 - `tests/` has `golden/`, `contracts/`, `parity/` and `_stubs/` (the vllm, torch and transformers stand-ins the golden CPU runs import): the probe contracts and GPU smoke tests live in `contracts/`.
-- `analysis/` has no synthetic-sampler studies or `build_trace_distributions`: `analysis/synthetic/` was deleted.
 - `data/` keeps `download_agent_trajectories.py` and `download_coding_prompts.py` apart: section 2's `fetch.py` merge is not done.
 - `legacy/trace_serve.py` is gone; `modes/serve.py` replaced it.
 - `tools/pre_commit/` (the commit-message and em-dash hooks) and `docker/` (the qbench plus vLLM image `just image` builds) sit outside section 2's tree.

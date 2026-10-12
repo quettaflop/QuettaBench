@@ -234,10 +234,8 @@ docs/runbooks/            the probe guide (probes.md) and the slice verification
 tests/golden/             characterization fixtures from the pre-refactor code
 tests/contracts/          one test module per package area, plus the crossval contracts and GPU smoke
 tests/parity/             the committed HTTP-vs-in-process slope gate and its test
-analysis/, data/          one-off studies and data fetch; not imported by the package
+data/                     data fetch scripts; not imported by the package
 ```
-
-analysis/ scripts do not import `quettabench`; run each as `python3 analysis/<script>.py`.
 
 ## Data
 

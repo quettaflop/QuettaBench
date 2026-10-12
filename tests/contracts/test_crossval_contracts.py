@@ -36,8 +36,7 @@ VERIFIED_CRATE = "llama"
 
 
 def _scripts(suffix):
-    roots = (QB, REPO / "analysis")
-    return sorted(p for root in roots for p in root.rglob(f"*{suffix}") if "__pycache__" not in p.parts)
+    return sorted(p for p in QB.rglob(f"*{suffix}") if "__pycache__" not in p.parts)
 
 
 def _load_workloads():
@@ -123,111 +122,6 @@ class CrossvalScripts(unittest.TestCase):
     def test_provision_defaults(self):
         # provision.py reads its defaults from the hardware yaml.
         self.assertEqual(_config("llama").hardware.provision["cache_root"], "/workspace/.xval-cache")
-
-    def test_lss_export_covers_or_fails_loudly(self):
-        # a missing probe cell must exit 2 with a MISSING line, never an interpolated row.
-        with tempfile.TemporaryDirectory() as td:
-            ref = Path(td) / "H200" / "meta-llama" / "Llama-3.1-8B" / "bf16"
-            (ref / "tp1").mkdir(parents=True)
-            (ref / "tp1" / "dense.csv").write_text("layer,tokens,time_us\nact_fn,1,3.3\nact_fn,2,3.4\n")
-            (ref / "tp1" / "per_sequence.csv").write_text("layer,sequences,time_us\nlm_head,1,248.0\n")
-            (ref / "meta.yaml").write_text("hardware: H200\nmodel: m\n")
-            probes = Path(td) / "probes.jsonl"
-            recs = [
-                {"table": "dense", "tp": 1, "layer": "act_fn", "tokens": 1, "time_us": 3.31},
-                {"table": "dense", "tp": 1, "layer": "act_fn", "tokens": 1, "time_us": 3.39},
-                {"table": "dense", "tp": 1, "layer": "act_fn", "tokens": 2, "time_us": 3.44},
-                {"table": "per_sequence", "tp": 1, "layer": "lm_head", "sequences": 1, "time_us": 250.0},
-            ]
-            probes.write_text("".join(json.dumps(r) + "\n" for r in recs))
-            out = Path(td) / "out"
-            full = subprocess.run(
-                [
-                    sys.executable,
-                    str(REPO / "analysis" / "lss_export.py"),
-                    "--probes",
-                    str(probes),
-                    "--reference",
-                    str(ref),
-                    "--out",
-                    str(out),
-                ],
-                capture_output=True,
-                text=True,
-            )
-            self.assertEqual(full.returncode, 0, full.stdout + full.stderr)
-            tree = out / "profiler" / "perf" / "H200" / "meta-llama" / "Llama-3.1-8B" / "bf16"
-            dense = (tree / "tp1" / "dense.csv").read_text().splitlines()
-            self.assertEqual(dense[0], "layer,tokens,time_us")
-            self.assertEqual(dense[1], "act_fn,1,3.35")  # median of the duplicates
-            self.assertTrue((tree / "meta.yaml").exists())
-            probes.write_text(json.dumps(recs[0]) + "\n")  # drop coverage
-            gap = subprocess.run(
-                [
-                    sys.executable,
-                    str(REPO / "analysis" / "lss_export.py"),
-                    "--probes",
-                    str(probes),
-                    "--reference",
-                    str(ref),
-                    "--out",
-                    str(out),
-                ],
-                capture_output=True,
-                text=True,
-            )
-            self.assertEqual(gap.returncode, 2, gap.stdout + gap.stderr)
-            self.assertIn("MISSING table=dense tp=1 layer=act_fn tokens=2", gap.stdout)
-            self.assertIn("MISSING", (out / "gaps.txt").read_text())
-
-    def test_lss_first_token_fit(self):
-        # a constant live-minus-sim offset is recovered exactly; the join is by request id.
-        with tempfile.TemporaryDirectory() as td:
-            live = Path(td) / "bench_dir"
-            live.mkdir()
-            sim_rows = [
-                "instance id,request id,model,input,output,arrival,end_time,latency,queuing_delay,TTFT,TPOT,ITL"
-            ]
-            with open(live / "requests.jsonl", "w") as fh:
-                for i in range(10):
-                    sim_ttft_ms = 10.0 + i
-                    toks = 256 * (i + 1)
-                    fh.write(
-                        json.dumps(
-                            {
-                                "request_id": f"bench-{i}",
-                                "input_toks": toks,
-                                "output_toks": 8,
-                                "queued_ts": 1000.0 + i,
-                                "first_token_ts": 1000.0 + i + (sim_ttft_ms + 6.3) / 1e3,
-                                "last_token_ts": 1000.0 + i + 1.0,
-                            }
-                        )
-                        + "\n"
-                    )
-                    sim_rows.append(f'0,{i},m,{toks},8,0,0,0,0,{sim_ttft_ms * 1e6:.0f},0,"[]"')
-            sim = Path(td) / "sim.csv"
-            sim.write_text("\n".join(sim_rows) + "\n")
-            meta = Path(td) / "meta.yaml"
-            meta.write_text("hardware: H200\n")
-            out = subprocess.run(
-                [
-                    sys.executable,
-                    str(REPO / "analysis" / "lss_first_token.py"),
-                    "--live",
-                    str(live),
-                    "--sim",
-                    str(sim),
-                    "--meta",
-                    str(meta),
-                ],
-                capture_output=True,
-                text=True,
-            )
-            self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
-            self.assertIn("overhead_ms=6.300", out.stdout)
-            self.assertIn("after_mape=0.0%", out.stdout)
-            self.assertIn("first_token_overhead_us: 6300", meta.read_text())
 
     def test_goodput_search_and_verdict(self):
         # the sweep must bracket the PASS/FAIL boundary within its probe cap.
