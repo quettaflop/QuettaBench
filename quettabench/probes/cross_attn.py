@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-"""Chunked-prefill attention (q_len new tokens over resident cached tokens, one varlen call) -> fa3_cross/{gpu}.csv rows, per layer, eager.
-
-Neither the decode nor the full-causal prefill grid covers this shape, which dominates prefill attention on long-ISL traces. --paged times vLLM's paged call (block_table, seqused_k), whose split-KV path is much faster at q << kv.
+"""Chunked-prefill attention (q_len new tokens over resident cached tokens) -> fa3_cross/{gpu}.csv rows, per layer, eager.
+--paged times vLLM's paged call (block_table, seqused_k).
 """
 
 from __future__ import annotations
@@ -53,7 +52,7 @@ class CrossAttnProbe(Probe):
         q = torch.randn(ql, a.n_heads, a.head_dim, device=dev, dtype=dt)
         cu_q = torch.tensor([0, ql], dtype=torch.int32, device=dev)
         if a.paged:
-            # vLLM's call shape. With a block_table split-KV engages; the contiguous cu_seqlens_k path runs unsplit and is up to ~3x slower at q<=512 over long residents.
+            # vLLM's call shape: a block_table engages split-KV, up to ~3x faster than contiguous cu_seqlens_k at q<=512.
             bs = 16
             nb = (kv + bs - 1) // bs
             k = torch.randn(nb, bs, a.n_kv_heads, a.head_dim, device=dev, dtype=dt)

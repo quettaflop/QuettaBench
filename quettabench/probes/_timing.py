@@ -1,6 +1,5 @@
 """Kernel timing shared by the probes: CUDA-graph replay, and NCU per-kernel durations.
-
-Graph replay matches vLLM's graphed decode (no per-launch CPU dispatch) and works where NCU counters are locked (RmProfilingAdminOnly=1). NCU sums the op's kernels per invocation and drops the `at::` tensor-setup kernels.
+Graph replay works where NCU counters are locked (RmProfilingAdminOnly=1).
 """
 
 from __future__ import annotations
@@ -15,14 +14,10 @@ import torch
 
 
 def graph_time_us(fn, *, warmup: int = 10, reps: int = 50, reduce=min) -> float:
-    """Capture fn into a CUDA graph and time replay in us, reduced over reps.
-
-    fn must be shape-static with inputs pre-allocated. Eager warmup runs first so autotuners pick kernels outside capture.
-    Each capture gets a private memory pool freed with its graph; one shared pool handle dies with the first graph and trips a CUDACachingAllocator use_count assert.
-    """
+    """Capture fn into a CUDA graph and time replay in us, reduced over reps; fn must be shape-static with inputs pre-allocated."""
     for _ in range(3):
         fn()
-    # One cudaGraphLaunch costs ~6us but a decode step launches one graph for everything, so the op is captured `iters` times per graph and divided; iters comes from an eager estimate so big ops do not exhaust pool memory.
+    # Capture iters ops per graph to amortize the ~6us launch.
     torch.cuda.synchronize()
     s0, e0 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
     s0.record()
@@ -39,6 +34,7 @@ def graph_time_us(fn, *, warmup: int = 10, reps: int = 50, reduce=min) -> float:
             fn()
     torch.cuda.current_stream().wait_stream(side)
 
+    # No shared memory pool: one pool handle dies with the first graph and trips a CUDACachingAllocator use_count assert.
     g = torch.cuda.CUDAGraph()
     with torch.cuda.graph(g):
         for _ in range(iters):

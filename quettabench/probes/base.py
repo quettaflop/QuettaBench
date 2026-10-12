@@ -137,10 +137,7 @@ def record_dir(name: str, argv: list[str], file_flag: str | None = None) -> Path
 
 
 def run_recorded(main, name: str, file_flag: str | None = None, now: datetime | None = None) -> None:
-    """main(argv) with its run recorded through RunWriter in <record_dir>/run.json, with main's rows in rows.jsonl beside it; an exception marks the run failed (aborted on Ctrl-C) and is re-raised.
-
-    A probe without file_flag gets --run-id from now, so each run has its own dir. The writer opens before main, so a killed run leaves no run.json and export skips it. Under torchrun only rank 0 records, and a main returning False records nothing.
-    """
+    """main(argv) with its run recorded through RunWriter in <record_dir>/run.json; an exception marks the run failed (aborted on Ctrl-C) and is re-raised."""
     global _WRITER
     now = now or datetime.now(timezone.utc)
     argv = sys.argv[1:] if file_flag else ["--run-id", run_id(now), *sys.argv[1:]]
@@ -154,6 +151,7 @@ def run_recorded(main, name: str, file_flag: str | None = None, now: datetime | 
             HardwareCfg(),
             run_name=f"probe-{name}",
         )
+        # Opened before main so a killed run leaves no run.json and export skips it.
         try:
             writer = RunWriter(run_dir, cfg, exclusive=True)
         except FileExistsError:

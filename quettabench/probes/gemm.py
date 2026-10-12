@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
-"""GEMM latency grid (M, N, K) -> gemm/{gpu}.csv rows (gemm_wide/ with --wide) for kernel_composed's GemmTable, which takes the min per cell.
-
-Timing: eager CUDA events by default, --ncu per-kernel NCU time on a curated grid, --graph CUDA-graph replay; the last two are dispatch-free and export to graph/, eager to eager/.
---dtype fp8 times vLLM's block-scaled FP8 GEMM into its own {gpu}_fp8.csv, since a table keyed on (M,N,K) would merge two precisions into one cell. The activation-quant kernel is timed apart and its affine fit goes to elementwise/{gpu}.json as fp8_act_quant.
+"""GEMM latency grid (M, N, K) -> gemm/{gpu}.csv rows (gemm_wide/ with --wide) for kernel_composed's GemmTable.
+--ncu and --graph are dispatch-free and export to graph/, eager to eager/; --dtype fp8 writes {gpu}_fp8.csv.
 """
 
 from __future__ import annotations
@@ -22,12 +20,7 @@ DIMS = [1024, 2048, 4096, 5120, 6144, 8192, 10240, 11008, 12288, 14336, 16384, 1
 VOCAB = [128256, 152064, 248320]  # lm_head N, with K = hidden
 HIDDENS = [4096, 5120, 8192]
 
-# Exact (N, K) cells a model's projections query, so the table never interpolates or falls to the roofline for them. Shapes follow sum_kernels._block_linear_us:
-#     qkv fused   N = (n_q/tp + 2*n_kv/kv_shards) * head_dim,  K = hidden
-#     o_proj      N = hidden,                                  K = hidden/tp
-#     MoE router  N = n_experts,                               K = hidden
-#     lm_head     N = vocab/tp,                                K = hidden
-# kv_shards = min(tp, kv_heads), so k/v stop shrinking past tp = kv_heads.
+# Exact (N, K) cells per model so these never interpolate.
 MODEL_SHAPES: dict[str, list[tuple[int, int]]] = {
     # hidden 4096, 64q/4kv heads, head_dim 128, 128 experts, vocab 151936; tp 1/2/4/8.
     "qwen3-235b-a22b": [
@@ -64,7 +57,7 @@ NCU_NK = [
     (152064, 8192),
     (28672, 4096),
 ]
-NCU_REPS = 3
+NCU_REPS = 3  # warm launches per NCU capture; the min is kept
 
 
 # Hopper GEMMs (nvjet, cutlass3x, xmma, wgmma) do not contain "gemm" in their names; the list still excludes the randn setup kernel.
@@ -87,11 +80,7 @@ def ncu_gemm_us(m, n, k, ncu_bin, reps=NCU_REPS) -> float | None:
 
 
 class Fp8Op:
-    """vLLM's block-scaled FP8 linear on Hopper as two kernels, QuantFP8 (bf16 to fp8 plus scales) and cutlass_scaled_mm, timed separately.
-
-    The grid stores the GEMM alone: torch.compile fuses the quant into the RMSNorm before qkv_proj and lm_head, and MoE experts quantize inside fused_moe, so only o_proj's input pays a standalone quant. That quant is fitted as the fp8_act_quant elementwise affine.
-    No torch._scaled_mm fallback: it is per-tensor scaled, a faster kernel than the per-block one the checkpoint ships.
-    """
+    """vLLM's block-scaled FP8 linear on Hopper: QuantFP8 and cutlass_scaled_mm, timed separately."""
 
     def __init__(self) -> None:
         """vllm is imported here: only --dtype fp8 needs it."""
@@ -127,6 +116,7 @@ class Fp8Op:
             ts.append(s.elapsed_time(e) * 1000.0)
         return min(ts)
 
+    # No torch._scaled_mm fallback: it is per-tensor scaled, faster than the per-block kernel the checkpoint ships.
     def gemm_us(self, m, n, k, dev, graph: bool = False) -> float:
         """GEMM kernel alone in us on a pre-quantized input; times the quant once per (m, k) for its fit."""
         x = torch.randn(m, k, device=dev, dtype=torch.bfloat16)
@@ -134,6 +124,7 @@ class Fp8Op:
         bn, bk = FP8_WEIGHT_BLOCK
         # Positive O(1e-2) scales: a zero or NaN scale can trip a fast path.
         ws = torch.rand((n + bn - 1) // bn, (k + bk - 1) // bk, device=dev, dtype=torch.float32).mul_(0.01).add_(1e-4)
+        # The grid stores the GEMM alone: the quant fuses into the RMSNorm or fused_moe except before o_proj, whose quant is fitted as fp8_act_quant.
         try:
             if not any(pm == m and pk == k for pm, pk, _ in self.quant_pts):
                 self.quant_pts.append((m, k, self._time(lambda: self.quant(x), graph)))

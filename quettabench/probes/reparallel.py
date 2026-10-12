@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-"""Cost of switching parallelism in place over NVLink, under torchrun: tp reshard (all-gather within groups on tp down, a local re-pack floor on tp up), dp broadcast, ep restage, pp, kv, whole PD-plan and cross-node modes.
-
-Rank 0 emits reparallel/<gpu>_reshard[_<mode>].csv rows (host_wallclock, last row on a key wins, sorted on KEY) and prints the floor + per-byte fit per (tp_from, tp_to) for a device YAML's reshard: block.
+"""Cost of switching parallelism in place over NVLink, under torchrun: tp reshard, dp broadcast, ep restage, pp, kv, whole PD-plan and cross-node modes.
+Rank 0 writes reparallel/<gpu>_reshard[_<mode>].csv and prints the floor + per-byte fit per (tp_from, tp_to).
 """
 
 from __future__ import annotations
@@ -440,9 +439,7 @@ def _measure_kv(a, rank: int, world: int, _get_groups) -> list[dict]:
 
 def _measure_xnode(a, rank: int, world: int) -> list[dict]:
     """Cross-node link rates for the reshard model; launch with torchrun --nnodes=2.
-
-    xpair{n}: n concurrent P2P pairs (GPU i of node 0 to GPU i of node 1); the sweep shows rail sharing when gpn pulls share fewer NICs. tp_from/tp_to carry n.
-    xallgather: gpn concurrent 2-way all-gathers spanning the two nodes, the reshard of an instance that spans nodes.
+    xpair{n} times n concurrent P2P pairs across the nodes; xallgather times gpn concurrent 2-way all-gathers spanning them.
     """
     gpn = int(os.environ.get("LOCAL_WORLD_SIZE", world))
     n_nodes = world // gpn

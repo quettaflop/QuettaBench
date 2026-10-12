@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-"""Elementwise kernel affine fits -> elementwise/{gpu}.json entries for kernel_composed's ElementwiseTable: latency_us = floor_us + bytes / eff_bw, bytes = elements x dtype_bytes x (reads + writes).
-
-Each kernel is timed across element counts (eager, or --graph replay) and least-squares fitted; --vllm times vLLM's fused kernels instead of torch-chain proxies.
+"""Elementwise kernel affine fits -> elementwise/{gpu}.json: latency_us = floor_us + bytes / eff_bw.
+--graph times graph replay; --vllm times vLLM's fused kernels instead of torch-chain proxies.
 """
 
 from __future__ import annotations
@@ -17,7 +16,7 @@ from quettabench.probes.base import Probe, ProbeRow, add_output_args, run_record
 
 # (reads, writes) per kernel; must match kernel_composed/elementwise.py::_IO.
 IO = {"rmsnorm": (1, 1), "silu_mul": (2, 1), "rotary_emb": (1, 1), "residual_add": (2, 1)}
-# Kernels only vLLM ships fused: fused_add_rms_norm (residual-add plus rmsnorm in one kernel) and reshape_and_cache_flash (the KV-cache write).
+# Kernels only vLLM ships fused: fused_add_rms_norm and reshape_and_cache_flash (the KV-cache write).
 VLLM_IO = {**IO, "fused_add_rmsnorm": (2, 2), "kv_cache_write": (1, 1)}
 ELEMS = [2**e for e in range(18, 30)]  # 262k to 537M elements
 REPS, WARMUP = 50, 10

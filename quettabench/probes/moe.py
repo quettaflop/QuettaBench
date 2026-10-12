@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
-"""Grouped-MoE expert-kernel grid (vLLM fused_experts over tokens x (E, top_k, intermediate, hidden)) -> moe/{gpu}.csv rows, plus the routing kernels' affine fits -> moe/{gpu}_routing.json entries.
-
-The roofline has no launch cost, so it under-prices a grouped kernel when each expert gets about one token. Use --graph for graphed decode (graph/); the eager default (eager/) includes dispatch.
---routing instead dumps one MoE block's input, output and routing from a transformers model to results/probes/<gpu>/moe_routing/<run-id>/<model>_layer<L>.safetensors, for an engine-side diff.
+"""Grouped-MoE expert-kernel grid (vLLM fused_experts) -> moe/{gpu}.csv rows and routing-kernel fits -> moe/{gpu}_routing.json.
+--graph times graphed decode; --routing dumps one MoE block's input, output and routing for an engine-side diff.
 """
 
 from __future__ import annotations
@@ -17,8 +15,7 @@ import torch
 from quettabench.probes._timing import graph_time_us
 from quettabench.probes.base import ProbeRow, add_output_args, emit, out_root, run_recorded
 
-# (n_experts, top_k, intermediate_per_expert, hidden); intermediate is sharded by tp at sweep time.
-# gpt-oss is swept for shape coverage only: MXFP4 experts are not priced off a bf16 grid, since a measured latency cannot be split into its weight-read term.
+# (n_experts, top_k, intermediate_per_expert, hidden), intermediate sharded by tp at sweep time; gpt-oss is shape coverage only, MXFP4 is not priced off a bf16 grid.
 GEOMETRIES: dict[str, tuple[int, int, int, int]] = {
     "qwen3-30b-a3b": (128, 8, 768, 2048),
     "qwen3-235b-a22b": (128, 8, 1536, 4096),
@@ -62,7 +59,7 @@ def _fused_experts():
 
 
 _GRAPH = False
-# vLLM >= 0.28 serves unquantized bf16 MoE through FlashInfer CUTLASS, which on RTXPRO6000/Qwen3-235B is ~2x slower than Triton at batch 1 and several times faster at prefill chunks.
+# Triton default: FlashInfer CUTLASS is ~2x slower at batch 1 but several times faster at prefill chunks.
 _BACKEND = "triton"
 
 

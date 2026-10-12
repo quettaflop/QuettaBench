@@ -350,8 +350,8 @@ def main(argv=None):
         "--tensor-parallel-size",
         type=int,
         default=1,
-        help="tp for the launched server (G3 like-for-like pair: run tp1 AND tp2 "
-        "with THIS same script/stack; needs tp GPUs in CUDA_VISIBLE_DEVICES)",
+        help="tp for the launched server (run tp1 AND tp2 with this same script "
+        "for the tp_comm pair; needs tp GPUs in CUDA_VISIBLE_DEVICES)",
     )
     ap.add_argument(
         "--hash",

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-"""NCCL collective microbenchmark under torchrun: every op LLM inference emits (all_reduce, all_gather, reduce_scatter, all_to_all) across message sizes, amortized over back-to-back calls.
-
-Rank 0 emits the curve as collectives/{gpu}_tp{world}.csv ProbeRows and prints the tp_comm: YAML block; run it once per world size.
+"""NCCL collective microbenchmark under torchrun: every op LLM inference emits across message sizes.
+Rank 0 writes collectives/{gpu}_tp{world}.csv and prints the tp_comm: YAML block; run it once per world size.
 """
 
 from __future__ import annotations
@@ -22,7 +21,7 @@ def _time_op(op: str, n_elems: int, world: int, iters: int, warmup: int) -> floa
 
     Timing the back-to-back loop lets launch overhead pipeline away, matching graphed decode; per-op event timing would over-price tp_comm.
     """
-    # n_elems is the full logical buffer (all_reduce/reduce_scatter input, all_gather result, all_to_all total sent), so ops compare at equal bytes.
+    # n_elems is the full logical buffer, so ops compare at equal bytes.
     full = torch.ones(n_elems, dtype=_DTYPE, device="cuda")
     shard = torch.ones(max(1, n_elems // world), dtype=_DTYPE, device="cuda")
     if op == "all_reduce":

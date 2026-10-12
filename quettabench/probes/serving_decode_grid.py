@@ -30,7 +30,7 @@ from quettabench.probes.base import launch_vllm, run_recorded
 CHUNK_BUDGET = 8192  # vLLM --max-num-batched-tokens, the admission ramp rate
 STEADY_MIN_STEPS = 384  # decode steps all requests share after the ramp
 KV_POOL_TOKENS_TP4 = 2_116_352  # the live tp4 pool at these engine flags
-CAP_FRAC = 0.95
+CAP_FRAC = 0.95  # B*(T + osl/2) may fill at most this fraction of the KV pool
 
 # B -> nominal T: 26 fixed cells, each under B*(T+osl/2) <= 0.95*pool except (160, 12288) at 95.2%.
 LATTICE_TP4: dict[int, tuple[int, ...]] = {
@@ -277,7 +277,7 @@ async def _run_shard(
 
 def _shard_entry(req_specs, port, api_key, model_name, eos_mode, barrier, shard_id, out_path, rt: bool = False):
     if rt:
-        # SCHED_RR for the shard process only (needs CAP_SYS_NICE): the server's threads otherwise preempt the client loop for ~2 ms CFS slices, tripping the p99 loop-lag flag while p50 ITL is unchanged.
+        # SCHED_RR (needs CAP_SYS_NICE) keeps the server's threads from preempting the client loop and tripping the p99 loop-lag flag.
         try:
             os.sched_setscheduler(0, os.SCHED_RR, os.sched_param(10))
             print(f"shard {shard_id}: SCHED_RR set", flush=True)
@@ -408,7 +408,7 @@ def main(argv=None) -> None:
         "--pool-tokens",
         type=int,
         default=None,
-        help="KV pool for lattice feasibility; default: tp4 pre-registered pool "
+        help="KV pool for lattice feasibility; default: the tp4 pool "
         f"({KV_POOL_TOKENS_TP4}); for other tp, pass the live pool and the "
         "lattice is re-derived by the same cap rule",
     )

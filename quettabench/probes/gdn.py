@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""Gated-DeltaNet (Qwen3.5) kernel grid on vLLM's vendored FLA ops: prefill chunk_gated_delta_rule over seq -> gdn/{gpu}_{geom}_prefill.csv (always eager), decode fused_recurrent_gated_delta_rule over batch -> gdn/{gpu}_{geom}_decode.csv (NCU with --ncu, else eager).
-
+"""Gated-DeltaNet kernel grid on vLLM's FLA ops: prefill (eager) -> gdn/{gpu}_{geom}_prefill.csv, decode (NCU with --ncu, else eager) -> gdn/{gpu}_{geom}_decode.csv.
 Rows hold per-call median us and us x n_linear (all GDN layers).
 """
 
@@ -21,7 +20,7 @@ from vllm.model_executor.layers.fla.ops import (
 from quettabench.probes._timing import ncu_op_us
 from quettabench.probes.base import Probe, ProbeRow, add_output_args, run_recorded
 
-# solve_tril autotunes on a host with no Triton cache and needs a scratch allocator, which vLLM sets at model init; without it prefill fails with "no allocator was set".
+# solve_tril needs a scratch allocator (vLLM sets one at model init), else prefill fails with "no allocator was set".
 triton.set_allocator(lambda size, alignment, stream: torch.empty(size, dtype=torch.int8, device="cuda"))
 
 REPS, WARMUP = 30, 5
@@ -32,7 +31,7 @@ BATCH_SMOKE = [1, 32, 256]
 SEQ_SMOKE = [128, 2048]
 # NCU is slow, so a curated grid; the loader interpolates.
 BATCH_NCU = [1, 8, 32, 80]
-NCU_REPS = 5
+NCU_REPS = 5  # launches per NCU capture; the min over per-invocation sums is kept
 
 
 def _ncu_decode_inner(B, H, K, V) -> str:
