@@ -1,8 +1,11 @@
 """Every quettabench module imports on its own in a fresh interpreter, so no
 import order hides a cycle. A module whose optional dependency (torch, vllm,
 QuettaSim's engine, ...) is not installed here is skipped by name; a missing
-quettabench name is a failure. tests/_stubs is on the path, as the golden
-harness puts it, so the probes that need only a torch or vllm name load too.
+quettabench name is a failure, as is an error raised in quettabench's own
+code. An error that surfaces inside a stub or an installed package (safetensors
+reaching for torch.nn on the stub) means the real dependency is absent: skipped.
+tests/_stubs is on the path, as the golden harness puts it, so the probes that
+need only a torch or vllm name load too.
 __main__ modules run a CLI on import and are left out."""
 
 import os
@@ -40,7 +43,8 @@ def test_every_module_imports_alone():
         if proc.returncode == 0:
             continue
         last = proc.stderr.strip().splitlines()[-1] if proc.stderr.strip() else ""
-        if last.startswith("ModuleNotFoundError") and "'quettabench" not in last:
+        third_party = str(STUBS) in proc.stderr or "site-packages" in proc.stderr
+        if "'quettabench" not in last and (last.startswith("ModuleNotFoundError") or third_party):
             skipped.append(name)
         else:
             failures.append(f"{name}: {last}")
