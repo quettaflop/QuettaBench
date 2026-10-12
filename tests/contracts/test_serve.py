@@ -278,7 +278,7 @@ class LineFormats(unittest.TestCase):
             summary_tag_lines({"sla": sla}),
             ["SLASUM verdict=PASS bound=none ttft_p99=5.0/30.0 tpot_p99=-/10.0 rate_req_s=1.000"],
         )
-        records = [{"ttft_ms": 5.0, "out_tokens": 1, "arrival_s": 0.0, "tpot_ms": None}]
+        records = [{"ttft_ms": 5.0, "index": 0, "out_tokens": 1, "arrival_s": 0.0, "tpot_ms": None}]
         with mock.patch.object(serve, "serve_records", return_value=records):
             sections = serve.crossval_sections([], 1.0, ModeCfg(sla_ttft_ms=30.0, sla_tpot_ms=10.0))
         self.assertIsNone(sections["sla"]["tpot_p99"])

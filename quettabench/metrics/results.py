@@ -387,6 +387,11 @@ def summary_tag_lines(summary):
             f"SERVESUM n={s['n']} "
             + " ".join(f"ttft_ms_p{q}={s['ttft_ms'][f'p{q}']:.1f}" for q in PCTS)
             + " "
+            + (
+                " ".join(f"steady_ttft_ms_p{q}={st[f'p{q}']:.1f}" for q in PCTS) + " "
+                if (st := s.get("steady_ttft_ms"))
+                else ""
+            )
             + (" ".join(f"tpot_ms_p{q}={tp[f'p{q}']:.3f}" for q in PCTS) + " " if tp else "tpot_ms_p50=- ")
             + f"req_s={s['req_s']:.3f} tok_s={s['tok_s']:.1f}"
         )

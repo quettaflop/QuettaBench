@@ -234,6 +234,7 @@ def serve_records(pairs, open_loop):
         out.append(
             {
                 "ttft_ms": (r.ttft or r.e2el) * 1e3,
+                "index": r.request_index,
                 "out_tokens": n,
                 "arrival_s": arrival,
                 "tpot_ms": (r.e2el - r.ttft) * 1e3 / (n - 1) if r.ttft and n > 1 else None,
@@ -277,7 +278,8 @@ def crossval_sections(pairs, duration, mode, server_spec=None):
     records = serve_records(pairs, mode.load == "open")
     if not records:
         return out
-    s = out["serve"] = summarize_serve(records, duration, "nearest")
+    closed = mode.concurrency if mode.load == "closed" else 0
+    s = out["serve"] = summarize_serve(records, duration, "nearest", closed)
     if mode.sla_ttft_ms or mode.sla_tpot_ms:
         bound = sla_verdict(s, mode.sla_ttft_ms, mode.sla_tpot_ms)
         out["sla"] = {

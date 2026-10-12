@@ -21,6 +21,7 @@ from quettabench.metrics.core import (
     percentile,
     sla_verdict,
     spec_counts,
+    steady_ttfts,
     success_rate_gate,
     summarize_serve,
     transient_gate,
@@ -104,6 +105,28 @@ class ServeSummaryTest(unittest.TestCase):
     def test_no_records_raises(self):
         with self.assertRaisesRegex(ValueError, "no completed requests"):
             summarize_serve([], 1.0, "nearest")
+
+
+class SteadyTtftTest(unittest.TestCase):
+    def test_summarize_serve_drops_the_first_wave(self):
+        records = [
+            {"ttft_ms": 100.0 if i < 2 else 10.0, "tpot_ms": None, "out_tokens": 1, "index": i} for i in range(6)
+        ]
+        s = summarize_serve(records, 1.0, "nearest", closed_concurrency=2)
+        self.assertEqual(s["ttft_ms"]["p99"], 100.0)
+        self.assertEqual(s["steady_ttft_ms"], {"p50": 10.0, "p90": 10.0, "p95": 10.0, "p99": 10.0})
+
+    def test_too_few_left_is_none(self):
+        records = [{"ttft_ms": 1.0, "tpot_ms": None, "out_tokens": 1, "index": i} for i in range(5)]
+        self.assertIsNone(summarize_serve(records, 1.0, "nearest", closed_concurrency=3)["steady_ttft_ms"])
+
+    def test_open_load_has_no_steady_key(self):
+        records = [{"ttft_ms": 1.0, "tpot_ms": None, "out_tokens": 1}]
+        self.assertNotIn("steady_ttft_ms", summarize_serve(records, 1.0, "nearest"))
+
+    def test_helper_counts_by_dispatch_index(self):
+        self.assertEqual(steady_ttfts([(0, 9.0), (3, 1.0), (2, 2.0), (4, 3.0)], 2), [1.0, 2.0, 3.0])
+        self.assertIsNone(steady_ttfts([(0, 9.0), (2, 2.0)], 2))
 
 
 class SpecCountsTest(unittest.TestCase):
@@ -325,6 +348,33 @@ class TestBusyThroughput(unittest.TestCase):
         results = [_req(0, 1), _req(0, 30, success=False, error_kind="timeout")]
         s = aggregate(results, duration_s=30.0, concurrency=2)
         self.assertAlmostEqual(s.busy_time_s, 30.0)
+
+
+class TestSteadyTtft(unittest.TestCase):
+    @staticmethod
+    def _wave(n, concurrency):
+        results = []
+        for i in range(n):
+            r = _req(i, i + 1)
+            r.ttft = 1.0 if i < concurrency else 0.1
+            r.request_index = i
+            results.append(r)
+        return results
+
+    def test_closed_loop_reports_steady_state(self):
+        s = aggregate(self._wave(8, 2), duration_s=8.0, concurrency=2, load_mode="closed-loop")
+        self.assertAlmostEqual(s.p99_ttft_ms, 1000.0)
+        self.assertAlmostEqual(s.steady_median_ttft_ms, 100.0)
+        self.assertAlmostEqual(s.steady_p99_ttft_ms, 100.0)
+
+    def test_none_when_fewer_than_concurrency_remain(self):
+        s = aggregate(self._wave(5, 3), duration_s=5.0, concurrency=3, load_mode="closed-loop")
+        self.assertIsNone(s.steady_median_ttft_ms)
+        self.assertIsNone(s.steady_p99_ttft_ms)
+
+    def test_open_loop_has_none(self):
+        s = aggregate(self._wave(8, 2), duration_s=8.0, concurrency=2, load_mode="open-loop")
+        self.assertIsNone(s.steady_median_ttft_ms)
 
 
 class TestFailureTaxonomy(unittest.TestCase):

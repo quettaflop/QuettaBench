@@ -218,6 +218,9 @@ class BenchmarkSummary:
     median_ttft_ms: float = 0.0
     p90_ttft_ms: float = 0.0
     p99_ttft_ms: float = 0.0
+    # Closed loop only: without the first `concurrency` requests, which start together and queue. None when under `concurrency` remain.
+    steady_median_ttft_ms: float | None = None
+    steady_p99_ttft_ms: float | None = None
 
     mean_tpot_ms: float = 0.0
     median_tpot_ms: float = 0.0
@@ -335,13 +338,20 @@ def pcts(values, method: str) -> dict:
     return {f"p{q}": percentile(values, q, method) for q in (50, 90, 95, 99)}
 
 
-def summarize_serve(records, wall_s: float, method: str) -> dict:
+def steady_ttfts(indexed_ttfts, concurrency: int) -> list | None:
+    """TTFTs past the first `concurrency` dispatched; None when fewer than `concurrency` remain."""
+    rest = [t for i, t in indexed_ttfts if i >= concurrency]
+    return rest if len(rest) >= concurrency else None
+
+
+def summarize_serve(records, wall_s: float, method: str, closed_concurrency: int = 0) -> dict:
+    """closed_concurrency > 0 adds steady-state TTFT percentiles; records then carry their dispatch index."""
     if not records:
         raise ValueError("no completed requests")
     ttft = [r["ttft_ms"] for r in records]
     tpot = [r["tpot_ms"] for r in records if r["tpot_ms"] is not None]
     toks = sum(r["out_tokens"] for r in records)
-    return {
+    out = {
         "n": len(records),
         "percentile_method": method,
         "ttft_ms": pcts(ttft, method),
@@ -349,6 +359,10 @@ def summarize_serve(records, wall_s: float, method: str) -> dict:
         "req_s": len(records) / wall_s if wall_s > 0 else 0.0,
         "tok_s": toks / wall_s if wall_s > 0 else 0.0,
     }
+    if closed_concurrency:
+        steady = steady_ttfts(((r["index"], r["ttft_ms"]) for r in records), closed_concurrency)
+        out["steady_ttft_ms"] = pcts(steady, method) if steady else None
+    return out
 
 
 def sla_verdict(summary: dict, sla_ttft_ms, sla_tpot_ms) -> list[str]:
@@ -415,11 +429,12 @@ def aggregate(
     )
 
     ttfts = []
+    steady_pairs = []
     tpots = []
     itls = []
     e2els = []
 
-    for r in results:
+    for pos, r in enumerate(results):
         if r.success:
             summary.successful_requests += 1
             summary.total_input_tokens += r.input_tokens
@@ -429,6 +444,7 @@ def aggregate(
 
             if r.ttft is not None:
                 ttfts.append(r.ttft * 1000)
+                steady_pairs.append((r.request_index if r.request_index is not None else pos, r.ttft * 1000))
             if r.tpot is not None:
                 tpots.append(r.tpot * 1000)
             if r.itl:
@@ -488,6 +504,10 @@ def aggregate(
         summary.median_ttft_ms = statistics.median(ttfts)
         summary.p90_ttft_ms = percentile(ttfts, 90, "linear")
         summary.p99_ttft_ms = percentile(ttfts, 99, "linear")
+        steady = steady_ttfts(steady_pairs, concurrency) if load_mode == "closed-loop" else None
+        if steady:
+            summary.steady_median_ttft_ms = statistics.median(steady)
+            summary.steady_p99_ttft_ms = percentile(steady, 99, "linear")
 
     if tpots:
         summary.mean_tpot_ms = statistics.mean(tpots)
@@ -813,6 +833,8 @@ def print_summary(s: BenchmarkSummary) -> None:
     print(
         f" TTFT  mean/p50/p90/p99:   {s.mean_ttft_ms:.1f} / {s.median_ttft_ms:.1f} / {s.p90_ttft_ms:.1f} / {s.p99_ttft_ms:.1f} ms"
     )
+    if s.steady_median_ttft_ms is not None:
+        print(f" TTFT  steady p50/p99:     {s.steady_median_ttft_ms:.1f} / {s.steady_p99_ttft_ms:.1f} ms")
     print(
         f" TPOT  mean/p50/p90/p99:   {s.mean_tpot_ms:.1f} / {s.median_tpot_ms:.1f} / {s.p90_tpot_ms:.1f} / {s.p99_tpot_ms:.1f} ms"
     )
