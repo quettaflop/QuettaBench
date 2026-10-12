@@ -210,10 +210,7 @@ def _measure_tp(a, rank: int, world: int, _get_groups) -> list[dict]:
 
 
 def _measure_dp(a, rank: int, world: int) -> list[dict]:
-    """DP replication: a fresh replica GPU pulls its whole W/tp shard from the source
-    replica's peer over NVLink (a P2P send). Measured pairwise (even->odd) in parallel,
-    which is how independent replica pairs replicate at once. ``tp_from``/``tp_to`` carry
-    the per-GPU shard's tp so the same sweep covers every shard size."""
+    """DP replication: a fresh replica GPU pulls its whole W/tp shard from the source replica's peer over NVLink (a P2P send). Measured pairwise (even->odd) in parallel, which is how independent replica pairs replicate at once. ``tp_from``/``tp_to`` carry the per-GPU shard's tp so the same sweep covers every shard size."""
     out_rows: list[dict] = []
     if world < 2:
         return out_rows
@@ -248,8 +245,7 @@ def _measure_dp(a, rank: int, world: int) -> list[dict]:
 
 def _measure_ep(a, rank: int, world: int) -> list[dict]:
     """EP expert restage: experts redistribute across the ep ranks via all-to-all.
-    Measured with all_to_all_single over the whole world at GB scale (the collectives
-    grid tops out at a few MB). Run with --nproc_per_node=<ep> to measure a given ep;
+    Measured with all_to_all_single over the whole world at GB scale (the collectives grid tops out at a few MB). Run with --nproc_per_node=<ep> to measure a given ep;
     ``ep = world`` here. moved per GPU = (ep-1)/ep of the per-GPU expert bytes."""
     out_rows: list[dict] = []
     ep = world
@@ -282,10 +278,8 @@ def _measure_ep(a, rank: int, world: int) -> list[dict]:
 
 
 def _measure_pp(a, rank: int, world: int, _get_groups) -> list[dict]:
-    """Pipeline-stage reshard: on a fixed pool, pp DOWN gathers whole layers onto the
-    surviving stages (all-gather within groups of k = pp_from/pp_to); pp UP discards.
-    Physically the SAME NVLink all-gather as a TP reshard, but over whole-layer tensors
-    -- this mode confirms that the tp grid prices it. ``switches`` reused as pp pairs."""
+    """Pipeline-stage reshard: on a fixed pool, pp DOWN gathers whole layers onto the surviving stages (all-gather within groups of k = pp_from/pp_to); pp UP discards.
+    Physically the SAME NVLink all-gather as a TP reshard, but over whole-layer tensors -- this mode confirms that the tp grid prices it. ``switches`` reused as pp pairs."""
     out_rows: list[dict] = []
     for sw in a.switches:
         p, q = (int(x) for x in sw.split(":"))
@@ -318,12 +312,7 @@ def _measure_pp(a, rank: int, world: int, _get_groups) -> list[dict]:
 
 
 def _measure_kv(a, rank: int, world: int, _get_groups) -> list[dict]:
-    """In-flight paged-KV reshard: a TP-down move re-shards the KV by head. Each
-    surviving rank gathers a sibling rank's head-shard for every layer. Measured as an
-    NCCL all-gather of a CONTIGUOUS per-rank KV buffer (the engine repacks the request's
-    blocks before the collective) -- the fast mechanism, an independent GT for the
-    cost model's contiguous KV bandwidth. A churned pool that cannot repack falls back
-    to the fragmented kv_transfer path (kv_transfer_probe), which is slower.
+    """In-flight paged-KV reshard: a TP-down move re-shards the KV by head. Each surviving rank gathers a sibling rank's head-shard for every layer. Measured as an NCCL all-gather of a CONTIGUOUS per-rank KV buffer (the engine repacks the request's blocks before the collective) -- the fast mechanism, an independent GT for the cost model's contiguous KV bandwidth. A churned pool that cannot repack falls back to the fragmented kv_transfer path (kv_transfer_probe), which is slower.
 
     Buffer per rank = 2 (K+V) * tokens * heads_per_rank * head_dim * 2 (bf16) * layers."""
     out_rows: list[dict] = []
@@ -358,16 +347,10 @@ def _measure_kv(a, rank: int, world: int, _get_groups) -> list[dict]:
 def _measure_xnode(a, rank: int, world: int) -> list[dict]:
     """Cross-node link physics for the reshard model, two patterns:
 
-    * ``xpair{n}`` -- n concurrent cross-node P2P pairs (GPU i of node 0 -> GPU i of
-      node 1), n in {1, 2, 4, ..., gpn}. One pair measures the single-stream fabric
-      rate; the sweep measures RAIL SHARING -- a whole-node replica hydration runs gpn
-      concurrent pulls over (typically fewer) NICs, and the per-pair effective rate is
-      what the cost model needs.
-    * ``xallgather`` -- gpn concurrent 2-way all-gathers, each spanning the two nodes
-      (group {i, gpn+i}): the pp/tp reshard of an instance that spans nodes.
+    * ``xpair{n}`` -- n concurrent cross-node P2P pairs (GPU i of node 0 -> GPU i of node 1), n in {1, 2, 4, ..., gpn}. One pair measures the single-stream fabric rate; the sweep measures RAIL SHARING -- a whole-node replica hydration runs gpn concurrent pulls over (typically fewer) NICs, and the per-pair effective rate is what the cost model needs.
+    * ``xallgather`` -- gpn concurrent 2-way all-gathers, each spanning the two nodes (group {i, gpn+i}): the pp/tp reshard of an instance that spans nodes.
 
-    Launch: torchrun --nnodes=2 --nproc_per_node=<gpn> ... --mode xnode
-    (tp_from/tp_to columns carry the concurrent-pair count for the fit.)"""
+    Launch: torchrun --nnodes=2 --nproc_per_node=<gpn> ... --mode xnode (tp_from/tp_to columns carry the concurrent-pair count for the fit.)"""
     gpn = int(os.environ.get("LOCAL_WORLD_SIZE", world))
     n_nodes = world // gpn
     out_rows: list[dict] = []
@@ -442,12 +425,7 @@ _UNITS = 24            # per axis: LCM of 1,2,3,4,6,8 -- fine enough for tp/pp u
 
 
 def _pool_cells(tp: int, pp: int, stage: int, t: int) -> set[int]:
-    """Cells of the (layers x width) weight grid held by rank (stage, t) of a tp x pp
-    layout. The grid is _UNITS x _UNITS cells, flattened row-major; a pipeline stage
-    holds a LAYER-row band, a tp rank a WIDTH-column band. This 2-D model is what lets
-    a tp8 <-> tp4xpp2 switch price correctly: both hold 1/8 of W but slice it along
-    different axes, so most of the new shard must be fetched (the 1-D unit model
-    wrongly called it free)."""
+    """Cells of the (layers x width) weight grid held by rank (stage, t) of a tp x pp layout. The grid is _UNITS x _UNITS cells, flattened row-major; a pipeline stage holds a LAYER-row band, a tp rank a WIDTH-column band. This 2-D model is what lets a tp8 <-> tp4xpp2 switch price correctly: both hold 1/8 of W but slice it along different axes, so most of the new shard must be fetched (the 1-D unit model wrongly called it free)."""
     rows = range(stage * _UNITS // pp, (stage + 1) * _UNITS // pp)
     cols = range(t * _UNITS // tp, (t + 1) * _UNITS // tp)
     return {r * _UNITS + c for r in rows for c in cols}
@@ -456,10 +434,7 @@ def _pool_cells(tp: int, pp: int, stage: int, t: int) -> set[int]:
 def _plan_owner_units(spec: str, world: int) -> dict[int, set[int]]:
     """Map each rank to the set of weight-grid cells it holds under a plan side.
 
-    ``spec`` = comma-separated pools, each 'tp:dp' or 'tp:pp:dp'. Ranks fill the pools
-    in order; within a pool a dp replica is pp*tp contiguous ranks (stage-major, tp
-    within a stage -- vLLM's rank order). Weight content is role-independent, so a cell
-    held by ANY rank (either pool, any replica) is a valid source for it."""
+    ``spec`` = comma-separated pools, each 'tp:dp' or 'tp:pp:dp'. Ranks fill the pools in order; within a pool a dp replica is pp*tp contiguous ranks (stage-major, tp within a stage -- vLLM's rank order). Weight content is role-independent, so a cell held by ANY rank (either pool, any replica) is a valid source for it."""
     owner: dict[int, set[int]] = {}
     r = 0
     for pool in spec.split(","):
@@ -480,15 +455,9 @@ def _plan_owner_units(spec: str, world: int) -> dict[int, set[int]]:
 
 def _plan_relabel(old_own: dict[int, set[int]], new_own: dict[int, set[int]],
                   world: int, gpus_per_node: int | None = None) -> dict[int, int]:
-    """Assign each physical GPU to a NEW-plan slot to MAXIMISE retained bytes (minimise
-    the reshard), a greedy max-overlap matching. Deterministic, so every rank computes
-    the same map with no communication. The cost model assumes this optimal relabel; a
-    runtime that skips it (naive rank->rank) pays far more -- e.g. the pd_4x4 swap costs
-    W/2 without it and 0 with it.
+    """Assign each physical GPU to a NEW-plan slot to MAXIMISE retained bytes (minimise the reshard), a greedy max-overlap matching. Deterministic, so every rank computes the same map with no communication. The cost model assumes this optimal relabel; a runtime that skips it (naive rank->rank) pays far more -- e.g. the pd_4x4 swap costs W/2 without it and 0 with it.
 
-    ``gpus_per_node`` restricts the matching to same-node (GPU, slot) pairs: slots are
-    physical positions (a new-plan pool pins its node), and GPUs do not move between
-    boxes -- only bytes do."""
+    ``gpus_per_node`` restricts the matching to same-node (GPU, slot) pairs: slots are physical positions (a new-plan pool pins its node), and GPUs do not move between boxes -- only bytes do."""
     gpn = gpus_per_node or world
     edges = sorted(((len(old_own[p] & new_own[s]), p, s)
                     for p in range(world) for s in range(world)
@@ -505,9 +474,7 @@ def _plan_relabel(old_own: dict[int, set[int]], new_own: dict[int, set[int]],
 
 
 def _coalesce_runs(unit_peer: list[tuple[int, int]]) -> list[tuple[int, int]]:
-    """Merge a unit list (sorted by unit) into (peer, run_length) runs, breaking on a
-    peer change or a gap in the unit index. Applied identically on the recv and send
-    sides so the coalesced messages match one-to-one."""
+    """Merge a unit list (sorted by unit) into (peer, run_length) runs, breaking on a peer change or a gap in the unit index. Applied identically on the recv and send sides so the coalesced messages match one-to-one."""
     runs: list[tuple[int, int]] = []
     last_u = None
     for u, p in unit_peer:
@@ -520,9 +487,7 @@ def _coalesce_runs(unit_peer: list[tuple[int, int]]) -> list[tuple[int, int]]:
 
 
 def _measure_plan(a, rank: int, world: int) -> list[dict]:
-    """Faithful whole-PD-plan reshard: lay the model out per the OLD plan across all
-    GPUs, relabel physical GPUs to the NEW plan optimally, then move exactly the
-    byte-ranges each GPU is still missing (P2P from any GPU that holds them) and time it.
+    """Faithful whole-PD-plan reshard: lay the model out per the OLD plan across all GPUs, relabel physical GPUs to the NEW plan optimally, then move exactly the byte-ranges each GPU is still missing (P2P from any GPU that holds them) and time it.
     Validates the plan cost model's VOLUME -- which new shards are free vs must gather."""
     out_rows: list[dict] = []
     gpn = int(os.environ.get("LOCAL_WORLD_SIZE", world))
@@ -535,10 +500,7 @@ def _measure_plan(a, rank: int, world: int) -> list[dict]:
         my_new = new_own[phys_to_slot[rank]]
         final_own = {p: new_own[phys_to_slot[p]] for p in range(world)}
         my_fetch = sorted(my_new - old_own[rank])
-        # One source rank per cell. Every rank must pick the same map, and a REAL
-        # runtime pulls from a same-node holder when one exists (NVLink/PCIe beats the
-        # fabric): prefer the lowest holder on the DESTINATION's node, else the lowest
-        # holder anywhere. Per-destination, so precompute holders once.
+        # One source rank per cell. Every rank must pick the same map, and a REAL runtime pulls from a same-node holder when one exists (NVLink/PCIe beats the fabric): prefer the lowest holder on the DESTINATION's node, else the lowest holder anywhere. Per-destination, so precompute holders once.
         holders = {u: [r for r in range(world) if u in old_own[r]]
                    for u in range(n_cells)}
 
@@ -547,8 +509,7 @@ def _measure_plan(a, rank: int, world: int) -> list[dict]:
             return min(same) if same else min(holders[u])
 
         src_of = {u: _src_for(u, rank) for u in range(n_cells)}
-        # a real reshard moves CONTIGUOUS byte ranges, so coalesce adjacent units that
-        # share a source (recv side) / a destination (send side) into one message.
+        # a real reshard moves CONTIGUOUS byte ranges, so coalesce adjacent units that share a source (recv side) / a destination (send side) into one message.
         my_recv_runs = _coalesce_runs([(u, src_of[u]) for u in my_fetch])   # (peer, len)
         my_send_runs = []
         for r in range(world):

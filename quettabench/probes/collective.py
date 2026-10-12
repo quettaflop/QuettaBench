@@ -18,14 +18,9 @@ _ITERS, _WARMUP = 50, 10
 def _time_op(op: str, n_elems: int, world: int, iters: int, warmup: int) -> float:
     """AMORTIZED wall-time (seconds) per ``op`` call over an n_elems bf16 buffer.
 
-    Times the whole back-to-back loop and divides by iters, so per-op launch/dispatch
-    overhead pipelines away and we get the MARGINAL cost -- the faithful measure for
-    decode, which replays the all-reduce inside a CUDA graph (no per-launch dispatch).
-    Per-op event timing instead would bake in launch overhead the graphed decode never
-    pays and over-price tp_comm (README: decode is graphed -> measure amortized)."""
-    # Buffers follow the table's convention: n_elems is the FULL LOGICAL BUFFER --
-    # the input for all_reduce/reduce_scatter, the RESULT for all_gather, the total
-    # each rank sends for all_to_all -- so every op is comparable at equal bytes.
+    Times the whole back-to-back loop and divides by iters, so per-op launch/dispatch overhead pipelines away and we get the MARGINAL cost -- the faithful measure for decode, which replays the all-reduce inside a CUDA graph (no per-launch dispatch).
+    Per-op event timing instead would bake in launch overhead the graphed decode never pays and over-price tp_comm (README: decode is graphed -> measure amortized)."""
+    # Buffers follow the table's convention: n_elems is the FULL LOGICAL BUFFER -- the input for all_reduce/reduce_scatter, the RESULT for all_gather, the total each rank sends for all_to_all -- so every op is comparable at equal bytes.
     full = torch.ones(n_elems, dtype=_DTYPE, device="cuda")
     shard = torch.ones(max(1, n_elems // world), dtype=_DTYPE, device="cuda")
     if op == "all_reduce":

@@ -125,8 +125,7 @@ def kernel_summary(results_dir, steps, window=None, subtract=None, top=25, gap_u
         col = next(c for c in ("shortName", "demangledName", "nameId", "name") if c in cols)
 
         def tally(win):
-            """{kernel: [launches, ns]}, {device: [(start, end)]}, {memop: [count, ns]}
-            for what lies fully inside win (None: everything)."""
+            """{kernel: [launches, ns]}, {device: [(start, end)]}, {memop: [count, ns]} for what lies fully inside win (None: everything)."""
             bound, args = (" WHERE k.start >= ? AND k.end <= ?", win) if win else ("", ())
             kernels, devices, mem = {}, {}, {}
             for s, e, dev, name in con.execute(

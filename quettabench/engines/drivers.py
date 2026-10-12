@@ -1,7 +1,6 @@
 """How work reaches an engine, one Driver per way: HttpDriver streams OpenAI requests at a launched server and times grid batches, InProcessDriver builds vLLM here for mode.returns runs, BenchDriver runs the QuettaServe bench per cell, ReferenceDriver scores with transformers.
 
-HttpDriver's first-token rule is recorded on every result as ttft_rule: chat counts the first chunk carrying content, reasoning or tool_calls, completions the first non-empty text.
-vllm, torch and transformers exist only on GPU boxes, so they are imported inside the methods that use them.
+HttpDriver's first-token rule is recorded on every result as ttft_rule: chat counts the first chunk carrying content, reasoning or tool_calls, completions the first non-empty text. vllm, torch and transformers exist only on GPU boxes, so they are imported inside the methods that use them.
 """
 
 import asyncio
@@ -89,17 +88,11 @@ async def _stream_chat(
     """
     Send a single streaming chat completion request and record metrics.
 
-    Parses SSE stream: each `data: {...}` line whose choices[0].delta carries a
-    generated payload (content, reasoning_content/reasoning, or tool_calls) is
-    one token. First = TTFT. Subsequent = ITL entries.
+    Parses SSE stream: each `data: {...}` line whose choices[0].delta carries a generated payload (content, reasoning_content/reasoning, or tool_calls) is one token. First = TTFT. Subsequent = ITL entries.
 
-    Sampling is caller-controlled: `temperature` defaults to greedy and `seed`
-    is forwarded, so re-running the same workload produces the same output
-    lengths. `min_tokens` (with ignore_eos) pins the generated length exactly.
+    Sampling is caller-controlled: `temperature` defaults to greedy and `seed` is forwarded, so re-running the same workload produces the same output lengths. `min_tokens` (with ignore_eos) pins the generated length exactly.
 
-    On failure the partial timings collected before the stream died are kept on
-    the result rather than discarded -- a timeout on the slowest request is
-    exactly the datapoint you need to see.
+    On failure the partial timings collected before the stream died are kept on the result rather than discarded, so a timeout on the slowest request still shows.
     """
     headers = _headers(api_key, extra_headers, request_id)
     payload = _payload(model, {"messages": messages}, max_tokens, temperature, ignore_eos,
@@ -155,14 +148,8 @@ async def _stream_chat(
                     continue
 
                 delta = choices[0].get("delta", {})
-                # A chunk is a token event if it carries ANY generated payload,
-                # not just `content`. Reasoning models (e.g. gpt-oss harmony on
-                # vLLM) stream analysis-channel tokens as `reasoning_content`
-                # (older) / `reasoning` (newer) with content=None, and tool-call
-                # argument deltas arrive under `tool_calls` with content=None.
-                # Skipping those coalesced whole reasoning phases into single
-                # ITL gaps and inflated tpot up to ~13x (see QuettaSim
-                # tools/GT_QUALITY_FLAGS.md, Finding 1).
+                # A chunk is a token event if it carries ANY generated payload, not just `content`. Reasoning models (e.g. gpt-oss harmony on vLLM) stream analysis-channel tokens as `reasoning_content` (older) / `reasoning` (newer) with content=None, and tool-call argument deltas arrive under `tool_calls` with content=None.
+                # Skipping those would fold whole reasoning phases into single ITL gaps and inflate tpot.
                 has_payload = (
                     delta.get("content") is not None
                     or delta.get("reasoning_content") is not None
@@ -201,9 +188,7 @@ async def _stream_chat(
     except asyncio.CancelledError:
         raise
     except Exception as e:
-        # Keep whatever the stream already delivered. A timeout truncates the
-        # slowest requests, so discarding their partial TTFT/ITL would erase
-        # the only evidence that the tail was cut off.
+        # Keep whatever the stream already delivered. A timeout truncates the slowest requests, so discarding their partial TTFT/ITL would erase the only evidence that the tail was cut off.
         is_timeout = isinstance(e, asyncio.TimeoutError)
         return RequestResult(
             success=False,
@@ -388,11 +373,7 @@ class GridBatchFailed(RuntimeError):
 class HttpDriver(Driver):
     """OpenAI-compatible streaming client for one endpoint of a launched server.
 
-    backend_name is serve.py's --backend; it picks the cache-reset endpoint.
-    url, model, api_key and timeout (seconds, for every request and the
-    reset) bind the driver to one server; send() and run() use them over
-    the aiohttp session opened by session(). run() with a cell is a grid
-    batch (see grid_batch); device(), version and warmup() serve the grid loop.
+    backend_name is serve.py's --backend; it picks the cache-reset endpoint. url, model, api_key and timeout (seconds, for every request and the reset) bind the driver to one server; send() and run() use them over the aiohttp session opened by session(). run() with a cell is a grid batch (see grid_batch); device(), version and warmup() serve the grid loop.
     """
 
     def __init__(self, endpoint, backend_name="vllm", *, url=None, model=None,
@@ -438,8 +419,7 @@ class HttpDriver(Driver):
 
     async def send(self, request, *, ignore_eos=False, temperature=0.0, seed=None,
                    min_tokens=0, request_id=None, capture_text=False) -> RequestResult:
-        """Stream one Request: token ids when it has them, else its messages.
-        capture_text is passed only when set; the completions body has none."""
+        """Stream one Request: token ids when it has them, else its messages. capture_text is passed only when set; the completions body has none."""
         extra = {}
         if request.prompt_token_ids:
             extra["prompt_token_ids"] = request.prompt_token_ids
@@ -452,8 +432,7 @@ class HttpDriver(Driver):
             **extra)
 
     def run(self, requests, *, concurrency=None, cell=None, **sampling):
-        """Closed loop at `concurrency` over requests; yields results in request
-        order. With a cell, one grid batch instead (grid_batch)."""
+        """Closed loop at `concurrency` over requests; yields results in request order. With a cell, one grid batch instead (grid_batch)."""
         if cell is not None:
             yield from self.grid_batch(requests, cell)
             return
@@ -471,10 +450,7 @@ class HttpDriver(Driver):
         yield from asyncio.run(all_of_them())
 
     def timed_batch(self, requests, cell_key=None):
-        """(seconds, results) of every request sent at once, greedy and
-        ignoring EOS, so each decodes exactly its max_tokens. The clock spans
-        only the requests. A cell_key other than the last one resets the
-        prefix cache first, so a cell never reads the previous cell's blocks."""
+        """(seconds, results) of every request sent at once, greedy and ignoring EOS, so each decodes exactly its max_tokens. The clock spans only the requests. A cell_key other than the last one resets the prefix cache first, so a cell never reads the previous cell's blocks."""
         async def go():
             async with self.session(len(requests)):
                 if cell_key is not None and cell_key != self._cell:
@@ -487,8 +463,7 @@ class HttpDriver(Driver):
         return asyncio.run(go())
 
     def spec_counters(self):
-        """The server's spec-decode counters from one /metrics scrape; None
-        without a bound url, without the counters, or when the scrape fails."""
+        """The server's spec-decode counters from one /metrics scrape; None without a bound url, without the counters, or when the scrape fails."""
         if not self.url:
             return None
         try:
@@ -503,11 +478,7 @@ class HttpDriver(Driver):
         self.timed_batch([Request(distinct_ids(256), 256, output_length=20)])
 
     def grid_batch(self, requests, cell):
-        """The batch at cell["step_point"] tokens, every row carrying the batch
-        wall as e2el and batch_wall_s and no TTFT (ttft_basis "batch"), the rows
-        InProcessDriver.run yields. A failed request, or a usage count other
-        than the step point, or none reported, raises: the wall would not be a
-        bs-wide batch of n steps."""
+        """The batch at cell["step_point"] tokens, every row carrying the batch wall as e2el and batch_wall_s and no TTFT (ttft_basis "batch"), the rows InProcessDriver.run yields. A failed request, or a usage count other than the step point, or none reported, raises: the wall would not be a bs-wide batch of n steps."""
         n = cell["step_point"]
         wall, results = self.timed_batch(requests, (cell["ctx"], cell["bs"]))
         for res in results:
@@ -525,9 +496,7 @@ class HttpDriver(Driver):
         Reset the server's prefix cache. Returns a short status string for logging.
         Arguments left out come from the bound server and its open session.
 
-        Raises PrefixCacheResetError if the backend has no known reset endpoint or
-        the server rejects the call -- silently continuing would produce exactly the
-        cross-cell contamination this exists to prevent.
+        Raises PrefixCacheResetError if the backend has no known reset endpoint or the server rejects the call; continuing would let one cell read another's cache.
         """
         session = self._http if session is None else session
         url = self.url if url is None else url
@@ -584,8 +553,7 @@ class BenchDriver(Driver):
         return launcher.accelerator("cuda")
 
     def run(self, cell_specs, *, concurrency=1, step_points=(), **kwargs):
-        """cell_specs: (ctx, bs, translate(cfg, (ctx, bs))) per cell; yields rows.
-        step_points go unused: the bench decodes its own timing_steps."""
+        """cell_specs: (ctx, bs, translate(cfg, (ctx, bs))) per cell; yields rows. step_points go unused: the bench decodes its own timing_steps."""
         self.log_path.write_text("")
         missing = []
         for ctx, bs, spec in cell_specs:
@@ -597,8 +565,7 @@ class BenchDriver(Driver):
         yield from self.rows()
 
     def rows(self):
-        """One dict per (ctx, bs, tp) the reader found in the log. The engine
-        times its own decode loop, so a row is already a per-step number:
+        """One dict per (ctx, bs, tp) the reader found in the log. The engine times its own decode loop, so a row is already a per-step number:
         measured_ms_per_step, which step_fit passes through instead of fitting.
         The bench takes no step points, so cell's step_point is None."""
         points, method, notes = crossval.bench_log_points(self.log_path)
@@ -633,9 +600,7 @@ class BenchDriver(Driver):
                     passed = passed or bool(ok.search(line))
             rc = proc.wait()
         finally:
-            # Ctrl-C, a failed write, or a bench that exited on its own must
-            # not leave a child it started (cargo's) holding the GPUs: kill
-            # its whole group every time; a group already gone is fine.
+            # Ctrl-C, a failed write, or a bench that exited on its own must not leave a child it started (cargo's) holding the GPUs: kill its whole group every time; a group already gone is fine.
             with contextlib.suppress(ProcessLookupError):
                 os.killpg(proc.pid, signal.SIGKILL)
             proc.wait()
@@ -648,9 +613,7 @@ class BenchDriver(Driver):
 class InProcessDriver(Driver):
     """vLLM in this process, built from spec.engine_kwargs and spec.env on first use.
 
-    Grid runs with mode.returns only: timing goes over HTTP since the parity
-    gate passed (tests/parity/slope_gate.json), and only this path returns
-    token ids, text or logits.
+    Grid runs with mode.returns only: timing goes over HTTP since the parity gate passed (tests/parity/slope_gate.json), and only this path returns token ids, text or logits.
     """
 
     def __init__(self, spec):
@@ -668,9 +631,7 @@ class InProcessDriver(Driver):
         return torch.cuda.get_device_name(0), torch.cuda.get_device_properties(0).total_memory
 
     def llm(self):
-        """The grid engine: vllm.LLM(**engine_kwargs), built once, after
-        spec.env is in this process (replacing an inherited value), so it
-        sizes its KV cache under the env the adapter gives a launched server."""
+        """The grid engine: vllm.LLM(**engine_kwargs), built once, after spec.env is in this process (replacing an inherited value), so it sizes its KV cache under the env the adapter gives a launched server."""
         if self._llm is None:
             env_map.export(self.spec.env)
             from vllm import LLM
@@ -681,8 +642,7 @@ class InProcessDriver(Driver):
         return self.llm().get_tokenizer()
 
     def generate(self, prompts, max_tokens):
-        """(seconds, outputs) of one greedy generate() that ignores EOS, so
-        every prompt decodes exactly max_tokens; the clock spans only the call."""
+        """(seconds, outputs) of one greedy generate() that ignores EOS, so every prompt decodes exactly max_tokens; the clock spans only the call."""
         from vllm import SamplingParams
         sp = SamplingParams(temperature=0.0, max_tokens=max_tokens, ignore_eos=True)
         t0 = time.perf_counter()
@@ -701,10 +661,7 @@ class InProcessDriver(Driver):
                                    use_tqdm=False)
 
     def run(self, requests, *, cell, returns="none", concurrency=None, **kwargs):
-        """The batch as one generate() at cell["step_point"] tokens. generate()
-        times the batch, not its requests, so every row gets the batch wall as
-        e2el and batch_wall_s, and no TTFT (ttft_basis "batch"). returns="logits"
-        scores the batch instead and times nothing."""
+        """The batch as one generate() at cell["step_point"] tokens. generate() times the batch, not its requests, so every row gets the batch wall as e2el and batch_wall_s, and no TTFT (ttft_basis "batch"). returns="logits" scores the batch instead and times nothing."""
         if returns == "logits":
             outs = self.score([r.prompt_token_ids for r in requests])
             for r, out in zip(requests, outs):
@@ -736,8 +693,7 @@ def truncated_config(model, layers):
 
 
 def prompt_logprob_summary(ids, prompt_logprobs):
-    """{argmax, top2_gap, logprob} from vLLM's prompt_logprobs, entry i scoring ids[i + 1] as the reference's does.
-    argmax is the rank-1 token, top2_gap rank 1's logprob minus rank 2's (the logit gap), logprob the true token's."""
+    """{argmax, top2_gap, logprob} from vLLM's prompt_logprobs, entry i scoring ids[i + 1] as the reference's does. argmax is the rank-1 token, top2_gap rank 1's logprob minus rank 2's (the logit gap), logprob the true token's."""
     out = {"argmax": [], "top2_gap": [], "logprob": []}
     for pos in range(1, len(ids)):
         entry = prompt_logprobs[pos]
@@ -769,8 +725,7 @@ class ReferenceDriver(Driver):
                                              trust_remote_code=True)
 
     def model(self):
-        """AutoModelForCausalLM in the run's dtype on cuda:0, eval mode, built
-        once; with engine_kwargs layers, only the first that many decoder layers."""
+        """AutoModelForCausalLM in the run's dtype on cuda:0, eval mode, built once; with engine_kwargs layers, only the first that many decoder layers."""
         if self._model is None:
             import torch
             from transformers import AutoModelForCausalLM
@@ -786,8 +741,7 @@ class ReferenceDriver(Driver):
         return self._model
 
     def score(self, ids):
-        """argmax and top-2 gap of the logits, and the true token's logprob,
-        at every position but the last (it has no true next token)."""
+        """argmax and top-2 gap of the logits, and the true token's logprob, at every position but the last (it has no true next token)."""
         import torch
         with torch.no_grad():
             t = torch.tensor([ids], device="cuda:0")

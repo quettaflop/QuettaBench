@@ -13,8 +13,7 @@ import torch.distributed as dist
 from quettabench.probes.base import ProbeRow, add_output_args, emit, run_recorded
 
 _ITERS, _WARMUP = 50, 10
-# Full logical buffer sizes (bytes): decode payloads (batch x hidden x 2B, a few KB..MB)
-# up to prefill chunks (8192 x 4096 x 2B = 64 MB).
+# Full logical buffer sizes (bytes): decode payloads (batch x hidden x 2B, a few KB..MB) up to prefill chunks (8192 x 4096 x 2B = 64 MB).
 BYTES_AXIS = [4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576, 2097152,
               4194304, 8388608, 16777216, 33554432, 67108864]
 
@@ -44,8 +43,7 @@ def main(argv=None):
     # Imported after set_device, the order a vLLM worker uses before it builds its communicator.
     from vllm.config import ParallelConfig, VllmConfig, set_current_vllm_config
     from vllm.distributed import get_tp_group, init_distributed_environment, initialize_model_parallel
-    # The device communicator reads parallel_config (custom-all-reduce enablement)
-    # from the current vLLM config, exactly as an engine worker would.
+    # The device communicator reads parallel_config (custom-all-reduce enablement) from the current vLLM config, exactly as an engine worker would.
     vcfg = VllmConfig(parallel_config=ParallelConfig(
         tensor_parallel_size=world,
         disable_custom_all_reduce=a.disable_custom_allreduce))

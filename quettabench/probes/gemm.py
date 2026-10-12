@@ -16,24 +16,20 @@ from quettabench.probes._timing import graph_time_us
 from quettabench.probes.base import Probe, ProbeRow, add_output_args, emit, run_recorded
 
 M_AXIS = [1, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
-# out/in feature dims covering Llama-3.1-8B/70B, Qwen2.5-72B, Qwen3.5-9B/27B
-# projections (hidden, 2*inter, inter, qkv-fused, o); the loader interpolates.
+# out/in feature dims covering Llama-3.1-8B/70B, Qwen2.5-72B, Qwen3.5-9B/27B projections (hidden, 2*inter, inter, qkv-fused, o); the loader interpolates.
 DIMS = [1024, 2048, 4096, 5120, 6144, 8192, 10240, 11008, 12288,
         14336, 16384, 17408, 28672, 29568]
 VOCAB = [128256, 152064, 248320]   # lm_head N (with K = hidden)
 HIDDENS = [4096, 5120, 8192]
 
-# Exact (N, K) cells a model's projections query, so the table answers from a
-# MEASURED cell instead of interpolating (or, off the K axis, falling to the
-# roofline). Shapes are read off sum_kernels._block_linear_us:
+# Exact (N, K) cells a model's projections query, so the table answers from a MEASURED cell instead of interpolating (or, off the K axis, falling to the roofline). Shapes are read off sum_kernels._block_linear_us:
 #     qkv fused   N = (n_q/tp + 2*n_kv/kv_shards) * head_dim,  K = hidden
 #     o_proj      N = hidden,                                  K = hidden/tp
 #     MoE router  N = n_experts,                               K = hidden
 #     lm_head     N = vocab/tp,                                K = hidden
 # kv_shards = min(tp, kv_heads), so k/v stop shrinking past tp = kv_heads.
 MODEL_SHAPES: dict[str, list[tuple[int, int]]] = {
-    # Qwen3-235B-A22B: 94L, hidden 4096, GQA 64q/4kv, head_dim 128, 128 experts,
-    # vocab 151936. tp in {1,2,4,8} (the tp that divide 64 heads).
+    # Qwen3-235B-A22B: 94L, hidden 4096, GQA 64q/4kv, head_dim 128, 128 experts, vocab 151936. tp in {1,2,4,8} (the tp that divide 64 heads).
     "qwen3-235b-a22b": [
         (9216, 4096), (4608, 4096), (2304, 4096), (1280, 4096),   # qkv @ tp 1/2/4/8
         (4096, 4096), (4096, 2048), (4096, 1024), (4096, 512),    # o_proj @ tp 1/2/4/8
@@ -51,16 +47,12 @@ NCU_NK = [(4096, 4096), (8192, 4096), (4096, 8192), (14336, 4096), (4096, 14336)
 NCU_REPS = 3
 
 
-# GEMM kernel family across archs: Ampere/Ada cuBLAS name their bf16 GEMMs
-# "...gemm...", but Hopper (H100) dispatches to nvJet ("nvjet_...") and
-# cutlass3x/xmma/wgmma kernels that DON'T contain "gemm". Matching the family
-# still excludes the randn setup kernel (distribution_elementwise...).
+# GEMM kernel family across archs: Ampere/Ada cuBLAS name their bf16 GEMMs "...gemm...", but Hopper (H100) dispatches to nvJet ("nvjet_...") and cutlass3x/xmma/wgmma kernels that DON'T contain "gemm". Matching the family still excludes the randn setup kernel (distribution_elementwise...).
 GEMM_KERNELS = ("gemm", "nvjet", "cutlass", "xmma", "wgmma")
 
 
 def ncu_gemm_us(m, n, k, ncu_bin, reps=NCU_REPS) -> float | None:
-    """NCU pure-kernel gpu__time_duration (us) for one GEMM, min over `reps` warm
-    launches of its GEMM-family kernels (_timing.ncu_kernel_durations parses the CSV)."""
+    """NCU pure-kernel gpu__time_duration (us) for one GEMM, min over `reps` warm launches of its GEMM-family kernels (_timing.ncu_kernel_durations parses the CSV)."""
     inner = (f"import torch;a=torch.randn({m},{k},device='cuda',dtype=torch.bfloat16);"
              f"b=torch.randn({k},{n},device='cuda',dtype=torch.bfloat16);"
              f"[torch.matmul(a,b) for _ in range({reps})];torch.cuda.synchronize()")
@@ -70,26 +62,15 @@ def ncu_gemm_us(m, n, k, ncu_bin, reps=NCU_REPS) -> float | None:
 
 
 class Fp8Op:
-    """The two kernels vLLM 0.27.1 runs for one block-scaled FP8 linear on Hopper
-    (model_executor/kernels/linear/scaled_mm/cutlass.py::CutlassFp8BlockScaledMMKernel):
+    """The two kernels vLLM 0.27.1 runs for one block-scaled FP8 linear on Hopper (model_executor/kernels/linear/scaled_mm/cutlass.py::CutlassFp8BlockScaledMMKernel):
 
         quant   QuantFP8(dynamic, group (1,128), column-major scales): bf16 -> fp8 + scales
         gemm    ops.cutlass_scaled_mm(A_fp8, W_fp8^T, scale_a, scale_b^T) -> bf16
 
-    They are timed SEPARATELY. The grid stores the GEMM alone, because the server does
-    not always run the quant: torch.compile's ``norm_quant`` pass fuses it into the
-    RMSNorm that feeds qkv_proj (and lm_head), and the MoE experts quantize inside the
-    fused_moe kernel (already in the MoE grid) -- only o_proj's input still pays a
-    standalone quant. The quant kernel is fitted as an elementwise affine
-    (``fp8_act_quant`` in elementwise/{gpu}.json) and the composition charges it per
-    unfused GEMM. The retired W8A8BlockFp8LinearOp.apply timing folded quant + glue
-    into every cell: 23.6 us at M=1 for qkv where quant+GEMM is 11.3 us.
+    They are timed SEPARATELY. The grid stores the GEMM alone, because the server does not always run the quant: torch.compile's ``norm_quant`` pass fuses it into the RMSNorm that feeds qkv_proj (and lm_head), and the MoE experts quantize inside the fused_moe kernel (already in the MoE grid) -- only o_proj's input still pays a standalone quant. The quant kernel is fitted as an elementwise affine (``fp8_act_quant`` in elementwise/{gpu}.json) and the composition charges it per unfused GEMM. The retired W8A8BlockFp8LinearOp.apply timing folded quant + glue into every cell: 23.6 us at M=1 for qkv where quant+GEMM is 11.3 us.
 
-    Needs an active vLLM config (QuantFP8 is a CustomOp that reads the compilation
-    config at __init__); the context is kept open for the process lifetime. Raising
-    when the import fails is correct rather than falling back to torch._scaled_mm:
-    that is a PER-TENSOR-scaled GEMM, a different and faster kernel than the
-    per-128x128-block one the checkpoint ships.
+    Needs an active vLLM config (QuantFP8 is a CustomOp that reads the compilation config at __init__); the context is kept open for the process lifetime. Raising when the import fails is correct rather than falling back to torch._scaled_mm:
+    that is a PER-TENSOR-scaled GEMM, a different and faster kernel than the per-128x128-block one the checkpoint ships.
     """
 
     def __init__(self) -> None:
@@ -124,14 +105,11 @@ class Fp8Op:
         return min(ts)
 
     def gemm_us(self, m, n, k, dev, graph: bool = False) -> float:
-        """GEMM kernel alone (us), input already quantized. Also times the quant kernel
-        for this (m, k) once, for the elementwise fit."""
+        """GEMM kernel alone (us), input already quantized. Also times the quant kernel for this (m, k) once, for the elementwise fit."""
         x = torch.randn(m, k, device=dev, dtype=torch.bfloat16)
         w = torch.randn(n, k, device=dev, dtype=torch.bfloat16).to(torch.float8_e4m3fn)
         bn, bk = FP8_WEIGHT_BLOCK
-        # Scales are positive and O(1e-2), the range a real per-block weight scale
-        # takes; magnitude cannot change kernel time but a zero/NaN scale can trip a
-        # fast path.
+        # Scales are positive and O(1e-2), the range a real per-block weight scale takes; magnitude cannot change kernel time but a zero/NaN scale can trip a fast path.
         ws = torch.rand((n + bn - 1) // bn, (k + bk - 1) // bk,
                         device=dev, dtype=torch.float32).mul_(0.01).add_(1e-4)
         try:
@@ -146,8 +124,7 @@ class Fp8Op:
             torch.cuda.empty_cache()
 
     def quant_fit(self) -> tuple[float, float] | None:
-        """(floor_us, eff_bw_gb_s) of the quant kernel: us = floor + bytes / bw with
-        bytes = m*k*(2 read + 1 write) -- the elementwise table's convention."""
+        """(floor_us, eff_bw_gb_s) of the quant kernel: us = floor + bytes / bw with bytes = m*k*(2 read + 1 write) -- the elementwise table's convention."""
         pts = [(m * k * 3, us) for m, k, us in self.quant_pts]
         if len(pts) < 3:
             return None
@@ -196,8 +173,7 @@ def time_matmul(m, n, k, dev, dt, graph: bool = False) -> float:
 
 
 class GemmProbe(Probe):
-    """One run's (N, K) x M cells: NCU's curated grid with --ncu, else the
-    swept or targeted pairs, each a row of gemm/ (gemm_wide/ with --wide)."""
+    """One run's (N, K) x M cells: NCU's curated grid with --ncu, else the swept or targeted pairs, each a row of gemm/ (gemm_wide/ with --wide)."""
 
     def __init__(self, a, fp8_op):
         self.a, self.fp8_op = a, fp8_op
@@ -205,8 +181,7 @@ class GemmProbe(Probe):
         self.dtype_bytes = 1 if a.dtype == "fp8" else 2
         # ncu and graph replay are dispatch-free (graph/), eager includes dispatch (eager/).
         self.timing = "ncu" if a.ncu else "graph_replay" if a.graph else "eager"
-        # FP8 lives in its own table: GemmTable keys on (M,N,K) only, so two precisions
-        # in one file would collapse into one cell (min wins) and silently misprice both.
+        # FP8 lives in its own table: GemmTable keys on (M,N,K) only, so two precisions in one file would collapse into one cell (min wins) and silently misprice both.
         stem = a.gpu_label if a.dtype == "bf16" else f"{a.gpu_label}_{a.dtype}"
         self.table = f"{'gemm_wide' if a.wide else 'gemm'}/{stem}.csv"
 
@@ -217,8 +192,7 @@ class GemmProbe(Probe):
             cells = [(n, k, m) for (n, k) in NCU_NK for m in NCU_M]
         else:
             if a.pairs or a.model_shapes:
-                # Targeted cell list: do NOT also sweep the full dims x dims cross
-                # product (that is ~250 (N,K) x 9 M and would dwarf the cells asked for).
+                # Targeted cell list: do NOT also sweep the full dims x dims cross product (that is ~250 (N,K) x 9 M and would dwarf the cells asked for).
                 pairs = set()
                 for spec in (a.pairs or []):
                     n_s, _, k_s = spec.partition(":")
@@ -302,8 +276,7 @@ def main(argv=None):
     probe = GemmProbe(a, fp8_op)
     n = probe.run()
     if fp8_op is not None and fp8_op.quant_fit() is not None:
-        # The standalone activation-quant kernel, as an elementwise affine the
-        # composition charges per FP8 GEMM whose quant the server does not fuse.
+        # The standalone activation-quant kernel, as an elementwise affine the composition charges per FP8 GEMM whose quant the server does not fuse.
         floor, bw = fp8_op.quant_fit()
         # This entry only; kernel_tables merges it into the elementwise probe's table.
         emit(ProbeRow("gemm", f"elementwise/{a.gpu_label}.json", {"entry": "fp8_act_quant"},

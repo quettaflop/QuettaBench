@@ -15,9 +15,7 @@ from quettabench.probes.base import Probe, ProbeRow, add_output_args, run_record
 
 # (reads, writes) per kernel -- MUST match kernel_composed/elementwise.py::_IO
 IO = {"rmsnorm": (1, 1), "silu_mul": (2, 1), "rotary_emb": (1, 1), "residual_add": (2, 1)}
-# --vllm adds the kernels only vLLM ships fused: fused_add_rms_norm (one kernel for
-# the residual-add + rmsnorm pair -- the composition prefers it when calibrated) and
-# reshape_and_cache_flash (the real KV-cache write, previously priced by roofline).
+# --vllm adds the kernels only vLLM ships fused: fused_add_rms_norm (one kernel for the residual-add + rmsnorm pair -- the composition prefers it when calibrated) and reshape_and_cache_flash (the real KV-cache write, previously priced by roofline).
 VLLM_IO = {**IO, "fused_add_rmsnorm": (2, 2), "kv_cache_write": (1, 1)}
 ELEMS = [2**e for e in range(18, 30)]   # ~262k .. ~537M elements
 REPS, WARMUP = 50, 10
@@ -61,11 +59,7 @@ def op_for(kernel, n, dev, dt):
 
 
 def op_for_vllm(kernel, n, dev, dt):
-    """The REAL vLLM kernel for each composition op (vs the torch-chain proxies in
-    ``op_for``, which launch several kernels where vLLM launches one -- the H200
-    torch-chain fit overpriced fused ops ~2-3 ms/step at 48 layers). ``n`` keeps the
-    same meaning as the composition's ``elements`` for that kernel. vllm is
-    imported here: only --vllm needs it, and the torch-chain default runs without it."""
+    """The REAL vLLM kernel for each composition op (vs the torch-chain proxies in ``op_for``, which launch several kernels where vLLM launches one -- the H200 torch-chain fit overpriced fused ops ~2-3 ms/step at 48 layers). ``n`` keeps the same meaning as the composition's ``elements`` for that kernel. vllm is imported here: only --vllm needs it, and the torch-chain default runs without it."""
     from vllm import _custom_ops as ops
     if kernel == "rmsnorm":
         t = max(1, n // HIDDEN)
@@ -129,8 +123,7 @@ def fit(bytes_list, us_list) -> tuple[float, float]:
 
 
 class ElementwiseProbe(Probe):
-    """One entry of elementwise/{gpu}.json per kernel: its latency across
-    ELEMS, least-squares fitted to (floor_us, eff_bw_gb_s)."""
+    """One entry of elementwise/{gpu}.json per kernel: its latency across ELEMS, least-squares fitted to (floor_us, eff_bw_gb_s)."""
 
     def __init__(self, a):
         self.a = a

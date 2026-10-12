@@ -59,9 +59,7 @@ def time_call(fn) -> float:
 
 
 class FlashAttnProbe(Probe):
-    """The decode grid (kv_len x batch, NCU, graph replay or eager) of
-    flash_attn/{gpu}.csv, then the prefill grid (seq, always eager) of
-    fa3_prefill/{gpu}.csv, for one head config."""
+    """The decode grid (kv_len x batch, NCU, graph replay or eager) of flash_attn/{gpu}.csv, then the prefill grid (seq, always eager) of fa3_prefill/{gpu}.csv, for one head config."""
 
     def __init__(self, a):
         self.a = a
@@ -79,8 +77,7 @@ class FlashAttnProbe(Probe):
             for b in batch_axis:
                 if 2 * b * kv * a.n_kv_heads * a.head_dim * 2 / 1e9 <= a.max_mem_gb:
                     yield "decode", kv, b
-        # Prefill is EAGER in serving (dynamic shapes, not CUDA-graphed) so dispatch
-        # overhead is real -> always cuda_event, never NCU (which would drop it).
+        # Prefill is EAGER in serving (dynamic shapes, not CUDA-graphed) so dispatch overhead is real -> always cuda_event, never NCU (which would drop it).
         for seq in SEQ_AXIS:
             yield "prefill", seq, None
 
@@ -162,9 +159,7 @@ def main(argv=None):
         a.fa_version = 3 if torch.cuda.get_device_capability()[0] >= 9 else 2
         print(f"[flash] auto fa_version={a.fa_version} for {torch.cuda.get_device_name(0)}", flush=True)
 
-    # This run emits the rows of the head config it measured; kernel_tables unions
-    # every ok run's rows on (n_heads, n_kv_heads, head_dim), the run that finished
-    # last winning a head config (the loader selects by those columns).
+    # This run emits the rows of the head config it measured; kernel_tables unions every ok run's rows on (n_heads, n_kv_heads, head_dim), the run that finished last winning a head config (the loader selects by those columns).
     n = FlashAttnProbe(a).run()
     print(f"{n} rows of flash_attn/{a.gpu_label}.csv and fa3_prefill/{a.gpu_label}.csv")
 

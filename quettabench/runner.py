@@ -1,6 +1,4 @@
-"""qbench run: a run yaml to results/<run>/, the same sequence every time: one Config per matrix point, its LaunchSpec, the GPUs and collective pins in the child env, the server launched unless the adapter drives the engine itself (a grid run with mode.returns, cargo bench), then modes/serve.py runs the Trace through the driver into a RunWriter; the server is stopped whatever happens.
-mode: probe runs quettabench.probes.<name> on the same GPUs into the run dir instead. --dry-run prints each Config with its origins and LaunchSpec (and the docker command when hardware.launcher=docker), secrets redacted, and starts nothing. hardware.launcher=docker needs a launched server, so a grid run with mode.returns cannot use it.
-"""
+"""qbench run: a run yaml to results/<run>/, the same sequence every time: one Config per matrix point, its LaunchSpec, the GPUs and collective pins in the child env, the server launched unless the adapter drives the engine itself (a grid run with mode.returns, cargo bench), then modes/serve.py runs the Trace through the driver into a RunWriter; the server is stopped whatever happens. mode: probe runs quettabench.probes.<name> on the same GPUs into the run dir instead. --dry-run prints each Config with its origins and LaunchSpec (and the docker command when hardware.launcher=docker), secrets redacted, and starts nothing. hardware.launcher=docker needs a launched server, so a grid run with mode.returns cannot use it."""
 
 import ast
 import dataclasses
@@ -38,8 +36,7 @@ from quettabench.workloads.sessions import (
     resolve_multi_turn_num_sessions,
 )
 
-# Probes mode: probe refuses (check_probe): torchrun's, and those whose
-# output flags name files instead of taking a directory --out.
+# Probes mode: probe refuses (check_probe): torchrun's, and those whose output flags name files instead of taking a directory --out.
 TORCHRUN_PROBES = ("collective", "reparallel", "vllm_allreduce")
 FILE_OUT_PROBES = ("serving_decode_grid", "serving_stage_split")
 
@@ -87,11 +84,7 @@ def session_trace(profile, num_sessions, seed, **trace_kw):
 
 
 def build_trace(cfg, tokenizer=None):
-    """The run's Trace. A grid run (mode.grid) gets the GridTrace of its
-    cells; otherwise workload.source is a profile name (configs/workloads.yaml),
-    drawn as single-turn or, for kind sessions, as multi-turn sessions, or a
-    replay JSONL path. tokenizer is the engine's, called lazily by corpus
-    grids."""
+    """The run's Trace. A grid run (mode.grid) gets the GridTrace of its cells; otherwise workload.source is a profile name (configs/workloads.yaml), drawn as single-turn or, for kind sessions, as multi-turn sessions, or a replay JSONL path. tokenizer is the engine's, called lazily by corpus grids."""
     w = cfg.workload
     if cfg.mode.grid is not None:
         return GridTrace.from_config(cfg, tokenizer=tokenizer)
@@ -116,9 +109,7 @@ def build_trace(cfg, tokenizer=None):
 
 
 def spec_lines(spec):
-    """One `spec.<field> = value` line per LaunchSpec field, then one
-    `cell ctx= bs= = <shell line>` per bench cell: its env and bench_argv
-    as the child runs them; secrets redacted."""
+    """One `spec.<field> = value` line per LaunchSpec field, then one `cell ctx= bs= = <shell line>` per bench cell: its env and bench_argv as the child runs them; secrets redacted."""
     lines = [f"spec.{k} = {v!r}" for k, v in redact(dataclasses.asdict(spec)).items()
              if k != "cells"]
     return lines + [f"cell ctx={ctx} bs={bs} = "
@@ -127,8 +118,7 @@ def spec_lines(spec):
 
 
 def in_docker(cfg, adapter):
-    """Whether the server runs in docker; refused when nothing is launched,
-    since the driver would then run the engine on the host."""
+    """Whether the server runs in docker; refused when nothing is launched, since the driver would then run the engine on the host."""
     if cfg.hardware.launcher != "docker":
         return False
     if not adapter.needs_server(cfg):
@@ -154,8 +144,7 @@ def dry_run(cfg, out):
 
 
 def is_probe(name):
-    """Whether quettabench.probes.<name> is a module with a top-level main;
-    read from its source, so checking imports no probe (or torch)."""
+    """Whether quettabench.probes.<name> is a module with a top-level main; read from its source, so checking imports no probe (or torch)."""
     module = sys.modules.get(f"quettabench.probes.{name}")
     if module is not None:
         return callable(getattr(module, "main", None))
@@ -169,9 +158,7 @@ def is_probe(name):
 
 
 def check_probe(cfg):
-    """Refuse a probe `mode: probe` cannot run: a name that is no probe
-    module with a main, one that needs torchrun ranks, or one whose output
-    flag names a file rather than the run dir."""
+    """Refuse a probe `mode: probe` cannot run: a name that is no probe module with a main, one that needs torchrun ranks, or one whose output flag names a file rather than the run dir."""
     name = cfg.mode.probe
     if cfg.hardware.backend in OTHER_ACCELERATORS:
         raise ConfigError(f"{cfg.run_name}: the kernel probes time CUDA kernels (CUDA graphs, "
@@ -188,10 +175,7 @@ def check_probe(cfg):
 
 
 def run_probe(cfg, out):
-    """The probe's main with its own flags and --out set to the run dir, on
-    the run's GPUs (hardware.visible_devices, else the first idle ones),
-    exported before the probe is imported; a live-server probe launches with
-    the run's hardware, and the rows it emits go to the run dir's rows.jsonl.
+    """The probe's main with its own flags and --out set to the run dir, on the run's GPUs (hardware.visible_devices, else the first idle ones), exported before the probe is imported; a live-server probe launches with the run's hardware, and the rows it emits go to the run dir's rows.jsonl.
     A probe that raises leaves run.json failed (aborted on Ctrl-C)."""
     check_probe(cfg)
     argv = [*shlex.split(cfg.mode.probe_args), "--out", str(out)]
@@ -211,9 +195,7 @@ def run_probe(cfg, out):
 
 
 def with_child_env(spec, pins, drop=()):
-    """spec with pins added to its env and to every bench cell's env, and the
-    names in drop (exported for an earlier in-process point, not pinned
-    here) unset in the child."""
+    """spec with pins added to its env and to every bench cell's env, and the names in drop (exported for an earlier in-process point, not pinned here) unset in the child."""
     cells = tuple((ctx, bs, with_child_env(cell, pins, drop)) for ctx, bs, cell in spec.cells)
     env_drop = (*spec.env_drop, *sorted(set(drop) - set(pins) - set(spec.env_drop)))
     return dataclasses.replace(spec, env={**spec.env, **pins}, env_drop=env_drop, cells=cells)
@@ -225,11 +207,7 @@ def in_process(cfg, adapter, spec):
 
 
 def refuse_mixed_in_process(cfgs):
-    """One process cannot change its CUDA_VISIBLE_DEVICES or collective pins
-    between matrix points, so in-process points must agree on them, and with
-    more than one they name their GPUs: idle GPUs picked per point could
-    differ, and CUDA reads the first point's for the whole process. A probe
-    point (run_probe exports its GPUs here too) counts as in-process."""
+    """One process cannot change its CUDA_VISIBLE_DEVICES or collective pins between matrix points, so in-process points must agree on them, and with more than one they name their GPUs: idle GPUs picked per point could differ, and CUDA reads the first point's for the whole process. A probe point (run_probe exports its GPUs here too) counts as in-process."""
     seen, unnamed, points = set(), False, 0
     for cfg in cfgs:
         adapter = None if cfg.mode.mode == "probe" else base.get(cfg.engine.name)
@@ -248,14 +226,11 @@ def refuse_mixed_in_process(cfgs):
 
 
 def run_one(cfg, out, exported=None):
-    """One Config through launch, drive, serve and stop. exported collects
-    the env names an in-process point put into this process, across the
-    matrix; a later point's child gets them unset unless it pins them."""
+    """One Config through launch, drive, serve and stop. exported collects the env names an in-process point put into this process, across the matrix; a later point's child gets them unset unless it pins them."""
     exported = set() if exported is None else exported
     if cfg.mode.mode == "probe":
         return run_probe(cfg, out)
-    # Opened first, so a run that raises anywhere below (translate, the GPU
-    # pick and the env export included) still leaves run.json.
+    # Opened first, so a run that raises anywhere below (translate, the GPU pick and the env export included) still leaves run.json.
     writer = RunWriter(out, cfg)
     try:
         serve_one(cfg, out, exported, writer)
@@ -265,9 +240,7 @@ def run_one(cfg, out, exported=None):
 
 
 def serve_one(cfg, out, exported, writer):
-    """run_one's body: the LaunchSpec, its GPUs and env, then the server,
-    the driver and serve.run into writer; the server is stopped whatever
-    happens."""
+    """run_one's body: the LaunchSpec, its GPUs and env, then the server, the driver and serve.run into writer; the server is stopped whatever happens."""
     adapter = base.get(cfg.engine.name)
     spec = adapter.translate(cfg, out)
     gpus = cfg.hardware.visible_devices or launcher.idle_gpus(device_count(cfg.engine),
@@ -282,8 +255,7 @@ def serve_one(cfg, out, exported, writer):
         exported.update(env_map.export(pins))
     spec = with_child_env(spec, pins, {*exported, *unset})
     writer.provenance["launch_env"] = redact(spec.env)
-    # A launched server's driver has no tokenizer, so its trace is built
-    # first: a bad workload fails before a long model load, not after.
+    # A launched server's driver has no tokenizer, so its trace is built first: a bad workload fails before a long model load, not after.
     trace = build_trace(cfg) if adapter.needs_server(cfg) else None
     handle = (launcher.start(spec, out, backend=backend, cfg=cfg, gpus=gpus,
                              timeout_s=cfg.hardware.ready_timeout_s)
@@ -307,12 +279,8 @@ def run_failed(out):
 
 
 def clear_run_dir(out, overwrite, results_dir):
-    """Refuse a run dir that already holds files, since requests.jsonl
-    appends; with overwrite, or when its run.json says failed, empty it:
-    everything in results/<run>/ belongs to the run, including profile.json
-    and the nsys export. Only a real dir directly under results_dir that
-    holds a run marker is ever emptied: renamed to a hidden sibling, then
-    removed, so the run dir is gone afterwards."""
+    """Refuse a run dir that already holds files, since requests.jsonl appends; with overwrite, or when its run.json says failed, empty it:
+    everything in results/<run>/ belongs to the run, including profile.json and the nsys export. Only a real dir directly under results_dir that holds a run marker is ever emptied: renamed to a hidden sibling, then removed, so the run dir is gone afterwards."""
     if out.is_symlink():
         raise ConfigError(f"{out} is a symlink; qbench empties only a run dir it made")
     if not out.is_dir() or not any(out.iterdir()):

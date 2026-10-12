@@ -363,8 +363,7 @@ def summarize_serve(records, wall_s: float, method: str) -> dict:
     """Serving summary of replay records ({ttft_ms, tpot_ms, out_tokens}).
 
     n, ttft/tpot percentiles by method, req/s and output tok/s over wall_s.
-    Records with tpot_ms None (single-token outputs) are left out of tpot;
-    tpot_ms is None when no record has one. Raises on no records.
+    Records with tpot_ms None (single-token outputs) are left out of tpot; tpot_ms is None when no record has one. Raises on no records.
     """
     if not records:
         raise ValueError("no completed requests")

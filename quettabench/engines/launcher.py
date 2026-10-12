@@ -23,8 +23,7 @@ from quettabench.metrics.results import redact, secret
 
 REPO = Path(__file__).resolve().parents[2]
 
-# Engine endpoints are local or on cluster-private addresses; an http_proxy in
-# the environment would send those requests through the proxy, which answers 403.
+# Engine endpoints are local or on cluster-private addresses; an http_proxy in the environment would send those requests through the proxy, which answers 403.
 _DIRECT = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
@@ -47,8 +46,7 @@ class Handle:
 
     def stop(self, grace_s=30):
         """SIGTERM the process group; SIGKILL whatever is left after grace_s.
-        A container gets `docker stop`; its log stream then ends (killed if
-        it has not after grace_s + 10 s) and the container is removed."""
+        A container gets `docker stop`; its log stream then ends (killed if it has not after grace_s + 10 s) and the container is removed."""
         if self.container:
             subprocess.run(["docker", "stop", "-t", str(grace_s), self.container],
                            capture_output=True, check=False)
@@ -78,8 +76,7 @@ class Handle:
 
 @dataclass
 class NoServer:
-    """The handle of a run whose driver starts the engine itself (in-process
-    vLLM, the cargo bench): the results dir, no endpoint, nothing to stop."""
+    """The handle of a run whose driver starts the engine itself (in-process vLLM, the cargo bench): the results dir, no endpoint, nothing to stop."""
     results_dir: Path
     endpoint: str | None = None
     backend: str = "cuda"
@@ -154,8 +151,7 @@ def tool_lines(argv):
 
 
 def accelerator(backend="cuda"):
-    """(name, total bytes) of device 0: nvidia-smi on cuda, the name only from amd-smi
-    or neuron-ls, nothing on tpu and cpu; ("", None) when the tool is missing, never a crash."""
+    """(name, total bytes) of device 0: nvidia-smi on cuda, the name only from amd-smi or neuron-ls, nothing on tpu and cpu; ("", None) when the tool is missing, never a crash."""
     if backend in IDENTITY:
         argv, prefix = IDENTITY[backend]
         names = [line[len(prefix):].strip() for line in tool_lines(argv) if line.startswith(prefix)]
@@ -191,9 +187,7 @@ def remove(container):
 
 
 def container_name(run_name):
-    """qbench-<run_name>-<pid>-<6 random hex>, every character docker refuses
-    in a name made -: two runs of one yaml, from two checkouts or one after
-    a crash that left its container, never take the same name."""
+    """qbench-<run_name>-<pid>-<6 random hex>, every character docker refuses in a name made -: two runs of one yaml, from two checkouts or one after a crash that left its container, never take the same name."""
     safe = re.sub(r"[^a-zA-Z0-9_.-]", "-", run_name)
     return f"qbench-{safe}-{os.getpid()}-{os.urandom(3).hex()}"
 
@@ -201,20 +195,8 @@ def container_name(run_name):
 def docker_argv(spec, cfg, gpus, results_dir):
     """`docker run -d` of spec.server_argv in spec.image on the given GPUs.
 
-    The flags follow the H200 campaign notes (no launch script ever used
-    docker): detached, --pull=never (provision never pulls, and a missing
-    image fails here instead of downloading), --init (so the engine is not
-    PID 1 and reaps its workers), the backend's device_flags, --ipc=host, --shm-size, the
-    port published, and the repo, the HF cache (hardware.hf_home, when set) and the model
-    dir (when it is an absolute path no other mount covers; provision puts
-    weights under <cache_root>/models/) mounted read-only at their host
-    paths so model paths resolve unchanged inside; the run's results dir
-    is mounted read-write at its absolute host path, so instrumentation
-    output (nsys) lands there and outlives the container.
-    --entrypoint is the argv's first word, so the image's own ENTRYPOINT does
-    not prefix the command. env is spec.env, the non-empty collective pins
-    and HF_HOME; a secret-named one (docker_secrets) is passed as `-e NAME`
-    alone, so docker takes its value from the env start() gives docker run.
+    The flags: detached, --pull=never (provision never pulls, and a missing image fails here instead of downloading), --init (so the engine is not PID 1 and reaps its workers), the backend's device_flags, --ipc=host, --shm-size, the port published (unless the backend runs with --net=host), and the repo, the HF cache (hardware.hf_home, when set) and the model dir (when it is an absolute path no other mount covers; provision puts weights under <cache_root>/models/) mounted read-only at their host paths so model paths resolve unchanged inside; the run's results dir is mounted read-write at its absolute host path, so instrumentation output (nsys) lands there and outlives the container.
+    --entrypoint is the argv's first word, so the image's own ENTRYPOINT does not prefix the command. env is spec.env, the non-empty collective pins and HF_HOME; a secret-named one (docker_secrets) is passed as `-e NAME` alone, so docker takes its value from the env start() gives docker run.
     """
     hw, run_dir = cfg.hardware, Path(results_dir).resolve()
     if not spec.image:
@@ -239,15 +221,13 @@ def docker_argv(spec, cfg, gpus, results_dir):
 
 
 def docker_secrets(spec):
-    """The secret-named env of a docker launch (VLLM_API_KEY): docker_argv
-    names them only, and start() hands their values to docker run's env."""
+    """The secret-named env of a docker launch (VLLM_API_KEY): docker_argv names them only, and start() hands their values to docker run's env."""
     return {k: v for k, v in spec.env.items() if secret(k)}
 
 
 def start(spec, results_dir, *, backend="local", cfg=None, gpus="", timeout_s=1800,
           poll_s=1.0):
-    """Launch spec.server_argv, wait for health, write engine.json; return a Handle.
-    backend docker runs it in a container built by docker_argv(spec, cfg, gpus, results_dir)."""
+    """Launch spec.server_argv, wait for health, write engine.json; return a Handle. backend docker runs it in a container built by docker_argv(spec, cfg, gpus, results_dir)."""
     if spec.server_unsupported:
         raise UnsupportedField(spec.adapter, ", ".join(spec.server_unsupported))
     if not spec.server_argv:
@@ -262,8 +242,7 @@ def start(spec, results_dir, *, backend="local", cfg=None, gpus="", timeout_s=18
         run = subprocess.run(argv, capture_output=True, text=True, check=False,
                              env=env_map.with_env(secrets) if secrets else None)
         if run.returncode != 0:
-            # The name is this run's own (container_name), so whatever docker
-            # left under it is logged and removed.
+            # The name is this run's own (container_name), so whatever docker left under it is logged and removed.
             with (results_dir / "server.log").open("w") as log:
                 log.write(run.stderr)
                 log.flush()

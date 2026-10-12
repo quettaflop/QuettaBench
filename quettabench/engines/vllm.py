@@ -1,7 +1,6 @@
 """vLLM adapter: one field table gives the `vllm serve` argv and the in-process vllm.LLM kwargs.
 
-A value with no server flag lands in server_unsupported and the launcher refuses it.
-quant adds no server flag, since the server reads it from the checkpoint; a slice run is engine.model naming a truncated checkpoint dir.
+A value with no server flag lands in server_unsupported and the launcher refuses it. quant adds no server flag, since the server reads it from the checkpoint; a slice run is engine.model naming a truncated checkpoint dir.
 """
 
 from pathlib import Path
@@ -68,8 +67,7 @@ def aggregated_only(v):
     return {}
 
 
-# EngineCfg field -> (argv fragment, kwargs fragment). An argv builder that
-# returns None means no flag carries that value.
+# EngineCfg field -> (argv fragment, kwargs fragment). An argv builder that returns None means no flag carries that value.
 FIELDS = {
     "model":          (lambda v: [],                       kw("model")),  # positional
     "port":           (flag("--port"),                     nothing),
@@ -91,8 +89,7 @@ SCALARS = (str, int, float, bool)
 
 
 def extra_fragments(extra, taken):
-    """argv and kwargs for engine.extra.vllm: {kwarg_name: scalar}, appended
-    last; api_key is left to the env (API_KEY_ENV)."""
+    """argv and kwargs for engine.extra.vllm: {kwarg_name: scalar}, appended last; api_key is left to the env (API_KEY_ENV)."""
     if not isinstance(extra, dict):
         raise UnsupportedField("vllm", "extra.vllm", "expected a mapping of flag: value")
     argv, kwargs = [], {}
@@ -156,16 +153,11 @@ class VllmAdapter(EngineAdapter):
         )
 
     def needs_server(self, cfg):
-        """A serve run, or a grid run that only times. A grid run with
-        mode.returns builds vllm.LLM itself: only that path gives token ids,
-        text or logits (tests/parity/slope_gate.json passed timing over HTTP)."""
+        """A serve run, or a grid run that only times. A grid run with mode.returns builds vllm.LLM itself: only that path gives token ids, text or logits (tests/parity/slope_gate.json passed timing over HTTP)."""
         return cfg.mode.grid is None or cfg.mode.returns == "none"
 
     def driver(self, spec, handle, trace=None):
-        """InProcessDriver when nothing was launched (a grid run with mode.returns),
-        else the launched server with the model it was started on: its
-        /v1/chat/completions for chat requests, /v1/completions otherwise,
-        sending the server's api key when it was started with one."""
+        """InProcessDriver when nothing was launched (a grid run with mode.returns), else the launched server with the model it was started on: its /v1/chat/completions for chat requests, /v1/completions otherwise, sending the server's api key when it was started with one."""
         if handle.endpoint is None:
             return InProcessDriver(spec)
         endpoint = "chat" if chat_requests(trace) else "completions"
@@ -176,10 +168,7 @@ class VllmAdapter(EngineAdapter):
 
 
 def chat_requests(trace):
-    """Whether trace is chat: multi-turn sessions, whose turns carry the whole
-    conversation and take the engine's reply text, or requests that carry
-    messages and no token ids. The completions body would send only the last
-    user message of such a request."""
+    """Whether trace is chat: multi-turn sessions, whose turns carry the whole conversation and take the engine's reply text, or requests that carry messages and no token ids. The completions body would send only the last user message of such a request."""
     if trace is None:
         return False
     if isinstance(trace, SessionTrace):

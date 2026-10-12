@@ -38,11 +38,7 @@ def clearing(path: Path, root: Path) -> bool:
 
 @functools.cache
 def run_dirs(root: Path) -> dict[Path, str | None]:
-    """{run dir: why export leaves it out, None when kept} for every run dir
-    under root (root included): run.json missing (a run that never finished),
-    unparsable, or a run_status other than ok. A server/ dir under a run dir
-    (a probe's launched server, engine.json there) is part of that run; a
-    .clearing-* dir (runner.clear_run_dir cut short) is none.
+    """{run dir: why export leaves it out, None when kept} for every run dir under root (root included): run.json missing (a run that never finished), unparsable, or a run_status other than ok. A server/ dir under a run dir (a probe's launched server, engine.json there) is part of that run; a .clearing-* dir (runner.clear_run_dir cut short) is none.
     Cached per root; export() clears it before each builder."""
     runs = {}
     dirs = sorted({p.parent for marker in RUN_MARKERS for p in Path(root).rglob(marker)
@@ -69,9 +65,7 @@ def skipped_runs(root: Path) -> dict[Path, str]:
 
 
 def owner(path: Path, root: Path, runs: dict[Path, str | None]) -> Path | None:
-    """The run dir path belongs to: path itself when it is a run dir, else its
-    nearest ancestor (up to root) that is one, None when it sits in none (a
-    table without a run.json)."""
+    """The run dir path belongs to: path itself when it is a run dir, else its nearest ancestor (up to root) that is one, None when it sits in none (a table without a run.json)."""
     for d in (path, *path.parents):
         if d in runs:
             return d
@@ -81,8 +75,7 @@ def owner(path: Path, root: Path, runs: dict[Path, str | None]) -> Path | None:
 
 
 def files(root: Path, pattern: str, recursive: bool = True) -> list[Path]:
-    """Paths under root matching pattern, sorted, without those in a
-    .clearing-* dir or whose run dir (owner) export leaves out."""
+    """Paths under root matching pattern, sorted, without those in a .clearing-* dir or whose run dir (owner) export leaves out."""
     root = Path(root)
     runs = run_dirs(root)
     hits = root.rglob(pattern) if recursive else root.glob(pattern)
@@ -90,9 +83,7 @@ def files(root: Path, pattern: str, recursive: bool = True) -> list[Path]:
 
 
 def finished(run_dir: Path | None) -> datetime:
-    """run_dir/run.json's provenance.pulled (a remote run, on this machine's
-    clock) or else provenance.finished as a UTC instant, NEVER for no run dir
-    or no time that parses."""
+    """run_dir/run.json's provenance.pulled (a remote run, on this machine's clock) or else provenance.finished as a UTC instant, NEVER for no run dir or no time that parses."""
     try:
         provenance = json.loads((Path(run_dir) / "run.json").read_text())["provenance"]
         when = provenance["pulled"] if "pulled" in provenance else provenance["finished"]
@@ -102,8 +93,7 @@ def finished(run_dir: Path | None) -> datetime:
 
 
 def find(results_dirs: Iterable[Path], name: str) -> Path | None:
-    """The file called `name` whose ok run finished last (provenance.finished),
-    over every results dir; a file in no run dir counts as finished never.
+    """The file called `name` whose ok run finished last (provenance.finished), over every results dir; a file in no run dir counts as finished never.
     A tie goes to the earlier results dir, then the first path."""
     best = None
     for rank, root in enumerate(map(Path, results_dirs)):
@@ -116,8 +106,7 @@ def find(results_dirs: Iterable[Path], name: str) -> Path | None:
 
 
 def stage_split_legs(results_dirs: Iterable[Path], gpu: str) -> list[tuple[int, Path, Path]]:
-    """(tp, tp1 csv, tpN csv) for every tp degree whose two stage-split legs
-    are present, each leg the one find picks (its run finished last)."""
+    """(tp, tp1 csv, tpN csv) for every tp degree whose two stage-split legs are present, each leg the one find picks (its run finished last)."""
     tp1 = find(results_dirs, f"serving_stage_split_{gpu}.csv")
     legs = []
     for tp in TP_DEGREES:
@@ -138,8 +127,7 @@ REDUCE = {"gemm": "min", "moe": "min", "elementwise": "median", "flash_attn": "m
 # The key a collectives row replaces a dest row on.
 COLLECTIVE_KEY = ("op", "world", "bytes")
 GEOMETRY = ("n_heads", "n_kv_heads", "head_dim")
-# (probe, kind) -> the columns a CSV row is keyed on: flash_attn and
-# cross_attn replace every row of a head config, the others one row.
+# (probe, kind) -> the columns a CSV row is keyed on: flash_attn and cross_attn replace every row of a head config, the others one row.
 ROW_KEYS = {
     ("flash_attn", "flash_attn"): GEOMETRY,
     ("flash_attn", "fa3_prefill"): GEOMETRY,
@@ -151,13 +139,13 @@ ROW_KEYS = {
     ("kv_transfer", "kv_transfer"): ("gpu", "kv_heads_per_rank", "head_dim", "block_size", "layers",
                                      "layout", "tokens"),
 }
-# Keyed tables whose union is sorted, on these columns, as their old upserts wrote them.
+# Keyed tables whose union is sorted on these columns.
 SORTED = {("reparallel", "reparallel"): ROW_KEYS[("reparallel", "reparallel")],
           ("kv_transfer", "kv_transfer"): ("gpu", "kv_heads_per_rank", "layout", "tokens",
                                            "head_dim", "block_size", "layers")}
 # Probes that live outside quettabench/probes/, by their sidecar tool.
 TOOLS = {"kv_transfer": "quettabench.profiling.kv_transfer"}
-# Probes whose run without --append replaced the whole table.
+# Probes whose run without --append replaces the whole table.
 RESET_WITHOUT_APPEND = ("gemm", "moe")
 # (probe, kind) whose JSON entries union across runs (gemm's fp8_act_quant).
 JSON_UNION = {("gemm", "elementwise")}
@@ -166,8 +154,7 @@ OLDEST = datetime.min.replace(tzinfo=timezone.utc)
 
 
 def _record(run_dir: Path) -> tuple[str | None, list[str], str | None]:
-    """(probe, its args, the day it finished) from run_dir/run.json; probe None
-    for a run that is no probe run."""
+    """(probe, its args, the day it finished) from run_dir/run.json; probe None for a run that is no probe run."""
     doc = json.loads((run_dir / "run.json").read_text())
     mode = (doc.get("config") or {}).get("mode") or {}
     probe = mode.get("probe") if mode.get("mode") == "probe" else None
@@ -186,8 +173,7 @@ def _gpu(args: list[str]) -> str | None:
 
 
 def _sidecar(rel: Path, by_probe: dict[str, list[Source]], runs: set[Path]) -> dict:
-    """rel's <file>.meta.json over the runs whose rows it holds; runs timed in
-    two modes make mode unknown."""
+    """rel's <file>.meta.json over the runs whose rows it holds; runs timed in two modes make mode unknown."""
     probes, modes, gpus, reduces, days = set(), set(), set(), set(), []
     for probe, sources in by_probe.items():
         for _, table, run, _ in (s for s in sources if s[2] in runs):
@@ -210,10 +196,8 @@ def _sidecar(rel: Path, by_probe: dict[str, list[Source]], runs: set[Path]) -> d
 
 
 def _keep_sidecar(meta: dict, table: Path, kept: bool) -> dict:
-    """meta over the sidecar dest has beside table: its other fields stay, a
-    field meta leaves null keeps its value and meta's notes join its notes.
-    When its rows were kept, measured spans both, tool names both, and a mode
-    other than meta's makes mode unknown."""
+    """meta over the sidecar dest has beside table: its other fields stay, a field meta leaves null keeps its value and meta's notes join its notes.
+    When its rows were kept, measured spans both, tool names both, and a mode other than meta's makes mode unknown."""
     path = table.with_name(table.name + ".meta.json")
     try:
         prior = json.loads(path.read_text()) if path.is_file() else {}
@@ -234,8 +218,7 @@ def _keep_sidecar(meta: dict, table: Path, kept: bool) -> dict:
 
 @dataclasses.dataclass
 class Rows:
-    """One run's rows of one table from its rows.jsonl: each row's key and
-    value cells, the probe and how the rows were timed."""
+    """One run's rows of one table from its rows.jsonl: each row's key and value cells, the probe and how the rows were timed."""
     probe: str
     timings: set[str]
     cells: list[dict]
@@ -245,13 +228,11 @@ Source = tuple[datetime, "Path | Rows", Path, bool]  # (finished, dest table or 
 
 
 class Lost(SystemExit):
-    """The export would drop a dest row or column; replace (--replace-tables)
-    replaces just the tables that stop with it."""
+    """The export would drop a dest row or column; replace (--replace-tables) replaces just the tables that stop with it."""
 
 
 def _rows(run: Path) -> list[dict]:
-    """run's rows.jsonl, one ProbeRow dict per line; stops the export on a
-    line that is not one."""
+    """run's rows.jsonl, one ProbeRow dict per line; stops the export on a line that is not one."""
     rows = []
     for n, line in enumerate((run / "rows.jsonl").read_text().splitlines(), 1):
         try:
@@ -288,9 +269,7 @@ def found(results_dirs: Iterable[Path]) -> dict[Path, dict[str, list[Source]]]:
 
 
 def _runs_used(probe: str, rel: Path, sources: list[Source]) -> list[Source]:
-    """The runs whose rows a probe's table is built from: all of them for a
-    keyed table (from the last run without --append on, for gemm and moe),
-    else the run that finished last."""
+    """The runs whose rows a probe's table is built from: all of them for a keyed table (from the last run without --append on, for gemm and moe), else the run that finished last."""
     kind = rel.parts[-2]
     if (probe, kind) in JSON_UNION and rel.suffix == ".json":
         return sources
@@ -303,8 +282,7 @@ def _runs_used(probe: str, rel: Path, sources: list[Source]) -> list[Source]:
 
 
 def _key(row: dict, key: tuple[str, ...]) -> tuple:
-    """row's key, numbers parsed as the old upserts' int() read them; an
-    empty op is all_reduce, as QuettaSim's collectives loader reads it."""
+    """row's key, numbers parsed with int(); an empty op is all_reduce, as QuettaSim's collectives loader reads it."""
     return tuple((row.get("op") or "all_reduce") if c == "op" else row[c] if c in ("gpu", "layout")
                  else float(row[c]) if c == "total_weight_gb" else int(row[c]) for c in key)
 
@@ -327,9 +305,7 @@ def _write_csv(out: Path, fields: list[str], rows: Iterable[dict], like: Path | 
 
 def _read_csv(rel: Path, table: Path | Rows, run: Path,
               key: tuple[str, ...] = ()) -> tuple[list[str], list[dict]]:
-    """table's header and rows as csv reads them (a run's cells as strings);
-    stops the export on a row with a missing or extra cell or a key that is
-    empty or does not parse."""
+    """table's header and rows as csv reads them (a run's cells as strings); stops the export on a row with a missing or extra cell or a key that is empty or does not parse."""
     if isinstance(table, Rows):
         fields = list(dict.fromkeys(c for cells in table.cells for c in cells))
         rows = [{c: "" if cells.get(c) is None else str(cells[c]) for c in fields} for cells in table.cells]
@@ -361,11 +337,7 @@ def _read_json(rel: Path, table: Path | Rows, run: Path) -> object:
 
 def _union_csv(rel: Path, sources: list[Source], key: tuple[str, ...], out: Path,
                old: Source | None = None) -> list[Path]:
-    """Rows of the dest table old, then of every source, oldest first; a
-    source's rows replace the earlier rows on each key it holds. Within a
-    run's table the last row on a key wins; old keeps its repeated rows on a
-    key (QuettaSim's loaders reduce them) unless the table's old upsert held
-    its rows in a dict (SORTED). Returns the run dirs with a row kept."""
+    """Rows of the dest table old, then of every source, oldest first; a source's rows replace the earlier rows on each key it holds. Within a run's table the last row on a key wins; old keeps its repeated rows on a key (QuettaSim's loaders reduce them) unless the table's old upsert held its rows in a dict (SORTED). Returns the run dirs with a row kept."""
     order = next((cols for k, cols in SORTED.items() if ROW_KEYS[k] == key), None)
     fields: list[str] = []
     kept: list[tuple[dict, Path]] = []
@@ -418,12 +390,7 @@ def _json_style(table: Path | Rows) -> tuple[int | None, str]:
 
 def _merge_collectives(rel: Path, collective: Source | None, vllm: Source | None, out: Path,
                        old: Source | None = None) -> list[Path]:
-    """The dest table old's rows, then the collective run's, each replacing
-    the earlier rows on its COLLECTIVE_KEY, then vllm_allreduce's all_reduce
-    rows, which replace every earlier all_reduce row of their world, as its
-    upsert did. Beside a vllm_allreduce run the collective run's all_reduce
-    rows are left out. The header is old's and the runs' columns; the
-    collective run's rows fill an empty dtype_bytes (2) and path (nccl)."""
+    """The dest table old's rows, then the collective run's, each replacing the earlier rows on its COLLECTIVE_KEY, then vllm_allreduce's all_reduce rows, which replace every earlier all_reduce row of their world. Beside a vllm_allreduce run the collective run's all_reduce rows are left out. The header is old's and the runs' columns; the collective run's rows fill an empty dtype_bytes (2) and path (nccl)."""
     sources = [(s, _read_csv(rel, s[1], s[2], COLLECTIVE_KEY)) for s in (old, collective, vllm) if s]
     fields: list[str] = []
     for _, (head, _) in sources:
@@ -464,9 +431,7 @@ def _check(rel: Path, by_probe: dict[str, list[Source]]) -> None:
 
 def _lost(rel: Path, old: Source, out: Path, key: tuple[str, ...], newer: set[tuple],
           rows: list[dict] | None = None) -> None:
-    """Stop (Lost) when out lacks a column of the dest table old, or drops one
-    of its rows (rows, else all of old's): each must be in out, cell for
-    cell, unless a run re-measured its key (newer)."""
+    """Stop (Lost) when out lacks a column of the dest table old, or drops one of its rows (rows, else all of old's): each must be in out, cell for cell, unless a run re-measured its key (newer)."""
     head, olds = _read_csv(rel, old[1], old[1], key)
     fields, kept = _read_csv(rel, out, out, key)
     stop = "; give --replace-tables to replace each table that stops this way"
@@ -490,8 +455,7 @@ def _lost(rel: Path, old: Source, out: Path, key: tuple[str, ...], newer: set[tu
 
 def _write(rel: Path, by_probe: dict[str, list[Source]], out: Path,
            old: Source | None = None) -> list[Path]:
-    """Build one dest file (_check passed) over the dest table old, when there
-    is one; returns the run dirs (and old's path) whose rows it holds."""
+    """Build one dest file (_check passed) over the dest table old, when there is one; returns the run dirs (and old's path) whose rows it holds."""
     used = {probe: _runs_used(probe, rel, sources) for probe, sources in by_probe.items()}
     probes = sorted(used)
     olds = [old] if old else []
@@ -525,13 +489,7 @@ def _write(rel: Path, by_probe: dict[str, list[Source]], out: Path,
 
 def run_kernel_tables(results_dirs: Iterable[Path], dest: Path,
         replace: bool = False) -> tuple[list[Path], dict[str, list[str]]]:
-    """Build every table and its sidecar in a temp dir under dest, over the
-    tables dest holds (or, given replace, without the ones that would stop
-    with Lost), then replace the dest files, so a stop
-    leaves the tables in dest as they were (and no dest when this run made
-    it). Returns the files written and, for
-    the manifest, {<dir>/<kind>/<file>: the run dirs with rows in it, in
-    finished order}."""
+    """Build every table and its sidecar in a temp dir under dest, over the tables dest holds (or, given replace, without the ones that would stop with Lost), then replace the dest files, so a stop leaves the tables in dest as they were (and no dest when this run made it). Returns the files written and, for the manifest, {<dir>/<kind>/<file>: the run dirs with rows in it, in finished order}."""
     tables = sorted(found(results_dirs).items())
     for rel, by_probe in tables:
         _check(rel, by_probe)
@@ -722,10 +680,8 @@ def load_trace(path: Path) -> list[dict]:
 def reconstruct_contexts(steps: list[dict]) -> list[dict | None]:
     """Per decode-only step: total context tokens across the decode batch.
 
-    prompt_tokens[id] from engine_cache_truth.requests[*].prompt_tokens (first sighting
-    wins); generated[id] = # prior steps where id appeared in decode_request_ids.
-    Returns one entry per step: None for non-decode-only steps or steps with an
-    unknown-prompt request; else {"ctx_total": int, "batch": int}.
+    prompt_tokens[id] from engine_cache_truth.requests[*].prompt_tokens (first sighting wins); generated[id] = # prior steps where id appeared in decode_request_ids.
+    Returns one entry per step: None for non-decode-only steps or steps with an unknown-prompt request; else {"ctx_total": int, "batch": int}.
     """
     prompt_tokens: dict[str, int] = {}
     generated: dict[str, int] = {}
@@ -968,32 +924,16 @@ def build_decode_grid(inputs: list[Path], snap_tolerance: float = 0.02,
           lag_upgrade: bool = False) -> list[dict]:
     """Merge runs (latest wins per cell) and summarize.
 
-    ``snap_tolerance``: the lattice's ``prompt = T - osl/2`` design targets an
-    effective context == nominal T at the steady-window middle, and the measured effectives land
-    within ~1.5% of nominal -- but as raw floats they are UNIQUE per (B, T) cell, which makes
-    every ``load_grid`` t-axis column single-B (ragged), so the consumer's bilinear corners mix
-    measured cells with analytic fills almost everywhere, diluting the measurement. The builder
-    therefore SNAPS ``context_len`` to the cell's nominal T when the measured effective is
-    within ``snap_tolerance`` of it (the by-construction case; rows align into a proper B x T
-    grid) and keeps the measured effective in the ``effective_context_len`` diagnostic column.
-    A deviation beyond the tolerance means the steady window was asymmetric/disturbed: the cell
-    keeps its measured effective AND is flagged ``check``.
+    ``snap_tolerance``: the lattice's ``prompt = T - osl/2`` design targets an effective context == nominal T at the steady-window middle, and the measured effectives land within ~1.5% of nominal -- but as raw floats they are UNIQUE per (B, T) cell, which makes every ``load_grid`` t-axis column single-B (ragged), so the consumer's bilinear corners mix measured cells with analytic fills almost everywhere, diluting the measurement. The builder therefore SNAPS ``context_len`` to the cell's nominal T when the measured effective is within ``snap_tolerance`` of it (the by-construction case; rows align into a proper B x T grid) and keeps the measured effective in the ``effective_context_len`` diagnostic column.
+    A deviation beyond the tolerance means the steady window was asymmetric/disturbed: the cell keeps its measured effective AND is flagged ``check``.
 
-    ``lag_upgrade`` (default off): the p99-loop-lag ``check`` flag exists to catch
-    client-side measurement distortion, which cross-topology reproducibility rules out. ``load_grid`` drops non-``ok`` rows, so a
-    marginally-over-limit lag flag (e.g. 2.01 vs the 2.0 ms limit on a host whose CPUs also run
-    the tensor-parallel server) silently replaces a reproducible MEASURED cell with the analytic
-    fill the grid exists to correct. With ``lag_upgrade=True`` a flagged cell is upgraded to
-    ``ok`` iff ALL deterministic criteria hold:
+    ``lag_upgrade`` (default off): the p99-loop-lag ``check`` flag exists to catch client-side measurement distortion, which cross-topology reproducibility rules out. ``load_grid`` drops non-``ok`` rows, so a marginally-over-limit lag flag (e.g. 2.01 vs the 2.0 ms limit on a host whose CPUs also run the tensor-parallel server) silently replaces a reproducible MEASURED cell with the analytic fill the grid exists to correct. With ``lag_upgrade=True`` a flagged cell is upgraded to ``ok`` iff ALL deterministic criteria hold:
       * the cell was measured in >= 2 input passes (independent client topologies);
-      * EVERY pass is hygiene-clean (no empty-stream drops, in-window deltas >= min_samples,
-        positive steady window) -- i.e. the only flag reason anywhere is loop lag;
+      * EVERY pass is hygiene-clean (no empty-stream drops, in-window deltas >= min_samples, positive steady window) -- the only flag reason anywhere is loop lag;
       * the final (latest-wins) row's flag is lag-only, with the snap check passing;
       * cross-pass decode_step_ms spread <= 0.5% of the adopted (latest) value;
-      * the adopted pass's p99 loop lag is <= 1.5x the flag limit (a genuinely lag-disturbed
-        run cannot be upgraded by an agreeing pair -- it must be re-measured clean).
-    Upgraded rows carry the evidence (pass count, spread, per-pass lags) in the
-    ``lag_reproducibility_upgrade`` diagnostic column."""
+      * the adopted pass's p99 loop lag is <= 1.5x the flag limit (a lag-disturbed run cannot be upgraded by an agreeing pair -- it must be re-measured clean).
+    Upgraded rows carry the evidence (pass count, spread, per-pass lags) in the ``lag_reproducibility_upgrade`` diagnostic column."""
     sig = inspect.signature(summarize_cell)
     min_samples = sig.parameters["min_samples"].default
     lag_limit_ms = sig.parameters["lag_limit_ms"].default
@@ -1096,9 +1036,7 @@ BUILDERS = {
 
 
 def source_runs(results_dirs: list[Path]) -> list[dict]:
-    """Every exported run.json under the results dirs: its run dir (the run
-    id), run name, status and start, so an exported table names the runs
-    behind it. A run dir skipped_runs leaves out is printed instead."""
+    """Every exported run.json under the results dirs: its run dir (the run id), run name, status and start, so an exported table names the runs behind it. A run dir skipped_runs leaves out is printed instead."""
     runs = []
     for root in results_dirs:
         skipped = skipped_runs(root)
@@ -1125,21 +1063,7 @@ def export(results_dirs: Iterable[Path], dest: Path | None = None, only: Iterabl
            kernel_dest: Path | None = None, replace_tables: bool = False) -> list[Path]:
     """Run the builders (all, or the named ones) over the results dirs; return the files written.
 
-    kernel_tables writes under kernel_dest (QuettaSim's data root) and runs
-    only when it is given; the other builders write under dest and run only
-    when it is given; kernel_tables merges into the tables kernel_dest holds
-    unless replace_tables. A builder named in only without its dest stops the
-    export. dest gets manifest.json, kernel_dest kernel_data/qbench_manifest.json
-    when kernel_tables found a table (not at QuettaSim's data root): where the inputs came from, the runs
-    recorded there (run.json), which bench commit, when, and for kernel_dest
-    per kernel table the run dirs whose rows it holds, the bench commit and
-    when, kept for the tables this export did not write; a table that kept
-    dest rows names the runs the old manifest recorded for it first, else
-    "adopted from dest". The old kernel manifest's other keys stay. dest's
-    manifest reads the runs after its builders; kernel_dest's reads them,
-    and the old kernel manifest, before kernel_tables builds, so one that
-    does not parse, or is no object with a kernel_tables object, stops the
-    export with kernel_dest as it was.
+    kernel_tables writes under kernel_dest (QuettaSim's data root) and runs only when it is given; the other builders write under dest and run only when it is given; kernel_tables merges into the tables kernel_dest holds unless replace_tables. A builder named in only without its dest stops the export. dest gets manifest.json, kernel_dest kernel_data/qbench_manifest.json when kernel_tables found a table (not at QuettaSim's data root): where the inputs came from, the runs recorded there (run.json), which bench commit, when, and for kernel_dest per kernel table the run dirs whose rows it holds, the bench commit and when, kept for the tables this export did not write; a table that kept dest rows names the runs the old manifest recorded for it first, else "adopted from dest". The old kernel manifest's other keys stay. dest's manifest reads the runs after its builders; kernel_dest's reads them, and the old kernel manifest, before kernel_tables builds, so one that does not parse, or is no object with a kernel_tables object, stops the export with kernel_dest as it was.
     """
     results_dirs = [Path(d) for d in results_dirs]
     names = list(only) if only else list(BUILDERS)

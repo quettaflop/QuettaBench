@@ -62,9 +62,7 @@ async def no_limit():
 
 @dataclass
 class Summary:
-    """One run: the aggregate (None for a grid run), the rows in summary
-    order, the per-turn breakdown (multi-turn only) and the extra run.json
-    sections."""
+    """One run: the aggregate (None for a grid run), the rows in summary order, the per-turn breakdown (multi-turn only) and the extra run.json sections."""
     core: BenchmarkSummary
     rows: list
     turns: list = field(default_factory=list)
@@ -73,8 +71,7 @@ class Summary:
     reason: str | None = None
 
     def to_dict(self):
-        """run.json's summary; each part with percentiles names their method
-        (aggregate and per_turn are linear, serve/sla/burst nearest)."""
+        """run.json's summary; each part with percentiles names their method (aggregate and per_turn are linear, serve/sla/burst nearest)."""
         core = {**self.core.to_dict(), "percentile_method": "linear"} if self.core else {}
         out = {**core, **self.sections}
         if self.turns:
@@ -116,10 +113,7 @@ def sampling(mode, request) -> dict:
 
 
 def arrival_offsets(trace, workload) -> list:
-    """Submission offsets for a single-turn trace. An injected schedule is
-    stamped on the requests' arrival_ts first, so it joins the workload hash
-    (trace-paced and injected runs never share one); "trace" keeps the
-    trace's own times, rebased to the first."""
+    """Submission offsets for a single-turn trace. An injected schedule is stamped on the requests' arrival_ts first, so it joins the workload hash (trace-paced and injected runs never share one); "trace" keeps the trace's own times, rebased to the first."""
     reqs = trace.requests()
     injected = parse_arrival(workload.arrival, len(reqs), workload.seed)
     if injected is None:
@@ -130,9 +124,7 @@ def arrival_offsets(trace, workload) -> list:
 
 
 async def warmup(trace, driver, mode, count, multi_turn):
-    """Send count warmup requests at the warmup width; discard the results,
-    abort when none succeeds. Warmup goes over the run's own session so its
-    TCP connections exist before timing starts."""
+    """Send count warmup requests at the warmup width; discard the results, abort when none succeeds. Warmup goes over the run's own session so its TCP connections exist before timing starts."""
     if multi_turn and not mode.reset_prefix_cache:
         # Multi-turn warmup duplicates measured prompts rather than consuming them.
         print("WARNING: multi-turn warmup replays prompts the measured run will also send,")
@@ -155,8 +147,7 @@ async def warmup(trace, driver, mode, count, multi_turn):
 
 
 def emitter(mode, writer, probe=None):
-    """emit(request, result): stamp the TTFT basis, score acceptance against the
-    trace's reference reply when the driver returned tokens, write the row."""
+    """emit(request, result): stamp the TTFT basis, score acceptance against the trace's reference reply when the driver returned tokens, write the row."""
     basis = "arrival" if mode.load == "open" else "slot"
     tag = {} if probe is None else {"probe": probe}
 
@@ -207,16 +198,13 @@ async def replay(trace, driver, mode, emit, offsets, request_id):
 
 
 def server_counters(driver):
-    """Spec-decode counters of the server a driver talks to; None for a
-    driver without spec_counters, or a server without them."""
+    """Spec-decode counters of the server a driver talks to; None for a driver without spec_counters, or a server without them."""
     counters = getattr(driver, "spec_counters", None)
     return counters() if counters else None
 
 
 async def measure(trace, driver, mode, emit, workload, request_id):
-    """Warm, reset, dispatch: (results, results_by_turn | None, [(request, result)],
-    duration, server SPECSUM | None). The server's spec-decode counters are read
-    just before and just after dispatch, so warmup is not in the window."""
+    """Warm, reset, dispatch: (results, results_by_turn | None, [(request, result)], duration, server SPECSUM | None). The server's spec-decode counters are read just before and just after dispatch, so warmup is not in the window."""
     multi = isinstance(trace, SessionTrace)
     offsets = None if multi else arrival_offsets(trace, workload)
     sessions = None
@@ -243,9 +231,7 @@ async def measure(trace, driver, mode, emit, workload, request_id):
 
 
 def serve_records(pairs, open_loop):
-    """The serving records from the successful, counted rows: TTFT (whole
-    latency when no token came), wall-clock TPOT, output tokens, and the
-    arrival burst windows bucket by (the slot grant under a closed loop)."""
+    """The serving records from the successful, counted rows: TTFT (whole latency when no token came), wall-clock TPOT, output tokens, and the arrival burst windows bucket by (the slot grant under a closed loop)."""
     out = []
     for _, r in pairs:
         if not r.success or r.excluded_from_summary:
@@ -270,10 +256,7 @@ def spec_section(pairs):
 
 
 def server_spec_section(before, after):
-    """SPECSUM from the server's counter deltas over the measured window, as
-    vllm bench serve defines them: accept_rate = accepted / draft tokens,
-    accept_len = 1 + accepted / drafts (its qwen_tp_bench.json numbers obey
-    both). None without both scrapes or without a draft in the window."""
+    """SPECSUM from the server's counter deltas over the measured window, as vllm bench serve defines them: accept_rate = accepted / draft tokens, accept_len = 1 + accepted / drafts (its qwen_tp_bench.json numbers obey both). None without both scrapes or without a draft in the window."""
     if before is None or after is None:
         return None
     d = {key: int(after[key] - before[key]) for key in after}
@@ -285,8 +268,7 @@ def server_spec_section(before, after):
 
 
 def crossval_sections(pairs, duration, mode, server_spec=None):
-    """serve (nearest-rank, as SERVESUM always was), sla, burst and spec;
-    spec is the server's counters when it reported them, else the rows'."""
+    """serve (nearest-rank), sla, burst and spec; spec is the server's counters when it reported them, else the rows'."""
     out = {"spec": server_spec or spec_section(pairs)}
     records = serve_records(pairs, mode.load == "open")
     if not records:
@@ -307,10 +289,7 @@ def crossval_sections(pairs, duration, mode, server_spec=None):
 
 
 def goodput_search(start=1.0, max_iters=6, tol=0.1):
-    """Generator bisection over speed: yields the next speed, receives whether
-    that probe met the SLA. Doubles from start to the first FAIL, halves to
-    the first PASS, then bisects until the bracket is within tol; at most
-    max_iters probes."""
+    """Generator bisection over speed: yields the next speed, receives whether that probe met the SLA. Doubles from start to the first FAIL, halves to the first PASS, then bisects until the bracket is within tol; at most max_iters probes."""
     lo = hi = None
     speed = start
     for _ in range(max_iters):
@@ -330,10 +309,7 @@ def goodput_search(start=1.0, max_iters=6, tol=0.1):
 
 
 def sweep(trace, driver, mode, writer, workload, request_id):
-    """--goodput-sweep: one measure() per probe speed (warmup on the first
-    only), rows tagged with their probe. Stops at the first probe whose
-    served set breaks the workload identity. Returns the last probe's
-    measure() result and the goodput section."""
+    """--goodput-sweep: one measure() per probe speed (warmup on the first only), rows tagged with their probe. Stops at the first probe whose served set breaks the workload identity. Returns the last probe's measure() result and the goodput section."""
     gen, probes, best, fail_bound = goodput_search(start=workload.speed), [], None, []
     speed = next(gen)
     while True:
@@ -377,9 +353,7 @@ def enforce(gate, writer, summary):
 
 
 def served(pairs):
-    """The requests the identity gate hashes: every one dispatched, failed or
-    not. A failure is the success-rate gate's and the partial status's to
-    judge; the hash moves only when what was sent differs from the trace."""
+    """The requests the identity gate hashes: every one dispatched, failed or not. A failure is the success-rate gate's and the partial status's to judge; the hash moves only when what was sent differs from the trace."""
     return [q for q, _ in pairs]
 
 
@@ -454,8 +428,7 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
 
 
 def model_dir(model):
-    """engine.model when it is a local dir, else that Hugging Face repo id's
-    snapshot in the local HF cache; never downloads."""
+    """engine.model when it is a local dir, else that Hugging Face repo id's snapshot in the local HF cache; never downloads."""
     if os.path.isdir(model):
         return model
     try:
@@ -506,8 +479,7 @@ def capacity(engine, gpu_bytes, kv_b):
 
 
 def measure_cell(driver, writer, mode, steps, prompts, cell):
-    """The cell's batches in order: the text run when asked, the
-    warm run at max(steps), then the fit passes. Returns the fit rows."""
+    """The cell's batches in order: the text run when asked, the warm run at max(steps), then the fit passes. Returns the fit rows."""
     def batch(step, phase, attempt=None, **extra):
         requests = [Request(ids, len(ids), output_length=step) for ids in prompts]
         rows = list(driver.run(requests, cell={**cell, "step_point": step, "phase": phase,
@@ -546,8 +518,7 @@ def score(driver, writer, prompts, cell):
 
 
 def score_grid(trace, driver, cfg, writer):
-    """A scoring pass per cell for a driver that only scores; maxlen SKIPs
-    apply, nothing is timed, so there are no steps."""
+    """A scoring pass per cell for a driver that only scores; maxlen SKIPs apply, nothing is timed, so there are no steps."""
     record, over = {"events": []}, set(trace.cells_over_maxlen)
     for ctx, bs in trace.cells:
         if (ctx, bs) in over:
@@ -563,10 +534,7 @@ def score_grid(trace, driver, cfg, writer):
 def run_bench(driver, cfg, writer):
     """driver.cells past the SKIP rules, measured in one driver.run call.
 
-    maxlen SKIPs as for any grid. A KV SKIP needs the budget: engine.kv_bytes,
-    engine.weights_gib and the GPU memory driver.device() reports; a cell
-    needs its bench max_seq (ctx + timing_steps + headroom) per sequence.
-    steps passes the measured rows through."""
+    maxlen SKIPs as for any grid. A KV SKIP needs the budget: engine.kv_bytes, engine.weights_gib and the GPU memory driver.device() reports; a cell needs its bench max_seq (ctx + timing_steps + headroom) per sequence. steps passes the measured rows through."""
     engine, hw, grid = cfg.engine, cfg.hardware, cfg.grid
     device = driver.device() if engine.kv_bytes and engine.weights_gib is not None else None
     cap = capacity(engine, device[1], engine.kv_bytes)[1] if device and device[1] else 0
@@ -590,9 +558,7 @@ def run_bench(driver, cfg, writer):
 
 
 def run_grid(trace, driver, cfg, writer):
-    """One grid run; returns (record, steps, rows). record is what the
-    legacy lines print from and the run.json grid section; steps is
-    fit_run over every fit row."""
+    """One grid run; returns (record, steps, rows). record is what the legacy lines print from and the run.json grid section; steps is fit_run over every fit row."""
     if getattr(driver, "measures_steps", False):
         return run_bench(driver, cfg, writer)
     if getattr(driver, "scores_only", False):
@@ -649,10 +615,7 @@ def run_grid(trace, driver, cfg, writer):
 
 
 class SessionDispatcher:
-    """One multi-turn replay. send(request, request_id=, capture_text=) is
-    the driver call with sampling bound; request_id(session, turn, index)
-    names a request or returns None; emit(request, result) takes every
-    result as it finishes."""
+    """One multi-turn replay. send(request, request_id=, capture_text=) is the driver call with sampling bound; request_id(session, turn, index) names a request or returns None; emit(request, result) takes every result as it finishes."""
 
     def __init__(self, trace, mode, workload, send, request_id, emit):
         self.trace, self.mode, self.workload = trace, mode, workload

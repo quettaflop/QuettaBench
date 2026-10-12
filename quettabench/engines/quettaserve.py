@@ -1,7 +1,6 @@
 """QuettaServe adapter: the cargo bench argv and per-cell env, one bench run per grid cell, since the engine cannot listen yet.
 
-Env to field: <P>_CKPT engine.model, <P>_WORLD engine.tp, <P>_TIMING_STEPS hardware.timing_steps, <P>_MAX_SEQ ctx + timing_steps + max_seq_headroom, <P>_CFG engine.extra.qs_cfg, <P>_BENCH_BIN engine.extra.bench_bin, QS_DIR engine.extra.qs_dir, QS_VLLM_GDN_DIR engine.extra.gdn_dir, QS_KERNELS, QS_CUSTOM_AR and <P>_MODE engine.extra.qs_kernels, qs_custom_ar and qs_mode, <P>_LAYERS engine.layers (crossval never pairs a layers=N line with a full model).
-translate(cfg, cell=(ctx, bs)) is one cell's spec; translate(cfg) of a grid lists every cell's in spec.cells.
+Env to field: <P>_CKPT engine.model, <P>_WORLD engine.tp, <P>_TIMING_STEPS hardware.timing_steps, <P>_MAX_SEQ ctx + timing_steps + max_seq_headroom, <P>_CFG engine.extra.qs_cfg, <P>_BENCH_BIN engine.extra.bench_bin, QS_DIR engine.extra.qs_dir, QS_VLLM_GDN_DIR engine.extra.gdn_dir, QS_KERNELS, QS_CUSTOM_AR and <P>_MODE engine.extra.qs_kernels, qs_custom_ar and qs_mode, <P>_LAYERS engine.layers (crossval never pairs a layers=N line with a full model). translate(cfg, cell=(ctx, bs)) is one cell's spec; translate(cfg) of a grid lists every cell's in spec.cells.
 """
 
 from pathlib import Path

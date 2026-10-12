@@ -1,5 +1,4 @@
-# The engine-agnostic run vocabulary: one frozen Config per run, built by
-# loader.py. Field defaults here are the "default" precedence level.
+# The engine-agnostic run vocabulary: one frozen Config per run, built by loader.py. Field defaults here are the "default" precedence level.
 import dataclasses
 import re
 from collections.abc import Mapping
@@ -173,8 +172,7 @@ class Config:
         return out
 
     def dump(self, origins=True, scrub=None):
-        """One `path = value` line per leaf, with its origin, for --dry-run;
-        scrub (metrics.results.redact) rewrites the dict first."""
+        """One `path = value` line per leaf, with its origin, for --dry-run; scrub (metrics.results.redact) rewrites the dict first."""
         lines = []
         d = self.to_dict()
         for path, value in flatten(scrub(d) if scrub else d, skip=("origins", "grid")):
@@ -225,15 +223,8 @@ def dict_field(path):
 
 # Serving-topology and expert-parallel rules: the loader refuses a Config that breaks them.
 def parse_serving_style(spec):
-    """Serving topology for a run, recorded so aggregated and disaggregated
-    numbers are never mixed in one table. 'aggregated' (default) is one server
-    over tp*pp GPUs. 'disagg:<P>p<D>d' splits prefill and decode onto disjoint
-    GPU pools with a KV-transfer connector between them (vLLM PD). 'ep<N>dp<M>'
-    is wide expert parallelism (N-way experts across M data-parallel replicas).
-    'afd:<A>a<F>f' puts attention and FFN/MoE layers on disjoint pools of A
-    and F GPUs (attention-FFN disaggregation).
-    Returns {mode, ...degrees}; raises ValueError on a malformed spec so a
-    fat-fingered topology fails at parse rather than silently running aggregated."""
+    """Serving topology for a run, recorded so aggregated and disaggregated numbers are never mixed in one table. 'aggregated' (default) is one server over tp*pp GPUs. 'disagg:<P>p<D>d' splits prefill and decode onto disjoint GPU pools with a KV-transfer connector between them (vLLM PD). 'ep<N>dp<M>' is wide expert parallelism (N-way experts across M data-parallel replicas). 'afd:<A>a<F>f' puts attention and FFN/MoE layers on disjoint pools of A and F GPUs (attention-FFN disaggregation).
+    Returns {mode, ...degrees}; raises ValueError on a malformed spec so a fat-fingered topology fails at parse rather than silently running aggregated."""
     if spec in (None, "", "aggregated"):
         return {"mode": "aggregated"}
     m = re.fullmatch(r"disagg:(\d+)p(\d+)d", spec)
@@ -269,15 +260,11 @@ def device_count(engine):
 
 
 def check_ep_legal(ep, num_experts):
-    """Expert parallelism must evenly divide the model's expert count, else a
-    rank ends up with a ragged expert shard the engine cannot place. Raises on
-    an illegal degree rather than letting the engine fail deep in load."""
+    """Expert parallelism must evenly divide the model's expert count, else a rank ends up with a ragged expert shard the engine cannot place. Raises on an illegal degree rather than letting the engine fail deep in load."""
     if num_experts % ep != 0:
         raise ValueError(f"ep={ep} does not divide {num_experts} experts")
 
 
 def serving_style_compatible(a, b):
-    """Two rows compare only when their serving topology matches; a disagg
-    number against an aggregated one is a category error the table must refuse,
-    the same way an NCCL or KV mismatch withholds a ratio."""
+    """Two rows compare only when their serving topology matches; a disagg number against an aggregated one is a category error the table must refuse, the same way an NCCL or KV mismatch withholds a ratio."""
     return parse_serving_style(a)["mode"] == parse_serving_style(b)["mode"]

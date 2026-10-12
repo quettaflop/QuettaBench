@@ -37,8 +37,7 @@ def fresh_tail(new: int) -> str:
     return " ".join(_TAIL.choice(_VOCAB) for _ in range(int(new * 0.96)))
 
 
-# vLLM v1 exposes per-request timings only as /metrics histograms; at concurrency 1 a histogram's _sum delta across one request is that request's value, and an absent name leaves its column blank.
-# metric_key -> (prometheus metric base name).  We scrape "<base>_sum".
+# vLLM v1 exposes per-request timings only as /metrics histograms; at concurrency 1 a histogram's _sum delta across one request is that request's value, and an absent name leaves its column blank. metric_key -> Prometheus base name, read as "<base>_sum".
 _PROM_METRICS = {
     # queued_ts -> scheduled_ts  (scheduler admit / queue wait). ~0 at c1.
     "queue_span_s":   "vllm:request_queue_time_seconds",
@@ -56,12 +55,7 @@ _PROM_METRICS = {
 def _parse_prom_sums(text: str) -> dict:
     """Parse a Prometheus exposition text body -> {metric_key: cumulative_sum_float}.
 
-    We only need the ``<base>_sum`` line of each histogram (a single float, labels ignored at c1
-    because there is one model / one finished-request stream). If a model label is present the
-    _sum line still parses; with one model there is exactly one such line.
-        [VERIFY ON H100] that there is a single model label series for these histograms (one model
-        loaded) so the bare ``<base>_sum`` match is unambiguous. If multiple label series appear,
-        tighten the match to the model_name label.
+    Only the ``<base>_sum`` line of each histogram is read; labels are ignored, since with one model loaded there is one such line per histogram.
     """
     wanted = {f"{base}_sum": key for key, base in _PROM_METRICS.items()}
     out = {key: None for key in _PROM_METRICS}
@@ -107,10 +101,7 @@ async def ttft_once(session, url, model, content, request_id=None):
                "stream_options": {"include_usage": True}}
     headers = {"Content-Type": "application/json"}  # the session sends Authorization
     if request_id is not None:
-        # runner.py sends a stable id via X-Request-Id (--trace-request-ids) but never reads it
-        # back. We propagate it so a future Lane-B per-request join key exists.
-        #   [VERIFY ON H100] header name vLLM 0.19.0 honors for client-supplied request ids
-        #   (candidates: "X-Request-Id"). If unsupported it is simply ignored.
+        # A stable id via X-Request-Id; a server that does not honor the header ignores it.
         headers["X-Request-Id"] = request_id
     t_send = time.perf_counter()
     async with session.post(url, json=payload, headers=headers) as resp:
@@ -177,8 +168,7 @@ async def measure(session, base_url, model, cached, new, trials):
     ttft_ms = med("ttft_ms")
     queue_ms = med("queue_span_ms")
     prefill_ms = med("prefill_span_ms")
-    # frontend_residual = wall - (queue + prefill) - (client connect already inside wall on loopback)
-    # This is stages 1-5 + 9-11 lumped: the HOST FRONTEND + IPC residual the offline LLM lacked.
+    # frontend_residual = wall - (queue + prefill) - (client connect already inside wall on loopback). This is stages 1-5 + 9-11 lumped: the HOST FRONTEND + IPC residual the offline LLM lacked.
     frontend_residual = None
     if ttft_ms is not None and queue_ms is not None and prefill_ms is not None:
         frontend_residual = ttft_ms - queue_ms - prefill_ms
@@ -202,9 +192,7 @@ async def measure(session, base_url, model, cached, new, trials):
 
 # Stats stay on so /metrics populates.
 def launch_server(model, port, gpu_mem, max_model_len, api_key, hash_algo, run_dir, tp=1):
-    # prefix_caching_hash_algo: toggling sha256 vs builtin attributes the block-hash cost to the
-    # frontend/scheduler-admit residual (the external-lit SHA-256 lead). Guarded -- older/newer
-    # CLIs may name it differently.   [VERIFY ON H100] exact flag name on 0.19.0.
+    # prefix_caching_hash_algo: toggling sha256 vs builtin attributes the block-hash cost to the frontend/scheduler-admit residual (the external-lit SHA-256 lead). Guarded, since vLLM CLIs name it differently across versions.
     flags = {"served_model_name": "llama", "host": "127.0.0.1", "api_key": api_key,
              # keep request logging quiet but STATS ON (do NOT add disable_log_stats).
              "no_enable_log_requests": True}
@@ -246,8 +234,7 @@ _WORKER_EXT_HINT = r'''
 
 
 def emit_nsys_cmd(model, port, gpu_mem, max_model_len, out_sqlite):
-    """Print the LANE B nsys-wrapped server command; it takes the API key from
-    VLLM_API_KEY in the operator's shell, so the key is never printed."""
+    """Print the LANE B nsys-wrapped server command; it takes the API key from VLLM_API_KEY in the operator's shell, so the key is never printed."""
     py = sys.executable
     nsys_cmd = (
         f"nsys profile -t cuda,nvtx,cublas --cuda-graph-trace=node \\\n"

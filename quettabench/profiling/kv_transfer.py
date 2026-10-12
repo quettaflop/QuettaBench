@@ -33,7 +33,7 @@ def _fit(rows):
 
 
 def _emit(table: str, rows: list[dict]) -> None:
-    """Emit this run's rows as table, sorted as the old upsert kept the shared file."""
+    """Emit this run's rows as table, sorted by heads per rank, layout and tokens."""
     for r in sorted(rows, key=lambda r: (r["kv_heads_per_rank"], r["layout"], r["tokens"])):
         emit(ProbeRow("kv_transfer", table, {c: r.get(c) for c in KEY},
                       {c: r.get(c) for c in COLS if c not in KEY}, "host_wallclock"))

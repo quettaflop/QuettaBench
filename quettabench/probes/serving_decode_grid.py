@@ -21,8 +21,7 @@ from pathlib import Path
 
 from quettabench.probes.base import launch_vllm, run_recorded
 
-# aiohttp is needed only at MEASUREMENT time (on the GPU host). The local builder/test import
-# of this module (for summarize_cell / the lattice) must work without it.
+# aiohttp is needed only at MEASUREMENT time (on the GPU host). The local builder/test import of this module (for summarize_cell / the lattice) must work without it.
 
 
 # The pre-registered lattice: prompt/osl are the integer fixed point of prompt = T - osl//2, osl = 384 + ceil(B*prompt/CHUNK_BUDGET) from osl0 = 384 (converges in < 10 iterations on every cell).
@@ -76,9 +75,7 @@ def lattice_cells(lattice: dict[int, tuple[int, ...]] = LATTICE_TP4,
 
 
 def build_lattice_for_pool(pool_tokens: int) -> dict[int, tuple[int, ...]]:
-    """Generic lattice for a DIFFERENT pool (the conditional tp2 leg): the same B rows /
-    T menu, keeping per row the directive's base Ts plus the largest menu Ts that satisfy
-    the cap (mirrors how the tp4 rows were derived). Deterministic in pool_tokens."""
+    """Generic lattice for a DIFFERENT pool (the conditional tp2 leg): the same B rows / T menu, keeping per row the directive's base Ts plus the largest menu Ts that satisfy the cap (mirrors how the tp4 rows were derived). Deterministic in pool_tokens."""
     cap = CAP_FRAC * pool_tokens
     out: dict[int, tuple[int, ...]] = {}
     for b in (1, 8, 32, 80, 160, 256, 320):
@@ -213,9 +210,7 @@ async def _run_shard(req_specs: list[dict], port: int, api_key: str, model_name:
         if barrier is not None:
             await asyncio.get_running_loop().run_in_executor(None, barrier.wait)
         wall_anchor = time.time() - time.perf_counter()   # per-process wall<->perf_counter map
-        # GC pauses are the dominant client-side lag source at high event rates (measurement
-        # hygiene, run 1 -> run 2 fix): freeze startup garbage and disable collection for the
-        # duration of the streams; re-enable after gather.
+        # GC pauses are the dominant client-side lag source at high event rates (measurement hygiene, run 1 -> run 2 fix): freeze startup garbage and disable collection for the duration of the streams; re-enable after gather.
         gc.collect()
         gc.freeze()
         gc.disable()
@@ -255,10 +250,7 @@ async def _run_shard(req_specs: list[dict], port: int, api_key: str, model_name:
 def _shard_entry(req_specs, port, api_key, model_name, eos_mode, barrier, shard_id, out_path,
                  rt: bool = False):
     if rt:
-        # SCHED_RR for the SHARD PROCESS ONLY (needs CAP_SYS_NICE / root): the GPU host's own
-        # server threads otherwise preempt the client loop for ~2 ms CFS slices, tripping the
-        # pre-registered p99 loop-lag flag while leaving the p50 ITL unchanged (run1 1-shard vs
-        # run2 8-shard agree <=0.5%). The server keeps its normal policy (separate process).
+        # SCHED_RR for the SHARD PROCESS ONLY (needs CAP_SYS_NICE / root): the GPU host's own server threads otherwise preempt the client loop for ~2 ms CFS slices, tripping the pre-registered p99 loop-lag flag while leaving the p50 ITL unchanged (run1 1-shard vs run2 8-shard agree <=0.5%). The server keeps its normal policy (separate process).
         try:
             os.sched_setscheduler(0, os.SCHED_RR, os.sched_param(10))
             print(f"shard {shard_id}: SCHED_RR set", flush=True)

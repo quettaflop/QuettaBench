@@ -11,8 +11,7 @@ NSYS = ("nsys", "profile", "-t", "cuda,nvtx", "-o", "{out}", "--force-overwrite=
 
 
 def nsys_argv(cfg, run_dir, name="nsys"):
-    """NSYS writing <run dir>/<name>; the run dir is made absolute, since the
-    engine may run in another cwd. run_dir None is results/<run_name>."""
+    """NSYS writing <run dir>/<name>; the run dir is made absolute, since the engine may run in another cwd. run_dir None is results/<run_name>."""
     out = Path(run_dir if run_dir is not None else Path("results", cfg.run_name)).resolve() / name
     return [a.format(out=out) for a in NSYS]
 
@@ -30,10 +29,7 @@ class UnsupportedField(ValueError):
 class LaunchSpec:
     """Everything needed to start and drive one engine, as plain data.
 
-    server_argv is empty when the adapter has no server, or when a field has
-    no flag (named in server_unsupported; the launcher refuses such a spec,
-    the in-process path does not need argv). env is added to the child's
-    inherited environment; env_drop names inherited variables to remove.
+    server_argv is empty when the adapter has no server, or when a field has no flag (named in server_unsupported; the launcher refuses such a spec, the in-process path does not need argv). env is added to the child's inherited environment; env_drop names inherited variables to remove.
     """
     adapter: str
     server_argv: tuple = ()
@@ -53,8 +49,7 @@ class LaunchSpec:
     timeout_s: int = 120              # client timeout per request, from mode.timeout
 
     def child_argv(self, argv):
-        """argv run under `env`, so the child gets env and env_drop applied on
-        top of what it inherits without this process reading os.environ."""
+        """argv run under `env`, so the child gets env and env_drop applied on top of what it inherits without this process reading os.environ."""
         unset = [a for name in self.env_drop for a in ("-u", name)]
         return ["env", *unset, *(f"{k}={v}" for k, v in self.env.items()), *argv]
 
@@ -71,9 +66,7 @@ class EngineAdapter(ABC):
     benchmarked = True   # False: a scoring side only (reference), not offered as an engine
 
     def refuse_unsupported(self, cfg):
-        """UnsupportedField for an engine field the run, env or --set moves off its
-        default when this adapter is not in its supports: no silent drop. A model
-        yaml value describes the checkpoint and is not refused."""
+        """UnsupportedField for an engine field the run, env or --set moves off its default when this adapter is not in its supports: no silent drop. A model yaml value describes the checkpoint and is not refused."""
         defaults = EngineCfg()
         for f in fields(EngineCfg):
             value = getattr(cfg.engine, f.name)
@@ -88,17 +81,14 @@ class EngineAdapter(ABC):
 
     @abstractmethod
     def translate(self, cfg, run_dir=None) -> LaunchSpec:
-        """The LaunchSpec for cfg; the single builder of this engine's arguments.
-        run_dir is where the run writes (instrumentation output lands there)."""
+        """The LaunchSpec for cfg; the single builder of this engine's arguments. run_dir is where the run writes (instrumentation output lands there)."""
 
     @abstractmethod
     def driver(self, spec, handle, trace=None):
-        """The Driver that sends work to an engine started from spec; trace
-        is the run's, for an adapter whose endpoint depends on it."""
+        """The Driver that sends work to an engine started from spec; trace is the run's, for an adapter whose endpoint depends on it."""
 
     def needs_server(self, cfg):
-        """Whether runner launches spec.server_argv before driving; by default
-        only a serve run does."""
+        """Whether runner launches spec.server_argv before driving; by default only a serve run does."""
         return cfg.mode.grid is None
 
 

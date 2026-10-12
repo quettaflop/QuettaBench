@@ -1,7 +1,4 @@
-"""What every kernel probe shares: ProbeRow and the Probe ABC, the output
-arguments, the run record each writes, the one way a live-server probe
-starts vLLM (launch_vllm), and the remote-probe recipe's ssh and rsync
-(remote_probe)."""
+"""What every kernel probe shares: ProbeRow and the Probe ABC, the output arguments, the run record each writes, the one way a live-server probe starts vLLM (launch_vllm), and the remote-probe recipe's ssh and rsync (remote_probe)."""
 from __future__ import annotations
 
 import abc
@@ -33,8 +30,7 @@ _WRITER: RunWriter | None = None
 
 @dataclasses.dataclass(frozen=True)
 class ProbeRow:
-    """One measured row of a QuettaSim table: table is <kind>/<file> (gemm/H200.csv),
-    its columns are key then value in order, and timing (TIMINGS) picks the dir.
+    """One measured row of a QuettaSim table: table is <kind>/<file> (gemm/H200.csv), its columns are key then value in order, and timing (TIMINGS) picks the dir.
     A JSON table's row is one entry: key {"entry": name}, value {"value": ...}."""
     probe: str
     table: str
@@ -56,9 +52,7 @@ def emit(row: ProbeRow) -> None:
 
 
 class Probe(abc.ABC):
-    """STRUCTURE.md's probe: grid() yields the points, run_point() times one
-    into a ProbeRow (None when the point is skipped), run() emits each row
-    as it is measured and returns how many."""
+    """STRUCTURE.md's probe: grid() yields the points, run_point() times one into a ProbeRow (None when the point is skipped), run() emits each row as it is measured and returns how many."""
 
     @abc.abstractmethod
     def grid(self) -> Iterable:
@@ -80,8 +74,7 @@ class Probe(abc.ABC):
 
 @contextlib.contextmanager
 def run_config(cfg: Config, writer: RunWriter | None = None):
-    """Hand the run's Config to launch_vllm, and its writer to emit, for the
-    duration of a probe's main."""
+    """Hand the run's Config to launch_vllm, and its writer to emit, for the duration of a probe's main."""
     global _RUN_CFG, _WRITER
     _RUN_CFG, _WRITER = cfg, writer
     try:
@@ -91,10 +84,7 @@ def run_config(cfg: Config, writer: RunWriter | None = None):
 
 
 def add_output_args(ap: argparse.ArgumentParser) -> None:
-    """Add --gpu-label, --out and --run-id; --out defaults to
-    results/probes/<gpu-label>, and each probe run records under its own
-    <out>/<probe>/<run-id>/ (out_root). The parser takes flags only as
-    written, so export reads probe_args as the probe did."""
+    """Add --gpu-label, --out and --run-id; --out defaults to results/probes/<gpu-label>, and each probe run records under its own <out>/<probe>/<run-id>/ (out_root). The parser takes flags only as written, so export reads probe_args as the probe did."""
     ap.allow_abbrev = False
     ap.add_argument("--gpu-label", "--gpu", required=True, help="GPU name the tables are keyed by, e.g. A100/H100")
     ap.add_argument("--out", "--out-dir", dest="out_dir", default=None,
@@ -110,8 +100,7 @@ def run_id(now: datetime) -> str:
 
 
 def out_root(args: argparse.Namespace, name: str) -> Path:
-    """<out>/<name>/<run-id>/: the run dir a probe's run.json and rows.jsonl
-    go in; <out>/<name>/ when no run id is given."""
+    """<out>/<name>/<run-id>/: the run dir a probe's run.json and rows.jsonl go in; <out>/<name>/ when no run id is given."""
     root = (Path(args.out_dir) if args.out_dir else DEFAULT_OUT / args.gpu_label) / name
     run = getattr(args, "run_id", None)
     if run is None:
@@ -122,9 +111,7 @@ def out_root(args: argparse.Namespace, name: str) -> Path:
 
 
 def record_dir(name: str, argv: list[str], file_flag: str | None = None) -> Path | None:
-    """Where a probe's run.json goes: out_root, or with file_flag (a probe
-    that names its output file) that file's dir. None when argv names no
-    output (no --gpu-label, or --out -)."""
+    """Where a probe's run.json goes: out_root, or with file_flag (a probe that names its output file) that file's dir. None when argv names no output (no --gpu-label, or --out -)."""
     ap = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
     if file_flag:
         ap.add_argument(file_flag, dest="file")
@@ -140,16 +127,7 @@ def record_dir(name: str, argv: list[str], file_flag: str | None = None) -> Path
 
 
 def run_recorded(main, name: str, file_flag: str | None = None, now: datetime | None = None) -> None:
-    """main(argv) with its run recorded: <record_dir>/run.json through RunWriter,
-    holding the probe and its argv as config (mode=probe), provenance and
-    run_status ok, or failed (aborted on Ctrl-C) with the exception, which is
-    raised on; the rows main emits go to rows.jsonl beside it. A probe
-    without file_flag gets --run-id from now (the start, taken here once
-    when not given), so each run has its own dir. The writer opens before
-    main, so a run killed before it finishes leaves requests.jsonl and no
-    run.json, which export skips; a run dir that already exists is refused
-    (RunWriter exclusive). Under torchrun only RANK 0 records, whatever its
-    main does; a main that returns False writes nothing either."""
+    """main(argv) with its run recorded: <record_dir>/run.json through RunWriter, holding the probe and its argv as config (mode=probe), provenance and run_status ok, or failed (aborted on Ctrl-C) with the exception, which is raised on; the rows main emits go to rows.jsonl beside it. A probe without file_flag gets --run-id from now (the start, taken here once when not given), so each run has its own dir. The writer opens before main, so a run killed before it finishes leaves requests.jsonl and no run.json, which export skips; a run dir that already exists is refused (RunWriter exclusive). Under torchrun only RANK 0 records, whatever its main does; a main that returns False writes nothing either."""
     global _WRITER
     now = now or datetime.now(timezone.utc)
     argv = sys.argv[1:] if file_flag else ["--run-id", run_id(now), *sys.argv[1:]]
@@ -182,15 +160,9 @@ def run_recorded(main, name: str, file_flag: str | None = None, now: datetime | 
 def launch_vllm(run_dir: Path, model: str, *, port: int, max_model_len: int, prefix_caching: bool,
                 tp: int = 1, gpu_util: float = 0.9, vllm_flags: dict | None = None,
                 timeout_s: int = 1800):
-    """Start vLLM as `qbench run` does: a Config through the vllm adapter's
-    translate, then launcher.start into run_dir (engine.json, server.log).
-    vllm_flags (served_model_name, api_key, ...) go in as engine.extra.vllm.
-    The hardware is the run's (run_config) when a `qbench run` started the
-    probe, else the defaults; the server is this python's venv vllm unless
-    that hardware names a provision.py. Returns the Handle; the caller
-    stops it."""
-    # Imported here: base.py ships to remote kernel-probe hosts, which have
-    # no engine stack; only the live-server probes, run locally, launch.
+    """Start vLLM as `qbench run` does: a Config through the vllm adapter's translate, then launcher.start into run_dir (engine.json, server.log). vllm_flags (served_model_name, api_key, ...) go in as engine.extra.vllm.
+    The hardware is the run's (run_config) when a `qbench run` started the probe, else the defaults; the server is this python's venv vllm unless that hardware names a provision.py. Returns the Handle; the caller stops it."""
+    # Imported here: base.py ships to remote kernel-probe hosts, which have no engine stack; only the live-server probes, run locally, launch.
     from quettabench.engines import launcher, vllm
 
     engine = EngineCfg(model=model, tp=tp, dtype="bfloat16", port=port, gpu_util=gpu_util,
@@ -215,8 +187,7 @@ OWN_FLAGS = ("--out", "--out-dir", "--run-id", "--gpu-label", "--gpu")
 
 
 def _own_flag(name):
-    """name is one of OWN_FLAGS or, past "--", a prefix of one, as an
-    abbreviating parser would take it."""
+    """name is one of OWN_FLAGS or, past "--", a prefix of one, as an abbreviating parser would take it."""
     return name in OWN_FLAGS or (name.startswith("--") and len(name) > 2
                                  and any(f.startswith(name) for f in OWN_FLAGS))
 
@@ -249,9 +220,7 @@ def _remote_python(py):
 
 
 def _finish_here(run_dir: Path) -> None:
-    """Stamp the pulled run's provenance.pulled from this machine's clock, so
-    export orders runs on one clock; a run.json that cannot be stamped is
-    warned about and left as pulled."""
+    """Stamp the pulled run's provenance.pulled from this machine's clock, so export orders runs on one clock; a run.json that cannot be stamped is warned about and left as pulled."""
     path = run_dir / "run.json"
     if not path.is_file():
         return
@@ -262,13 +231,7 @@ def _finish_here(run_dir: Path) -> None:
 
 
 def remote_probe(argv=None, run=subprocess.run, now=None) -> int:
-    """Run a probe on a remote host in its own `mktemp -d` dir: ship SHIPPED,
-    run it with --run-id from this machine's clock, always pull its out/
-    (made up front, so a probe that wrote nothing pulls nothing) into
-    results/probes/<gpu>/ (never overwriting a local file), stamp its
-    run.json's provenance.pulled on this machine's clock, then remove that dir alone. Returns the
-    remote run's exit code; a failed or interrupted pull keeps the remote
-    dir and says where it is."""
+    """Run a probe on a remote host in its own `mktemp -d` dir: ship SHIPPED, run it with --run-id from this machine's clock, always pull its out/ (made up front, so a probe that wrote nothing pulls nothing) into results/probes/<gpu>/ (never overwriting a local file), stamp its run.json's provenance.pulled on this machine's clock, then remove that dir alone. Returns the remote run's exit code; a failed or interrupted pull keeps the remote dir and says where it is."""
     a = _remote_args(argv)
     ssh = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=30", a.host]
     rsh = "ssh -o BatchMode=yes -o ConnectTimeout=30"
