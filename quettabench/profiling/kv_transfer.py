@@ -41,6 +41,8 @@ per-byte fit to paste into a system YAML's ``links.intra_node`` (per GPU PAIR: t
 replay divides the unsharded bytes by the reader tp, see
 engine/sim/disagg.py::Link.transfer_ms). `qbench export --only kernel_tables` carries
 the runs into QuettaSim's eager/kv_transfer/<gpu>_nixl.csv, unioned on KEY.
+A rank whose peer never joins the gloo group fails after five minutes, and a
+SIGTERM raises SystemExit(143), so run_recorded records either run as failed.
 
 Not an attach source: it needs its own two torchrun ranks, which the
 profiler never starts. `qbench profile --source kv_transfer --kv-transfer-csv <csv>`
@@ -53,7 +55,9 @@ from __future__ import annotations
 import argparse
 import csv
 import os
+import signal
 import time
+from datetime import timedelta
 from pathlib import Path
 
 import numpy as np
@@ -85,6 +89,11 @@ def _write(path: Path, rows: list[dict]) -> None:
         w.writerows(sorted(rows, key=lambda r: (r["kv_heads_per_rank"], r["layout"], r["tokens"])))
 
 
+def _on_sigterm(signum, frame):
+    """A SIGTERM (torchrun stopping a rank) fails the run in run_recorded."""
+    raise SystemExit(143)
+
+
 def main(argv=None) -> bool:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -108,7 +117,9 @@ def main(argv=None) -> bool:
     assert world == 2, "run with --nproc_per_node=2 (rank 0 = P, rank 1 = D)"
     torch.cuda.set_device(local)
     dev = torch.device("cuda", local)
-    dist.init_process_group("gloo", rank=rank, world_size=world)
+    signal.signal(signal.SIGTERM, _on_sigterm)
+    # A peer that never joins fails the run after five minutes instead of hanging it.
+    dist.init_process_group("gloo", rank=rank, world_size=world, timeout=timedelta(minutes=5))
 
     # nixl is imported here, under torchrun on the PD hosts that have it; the module imports without it.
     from nixl._api import nixl_agent, nixl_agent_config

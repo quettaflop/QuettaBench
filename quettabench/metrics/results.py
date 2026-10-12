@@ -53,6 +53,12 @@ HEADER = re.compile(r"\s*(?P<name>[A-Za-z0-9_.-]+)\s*:\s*\S.*", re.DOTALL)
 # A string that holds a flag, or a NAME=value whose NAME is secret: a command line.
 FLAG = re.compile(r"(^|\s)-")
 ASSIGN = re.compile(r"(?:^|\s)([A-Za-z_][A-Za-z0-9_.-]*)=")
+# The password in scheme://user:password@host.
+URL_PASSWORD = re.compile(r"([A-Za-z][A-Za-z0-9+.-]*://[^\s/:@]*:)[^\s/@]+@")
+# Secret words that hide the next word in a command line too (Bearer X).
+COMMAND_SECRETS = ("bearer", "authorization")
+# Shell tokens _redact_command keeps as written.
+PUNCTUATION = re.compile(r"[();<>|&]+")
 REPO = Path(__file__).resolve().parents[2]
 
 
@@ -70,13 +76,15 @@ def _secret_header(text):
 def redact_argv(argv, command=False):
     """argv with the value of every secret-named item replaced by REDACTED,
     in the `--api-key X`, `password X`, `--api-key=X`, `NAME=X` (docker -e),
-    `Authorization: Bearer X` (an HTTP header) and `--header=Name: X` forms;
-    an item starting with '-' after a secret name is the next flag, kept.
-    In a command line (command) only a flag hides the next item, so a bare
-    word like "pass" in free text hides nothing. An item holding whitespace
-    (`sh -c "... --api-key X"`) is a command line, redacted as one; a JSON
-    object or list item is redacted as JSON. Items need not be strings; a
-    dict or list item (a header pair) goes through redact."""
+    `Authorization: Bearer X` (an HTTP header), `--header=Name: X` and
+    `scheme://user:X@host` forms; an item starting with '-' after a secret
+    name is the next flag, kept. In a command line (command) only a flag,
+    bearer or authorization hides the next item, so a bare word like "pass"
+    in free text hides nothing. An item holding whitespace (`sh -c "...
+    --api-key X"`, `HF_TOKEN=X vllm serve`) is a command line, redacted as
+    one, unless it is a secret --flag=value; a JSON object or list item is
+    redacted as JSON. Items need not be strings; a dict or list item (a
+    header pair) goes through redact."""
     out, hide = [], False
     for arg in argv:
         if isinstance(arg, (dict, list, tuple)):
@@ -84,6 +92,8 @@ def redact_argv(argv, command=False):
             hide = False
             continue
         text = str(arg)
+        if URL_PASSWORD.search(text):
+            arg = text = URL_PASSWORD.sub(r"\1REDACTED@", text)
         if hide and not text.startswith("-"):
             out.append("REDACTED")
             hide = False
@@ -100,29 +110,34 @@ def redact_argv(argv, command=False):
                 doc = None
             if isinstance(doc, (dict, list)):
                 hidden = redact(doc)
-                out.append(arg if hidden == doc else json.dumps(hidden))
+                out.append(arg if hidden == doc else json.dumps(hidden, ensure_ascii=False))
                 continue
         name, eq, value = text.partition("=")
-        if secret(name):
-            arg = f"{name}=REDACTED" if eq else arg
-            hide = not eq and (not command or text.startswith("-"))
-        elif eq and _secret_header(value):
+        if eq and _secret_header(value):
             arg = f"{name}={_secret_header(value)}"
-        elif any(c.isspace() for c in text):
+        elif any(c.isspace() for c in text) and not (text.startswith("-") and eq and secret(name)):
             arg = _redact_command(text)
+        elif secret(name):
+            arg = f"{name}=REDACTED" if eq else arg
+            hide = not eq and (not command or text.startswith("-") or text.lower() in COMMAND_SECRETS)
         out.append(arg)
     return out
 
 
 def _redact_command(text):
-    """A command line held as one string, redacted as its argv (shlex, else
-    split on spaces); text unchanged when it holds no secret."""
+    """A command line held as one string, redacted as its argv (shlex, with
+    ; & | and the like their own tokens, else split on spaces); text
+    unchanged when it holds no secret."""
+    lexer = shlex.shlex(text, posix=True, punctuation_chars=True)
+    lexer.whitespace_split, lexer.commenters = True, ""
     try:
-        parts, join = shlex.split(text), shlex.join
+        parts = list(lexer)
     except ValueError:
-        parts, join = text.split(), " ".join
+        parts = text.split()
     hidden = redact_argv(parts, command=True)
-    return text if hidden == parts else join(hidden)
+    if hidden == parts:
+        return text
+    return " ".join(p if PUNCTUATION.fullmatch(p) else shlex.quote(p) for p in hidden)
 
 
 def redact(obj):
@@ -131,7 +146,8 @@ def redact(obj):
     secret-named key, each item of it when it is a list; in a list (an argv)
     the value of every secret-named flag or NAME=; a mapping value that is a
     command line in one string (holds a flag, as probe_args does, or a
-    secret NAME=value) likewise.
+    secret NAME=value), one HTTP header, or JSON in one string likewise; and
+    the password of a URL in any string.
     run.json's provenance and config, the probe argv and the launcher's
     engine.json all go through it."""
     if isinstance(obj, dict):
@@ -140,6 +156,8 @@ def redact(obj):
             if secret(k) and not isinstance(v, dict):
                 out[k] = (["REDACTED" if not isinstance(x, dict) else redact(x) for x in v]
                           if isinstance(v, (list, tuple)) else "REDACTED")
+            elif isinstance(v, str) and (v[:1] in ("{", "[") or _secret_header(v)):
+                out[k] = redact_argv([v])[0]
             elif isinstance(v, str) and (FLAG.search(v) or any(map(secret, ASSIGN.findall(v)))):
                 out[k] = _redact_command(v)
             else:
@@ -147,6 +165,8 @@ def redact(obj):
         return out
     if isinstance(obj, (list, tuple)):
         return redact_argv(obj)
+    if isinstance(obj, str):
+        return URL_PASSWORD.sub(r"\1REDACTED@", obj)
     return obj
 
 

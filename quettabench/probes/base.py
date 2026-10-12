@@ -71,7 +71,7 @@ def record_dir(name: str, argv: list[str], file_flag: str | None = None) -> Path
     """Where a probe's run.json goes: out_root, the dir its tables are written
     under, or with file_flag (a probe that names its output file) that file's
     dir. None when argv names no output (no --gpu-label, or --out -)."""
-    ap = argparse.ArgumentParser(add_help=False)
+    ap = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
     if file_flag:
         ap.add_argument(file_flag, dest="file")
         known, _ = ap.parse_known_args(argv)
@@ -152,8 +152,15 @@ SHIPPED = ("quettabench/__init__.py", "quettabench/probes/", "quettabench/config
 REMOTE_DIR = re.compile(r"/tmp/qbench-probes\.[A-Za-z0-9]{6,}")
 NAME = re.compile(r"[a-z][a-z0-9_]*")
 GPU = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
-# Flags remote_probe sets itself; a probe arg naming one is refused.
+# Flags remote_probe sets itself; a probe arg naming or abbreviating one is refused.
 OWN_FLAGS = ("--out", "--out-dir", "--run-id", "--gpu-label", "--gpu")
+
+
+def _own_flag(name):
+    """name is one of OWN_FLAGS or, past "--", a prefix of one, as an
+    abbreviating parser would take it."""
+    return name in OWN_FLAGS or (name.startswith("--") and len(name) > 2
+                                 and any(f.startswith(name) for f in OWN_FLAGS))
 
 
 def _remote_args(argv):
@@ -173,7 +180,7 @@ def _remote_args(argv):
         ap.error("needs --host (set REMOTE_HOST, not starting with -), a probe module name "
                  "and a GPU label")
     a.probe_argv = [*shlex.split(a.probe_args), *a.probe_argv]
-    if any(arg.split("=")[0] in OWN_FLAGS for arg in a.probe_argv):
+    if any(_own_flag(arg.split("=")[0]) for arg in a.probe_argv):
         ap.error(f"remote_probe sets {', '.join(OWN_FLAGS)} itself; leave them out of the probe args")
     return a
 

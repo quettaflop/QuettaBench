@@ -241,7 +241,7 @@ class Redaction(unittest.TestCase):
         self.assertEqual(results.redact({"cmd": "HF_TOKEN=sk vllm serve m"}),
                          {"cmd": "HF_TOKEN=REDACTED vllm serve m"})
         self.assertEqual(results.redact({"cmd": "export HF_TOKEN=sk; vllm serve"}),
-                         {"cmd": "export HF_TOKEN=REDACTED vllm serve"})
+                         {"cmd": "export HF_TOKEN=REDACTED ; vllm serve"})
         self.assertEqual(results.redact({"cmd": "HF_HOME=/h vllm serve m"}),
                          {"cmd": "HF_HOME=/h vllm serve m"})
 
@@ -251,6 +251,45 @@ class Redaction(unittest.TestCase):
         self.assertEqual(results.redact({"cmd": """vllm serve --hf-overrides '{"api_key": "sk"}'"""}),
                          {"cmd": """vllm serve --hf-overrides '{"api_key": "REDACTED"}'"""})
         self.assertEqual(results.redact(["--x", '{"n":  1}']), ["--x", '{"n":  1}'])
+
+    def test_bearer_and_authorization_hide_the_next_word_in_a_command(self):
+        self.assertEqual(results.redact(["Bearer sk"]), ["Bearer REDACTED"])
+        self.assertEqual(results.redact({"cmd": "curl -H authorization sk http://h"}),
+                         {"cmd": "curl -H authorization REDACTED http://h"})
+
+    def test_an_assignment_in_a_command_item_keeps_the_rest(self):
+        self.assertEqual(results.redact(["sh", "-c", "export HF_TOKEN=sk; vllm serve m"]),
+                         ["sh", "-c", "export HF_TOKEN=REDACTED ; vllm serve m"])
+        self.assertEqual(results.redact(["sh", "-c", "OPENAI_API_KEY=sk python -m x"]),
+                         ["sh", "-c", "OPENAI_API_KEY=REDACTED python -m x"])
+        self.assertEqual(results.redact({"cmd": "sh -c 'OPENAI_API_KEY=sk python -m x'"}),
+                         {"cmd": "sh -c 'OPENAI_API_KEY=REDACTED python -m x'"})
+        self.assertEqual(results.redact(["--api-key=a b"]), ["--api-key=REDACTED"])
+
+    def test_shell_punctuation_stays_its_own_token(self):
+        self.assertEqual(results.redact({"cmd": "--api-key sk;echo hi"}),
+                         {"cmd": "--api-key REDACTED ; echo hi"})
+        self.assertEqual(results.redact({"cmd": "--token sk && ls | wc -l & x"}),
+                         {"cmd": "--token REDACTED && ls | wc -l & x"})
+
+    def test_redacted_json_keeps_unicode_and_numbers(self):
+        self.assertEqual(results.redact(["--hf-overrides", '{"name": "café", "api_key": "sk", "f": 4.0}']),
+                         ["--hf-overrides", '{"name": "café", "api_key": "REDACTED", "f": 4.0}'])
+
+    def test_a_header_or_json_mapping_value_is_redacted(self):
+        doc = {"header": "Authorization: Bearer sk", "obj": '{"api_key": "sk"}',
+               "list": '["--api-key", "sk"]', "plain": '{"n": 1}', "text": "[draft] notes"}
+        self.assertEqual(results.redact(doc), {
+            "header": "Authorization: REDACTED", "obj": '{"api_key": "REDACTED"}',
+            "list": '["--api-key", "REDACTED"]', "plain": '{"n": 1}', "text": "[draft] notes"})
+
+    def test_url_credentials_are_redacted(self):
+        self.assertEqual(results.redact({"db": "postgres://user:hunter2@db/x"}),
+                         {"db": "postgres://user:REDACTED@db/x"})
+        self.assertEqual(results.redact(["--db", "redis://:pw@h:6379/0", "http://h:8000/v1"]),
+                         ["--db", "redis://:REDACTED@h:6379/0", "http://h:8000/v1"])
+        self.assertEqual(results.redact({"cmd": "psql postgres://u:pw@h/x --port 1"}),
+                         {"cmd": "psql postgres://u:REDACTED@h/x --port 1"})
 
     def test_passphrase_and_ssh_encryption_signing_keys_are_secret(self):
         names = {"passphrase": True, "SSH_KEY": True, "encryption_key": True,

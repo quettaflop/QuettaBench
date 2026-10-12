@@ -686,3 +686,24 @@ dropped `decode_batch` and `frontend`, which no probe exports; `pd_host`'s
 example writes under `results/` and is profile only. kv_transfer's union
 sorts on `gpu, kv_heads_per_rank, layout, tokens`, then the other key
 columns.
+
+2026-10-12: no fixture changed. Redaction and probe failure paths
+tightened. `record_dir`'s parser takes no abbreviation, and `remote_probe`
+refuses a probe arg that abbreviates one of its own flags (`--out-d`,
+`--gpu-l`, `--ru`, `--o`). In a command line `bearer` and `authorization`
+hide the next word again, so the argv item "Bearer sk" is redacted. An
+argv item holding whitespace is redacted as a command line before its name
+is checked, unless it is a secret `--flag=value`, so
+`export HF_TOKEN=sk; vllm serve m` and `OPENAI_API_KEY=sk python -m x`
+keep their tails. A command line is tokenized with `;`, `&`, `|` and the
+other shell punctuation as their own tokens and written back unquoted, so
+`--api-key sk;echo hi` becomes `--api-key REDACTED ; echo hi`. Redacted
+JSON keeps unicode (`ensure_ascii=False`); a number such as `1e5` in a
+JSON value that held a secret is written back as `100000.0`. A mapping
+value that is one secret HTTP header, or JSON in one string (object or
+list), is redacted, and the password in `scheme://user:password@host` is
+written as REDACTED in any string. `profiling/kv_transfer.py` gives its
+gloo group a five-minute timeout and turns SIGTERM into SystemExit(143), so
+`run_recorded` records the run as failed. Known and left: a short flag
+(`-k sk`) is not a secret name, and free text such as
+`my password is hunter2` or `aws_secret_access_key = abc` is kept.

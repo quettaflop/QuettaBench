@@ -13,6 +13,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from quettabench.metrics import results
 from quettabench.profiling import native
 from tests.profiling import fake_endpoint
 
@@ -234,6 +235,25 @@ class LiveProbes(unittest.TestCase):
         self.assertIn(("out_root", ("a", "kv_transfer")), calls)
         self.assertIn(("run_recorded", ("main", "kv_transfer")), calls)
         self.assertNotIn("data/kernel_data", text)
+
+    def test_kv_transfer_fails_its_run_on_a_hang_or_sigterm(self):
+        """The gloo group times out after five minutes, and SIGTERM raises
+        SystemExit(143), so run_recorded records the run as failed."""
+        tree = ast.parse((Path(native.__file__).parent / "kv_transfer.py").read_text())
+        (init,) = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
+                   and getattr(n.func, "attr", "") == "init_process_group"]
+        self.assertEqual(ast.unparse(next(k.value for k in init.keywords if k.arg == "timeout")),
+                         "timedelta(minutes=5)")
+        calls = [ast.unparse(n) for n in ast.walk(tree) if isinstance(n, ast.Call)
+                 and getattr(n.func, "attr", "") == "signal"]
+        self.assertEqual(calls, ["signal.signal(signal.SIGTERM, _on_sigterm)"])
+        (handler,) = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_on_sigterm"]
+        namespace = {}
+        exec(compile(ast.Module([handler], []), "kv_transfer", "exec"), namespace)
+        with self.assertRaises(SystemExit) as stop:
+            namespace["_on_sigterm"](15, None)
+        self.assertEqual(stop.exception.code, 143)
+        self.assertEqual(results.exit_status(stop.exception)[0], "failed")
 
     def test_frontend_sources_take_quettasims_device_yaml(self):
         """serving_frontend and pd_host load the GPU from --device-yaml, a

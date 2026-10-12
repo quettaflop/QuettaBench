@@ -381,3 +381,11 @@ def test_probes_without_output_args_take_no_abbreviation_either(name, out, capsy
     with pytest.raises(SystemExit) as stop:
         probe.main(["--mod", "/w", "--no-launch", *out])
     assert stop.value.code == 2 and "unrecognized" in capsys.readouterr().err
+
+
+def test_record_dir_takes_no_abbreviation(tmp_path):
+    """--out-d is no --out-dir for record_dir either, so run.json goes where
+    the probe's own parser puts its tables."""
+    argv = ["--run-id", "20260101T000000.000000Z", "--gpu-label", "H100", "--out", str(tmp_path / "a"),
+            "--out-d", str(tmp_path / "b")]
+    assert probes_base.record_dir("flash_attn", argv) == tmp_path / "a" / "flash_attn" / argv[1]

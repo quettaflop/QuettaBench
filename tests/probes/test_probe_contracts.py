@@ -331,7 +331,11 @@ def test_an_odd_mktemp_answer_is_never_removed(rdir, tmp_path, monkeypatch):
                                   ["gemm", "A100", "--probe-args=--run-id=1"],
                                   ["gemm", "A100", "--probe-args=--gpu-label H100"],
                                   ["--", "gemm", "A100", "--gpu=H100"],
-                                  ["--", "gemm", "A100", "--out-dir", "/x"]])
+                                  ["--", "gemm", "A100", "--out-dir", "/x"],
+                                  ["gemm", "A100", "--probe-args=--out-d /x"],
+                                  ["gemm", "A100", "--probe-args=--gpu-l H100"],
+                                  ["gemm", "A100", "--probe-args=--ru=1"],
+                                  ["--", "gemm", "A100", "--o", "/x"]])
 def test_remote_probe_refuses_odd_names(argv, tmp_path, monkeypatch):
     host = FakeHost()
     with pytest.raises(SystemExit):
