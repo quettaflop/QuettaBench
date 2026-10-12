@@ -358,6 +358,9 @@ class WorkloadProfile:
 
 def load_profiles(path=WORKLOADS):
     """Every entry of the workloads yaml as a WorkloadProfile, by name."""
+    if not Path(path).exists():
+        raise FileNotFoundError(f"{path} not found: qbench reads configs/ beside its package, "
+                                "so install it from a checkout with pip install -e .")
     keys = {f.name for f in dataclasses.fields(WorkloadProfile)} - {"name"}
     profiles = {}
     for name, data in yaml.safe_load(Path(path).read_text()).items():

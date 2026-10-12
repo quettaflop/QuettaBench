@@ -6,6 +6,8 @@ import hashlib
 import io
 import json
 import os
+import shutil
+import subprocess
 import sys
 import tempfile
 import types
@@ -490,6 +492,17 @@ class ProfileRegistryTests(unittest.TestCase):
                             "  description: d\n  dataset: test\n  isl: 3\n")
             with self.assertRaisesRegex(ValueError, r"w.yaml: x: unknown profile key\(s\) \['isl'\]"):
                 load_profiles(path)
+
+    def test_site_packages_install_names_the_editable_fix(self):
+        with tempfile.TemporaryDirectory() as td:
+            shutil.copytree(Path(runner.__file__).parent, Path(td) / "site-packages" / "quettabench",
+                            ignore=shutil.ignore_patterns("__pycache__"))
+            proc = subprocess.run([sys.executable, "-c", "import quettabench.workloads.live"],
+                                  cwd=td, env={**os.environ, "PYTHONPATH": f"{td}/site-packages"},
+                                  capture_output=True, text=True, check=False)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("configs/workloads.yaml not found", proc.stderr)
+        self.assertIn("pip install -e .", proc.stderr)
 
     def test_listings_hide_inactive_profiles(self):
         self.assertEqual(active_profiles(), ["chat-singleturn", "coding-singleturn",

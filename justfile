@@ -102,7 +102,7 @@ remote-probe name gpu=gpu *args:
 
 # qbench and vLLM in one image, qbench:<short sha>; another base: just image --build-arg VLLM_IMAGE=<image>
 image *args:
-    docker build --network host ${HTTPS_PROXY:+--build-arg HTTPS_PROXY} ${HTTP_PROXY:+--build-arg HTTP_PROXY} ${NO_PROXY:+--build-arg NO_PROXY} "$@" -f docker/Dockerfile -t qbench:$(git rev-parse --short HEAD) .
+    docker build --network host ${HTTPS_PROXY:+--build-arg HTTPS_PROXY} ${HTTP_PROXY:+--build-arg HTTP_PROXY} ${NO_PROXY:+--build-arg NO_PROXY} --build-arg QBENCH_SHA=$(git rev-parse --short HEAD) "$@" -f docker/Dockerfile -t qbench:$(git rev-parse --short HEAD) .
 
 # QuettaSim tables from results dirs: just export --results results/<run> --dest <dir> [--kernel-dest <QuettaSim data root>]
 export *args:

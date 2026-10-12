@@ -41,7 +41,7 @@ ENV_MAP = {
     "VMIN_ATTEMPTS": ("mode.vmin_attempts", int, "vmin_fit.py:256"),
     "PROMPT_MODE": ("workload.prompt_mode", str, "vmin_fit.py:130"),
     "GPU_UTIL": ("engine.gpu_util", float, "vmin_fit.py:127"),
-    "ENABLE_EP": ("engine.ep", _truthy, "serve.py:1323"),
+    "ENABLE_EP": ("engine.ep", _truthy, "modes/serve.py:1323 before bee575c"),
     "NCCL_ALGO": ("hardware.collective.NCCL_ALGO", str, "vmin_fit.py:30,149 table.py:119"),
     "NCCL_PROTO": ("hardware.collective.NCCL_PROTO", str, "vmin_fit.py:30,150 table.py:120"),
     # The caller's value beats the hardware yaml for the collective pins.
@@ -58,6 +58,8 @@ ENV_MAP = {
     "HF_HOME": ("hardware.hf_home", str, "provision.py writes it to .env; just loads it"),
     # Not a field: an input to backend auto-detection.
     "TPU_NAME": ("detect.tpu_name", str, "xval_config.py:191"),
+    # Not a field: run.json's bench_sha where there is no .git (the docker image sets it).
+    "QBENCH_SHA": ("detect.bench_sha", str, "docker/Dockerfile ENV"),
 }
 
 

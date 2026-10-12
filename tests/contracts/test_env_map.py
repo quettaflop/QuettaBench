@@ -3,9 +3,10 @@
 import ast
 import unittest
 
+from quettabench.config import loader
 from quettabench.config.env_map import ENV_MAP, read_env
 from quettabench.config.schema import ConfigError, default_values, dict_field
-from tests.golden._harness import REPO
+from tests.golden._harness import REPO, RUNS
 
 
 class ReadEnv(unittest.TestCase):
@@ -35,6 +36,11 @@ class ReadEnv(unittest.TestCase):
         got = read_env({"QS_SHA": "aaa", "DS_ENGINE_SHA": "bbb"})
         self.assertEqual(got, {"provenance.engine_sha": "aaa"})
         self.assertEqual(read_env({"DS_ENGINE_SHA": "bbb"}), {"provenance.engine_sha": "bbb"})
+
+    def test_qbench_sha_is_a_detect_input_the_loader_accepts(self):
+        self.assertEqual(read_env({"QBENCH_SHA": "7eea8ff"}), {"detect.bench_sha": "7eea8ff"})
+        (cfg,) = loader.load(RUNS / "llama.yaml", ["engine.model=/w"], env={"QBENCH_SHA": "7eea8ff"})
+        self.assertNotIn("bench_sha", cfg.provenance)
 
     def test_bad_number_names_the_var(self):
         with self.assertRaisesRegex(ConfigError, "XVAL_PP='two'"):

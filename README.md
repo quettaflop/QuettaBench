@@ -67,7 +67,7 @@ engines.
 
 ## One image on a fresh box
 
-`just image` builds `docker/Dockerfile`, qbench on the vLLM image (`--build-arg VLLM_IMAGE=<image>` for another platform), tagged `qbench:<short sha>`. Mount the HF cache, so `engine.model` can be a repo id, the vLLM compile cache and `results/`:
+`just image` builds `docker/Dockerfile`, qbench installed editable on `vllm/vllm-openai:v0.26.0` (`--build-arg VLLM_IMAGE=<image>` for another platform), tagged `qbench:<short sha>` with the sha in `QBENCH_SHA`. Mount the HF cache, so `engine.model` can be a repo id, the vLLM compile cache and `results/`:
 
 ```bash
 docker run --rm --gpus all --network host --ipc host -v ~/.cache/huggingface:/root/.cache/huggingface \
@@ -75,7 +75,17 @@ docker run --rm --gpus all --network host --ipc host -v ~/.cache/huggingface:/ro
     qbench:<sha> run configs/runs/llama.yaml --set engine.model=meta-llama/Llama-3.1-8B-Instruct
 ```
 
-That form against a local run on hwn-z1-gpu11 (2026-10-12, Qwen3-4B HTTP grid): 15/15 cells within 1.51%, mean +0.52%.
+On 2026-10-12 this command (Qwen3-4B, GPU 0, HTTP grid) agreed with the same qbench source run outside docker on vLLM 0.26.0 (GPU 1) within 1.51% on 15/15 cells, mean +0.52%:
+
+```bash
+docker run --rm --gpus '"device=0"' --network host --ipc host \
+    -v ~/hf:/root/.cache/huggingface -v ~/qbt-run2/docker:/opt/qbench/results \
+    -e HF_HUB_OFFLINE=1 -e HF_HOME=/root/.cache/huggingface \
+    qbench:81ac0e4 run configs/runs/llama.yaml --results-dir results \
+    --set engine.driver=http --set hardware.link_profile=pcie --allow-unverified \
+    --set engine.model=/root/.cache/huggingface/hub/models--Qwen--Qwen3-4B/snapshots/1cfa9a7208912126459214e8b04321603b3df60c \
+    --set engine.port=8040 --set run_name=docker_qwen4b
+```
 
 ## Running inside docker
 
