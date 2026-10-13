@@ -41,8 +41,7 @@ class PowerSampler:
         self._thread = threading.Thread(target=self._loop, daemon=True)
 
     def _loop(self):
-        # A fixed clock: each nvidia-smi call takes ~0.1 s, which a plain wait added to every interval, so a
-        # 5 s window held 4 samples and the energy read 20% low.
+        # A fixed clock, so nvidia-smi's own run time does not stretch the interval each sample stands for.
         tick = time.monotonic()
         while True:
             tick += self.interval_s
@@ -119,8 +118,7 @@ def load_gsm8k(path, tokenizer_name, n, tokenizer=None):
 
 
 def gsm8k_prompt(tokenizer, question):
-    """Chat template when the tokenizer has one: given the bare question, an instruct model writes on past its
-    answer and the last number is noise (Llama-3.1-8B-Instruct: 20% bare, 87% templated, 1319 questions)."""
+    """Chat template when the tokenizer has one; given the bare question an instruct model writes past its answer."""
     if getattr(tokenizer, "chat_template", None):
         msg = [{"role": "user", "content": question + GSM8K_INSTRUCTION}]
         return list(tokenizer.apply_chat_template(msg, add_generation_prompt=True, tokenize=True, return_dict=False))

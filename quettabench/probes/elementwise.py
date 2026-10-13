@@ -99,12 +99,7 @@ def op_for_vllm(kernel, n, dev, dt):
 
 
 def fit(bytes_list, us_list) -> tuple[float, float]:
-    """Returns (floor_us, eff_bw_gb_s).
-
-    The floor is the median of the three smallest sizes (launch bound); the bandwidth is the slope over
-    the larger half (past any cache). One line through every size put the floor below zero once L2 held
-    the small sizes.
-    """
+    """Returns (floor_us, eff_bw_gb_s): the floor from the smallest sizes, the bandwidth from the larger half (past L2)."""
     pts = sorted(zip(bytes_list, us_list))
     floor = st.median(u for _, u in pts[:3])
     big = pts[len(pts) // 2 :]

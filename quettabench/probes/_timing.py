@@ -170,7 +170,7 @@ def ncu_kernel_durations(inner: str, ncu_bin: str) -> list[tuple[str, float]]:
     ]
     out = subprocess.run(cmd, capture_output=True, text=True).stdout
     lines = out.splitlines()
-    # A run without counter access (ERR_NVGPUCTRPERM) would otherwise read as "no kernel" in every cell.
+    # e.g. ERR_NVGPUCTRPERM: no counter access.
     err = next((line for line in lines if line.startswith("==ERROR==")), None)
     if err:
         raise RuntimeError(f"ncu: {err}")

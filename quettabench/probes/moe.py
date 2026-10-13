@@ -77,7 +77,7 @@ def _time(fn, calls: int = 1) -> float:
     return event_time_us(fn, WARMUP, REPS, min)
 
 
-# One fixed routing rereads the same experts, from L2 once they fit (top-8 of small experts at one token).
+# Routings rotated per call, so experts are read from memory, not L2.
 ROUTINGS = 16
 
 
