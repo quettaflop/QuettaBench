@@ -181,7 +181,7 @@ def fit_affine(points) -> tuple[float, float] | None:
 
 def sweep_routing(dev, e_default=128, k_default=8):
     """Byte counts must match kernel_composed/elementwise.py::_IO."""
-    out: dict[str, dict] = {}
+    out: dict[str, dict | float] = {}
 
     topk_pts, perm_pts = [], []
     for n in ROUTE_ELEMS:

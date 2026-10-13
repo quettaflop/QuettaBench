@@ -88,7 +88,7 @@ KERNEL_FAMILIES = [
 
 
 def _merged(intervals):
-    out = []
+    out: list[list] = []
     for s, e in sorted(intervals):
         if out and s <= out[-1][1]:
             out[-1][1] = max(out[-1][1], e)
@@ -132,7 +132,9 @@ def kernel_summary(results_dir, steps, window=None, subtract=None, top=25, gap_u
         def tally(win):
             """win None means everything."""
             bound, args = (" WHERE k.start >= ? AND k.end <= ?", win) if win else ("", ())
-            kernels, devices, mem = {}, {}, {}
+            kernels: dict[str, list[int]] = {}
+            devices: dict[int, list[tuple]] = {}
+            mem: dict[str, list[int]] = {}
             for s, e, dev, name in con.execute(
                 "SELECT k.start, k.end, k.deviceId, COALESCE(s.value, 'unknown') "
                 f"FROM CUPTI_ACTIVITY_KIND_KERNEL k LEFT JOIN StringIds s ON s.id = k.{col}" + bound,
@@ -164,7 +166,7 @@ def kernel_summary(results_dir, steps, window=None, subtract=None, top=25, gap_u
             kernels = {name: v for name, v in kernels.items() if v[0] > 0}
     n = steps
     total_ns = sum(d for _, d in kernels.values())
-    families = {}
+    families: dict[str, list[int]] = {}
     for name, (c, d) in kernels.items():
         fam = next((f for pat, f in KERNEL_FAMILIES if re.search(pat, name, re.I)), "other")
         f = families.setdefault(fam, [0, 0])

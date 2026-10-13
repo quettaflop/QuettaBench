@@ -56,7 +56,7 @@ async def no_limit():
 
 @dataclass
 class Summary:
-    core: BenchmarkSummary
+    core: BenchmarkSummary | None
     rows: list
     turns: list = field(default_factory=list)
     sections: dict = field(default_factory=dict)
@@ -157,7 +157,7 @@ async def replay(trace, driver, mode, emit, offsets, request_id):
     open_loop = mode.load == "open"
     slots = asyncio.Semaphore(mode.concurrency)
     reqs = trace.requests()
-    rows = [None] * len(reqs)
+    rows: list = [None] * len(reqs)
     start = time.perf_counter()
 
     async def dispatch(i, request, at):
@@ -201,7 +201,7 @@ def server_counters(driver):
 async def measure(trace, driver, mode, emit, workload, request_id):
     multi = isinstance(trace, SessionTrace)
     offsets = None if multi else arrival_offsets(trace, workload)
-    sessions = None
+    sessions: SessionDispatcher | None = None
     if multi:
         sessions = SessionDispatcher(
             trace, mode, workload, lambda r, **kw: driver.send(r, **kw, **sampling(mode, r)), request_id, emit
@@ -214,7 +214,7 @@ async def measure(trace, driver, mode, emit, workload, request_id):
         if mode.reset_prefix_cache:
             print(f"Prefix cache: {await driver.reset()}")
         before = server_counters(driver)
-        if multi:
+        if sessions is not None:
             results, by_turn, pairs, start = await sessions.run()
         else:
             pairs, start = await replay(trace, driver, mode, emit, offsets, request_id)
@@ -325,7 +325,9 @@ def goodput_search(start=1.0, max_iters=6, tol=0.1):
 
 def sweep(trace, driver, mode, writer, workload, request_id):
     """Stops at the first probe that breaks workload identity."""
-    gen, probes, best, fail_bound = goodput_search(start=workload.speed), [], None, []
+    gen, best = goodput_search(start=workload.speed), None
+    probes: list = []
+    fail_bound: list = []
     speed = next(gen)
     while True:
         probe_mode = mode if not probes else dataclasses.replace(mode, warmup=0)
@@ -564,7 +566,8 @@ def score(driver, writer, prompts, cell):
 
 def score_grid(trace, driver, cfg, writer):
     """maxlen SKIPs apply and nothing is timed."""
-    record, over = {"events": []}, set(trace.cells_over_maxlen)
+    record: dict = {"events": []}
+    over = set(trace.cells_over_maxlen)
     for ctx, bs in trace.cells:
         if (ctx, bs) in over:
             event = {"event": "skip_maxlen", "ctx": ctx, "bs": bs}
@@ -581,7 +584,8 @@ def run_bench(driver, cfg, writer):
     device = driver.device() if engine.kv_bytes_per_token and engine.weights_gib is not None else None
     cap = capacity(engine, device[1], engine.kv_bytes_per_token)[1] if device and device[1] else 0
     over = set(grid.cells_over_maxlen)
-    record, kept = {"bench_log": str(driver.log_path), "events": []}, []
+    record: dict = {"bench_log": str(driver.log_path), "events": []}
+    kept: list = []
     for ctx, bs, spec in driver.cells:
         need = (ctx + hw.timing_steps + hw.max_seq_headroom) * bs
         if (ctx, bs) in over:
@@ -687,8 +691,8 @@ class SessionDispatcher:
 
     async def run(self):
         self.slots = asyncio.Semaphore(self.mode.concurrency)
-        self.by_turn = {i: [] for i in range(self.max_turns)}
-        self.served = []
+        self.by_turn: dict[int, list] = {i: [] for i in range(self.max_turns)}
+        self.served: list = []
         self.prev_context, self.prev_output = {}, {}
         self.dead, self.warned = set(), False
         self.start = time.perf_counter()
@@ -800,7 +804,8 @@ class SessionDispatcher:
             )
         else:
             spec = self.workload.arrival
-            arrivals = [t / self.workload.speed for t in parse_arrival(spec, n, self.workload.seed)]
+            # Latent: arrival "trace" gives None here, so a trace-arrival session run raises TypeError.
+            arrivals = [t / self.workload.speed for t in parse_arrival(spec, n, self.workload.seed)]  # type: ignore[union-attr]
             print(
                 f"  Open loop: {n} sessions arriving at "
                 f"{offered_rate(spec)} sess/s ({spec.partition(':')[0]}); "

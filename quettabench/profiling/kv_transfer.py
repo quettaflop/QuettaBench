@@ -110,7 +110,7 @@ def main(argv=None) -> bool:
         caches = [(t.data_ptr(), t.numel(), dev_id, "") for t in pool]
         reg = agent.register_memory(agent.get_reg_descs(caches, "VRAM"))
 
-        meta = [None]
+        meta: list = [None]
         if rank == 0:
             meta = [(agent.get_agent_metadata(), [t.data_ptr() for t in pool], dev_id)]
         dist.broadcast_object_list(meta, src=0)

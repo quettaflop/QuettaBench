@@ -52,7 +52,7 @@ _PROM_METRICS = {
 def _parse_prom_sums(text: str) -> dict:
     """Labels are ignored: one model means one line per histogram."""
     wanted = {f"{base}_sum": key for key, base in _PROM_METRICS.items()}
-    out = {key: None for key in _PROM_METRICS}
+    out: dict[str, float | None] = {key: None for key in _PROM_METRICS}
     for line in text.splitlines():
         if not line or line[0] == "#":
             continue

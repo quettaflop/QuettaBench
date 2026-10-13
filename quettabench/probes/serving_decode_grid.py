@@ -256,7 +256,7 @@ def run_cell(
         p.join()
         if p.exitcode != 0:
             raise RuntimeError(f"shard process exited {p.exitcode}")
-    recs: list[dict] = []
+    recs = []
     for path in paths:
         recs.extend(json.loads(path.read_text()))
         path.unlink()

@@ -64,6 +64,7 @@ def _stream_once(base_url: str, model: str, prompt: str, out_tokens: int = 8) ->
                 first_at = now
             n += 1
     last = time.perf_counter()
+    assert first_at is not None
     ttft_ms = (first_at - t0) * 1000.0
     tpot_ms = ((last - first_at) / max(1, n - 1)) * 1000.0 if n > 1 else 0.0
     return ttft_ms, tpot_ms, prompt_tokens
@@ -514,13 +515,13 @@ def pd_proxy_overhead_probe(a) -> list[dict]:
     if a.herd > 1:
         texts = [pr.make(a.herd_tokens, f"H{i}") for i in range(a.herd)]
         totals = []
-        for i, t in enumerate(texts):
+        for i, text in enumerate(texts):
             since = len(_loglines(log))
-            chat_stream(a.proxy_url, a.model, t, f"probe-herdseed-{i}")
+            chat_stream(a.proxy_url, a.model, text, f"probe-herdseed-{i}")
             time.sleep(0.2)
             totals.append(int(proxy_rows(log, since)[-1]["prefill_usage"]["prompt_tokens"]))
         since = len(_loglines(log))
-        results: list[dict] = [None] * a.herd
+        results: list = [None] * a.herd
 
         def fire(i):
             results[i] = chat_stream(
@@ -528,14 +529,14 @@ def pd_proxy_overhead_probe(a) -> list[dict]:
             )
 
         th = [threading.Thread(target=fire, args=(i,)) for i in range(a.herd)]
-        for t in th:
-            t.start()
-        for t in th:
-            t.join()
+        for thread in th:
+            thread.start()
+        for thread in th:
+            thread.join()
         time.sleep(0.5)
-        px = {r["request_id"]: r for r in proxy_rows(log, since)}
+        by_id = {r["request_id"]: r for r in proxy_rows(log, since)}
         for i in range(a.herd):
-            p = px.get(f"probe-herd-{i}")
+            p = by_id.get(f"probe-herd-{i}")
             if p:
                 p["_cached_d"] = totals[i] + 4
                 rows.append(score("herd", a.herd, results[i], p))
