@@ -448,6 +448,15 @@ def test_gemm_ncu_reads_kernels_through_the_shared_parser():
     assert "Metric Value" not in (PROBES / "gemm.py").read_text()
 
 
+def test_elementwise_floor_survives_a_cache_knee():
+    """residual_add measured on an RTX PRO 6000: flat while L2 holds the data, then memory bound."""
+    mb = [1.6, 3.1, 6.3, 12.6, 25.2, 50.3, 100.7, 201.3, 402.7, 805.3, 1610.6, 3221.2]
+    us = [7.14, 7.22, 7.23, 7.07, 7.14, 10.56, 16.74, 138.99, 271.26, 542.50, 1084.26, 2168.69]
+    floor, bw = import_without_torch("elementwise").fit([m * 1e6 for m in mb], us)
+    assert floor == 7.22
+    assert 1450 < bw < 1520
+
+
 @pytest.mark.parametrize("name", ["gemm", "moe"])
 def test_append_cannot_be_abbreviated(name, capsys):
     """export reads --append from probe_args as written; --app would append unseen."""

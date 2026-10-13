@@ -1663,6 +1663,10 @@ def test_rows_export_matches_the_per_probe_tables_export(tmp_path: Path) -> None
     old, new = exported(tmp_path / "old", BASE_NAMES), exported(tmp_path / "new")
     for tree_dir in ("data", "fresh"):
         assert [t for t in IDENTITY_TABLES if f"{tree_dir}/kernel_data/{t}" in old] == IDENTITY_TABLES
-    assert {k: v for k, v in new.items() if old.get(k) != v} == {}
+    # The elementwise fit changed on purpose: the floor now comes from the smallest sizes.
+    changed = {k for k, v in new.items() if old.get(k) != v}
+    assert changed == {
+        f"{d}/kernel_data/{t}/elementwise/H200.json" for d in ("data", "fresh") for t in ("graph", "eager")
+    }
     assert old.keys() == new.keys()
     assert b"keep 0 of its 15 rows" in old["stop.txt"]

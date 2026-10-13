@@ -99,17 +99,24 @@ def op_for_vllm(kernel, n, dev, dt):
 
 
 def fit(bytes_list, us_list) -> tuple[float, float]:
-    """Returns (floor_us, eff_bw_gb_s)."""
-    nP = len(bytes_list)
-    sx = sum(bytes_list)
-    sy = sum(us_list)
-    sxx = sum(b * b for b in bytes_list)
-    sxy = sum(b * u for b, u in zip(bytes_list, us_list))
+    """Returns (floor_us, eff_bw_gb_s).
+
+    The floor is the median of the three smallest sizes (launch bound); the bandwidth is the slope over
+    the larger half (past any cache). One line through every size put the floor below zero once L2 held
+    the small sizes.
+    """
+    pts = sorted(zip(bytes_list, us_list))
+    floor = st.median(u for _, u in pts[:3])
+    big = pts[len(pts) // 2 :]
+    nP = len(big)
+    sx = sum(b for b, _ in big)
+    sy = sum(u for _, u in big)
+    sxx = sum(b * b for b, _ in big)
+    sxy = sum(b * u for b, u in big)
     denom = nP * sxx - sx * sx
     slope = (nP * sxy - sx * sy) / denom if denom else 0.0  # us/byte
-    floor = (sy - slope * sx) / nP
     eff_bw_gb_s = (1e-3 / slope) if slope > 0 else 0.0
-    return round(max(0.0, floor), 3), round(eff_bw_gb_s, 1)
+    return round(floor, 3), round(eff_bw_gb_s, 1)
 
 
 class ElementwiseProbe(Probe):
