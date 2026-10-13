@@ -47,3 +47,16 @@ combine-as-imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.10"
+files = ["quettabench"]
+check_untyped_defs = true
+
+# Not installed in the mypy hook env: the serving stack, and the QuettaSim and engine modules loaded by name.
+[[tool.mypy.overrides]]
+module = [
+    "torch.*", "vllm.*", "triton.*", "transformers.*", "datasets.*", "safetensors.*", "flashinfer.*", "nixl.*",
+    "engine.*", "simulator.*", "kernel_composed.*",
+]
+ignore_missing_imports = true
