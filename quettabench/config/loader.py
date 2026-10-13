@@ -272,7 +272,9 @@ def _validate(values, origins, allow_unverified, where):
         use = (
             "workload.num_sessions"
             if values["workload.kind"] == "sessions"
-            else "a shorter source file" if values["mode.grid"] is None else "the grid's cells"
+            else "a shorter source file"
+            if values["mode.grid"] is None
+            else "the grid's cells"
         )
         raise ConfigError(
             f"{where}: workload.num_requests only sizes a single-turn profile; {source!r} sets its own count, "
