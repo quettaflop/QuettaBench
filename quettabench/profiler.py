@@ -226,7 +226,3 @@ def main(argv=None):
     for source, message in out["errors"].items():
         print(f"PROFILE_ERROR source={source} {message}", file=sys.stderr)
     return 1 if out["errors"] else 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())

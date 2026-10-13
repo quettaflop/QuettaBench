@@ -1229,7 +1229,3 @@ def main(argv=None) -> None:
         ap.error("give --dest, --kernel-dest or both")
     for path in export(a.results, a.dest, a.only, kernel_dest=a.kernel_dest, replace_tables=a.replace_tables):
         print(path)
-
-
-if __name__ == "__main__":
-    main()

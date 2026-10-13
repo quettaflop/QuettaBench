@@ -764,7 +764,3 @@ def main(argv=None):
         sys.exit("no overlapping (ctx, bs, tp) points")
     if any(r["kind"] in ("logit_summary", "band") and r["verdict"] == "FAIL" for r in report.agreement):
         sys.exit(1)
-
-
-if __name__ == "__main__":
-    main(sys.argv[1:])

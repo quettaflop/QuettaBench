@@ -366,7 +366,8 @@ class TableParity(unittest.TestCase):
                 [
                     sys.executable,
                     "-m",
-                    "quettabench.compare",
+                    "quettabench.cli",
+                    "compare",
                     str(bench),
                     str(cache),
                     "--json",
@@ -526,7 +527,8 @@ class TableParity(unittest.TestCase):
                 [
                     sys.executable,
                     "-m",
-                    "quettabench.compare",
+                    "quettabench.cli",
+                    "compare",
                     str(bench),
                     str(cache),
                     "--json",
@@ -571,7 +573,8 @@ class TableParity(unittest.TestCase):
                 [
                     sys.executable,
                     "-m",
-                    "quettabench.compare",
+                    "quettabench.cli",
+                    "compare",
                     str(bench),
                     str(cache),
                     "--json",
