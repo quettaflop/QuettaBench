@@ -67,7 +67,7 @@ compare *args:
 test:
     python3 -m pytest tests -q
 
-# CI hooks when pre-commit is installed, else ruff alone.
+# CI hooks, mypy included, when pre-commit is installed, else ruff alone.
 lint:
     if command -v pre-commit >/dev/null; then pre-commit run --all-files --hook-stage manual; else ruff check quettabench tests; fi
 

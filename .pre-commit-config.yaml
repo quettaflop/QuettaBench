@@ -14,6 +14,16 @@ repos:
     files: ^(quettabench|tests|tools)/
   - id: ruff-format
     files: ^(quettabench|tests|tools)/
+- repo: https://github.com/pre-commit/mirrors-mypy
+  rev: v2.3.1
+  hooks:
+  - id: mypy
+    # Scope and per-module ignores are in pyproject.toml; the default args would ignore every missing import.
+    args: []
+    pass_filenames: false
+    files: ^quettabench/
+    # Exact pins: numpy 2.3+ stubs need Python 3.12 syntax, and the target is 3.10.
+    additional_dependencies: [numpy==2.2.6, aiohttp==3.14.3, huggingface_hub==2.0.0, types-PyYAML==6.0.12.20260906]
 - repo: https://github.com/crate-ci/typos
   rev: v1.43.5
   hooks:

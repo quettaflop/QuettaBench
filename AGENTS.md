@@ -55,7 +55,6 @@ One line each; everything else follows section 2 "Target layout".
 - rocm, tpu and neuron launch paths are tested against mocks only; no hardware run is recorded yet. On them the loader refuses `engine.name=quettaserve` and `qbench profile` refuses the `energy` source, which reads nvidia-smi.
 - qbench runs real traces only: a workload source named `random*` or `synthetic*` that is not a file is refused.
 - `probes/base.py` imports `quettabench.engines` inside `launch_vllm`, so a remote kernel-probe host without the engine stack can still run a probe.
-- No mypy config: the lint gate is ruff and the pre-commit hooks.
 - `probes/gemm.py`, `flash_attn.py`, `gdn.py`, `vllm_allreduce.py`, `reparallel.py` and `profiling/kv_transfer.py` read `os.environ` themselves: they run as `python -m` modules outside the Config path (under torchrun or on a remote host that gets only the probe package), so torchrun's `RANK`, `WORLD_SIZE`, `LOCAL_RANK`, `LOCAL_WORLD_SIZE` and the `--ncu-bin` default `NCU_BIN` reach them only through the environment.
 - `serving_decode_grid.py`, `serving_stage_split.py` and `profiling/client_side.py` write their own CSV/JSON at `--out`, not `ProbeRow`s through `metrics/results.py`: `export/quettasim.py` reads the serving probes' files by name and in their own schema, and frontend's `--out` is a standalone dump beside the result `engine_side.py` puts in `profile.json`; `run_recorded` still writes the serving probes' `run.json`.
 - `probes/gemm.py` and `probes/moe.py` hold the GEMM shapes and MoE geometries they time: probe grids, not model configs, so they are not read from `configs/models/`.
@@ -100,7 +99,7 @@ Every writer and every process starter, exactly:
 - One mechanism per commit, about 300 changed lines (deletions not counted). The message states the mechanism.
 - Pure moves (`git mv`) are their own commits and carry nothing else.
 - Goldens pass unchanged. A fixture that has to change is a behaviour change and gets its line in `tests/golden/REPORT.md`.
-- `just test` and `just lint` are green before every commit. The lint gate is ruff and the pre-commit hooks; mypy is not part of it.
+- `just test` and `just lint` are green before every commit. The lint gate is ruff, mypy and the pre-commit hooks; mypy checks `quettabench/` as configured in `pyproject.toml`.
 - No attribution trailers in code, commits or PRs: the author field is the only authorship.
 - No em-dash in prose; write `--`.
 - Imports at the top of the file, except torch, vLLM, GPU-only and optional packages, imported where used so the CPU paths and tests load without them, and transformers and datasets, imported where used because they load slowly and only tokenizing paths need them; a new one goes in `OPTIONAL_PACKAGES` in `tests/contracts/test_imports.py`. No inline python in shell or justfile recipes. A recipe calls into the package where it can; `gpu-info`, `image`, `hooks`, `test`, `lint`, `fetch` and the `mirror-*` recipes call host tools (ssh, the backend's device tool (nvidia-smi, amd-smi, neuron-ls), docker, pre-commit, pytest, ruff, aws) or `data/fetch.py` instead, and `gpu-info` and `profile-gpu` run more than one line.
