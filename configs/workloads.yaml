@@ -115,7 +115,7 @@ terminalbench-multiturn-long:
   active: false
 
 osworld-multiturn-short:
-  # Computer-use agent; screenshots arrive as text.
+  # WebArena browser agent: each page is an accessibility tree, about 3x the word-based token estimate.
   isl_tokens: 32768
   osl_tokens: 500
   dataset: osworld-multi-turn
