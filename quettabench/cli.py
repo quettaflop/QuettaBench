@@ -40,6 +40,11 @@ def parser():
     run.add_argument(
         "--overwrite", action="store_true", help="empty a results/<run>/ that already holds a run before running"
     )
+    run.add_argument(
+        "--reuse-server",
+        action="store_true",
+        help="matrix points with one engine and hardware config share one server; needs mode.reset_prefix_cache",
+    )
     for subcommand, module in SUBCOMMANDS.items():
         sub.add_parser(subcommand, help=f"{module}.main", add_help=False)
     return ap
@@ -59,7 +64,9 @@ def main(argv=None):
         ap.print_help()
         return 2
     try:
-        return runner.main(a.run_yaml, a.overrides, a.dry_run, a.results_dir, a.allow_unverified, a.overwrite)
+        return runner.main(
+            a.run_yaml, a.overrides, a.dry_run, a.results_dir, a.allow_unverified, a.overwrite, a.reuse_server
+        )
     except (ConfigError, UnsupportedField) as e:
         sys.exit(str(e))
 

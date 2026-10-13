@@ -120,6 +120,55 @@ class GpuPick(unittest.TestCase):
         self.assertEqual((gpus, idle), ("6,7", None))
 
 
+class ReuseServer(unittest.TestCase):
+    def run_matrix(self, matrix, reset=True, reuse=True):
+        run = {
+            "model": "llama31_8b",
+            "workload": {"source": "chat-singleturn"},
+            "mode": {"reset_prefix_cache": reset},
+            "hardware": {"visible_devices": "0"},
+            "matrix": matrix,
+        }
+
+        def start(spec, out, **kw):
+            Path(out).mkdir(parents=True, exist_ok=True)
+            (Path(out) / "engine.json").write_text("{}")
+            return launcher.Handle("vllm", "http://127.0.0.1:1", 1, Path(out), mock.Mock())
+
+        with (
+            scratch_configs("sweep", run) as (path, td),
+            mock.patch.object(runner.launcher, "start", side_effect=start) as started,
+            mock.patch.object(launcher.Handle, "stop") as stop,
+            mock.patch.object(runner, "build_trace"),
+            mock.patch.object(runner, "RunWriter") as writer,
+            mock.patch.object(runner.serve, "run") as served,
+        ):
+            runner.main(path, ["engine.model=/w"], results_dir=td, allow_unverified=True, reuse_server=reuse)
+            copied = sorted(p.parent.name for p in Path(td).glob("*/engine.json"))
+        return started, stop, served, writer, copied
+
+    def test_points_that_differ_only_in_mode_share_one_server(self):
+        started, stop, served, writer, copied = self.run_matrix({"mode.concurrency": [1, 4, 16]})
+        self.assertEqual((started.call_count, served.call_count, stop.call_count), (1, 3, 1))
+        self.assertEqual(copied, ["sweep-concurrency1", "sweep-concurrency16", "sweep-concurrency4"])
+        self.assertIn(
+            mock.call("server_started_by", "sweep-concurrency1"),
+            writer.return_value.provenance.__setitem__.call_args_list,
+        )
+
+    def test_each_engine_config_gets_its_own_server(self):
+        started, stop, served, _, _ = self.run_matrix({"engine.gpu_util": [0.8, 0.9], "mode.concurrency": [1, 4]})
+        self.assertEqual((started.call_count, served.call_count, stop.call_count), (2, 4, 2))
+
+    def test_without_the_flag_every_point_starts_a_server(self):
+        started, stop, _, _, _ = self.run_matrix({"mode.concurrency": [1, 4]}, reuse=False)
+        self.assertEqual((started.call_count, stop.call_count), (2, 2))
+
+    def test_reuse_needs_a_prefix_cache_reset(self):
+        with self.assertRaisesRegex(ConfigError, "set mode.reset_prefix_cache=true"):
+            self.run_matrix({"mode.concurrency": [1, 4]}, reset=False)
+
+
 class MatrixEnv(unittest.TestCase):
     def test_each_point_gets_its_own_gpus_and_pins(self):
         run = {

@@ -255,21 +255,44 @@ def refuse_mixed_in_process(cfgs):
         )
 
 
-def run_one(cfg, out, exported=None):
-    """exported collects env names in-process points put into this process."""
+def run_one(cfg, out, exported=None, server=None, keep=False):
+    """exported collects env names in-process points put into this process; server is a shared Handle."""
     exported = set() if exported is None else exported
     if cfg.mode.mode == "probe":
         return run_probe(cfg, out)
     # Opened first so a run that raises still leaves run.json.
     writer = RunWriter(out, cfg)
     try:
-        serve_one(cfg, out, exported, writer)
+        return serve_one(cfg, out, exported, writer, server, keep)
     except BaseException as e:
         writer.fail(e)
         raise
 
 
-def serve_one(cfg, out, exported, writer):
+def reuse_groups(cfgs):
+    """Consecutive serve points with one engine and hardware config share a server."""
+    groups: list[list] = []
+    for cfg in cfgs:
+        prev = groups[-1][-1] if groups else None
+        if (
+            prev
+            and cfg.mode.mode == prev.mode.mode == "serve"
+            and (cfg.engine, cfg.hardware) == (prev.engine, prev.hardware)
+        ):
+            groups[-1].append(cfg)
+        else:
+            groups.append([cfg])
+    for group in groups:
+        if len(group) > 1 and not all(c.mode.reset_prefix_cache for c in group):
+            raise ConfigError(
+                f"--reuse-server: {group[0].run_name} and {len(group) - 1} more points share a server; "
+                "set mode.reset_prefix_cache=true so each starts with an empty prefix cache"
+            )
+    return groups
+
+
+def serve_one(cfg, out, exported, writer, server=None, keep=False):
+    """keep leaves the server up and returns its Handle; the caller stops it."""
     adapter = base.get(cfg.engine.name)
     spec = adapter.translate(cfg, out)
     gpus = cfg.hardware.visible_devices or launcher.idle_gpus(device_count(cfg.engine), cfg.hardware.backend)
@@ -285,19 +308,29 @@ def serve_one(cfg, out, exported, writer):
     writer.provenance["launch_env"] = redact(spec.env)
     # Build the trace first so a bad workload fails before a long load.
     trace = build_trace(cfg) if adapter.needs_server(cfg) else None
-    handle = (
-        launcher.start(spec, out, backend=backend, cfg=cfg, gpus=gpus, timeout_s=cfg.hardware.ready_timeout_s)
-        if adapter.needs_server(cfg)
-        else launcher.NoServer(out)
-    )
+    shared = isinstance(server, launcher.Handle)
+    if shared:
+        handle = server
+        out.mkdir(parents=True, exist_ok=True)
+        shutil.copy(handle.results_dir / "engine.json", out / "engine.json")
+        writer.provenance["server_started_by"] = handle.results_dir.name
+    elif adapter.needs_server(cfg):
+        handle = launcher.start(spec, out, backend=backend, cfg=cfg, gpus=gpus, timeout_s=cfg.hardware.ready_timeout_s)
+    else:
+        handle = launcher.NoServer(out)
     try:
         driver = adapter.driver(spec, handle, trace)
         writer.bind(handle, driver)
         if trace is None:
             trace = build_trace(cfg, tokenizer=getattr(driver, "tokenizer", None))
         serve.run(trace, driver, cfg.mode, writer, cfg.workload)
-    finally:
+    except BaseException:
+        if not shared:
+            handle.stop()
+        raise
+    if not shared and not keep:
         handle.stop()
+    return handle
 
 
 def run_failed(out):
@@ -334,7 +367,15 @@ def clear_run_dir(out, overwrite, results_dir):
     shutil.rmtree(aside)
 
 
-def main(run_yaml, overrides=(), dry=False, results_dir="results", allow_unverified=False, overwrite=False):
+def main(
+    run_yaml,
+    overrides=(),
+    dry=False,
+    results_dir="results",
+    allow_unverified=False,
+    overwrite=False,
+    reuse_server=False,
+):
     sets = [*overrides, *(["allow_unverified=true"] if allow_unverified else [])]
     cfgs = loader.load(run_yaml, sets)
     for cfg in cfgs:
@@ -345,10 +386,18 @@ def main(run_yaml, overrides=(), dry=False, results_dir="results", allow_unverif
         for cfg in cfgs:
             clear_run_dir(Path(results_dir) / cfg.run_name, overwrite, results_dir)
     exported: set[str] = set()
-    for cfg in cfgs:
-        out = Path(results_dir) / cfg.run_name
-        if dry:
-            dry_run(cfg, out)
-        else:
-            run_one(cfg, out, exported)
+    if dry:
+        for cfg in cfgs:
+            dry_run(cfg, Path(results_dir) / cfg.run_name)
+        return 0
+    for group in reuse_groups(cfgs) if reuse_server else [[cfg] for cfg in cfgs]:
+        if len(group) == 1:
+            run_one(group[0], Path(results_dir) / group[0].run_name, exported)
+            continue
+        handle = run_one(group[0], Path(results_dir) / group[0].run_name, exported, keep=True)
+        try:
+            for cfg in group[1:]:
+                run_one(cfg, Path(results_dir) / cfg.run_name, exported, server=handle)
+        finally:
+            handle.stop()
     return 0
