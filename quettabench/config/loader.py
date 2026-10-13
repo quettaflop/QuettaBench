@@ -274,6 +274,9 @@ def _validate(values, origins, allow_unverified, where):
             f"{where}: open load needs a rate-bearing arrival "
             f"(poisson, ramp, burst) or trace, got {values['workload.arrival']!r}"
         )
+    sessions = values["workload.num_sessions"]
+    if sessions is not None and (isinstance(sessions, bool) or not isinstance(sessions, int) or sessions < 1):
+        raise ConfigError(f"{where}: workload.num_sessions must be a positive integer, got {sessions!r}")
     if (
         values["mode.load"] == "open"
         and arrival == "trace"

@@ -105,7 +105,7 @@ def build_trace(cfg, tokenizer=None):
     profile = get_profile(w.source)
     if w.kind == "sessions":
         pacing = TurnPacing(w.pacing, w.tool_wait_ms, w.human_wait_ms, w.use_recorded_waits, w.use_recorded_arrivals)
-        sessions, _ = resolve_multi_turn_num_sessions(profile, cfg.mode.concurrency)
+        sessions, _ = resolve_multi_turn_num_sessions(profile, cfg.mode.concurrency, w.num_sessions)
         return session_trace(
             profile, sessions, w.seed, warmup=cfg.mode.warmup, pacing=pacing, max_turn_index=w.max_turn_index
         )

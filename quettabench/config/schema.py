@@ -114,6 +114,7 @@ class WorkloadCfg:
     use_recorded_waits: bool = False
     use_recorded_arrivals: bool = False
     max_turn_index: int | None = None
+    num_sessions: int | None = None  # None: the profile's count; at least concurrency
 
 
 @dataclass(frozen=True)

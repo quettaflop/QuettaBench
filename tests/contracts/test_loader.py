@@ -234,6 +234,12 @@ class LoaderRules(unittest.TestCase):
         open_trace["workload"]["use_recorded_arrivals"] = True
         self.one(open_trace)
 
+    def test_num_sessions_must_be_a_positive_integer(self):
+        for bad in (0, -2, 1.5, True):
+            with self.subTest(bad=bad), self.assertRaisesRegex(ConfigError, "workload.num_sessions must be"):
+                self.load({"workload": {"kind": "sessions", "num_sessions": bad}})
+        self.one({"workload": {"kind": "sessions", "num_sessions": 3}})
+
     def test_malformed_arrival(self):
         for spec in (
             "poisson",

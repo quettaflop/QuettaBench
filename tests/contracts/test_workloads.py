@@ -565,6 +565,13 @@ class ProfileRegistryTests(unittest.TestCase):
         self.assertEqual(effective, profile.num_sessions)
         self.assertEqual(source, "profile_default")
 
+    def test_workload_num_sessions_sets_the_session_count(self):
+        cfg = profile_config("swebench-multiturn-short", "sessions")
+        cfg = dataclasses.replace(cfg, workload=dataclasses.replace(cfg.workload, num_sessions=5))
+        with fixture_cwd():
+            trace = runner.build_trace(cfg)
+        self.assertEqual(len(trace.sessions()), 5)
+
 
 SEED = 7
 NUM_REQUESTS = 12
