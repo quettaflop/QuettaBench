@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import itertools
 import statistics as st
 import sys
 from pathlib import Path
@@ -69,11 +70,21 @@ def _flashinfer_moe():
     return cutlass_fused_moe
 
 
-def _time(fn) -> float:
+def _time(fn, calls: int = 1) -> float:
     """Min matches GemmTable's reduce and warm back-to-back decode kernels."""
     if _GRAPH:
-        return graph_time_us(fn)
+        return graph_time_us(fn, min_calls=calls)
     return event_time_us(fn, WARMUP, REPS, min)
+
+
+# One fixed routing rereads the same experts, from L2 once they fit (top-8 of small experts at one token).
+ROUTINGS = 16
+
+
+def _rotate(fn, routes):
+    """Calls fn with the next routing each time."""
+    it = itertools.cycle(routes)
+    return lambda: fn(*next(it))
 
 
 def _fp8_quant_config(e, inter, hidden, dev):
@@ -108,37 +119,44 @@ def sweep_expert_kernel(name, e, k, inter, hidden, tokens_axis, dev, max_mem_gb)
         try:
             x = torch.randn(m, hidden, device=dev, dtype=DT)
             # Real top-k gives imbalanced expert occupancy, so moe_align_block_size padding is representative.
-            gate = torch.randn(m, e, device=dev, dtype=DT)
             # vLLM ~0.11 added a third return value.
-            tw, tid, *_rest = fused_topk(x, gate, k, True)
+            routes = [
+                tuple(fused_topk(x, torch.randn(m, e, device=dev, dtype=DT), k, True)[:2]) for _ in range(ROUTINGS)
+            ]
             if _BACKEND == "flashinfer":
                 if _FP8:
                     raise RuntimeError(
                         "--backend flashinfer supports bf16 only here (the served CUTLASS Unquantized path)"
                     )
                 cutlass_fused_moe = _flashinfer_moe()
-                tid_i = tid.to(torch.int)
-                tw_f = tw.to(torch.float32)
                 out = torch.empty_like(x)
                 us = _time(
-                    lambda: cutlass_fused_moe(
-                        input=x,
-                        token_selected_experts=tid_i,
-                        token_final_scales=tw_f,
-                        fc1_expert_weights=w1,
-                        fc2_expert_weights=w2,
-                        output_dtype=DT,
-                        quant_scales=[],
-                        output=out,
-                    )
+                    _rotate(
+                        lambda tw, tid: cutlass_fused_moe(
+                            input=x,
+                            token_selected_experts=tid,
+                            token_final_scales=tw,
+                            fc1_expert_weights=w1,
+                            fc2_expert_weights=w2,
+                            output_dtype=DT,
+                            quant_scales=[],
+                            output=out,
+                        ),
+                        [(tw.to(torch.float32), tid.to(torch.int)) for tw, tid in routes],
+                    ),
+                    ROUTINGS,
                 )
             elif qc is not None:
-                us = _time(lambda: fused_experts(x, w1, w2, tw, tid, quant_config=qc))
+                us = _time(
+                    _rotate(lambda tw, tid: fused_experts(x, w1, w2, tw, tid, quant_config=qc), routes), ROUTINGS
+                )
             else:
                 try:
-                    us = _time(lambda: fused_experts(x, w1, w2, tw, tid, inplace=False))
+                    us = _time(
+                        _rotate(lambda tw, tid: fused_experts(x, w1, w2, tw, tid, inplace=False), routes), ROUTINGS
+                    )
                 except TypeError:  # vllm >= 0.27 dropped the inplace kwarg
-                    us = _time(lambda: fused_experts(x, w1, w2, tw, tid))
+                    us = _time(_rotate(lambda tw, tid: fused_experts(x, w1, w2, tw, tid), routes), ROUTINGS)
         except Exception as ex:  # noqa: BLE001
             print(f"  skip {name} tokens={m}: {type(ex).__name__}: {ex}", flush=True)
             continue

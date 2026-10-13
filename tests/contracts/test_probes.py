@@ -463,6 +463,15 @@ def test_gemm_rotates_enough_weights_to_span_twice_l2():
     assert seen == ["w0", "w1", "w2", "w0"]
 
 
+def test_moe_rotates_routings():
+    moe = import_without_torch("moe")
+    seen = []
+    run = moe._rotate(lambda tw, tid: seen.append((tw, tid)), [("w0", "t0"), ("w1", "t1")])
+    for _ in range(3):
+        run()
+    assert seen == [("w0", "t0"), ("w1", "t1"), ("w0", "t0")]
+
+
 def test_ncu_without_counter_access_raises_its_error():
     timing = import_without_torch("gemm")._timing
     denied = (
