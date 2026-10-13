@@ -11,5 +11,5 @@ jobs:
     # Self-hosted GPU runner whose default python has torch, vllm and pytest; the compare smoke also needs MODEL set to a Llama weights dir.
     runs-on: [self-hosted, gpu]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: python -m pytest tests/contracts/test_probes_gpu.py -v
