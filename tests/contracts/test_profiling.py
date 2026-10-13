@@ -440,9 +440,21 @@ class Gsm8k(unittest.TestCase):
             return "so 3" if ids == [97, 98] else "nothing"
 
         acc = energy_cost_accuracy.gsm8k_accuracy(generate, items)
-        self.assertEqual(acc, {"dataset": "gsm8k", "correct": 1, "n": 2, "exact_match": 0.5, "max_tokens": 256})
-        self.assertEqual(calls, [([97, 98], 256), ([99], 256)])
+        self.assertEqual(acc, {"dataset": "gsm8k", "correct": 1, "n": 2, "exact_match": 0.5, "max_tokens": 512})
+        self.assertEqual(calls, [([97, 98], 512), ([99], 512)])
         self.assertEqual(energy_cost_accuracy.gsm8k_accuracy(generate, [])["exact_match"], 0.0)
+
+    def test_a_chat_tokenizer_gets_the_template_and_instruction(self):
+        class Chat(Tokenizer):
+            chat_template = "{{ messages }}"
+
+            def apply_chat_template(self, msgs, **kw):
+                assert kw == {"add_generation_prompt": True, "tokenize": True, "return_dict": False}
+                return [1] + self(msgs[0]["content"])["input_ids"]
+
+        ids = energy_cost_accuracy.gsm8k_prompt(Chat(), "q")
+        self.assertEqual(ids, [1, ord("q")] + [ord(c) for c in energy_cost_accuracy.GSM8K_INSTRUCTION])
+        self.assertEqual(energy_cost_accuracy.gsm8k_prompt(Tokenizer(), "q"), [ord("q")])
 
 
 class HttpGenerate(unittest.TestCase):
