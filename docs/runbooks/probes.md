@@ -61,7 +61,7 @@ PYTHON_BIN=/home/<user>/miniconda3/envs/vllm/bin/python \
 ## Probes
 | probe | table (exported dir) | axis |
 |---|---|---|
-| `gemm` | `gemm/{gpu}.csv` (`--wide` → `gemm_wide/`; `--ncu` or `--graph` → `graph/`, else `eager/`) | M × (N,K) |
+| `gemm` | `gemm/{gpu}.csv` (`--wide` → `gemm_wide/`; `--ncu` or `--graph` → `graph/`, else `eager/`) | M × (N,K); weights rotate past L2, as decode reads them from memory (moe rotates routings likewise) |
 | `flash_attn` | decode → `flash_attn/{gpu}[_tpN].csv` (`graph/` with `--ncu` or `--graph`, else `eager/`); prefill → `fa3_prefill/{gpu}[_tpN].csv` (`eager/` always) | decode (kv×batch), prefill (seq) |
 | `chunked_prefill_attn` | `fa3_cross/{gpu}.csv` (`eager/`) | chunked-prefill attention per layer over (q_len × resident_tokens), the rectangular shape neither the decode (q=1) nor the full-causal prefill grid covers; on long-ISL traces it dominates prefill attention FLOPs. One run per head config (`--n-heads/--n-kv-heads/--head-dim`); the export unions runs on the head config |
 | `collective` | `collectives/{gpu}_tp{N}.csv` (`graph/`) | plain-NCCL collectives over decode-step payloads (torchrun); also prints a `tp_comm:` YAML block |

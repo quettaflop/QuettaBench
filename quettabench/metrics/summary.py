@@ -224,7 +224,7 @@ class BenchmarkSummary:
     median_ttft_ms: float = 0.0
     p90_ttft_ms: float = 0.0
     p99_ttft_ms: float = 0.0
-    # Closed loop only: without the first `concurrency` requests, which start together and queue. None when under `concurrency` remain.
+    # Closed loop only: drops the first `concurrency` requests, which start together and queue.
     steady_median_ttft_ms: float | None = None
     steady_p99_ttft_ms: float | None = None
 
