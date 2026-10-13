@@ -249,8 +249,8 @@ def main(argv=None):
     ap.add_argument(
         "--graph",
         action="store_true",
-        help="CUDA-graph-replay timing: NCU-equivalent (graphed-decode-"
-        "faithful) without needing GPU counter permissions; full grid",
+        help="CUDA-graph-replay timing without GPU counter permissions; full grid. Caches stay warm "
+        "across replays, so weights that fit in L2 time faster than under ncu, which flushes them",
     )
     ap.add_argument(
         "--dtype",

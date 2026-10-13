@@ -448,6 +448,16 @@ def test_gemm_ncu_reads_kernels_through_the_shared_parser():
     assert "Metric Value" not in (PROBES / "gemm.py").read_text()
 
 
+def test_ncu_without_counter_access_raises_its_error():
+    timing = import_without_torch("gemm")._timing
+    denied = (
+        "==ERROR== ERR_NVGPUCTRPERM - The user does not have permission to access NVIDIA GPU Performance Counters\n"
+    )
+    with mock.patch.object(timing.subprocess, "run", return_value=mock.Mock(stdout=denied)):
+        with pytest.raises(RuntimeError, match="ERR_NVGPUCTRPERM"):
+            timing.ncu_kernel_durations("pass", "ncu")
+
+
 def test_elementwise_floor_survives_a_cache_knee():
     """residual_add measured on an RTX PRO 6000: flat while L2 holds the data, then memory bound."""
     mb = [1.6, 3.1, 6.3, 12.6, 25.2, 50.3, 100.7, 201.3, 402.7, 805.3, 1610.6, 3221.2]
