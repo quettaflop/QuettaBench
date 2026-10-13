@@ -16,9 +16,10 @@ import shutil
 import statistics
 import tempfile
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from quettabench.metrics.results import RUN_MARKERS, bench_sha, write_atomic
 from quettabench.metrics.summary import SUMMARY_FIELDS, summarize_cell
@@ -35,7 +36,7 @@ def clearing(path: Path, root: Path) -> bool:
 @functools.cache
 def run_dirs(root: Path) -> dict[Path, str | None]:
     """Cached per root."""
-    runs = {}
+    runs: dict[Path, str | None] = {}
     dirs = sorted({p.parent for marker in RUN_MARKERS for p in Path(root).rglob(marker) if not clearing(p, root)})
     for run_dir in dirs:
         if run_dir.name == "server" and run_dir.parent in dirs:
@@ -70,13 +71,16 @@ def files(root: Path, pattern: str, recursive: bool = True) -> list[Path]:
     root = Path(root)
     runs = run_dirs(root)
     hits = root.rglob(pattern) if recursive else root.glob(pattern)
-    return [p for p in sorted(hits) if not clearing(p, root) and runs.get(owner(p, root, runs)) is None]
+    return [
+        p for p in sorted(hits) if not clearing(p, root) and ((d := owner(p, root, runs)) is None or runs[d] is None)
+    ]
 
 
 def finished(run_dir: Path | None) -> datetime:
     """NEVER when neither parses."""
     try:
-        provenance = json.loads((Path(run_dir) / "run.json").read_text())["provenance"]
+        # A None run_dir raises TypeError, which the except below turns into NEVER.
+        provenance = json.loads((Path(run_dir) / "run.json").read_text())["provenance"]  # type: ignore[arg-type]
         when = provenance["pulled"] if "pulled" in provenance else provenance["finished"]
         return datetime.fromisoformat(when).astimezone(timezone.utc)
     except (OSError, ValueError, KeyError, TypeError):
@@ -216,7 +220,8 @@ def _sidecar(rel: Path, by_probe: dict[str, list[Source]], runs: set[Path]) -> d
     for probe, sources in by_probe.items():
         for _, table, run, _ in (s for s in sources if s[2] in runs):
             _, args, day = _record(run)
-            for mode in {"reference"} if rel.stem.endswith("_nccl_vs_vllm") else table.timings:
+            # Only an nccl_vs_vllm table can be a Path; every other source is Rows.
+            for mode in {"reference"} if rel.stem.endswith("_nccl_vs_vllm") else table.timings:  # type: ignore[union-attr]
                 modes.add(mode)
                 reduces.add(
                     "min" if mode == "ncu" else REDUCE.get(probe) if mode in ("graph_replay", "eager") else None
@@ -357,7 +362,9 @@ def _write_csv(out: Path, fields: list[str], rows: Iterable[dict], like: Path | 
         w.writerows(rows)
 
 
-def _read_csv(rel: Path, table: Path | Rows, run: Path, key: tuple[str, ...] = ()) -> tuple[list[str], list[dict]]:
+def _read_csv(
+    rel: Path, table: Path | Rows, run: Path | Rows, key: tuple[str, ...] = ()
+) -> tuple[list[str], list[dict]]:
     """Stops the export on a bad row or an empty or unparsable key."""
     if isinstance(table, Rows):
         fields = list(dict.fromkeys(c for cells in table.cells for c in cells))
@@ -522,9 +529,8 @@ def _write(rel: Path, by_probe: dict[str, list[Source]], out: Path, old: Source 
     olds = [old] if old else []
     tp_table = rel.parts[-2] == "collectives" and not rel.stem.endswith("_nccl_vs_vllm") and rel.suffix == ".csv"
     if tp_table and set(probes) <= {"collective", "vllm_allreduce"}:
-        return _merge_collectives(
-            rel, *(used[p][-1] if p in used else None for p in ("collective", "vllm_allreduce")), out, old
-        )
+        collective, vllm = (used[p][-1] if p in used else None for p in ("collective", "vllm_allreduce"))
+        return _merge_collectives(rel, collective, vllm, out, old)
     if probes == ["elementwise", "gemm"]:
         return _union_json(rel, olds + used["elementwise"] + used["gemm"], out)
     (probe,) = probes
@@ -578,8 +584,8 @@ def run_kernel_tables(
                 meta = _sidecar(rel, by_probe, runs)
                 if old:
                     meta = _keep_sidecar(meta, table, table in runs)
-                meta = json.dumps(meta, indent=1, sort_keys=True)
-                out.with_name(out.name + ".meta.json").write_text(meta + "\n")
+                meta_text = json.dumps(meta, indent=1, sort_keys=True)
+                out.with_name(out.name + ".meta.json").write_text(meta_text + "\n")
                 order = sorted((s[0], str(s[2])) for sources in by_probe.values() for s in sources if s[2] in runs)
                 used[rel.as_posix()] = (["adopted from dest"] if table in runs else []) + list(
                     dict.fromkeys(run for _, run in order)
@@ -630,7 +636,7 @@ def build_tpn(n: int, tpn_csv: Path, out_json: Path, tp1_csv: Path, gpu: str) ->
     tp1 = _span_new_rate(tp1_csv)
     tpn = _span_new_rate(tpn_csv)
     comm = tpn["new_ms_per_tok"] - tp1["new_ms_per_tok"] / float(n)
-    payload = {
+    payload: dict[str, Any] = {
         "schema": "prefill_tp_comm.v1",
         "gpu": f"{gpu}x{n}",
         "model": leg_model(tpn_csv),
@@ -945,14 +951,15 @@ def build_roofline_utils(gpu: str, params_path: Path, trace_paths: dict[str, Pat
 
 def run_roofline_utils(results_dirs: Iterable[Path], dest: Path) -> list[Path]:
     written = []
-    params = {}
+    params: dict[str, str] = {}
     for root in map(Path, results_dirs):
         for path in files(root, "roofline_params_*.json"):
             params.setdefault(path.name.split("_")[2], path.name)  # roofline_params_<gpu>_<model>.json
     for gpu, name in sorted(params.items()):
         params_path = find(results_dirs, name)
-        trace_paths = {name: find(results_dirs, name) for name in TRACES}
-        if params_path is None or None in trace_paths.values():
+        found = {name: find(results_dirs, name) for name in TRACES}
+        trace_paths = {name: path for name, path in found.items() if path is not None}
+        if params_path is None or len(trace_paths) < len(found):
             print(f"SKIP roofline_utils {gpu}: params or pinned traces not in the results dirs")
             continue
         out_path = Path(dest) / "kernels" / f"roofline_utils_{gpu}.json"
@@ -1032,7 +1039,7 @@ def build_decode_grid(inputs: list[Path], snap_tolerance: float = 0.02, lag_upgr
             and row["steady_window_s"] > 0
             and len(history[key]) >= 2
         ):
-            per_pass = []
+            per_pass: list[tuple] | None = []
             for recs_i, name_i in history[key]:
                 ok_i = [r for r in recs_i if r.get("t_first_wall") is not None]
                 if len(ok_i) != len(recs_i):
@@ -1042,7 +1049,8 @@ def build_decode_grid(inputs: list[Path], snap_tolerance: float = 0.02, lag_upgr
                 if row_i["n_samples"] < min_samples or row_i["steady_window_s"] <= 0:
                     per_pass = None
                     break
-                per_pass.append((row_i["decode_step_ms"], row_i["p99_loop_lag_ms"], name_i))
+                # mypy loses the narrowing across the break above.
+                per_pass.append((row_i["decode_step_ms"], row_i["p99_loop_lag_ms"], name_i))  # type: ignore[union-attr]
             if per_pass is not None:
                 vals = [v for v, _, _ in per_pass]
                 spread = (max(vals) - min(vals)) / vals[-1]
@@ -1090,7 +1098,7 @@ def run_serving_decode_grid(results_dirs: Iterable[Path], dest: Path, lag_upgrad
     return written
 
 
-BUILDERS = {
+BUILDERS: dict[str, Callable[..., Any]] = {
     "tp_comm": run_tp_comm,
     "roofline_utils": run_roofline_utils,
     "serving_decode_grid": run_serving_decode_grid,
@@ -1143,12 +1151,13 @@ def export(
         raise ValueError("kernel_tables needs kernel_dest and the other builders need dest")
     names = [n for n in names if (kernel_dest if n == "kernel_tables" else dest) is not None]
     if "kernel_tables" in names:
+        assert kernel_dest is not None
         path = Path(kernel_dest) / "kernel_data" / "qbench_manifest.json"
         kernel = manifest(results_dirs)
         try:
             prior = json.loads(path.read_text()) if path.is_file() else {"kernel_tables": {}}
         except ValueError:
-            prior = None
+            prior = {}
         if not isinstance(prior, dict) or not isinstance(prior.get("kernel_tables"), dict):
             raise SystemExit(f"{path}: malformed manifest")
     written: list[Path] = []
@@ -1156,12 +1165,15 @@ def export(
     for name in names:
         run_dirs.cache_clear()
         if name == "kernel_tables":
+            assert kernel_dest is not None
             paths, tables = run_kernel_tables(results_dirs, Path(kernel_dest), replace_tables)
             written.extend(paths)
         else:
+            assert dest is not None
             written.extend(BUILDERS[name](results_dirs, Path(dest)))
     run_dirs.cache_clear()
     if any(n != "kernel_tables" for n in names):
+        assert dest is not None
         Path(dest).mkdir(parents=True, exist_ok=True)
         (Path(dest) / "manifest.json").write_text(json.dumps(manifest(results_dirs), indent=2) + "\n")
     if tables:
