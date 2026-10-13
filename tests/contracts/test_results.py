@@ -552,13 +552,12 @@ class Redaction(unittest.TestCase):
 
 
 CRASH = """
-import os, sys
+import os, sys, time
+from pathlib import Path
 from quettabench.metrics.results import RunWriter
 from quettabench.metrics.summary import RequestResult
 from tests.contracts.test_results import config
 w = RunWriter(sys.argv[1], config())
-import time
-from pathlib import Path
 n = int(sys.argv[2])
 for i in range(n):
     w.append(RequestResult(success=True, request_index=i))
