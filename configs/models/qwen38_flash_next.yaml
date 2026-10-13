@@ -1,0 +1,9 @@
+name: Qwen3.8-Flash-Next
+dtype: auto
+weights_gib: 335.3
+max_model_len: 262144
+tp: 4
+kv_bytes_per_token: 24576
+ep: true
+verified: false
+attention: hybrid

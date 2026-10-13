@@ -1,0 +1,9 @@
+name: Qwen3.8-2.4T-A95B-NVFP4
+dtype: auto
+weights_gib: 1347.9
+max_model_len: 262144
+tp: 8
+kv_bytes_per_token: 94208
+ep: true
+verified: false
+attention: hybrid
