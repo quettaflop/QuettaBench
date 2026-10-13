@@ -12,6 +12,7 @@ import subprocess
 import sys
 import time
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
@@ -30,7 +31,7 @@ from quettabench.workloads.grid import distinct_ids
 
 class Driver(ABC):
     @abstractmethod
-    def run(self, requests, *, concurrency, **kwargs):
+    def run(self, *args, **kwargs):
         """Yield one RequestResult per request."""
 
 
@@ -88,7 +89,7 @@ async def _stream_chat(
     start_time = time.perf_counter()
     ttft = None
     itl = []
-    last_token_time = None
+    last_token_time = start_time
     input_tokens = 0
     output_tokens = 0
     usage_reported = False
@@ -226,7 +227,7 @@ async def _stream_completions(
     start_time = time.perf_counter()
     ttft = None
     itl = []
-    last_token_time = None
+    last_token_time = start_time
     input_tokens = 0
     output_tokens = 0
     usage_reported = False
@@ -308,7 +309,7 @@ async def _stream_completions(
 
 
 # endpoint -> (stream body, first-token rule)
-ENDPOINTS = {
+ENDPOINTS: dict[str, tuple[Callable[..., Awaitable[RequestResult]], str]] = {
     "chat": (_stream_chat, "first_payload_chunk"),
     "completions": (_stream_completions, "first_nonempty_text"),
 }
@@ -583,6 +584,7 @@ class BenchDriver(Driver):
             stderr=subprocess.STDOUT,
             start_new_session=True,
         )
+        assert proc.stdout is not None
         try:
             with self.log_path.open("a") as fh:
                 for line in proc.stdout:
@@ -695,7 +697,7 @@ def truncated_config(model, layers):
 
 def prompt_logprob_summary(ids, prompt_logprobs):
     """Entry i scores ids[i + 1]."""
-    out = {"argmax": [], "top2_gap": [], "logprob": []}
+    out: dict[str, list] = {"argmax": [], "top2_gap": [], "logprob": []}
     for pos in range(1, len(ids)):
         entry = prompt_logprobs[pos]
         by_rank = {lp.rank: (token, lp.logprob) for token, lp in entry.items()}

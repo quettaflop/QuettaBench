@@ -296,6 +296,7 @@ class RunWriter:
             self._row_pool = ThreadPoolExecutor(max_workers=1)
 
     def _write_row(self, row):
+        assert self._fh is not None
         try:
             self._fh.write(json.dumps(row) + "\n")
             self._fh.flush()
@@ -303,6 +304,7 @@ class RunWriter:
             self._row_errors.append(e)
 
     def _close_rows(self):
+        assert self._fh is not None
         self._row_pool.shutdown(wait=True)
         self._fh.close()
         self._fh = None
@@ -310,7 +312,7 @@ class RunWriter:
     def discard(self):
         """For a run this process does not record."""
         self._close_probe_rows()
-        if self._fh is not None:
+        if self._fh is not None and self.dir is not None:
             self._close_rows()
             if not self.rows:
                 (self.dir / "requests.jsonl").unlink(missing_ok=True)
@@ -366,7 +368,7 @@ class RunWriter:
             "run_status": {"status": status, "reason": reason},
         }
         self._close_probe_rows()
-        if self._fh is not None:
+        if self._fh is not None and self.dir is not None:
             self._close_rows()
             if self._row_errors and status == "ok":
                 run["run_status"] = {
