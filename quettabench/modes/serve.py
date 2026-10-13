@@ -804,8 +804,9 @@ class SessionDispatcher:
             )
         else:
             spec = self.workload.arrival
-            # Latent: arrival "trace" gives None here, so a trace-arrival session run raises TypeError.
-            arrivals = [t / self.workload.speed for t in parse_arrival(spec, n, self.workload.seed)]  # type: ignore[union-attr]
+            offsets = parse_arrival(spec, n, self.workload.seed)
+            assert offsets is not None, "the loader refuses arrival=trace without recorded arrivals"
+            arrivals = [t / self.workload.speed for t in offsets]
             print(
                 f"  Open loop: {n} sessions arriving at "
                 f"{offered_rate(spec)} sess/s ({spec.partition(':')[0]}); "

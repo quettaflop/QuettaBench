@@ -274,6 +274,16 @@ def _validate(values, origins, allow_unverified, where):
             f"{where}: open load needs a rate-bearing arrival "
             f"(poisson, ramp, burst) or trace, got {values['workload.arrival']!r}"
         )
+    if (
+        values["mode.load"] == "open"
+        and arrival == "trace"
+        and values["workload.kind"] == "sessions"
+        and not values["workload.use_recorded_arrivals"]
+    ):
+        raise ConfigError(
+            f"{where}: open-loop sessions with arrival=trace replay the recorded session starts; "
+            "set workload.use_recorded_arrivals=true or a rate arrival (poisson, ramp, burst)"
+        )
     if values["mode.load"] == "closed" and arrival in RATE_ARRIVALS:
         raise ConfigError(
             f"{where}: arrival {values['workload.arrival']!r} is open-loop "

@@ -227,6 +227,13 @@ class LoaderRules(unittest.TestCase):
             self.one({"mode": {"load": "open"}, "workload": {"arrival": arrival}})
         self.one({"workload": {"arrival": "trace"}})
 
+    def test_open_loop_sessions_need_recorded_arrivals_for_trace(self):
+        open_trace = {"mode": {"load": "open"}, "workload": {"kind": "sessions", "arrival": "trace"}}
+        with self.assertRaisesRegex(ConfigError, "set workload.use_recorded_arrivals=true"):
+            self.load(open_trace)
+        open_trace["workload"]["use_recorded_arrivals"] = True
+        self.one(open_trace)
+
     def test_malformed_arrival(self):
         for spec in (
             "poisson",
