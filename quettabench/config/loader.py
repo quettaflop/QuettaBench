@@ -268,6 +268,16 @@ def _validate(values, origins, allow_unverified, where):
             "so use a profile from configs/workloads.yaml or a JSONL path"
         )
     drawn = values["mode.grid"] is None and values["workload.kind"] == "live" and source in live.PROFILES
+    if not drawn and origins.get("workload.num_requests", "default") != "default":
+        use = (
+            "workload.num_sessions"
+            if values["workload.kind"] == "sessions"
+            else "a shorter source file" if values["mode.grid"] is None else "the grid's cells"
+        )
+        raise ConfigError(
+            f"{where}: workload.num_requests only sizes a single-turn profile; {source!r} sets its own count, "
+            f"so use {use}"
+        )
     arrival = arrival_kind(values["workload.arrival"], values["workload.num_requests"] if drawn else 0)
     if values["mode.load"] == "open" and arrival not in RATE_ARRIVALS + ("trace",):
         raise ConfigError(

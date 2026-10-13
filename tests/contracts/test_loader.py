@@ -234,6 +234,15 @@ class LoaderRules(unittest.TestCase):
         open_trace["workload"]["use_recorded_arrivals"] = True
         self.one(open_trace)
 
+    def test_num_requests_is_refused_where_it_sizes_nothing(self):
+        for workload, use in (
+            ({"source": "/t/trace.jsonl"}, "a shorter source file"),
+            ({"kind": "sessions", "source": "chat-multiturn-short"}, "workload.num_sessions"),
+        ):
+            with self.subTest(use=use), self.assertRaisesRegex(ConfigError, use):
+                self.load({"workload": {**workload, "num_requests": 50}})
+        self.one({"workload": {"source": "chat-singleturn", "num_requests": 50}})
+
     def test_num_sessions_must_be_a_positive_integer(self):
         for bad in (0, -2, 1.5, True):
             with self.subTest(bad=bad), self.assertRaisesRegex(ConfigError, "workload.num_sessions must be"):
