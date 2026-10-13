@@ -37,136 +37,86 @@ chat-multiturn-short:
 
 swebench-multiturn-short:
   # Turns are agent steps, not conversation rounds.
+  <<: &agent {system_prompt: '', mode: multi-turn, prefix_caching_required: true, active: false}
   isl_tokens: 32768
   osl_tokens: 2000
   dataset: swebench-multi-turn
   file_path: data/swebench_trajectories.jsonl
-  system_prompt: ''
-  mode: multi-turn
-  prefix_caching_required: true
   min_turns: 13
   max_turns: 30
   num_sessions: 100
-  active: false
 
 swebench-multiturn-medium:
+  <<: *agent
   isl_tokens: 65536
   osl_tokens: 2000
   dataset: swebench-multi-turn
   file_path: data/swebench_trajectories.jsonl
-  system_prompt: ''
-  mode: multi-turn
-  prefix_caching_required: true
   min_turns: 30
   max_turns: 80
   num_sessions: 100
-  active: false
-
-swebench-multiturn-long:
-  isl_tokens: 131072
-  osl_tokens: 2000
-  dataset: swebench-multi-turn
-  file_path: data/swebench_trajectories.jsonl
-  system_prompt: ''
-  mode: multi-turn
-  prefix_caching_required: true
-  min_turns: 80
-  max_turns: 150
-  num_sessions: 50
-  active: false
 
 terminalbench-multiturn-short:
+  <<: *agent
   isl_tokens: 32768
   osl_tokens: 2000
   dataset: terminalbench-multi-turn
   file_path: data/terminalbench_trajectories.jsonl
-  system_prompt: ''
-  mode: multi-turn
-  prefix_caching_required: true
   min_turns: 2
   max_turns: 20
   num_sessions: 100
-  active: false
 
 terminalbench-multiturn-medium:
+  <<: *agent
   isl_tokens: 65536
   osl_tokens: 2000
   dataset: terminalbench-multi-turn
   file_path: data/terminalbench_trajectories.jsonl
-  system_prompt: ''
-  mode: multi-turn
-  prefix_caching_required: true
   min_turns: 20
   max_turns: 60
   num_sessions: 100
-  active: false
-
-terminalbench-multiturn-long:
-  isl_tokens: 131072
-  osl_tokens: 2000
-  dataset: terminalbench-multi-turn
-  file_path: data/terminalbench_trajectories.jsonl
-  system_prompt: ''
-  mode: multi-turn
-  prefix_caching_required: true
-  min_turns: 60
-  max_turns: 150
-  num_sessions: 50
-  active: false
 
 osworld-multiturn-short:
   # WebArena browser agent: each page is an accessibility tree, about 3x the word-based token estimate.
+  <<: *agent
   isl_tokens: 32768
   osl_tokens: 500
   dataset: osworld-multi-turn
   file_path: data/osworld_trajectories.jsonl
-  system_prompt: ''
-  mode: multi-turn
-  prefix_caching_required: true
   min_turns: 2
   max_turns: 10
   num_sessions: 50
-  active: false
 
 osworld-multiturn-medium:
+  <<: *agent
   isl_tokens: 65536
   osl_tokens: 500
   dataset: osworld-multi-turn
   file_path: data/osworld_trajectories.jsonl
-  system_prompt: ''
-  mode: multi-turn
-  prefix_caching_required: true
   min_turns: 10
   max_turns: 20
   num_sessions: 30
-  active: false
 
 osworld-multiturn-long:
+  <<: *agent
   isl_tokens: 131072
   osl_tokens: 500
   dataset: osworld-multi-turn
   file_path: data/osworld_trajectories.jsonl
-  system_prompt: ''
-  mode: multi-turn
-  prefix_caching_required: true
   min_turns: 20
   max_turns: 30
   num_sessions: 20
-  active: false
 
 deepresearch-multiturn:
   # Built by data/build_trajectories.py deepresearch; output capped at 16384 of the trace's 65536 reasoning budget.
+  <<: *agent
   isl_tokens: 32768
   osl_tokens: 16384
   dataset: deepresearch-multi-turn
   file_path: data/deepresearch_trajectories.jsonl
-  system_prompt: ''
-  mode: multi-turn
-  prefix_caching_required: true
   min_turns: 1
   max_turns: 30
   num_sessions: 300
-  active: false
 
 test:
   isl_tokens: 10
