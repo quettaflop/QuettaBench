@@ -1,4 +1,5 @@
 # Keys are WorkloadProfile's fields; omitted keys take its defaults.
+# Sessions are cut where a word-count estimate (1.35 tokens per word) passes isl_tokens; real agent prompts run 1.2x to 3x that estimate.
 
 chat-singleturn:
   # Chat-sized caps, safe for 4K-context cells.
