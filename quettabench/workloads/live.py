@@ -74,7 +74,7 @@ def mooncake_prompt_ids(record, seed=42, block_cache=None):
     """No hash_ids gives synth_ids(input_length, line index)."""
     if not record.hash_ids:
         return synth_ids(record.input_length, record.index)
-    tokens = []
+    tokens: list[int] = []
     for hash_id in record.hash_ids:
         if len(tokens) >= record.input_length:
             break
@@ -143,7 +143,7 @@ class RealTrace(Trace):
     @classmethod
     def from_jsonl(cls, path, seed=42):
         """seed only matters for Mooncake hash blocks."""
-        cache = {}
+        cache: dict = {}
         reqs = [_line_request(path, row, i, seed, cache) for i, row in _rows(path)]
         return cls(reqs, path, "jsonl")
 

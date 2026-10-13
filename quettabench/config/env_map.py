@@ -1,6 +1,8 @@
 """Environment variables to Config fields; the only os.environ reads and writes."""
 
 import os
+from collections.abc import Callable
+from typing import Any
 
 from quettabench.config.schema import ConfigError
 
@@ -26,7 +28,7 @@ CLASHES = {"QBENCH_TRACE": "QBENCH_CORPUS", "QBENCH_AFD": "QBENCH_SERVING_STYLE"
 
 
 # env var -> (Config path, converter, description).
-ENV_MAP = {
+ENV_MAP: dict[str, tuple[str, Callable[[str], Any], str]] = {
     "QBENCH_LINK_PROFILE": ("hardware.link_profile", str, "interconnect profile name"),
     "QBENCH_BACKEND": ("hardware.backend", str, "GPU backend override"),
     "QBENCH_PP": ("engine.pp", int, "pipeline-parallel size"),
@@ -72,7 +74,7 @@ def read_env(env=None, only=None):
     """Clashing vars with different values raise ConfigError."""
     if env is None:
         env = os.environ
-    out = {}
+    out: dict[str, Any] = {}
     for var, (path, convert, _) in ENV_MAP.items():
         if only is not None and var not in only:
             continue

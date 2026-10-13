@@ -54,6 +54,7 @@ def _fit_cell(key, attempts, eval_pos, kv_bytes_per_token, weights_gib):
         slope, inter, r2 = fit(xs, ys)
         if best is None or r2 > best[0]:
             best = (r2, slope, inter, xs, ys)
+    assert best is not None
     r2, slope, inter, xs, ys = best
     mean_steps = sum(xs) / len(xs)
     kv_gib = ctx * bs * kv_bytes_per_token / GIB

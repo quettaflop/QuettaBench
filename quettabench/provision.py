@@ -217,7 +217,8 @@ def run(plan, name, cfg, py, qs):
 
 
 def split_sets(items):
-    common, scoped = [], {}
+    common: list[str] = []
+    scoped: dict[str, list[str]] = {}
     for item in items:
         key, sep, value = item.partition("=")
         stem, colon, path = key.partition(":")

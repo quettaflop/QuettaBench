@@ -339,7 +339,7 @@ def main(run_yaml, overrides=(), dry=False, results_dir="results", allow_unverif
         refuse_mixed_in_process(cfgs)
         for cfg in cfgs:
             clear_run_dir(Path(results_dir) / cfg.run_name, overwrite, results_dir)
-    exported = set()
+    exported: set[str] = set()
     for cfg in cfgs:
         out = Path(results_dir) / cfg.run_name
         if dry:

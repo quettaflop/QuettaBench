@@ -35,7 +35,7 @@ def burst_arrivals(num_requests: int, n_bursts: int, burst_size: int, gap_s: flo
             f"burst spec covers {n_bursts * burst_size} requests but the trace has "
             f"{num_requests}; raise the spec or use --limit"
         )
-    times = []
+    times: list[float] = []
     for b in range(n_bursts):
         take = min(burst_size, num_requests - len(times))
         times.extend([b * gap_s] * take)
@@ -64,9 +64,9 @@ def parse_arrival(spec: str, n: int, seed: int = 42) -> list[float] | None:
         a, b = rest.split(":")
         return ramp_arrivals(n, positive(float(a), spec), positive(float(b), spec), seed)
     if kind == "burst":
-        nb, rest2 = rest.split("x")
-        size, gap = rest2.split("@")
-        nb, size, gap = int(nb), int(size), float(gap)
+        nb_raw, rest2 = rest.split("x")
+        size_raw, gap_raw = rest2.split("@")
+        nb, size, gap = int(nb_raw), int(size_raw), float(gap_raw)
         if nb <= 0 or size <= 0 or not math.isfinite(gap) or gap < 0:
             raise ValueError(f"arrival {spec!r}: bursts and size must be > 0, gap finite and >= 0")
         return burst_arrivals(n, nb, size, gap)

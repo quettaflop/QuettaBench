@@ -31,7 +31,7 @@ def clone_ids(n):
 
 def corpus_window(ids, n, slot):
     start = (slot * 997) % max(1, len(ids))
-    out = []
+    out: list[int] = []
     while len(out) < n:
         out.extend(ids[start : start + (n - len(out))])
         start = 0
@@ -101,7 +101,7 @@ class GridTrace(Trace):
 
     def requests(self):
         skip = set(self.cells_over_maxlen)
-        out = []
+        out: list[Request] = []
         for ctx, bs in self.cells:
             if (ctx, bs) in skip:
                 continue

@@ -78,14 +78,15 @@ class RequestResult:
     @property
     def tpot(self) -> float | None:
         """Falls back to (e2el - ttft) / (output_tokens - 1) when ITL covers under 80% of tokens."""
-        wall_clock_ok = self.e2el is not None and self.ttft is not None and self.output_tokens > 1
+        decode_time = None
+        if self.e2el is not None and self.ttft is not None and self.output_tokens > 1:
+            decode_time = self.e2el - self.ttft
         if self.itl:
             incomplete = self.output_tokens > 1 and len(self.itl) < 0.8 * (self.output_tokens - 1)
-            if incomplete and wall_clock_ok:
-                return (self.e2el - self.ttft) / (self.output_tokens - 1)
+            if incomplete and decode_time is not None:
+                return decode_time / (self.output_tokens - 1)
             return sum(self.itl) / len(self.itl)
-        if wall_clock_ok:
-            decode_time = self.e2el - self.ttft
+        if decode_time is not None:
             return decode_time / (self.output_tokens - 1)
         return None
 
@@ -397,11 +398,11 @@ def burst_recovery(records, sla_ttft_ms, window_s: float = 5.0):
         return None, None
     rs = sorted(records, key=lambda r: r["arrival_s"])
     t0 = rs[0]["arrival_s"]
-    buckets = {}
+    buckets: dict[int, list[float]] = {}
     for r in rs:
         buckets.setdefault(int((r["arrival_s"] - t0) // window_s), []).append(r["ttft_ms"])
     p99 = {w: percentile(v, 99, "nearest") for w, v in buckets.items()}
-    peak_w = max(p99, key=p99.get)
+    peak_w = max(p99, key=lambda w: p99[w])
     for w in sorted(p99):
         if w > peak_w and p99[w] <= sla_ttft_ms:
             return (w - peak_w) * window_s, p99[peak_w]
@@ -437,7 +438,7 @@ def aggregate(
     ttfts = []
     steady_pairs = []
     tpots = []
-    itls = []
+    itls: list[float] = []
     e2els = []
 
     for pos, r in enumerate(results):

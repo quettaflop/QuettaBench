@@ -30,7 +30,7 @@ class SessionTrace(RealTrace):
     replies: Mapping = MappingProxyType({})
 
     def sessions(self):
-        groups = {}
+        groups: dict[object, list[Request]] = {}
         for r in self.requests():
             groups.setdefault(r.session_id, []).append(r)
         return [sorted(turns, key=lambda r: (r.turn is None, r.turn or 0, r.order)) for turns in groups.values()]
@@ -99,7 +99,7 @@ class LoadedSessionTrace(SessionTrace):
             raise ValueError("No multi-turn sessions loaded -- check ShareGPT dataset and filter bounds")
         self.max_turns = max(len(s.turns) for s in sessions)
         print(f"Loaded {len(sessions)} sessions, max {self.max_turns} turns per session")
-        reqs = []
+        reqs: list[Request] = []
         for s in sessions:
             for t, req in enumerate(s.turns):
                 if max_turn_index is not None and t > max_turn_index:
@@ -147,7 +147,7 @@ class ShareGPTSessionTrace(LoadedSessionTrace):
         min_osl_tokens=50,
         **trace_kw,
     ):
-        sessions = []
+        sessions: list[MultiTurnSession] = []
         for item in load_sharegpt():
             convs = item["conversations"]
             if len(convs) < min_turns * 2:
@@ -201,14 +201,14 @@ class TrajectorySessionTrace(LoadedSessionTrace):
         context_safety_margin_tokens=0,
         **trace_kw,
     ):
-        sessions = []
+        sessions: list[MultiTurnSession] = []
         with open(path) as f:
             lines = [json.loads(line) for line in (raw.strip() for raw in f) if line]
         for entry in lines:
             raw_turns = entry.get("turns", [])
             if len(raw_turns) < min_turns:
                 continue
-            turns = []
+            turns: list[Request] = []
             for t in raw_turns[:max_turns]:
                 messages = t["messages"]
                 osl = min(t.get("osl_tokens", 500), max_osl_tokens)

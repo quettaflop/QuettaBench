@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
 from pathlib import Path
+from typing import Any
 
 from quettabench.config.schema import NOT_ASKED, EngineCfg
 
@@ -85,7 +86,7 @@ class EngineAdapter(ABC):
         return cfg.mode.grid is None
 
 
-_ADAPTERS = {}
+_ADAPTERS: dict[str, Any] = {}
 
 
 def register(adapter):

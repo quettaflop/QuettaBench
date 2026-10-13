@@ -220,7 +220,8 @@ def default_values():
     out = {}
     for section, cls in SECTIONS.items():
         for f in dataclasses.fields(cls):
-            dv = f.default_factory() if f.default is dataclasses.MISSING else f.default
+            # The stubs type default_factory as a union with MISSING.
+            dv = f.default_factory() if f.default is dataclasses.MISSING else f.default  # type: ignore[misc]
             out[f"{section}.{f.name}"] = dv
     out["run_name"] = ""
     out["provenance"] = {}

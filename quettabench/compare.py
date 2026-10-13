@@ -135,13 +135,13 @@ def _batch_bench_points(text, notes):
 def bench_log_points(path):
     """Criterion groups sync every step, so their ratios are withheld."""
     text = Path(path).read_text()
-    notes = []
+    notes: list[str] = []
     bench = _batch_bench_points(text, notes)
     loop = _loop_points(text, notes)
     if loop or bench:
         return {**bench, **loop}, "loop", notes
     pref = {name: i for i, name in enumerate(GROUP_PREF)}
-    by_key = {}
+    by_key: dict[tuple[int, int, int], tuple] = {}
     for m in POINT_RE.finditer(text):
         p = m.group("param")
         ctx, bs = (int(v) for v in p.split("x")) if "x" in p else (int(p), 1)
@@ -336,7 +336,8 @@ AGREE_MIN = 4  # leading tokens that count as agreeing
 
 
 def returned(rows, name):
-    out, seen = {}, {}
+    out: dict = {}
+    seen: dict[tuple, int] = {}
     for i, r in enumerate(rows):
         if r.get(name) is None:
             continue

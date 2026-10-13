@@ -313,7 +313,7 @@ def _grid(values, grids, step_points, where):
 
 
 def _build(values, origins, grid):
-    parts = {s: {} for s in SECTIONS}
+    parts: dict[str, dict] = {s: {} for s in SECTIONS}
     for path, value in values.items():
         section, _, name = path.partition(".")
         if section in SECTIONS:
@@ -332,7 +332,8 @@ def _build(values, origins, grid):
 
 
 def _resolve(upper, configs, grids, step_points, detect, allow_unverified, where):
-    values, origins = default_values(), {}
+    values = default_values()
+    origins: dict[str, str] = {}
 
     def pick(path):
         found = [layer[path] for _, layer in upper if path in layer]
