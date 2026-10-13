@@ -39,7 +39,12 @@ from quettabench.workloads.sessions import (
 TORCHRUN_PROBES = ("collective", "reparallel", "vllm_allreduce")
 FILE_OUT_PROBES = ("serving_decode_grid", "serving_stage_split")
 
-TRAJECTORY_DATASETS = ("swebench-multi-turn", "terminalbench-multi-turn", "osworld-multi-turn")
+TRAJECTORY_DATASETS = (
+    "swebench-multi-turn",
+    "terminalbench-multi-turn",
+    "osworld-multi-turn",
+    "deepresearch-multi-turn",
+)
 
 # Room left in the profile's isl_tokens window after a turn's prompt and output.
 CONTEXT_SAFETY_MARGIN = 256

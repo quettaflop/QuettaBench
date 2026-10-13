@@ -17,6 +17,10 @@ DATASETS = [
     "swebench_trajectories.jsonl",
     "terminalbench_trajectories.jsonl",
 ]
+# Raw traces that build_trajectories.py converts: key under the bucket -> name in data/.
+TRACES = {
+    "traces/deepresearch-9k_DeepSeek-V4-Flash-0731_rtx6000pro/dr9k-v4flash.jsonl": "dr9k-v4flash.jsonl",
+}
 
 
 def aws_s3(*args: str) -> None:
@@ -31,6 +35,8 @@ def main() -> None:
         sys.exit("R2_ENDPOINT is unset; run this as just fetch")
     for name in DATASETS:
         aws_s3("cp", f"s3://{BUCKET}/data/{name}", str(DEST / name))
+    for key, name in TRACES.items():
+        aws_s3("cp", f"s3://{BUCKET}/{key}", str(DEST / name))
     print(f"datasets in {DEST}")
 
 

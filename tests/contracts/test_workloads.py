@@ -3,6 +3,7 @@
 import contextlib
 import dataclasses
 import hashlib
+import importlib.util
 import io
 import json
 import os
@@ -48,6 +49,8 @@ from quettabench.workloads.sessions import (
     session_arrival_ms,
     turn_wait_metadata,
 )
+
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def write_jsonl(td, rows):
@@ -495,8 +498,17 @@ class ProfileRegistryTests(unittest.TestCase):
                 "chat-multiturn-short",
                 "chat-singleturn",
                 "coding-singleturn",
+                "deepresearch-multiturn",
                 "mooncake-trace",
+                "osworld-multiturn-long",
+                "osworld-multiturn-medium",
+                "osworld-multiturn-short",
+                "swebench-multiturn-long",
+                "swebench-multiturn-medium",
                 "swebench-multiturn-short",
+                "terminalbench-multiturn-long",
+                "terminalbench-multiturn-medium",
+                "terminalbench-multiturn-short",
                 "test",
             ],
         )
@@ -581,8 +593,17 @@ PINS = {
     "chat-multiturn-short": ("c51f134d3946f53d", "5e2d31c9032a7cb8"),
     "chat-singleturn": ("1b84966cb9c4facc", "84b2b4875f8a177f"),
     "coding-singleturn": ("15384d696a4d7a1b", "0359e7a0be1623a2"),
+    "deepresearch-multiturn": ("3f95464ab226ff8f", "d156d90f6eafdc78"),
     "mooncake-trace": ("a03be7b0ed268d81", "b5ed59cd7a0d7aff"),
+    "osworld-multiturn-long": ("762312f6b602cb88", "7c281ff0cc772773"),
+    "osworld-multiturn-medium": ("29482f55adf89f20", "c8ecbee41859e40e"),
+    "osworld-multiturn-short": ("ab09ce8e07b841c8", "387a35fabdd98d42"),
+    "swebench-multiturn-long": ("60b6ad3b16fac67e", "ec78ec95a027a8e7"),
+    "swebench-multiturn-medium": ("f02e03a9e1282fc2", "d4ba4dd7703c762a"),
     "swebench-multiturn-short": ("9f0aa9d6f98e5bd3", "2e44a22e09c81ea1"),
+    "terminalbench-multiturn-long": ("716641f80b9ffb4e", "06dd564c6c54ed56"),
+    "terminalbench-multiturn-medium": ("6bc7cd20245181c3", "2f91359db9f0a799"),
+    "terminalbench-multiturn-short": ("2ab1e354437af5f0", "fb564412a27e3079"),
     "test": ("7ae706bdf8eeae1d", "a5c809ace7fb7a08"),
     "cut": ("0e8b8a8de4442ecb", "c8f75cbcdd1e78dc"),
 }
@@ -647,6 +668,9 @@ def write_fixtures(root):
             for i in range(4)
         ],
         "data/swebench_trajectories.jsonl": trajectory_rows("swe"),
+        "data/terminalbench_trajectories.jsonl": trajectory_rows("tb"),
+        "data/osworld_trajectories.jsonl": trajectory_rows("os"),
+        "data/deepresearch_trajectories.jsonl": trajectory_rows("dr"),
     }
     for rel, rows in files.items():
         path = Path(root) / rel
@@ -677,7 +701,7 @@ FAKE_MODULES = {
     ),
 }
 
-MULTI_TURN = ("sharegpt-multi-turn", "swebench-multi-turn")
+MULTI_TURN = ("sharegpt-multi-turn", *runner.TRAJECTORY_DATASETS)
 
 
 def profile_config(name, kind, max_turn_index=None):
@@ -741,6 +765,31 @@ def pinned_build(name, max_turn_index=None):
 
 def runnable():
     return sorted(PROFILES)
+
+
+class DeepResearchTrajectories(unittest.TestCase):
+    def test_trace_rows_become_sessions_the_trajectory_loader_reads(self):
+        spec = importlib.util.spec_from_file_location("build_trajectories", ROOT / "data" / "build_trajectories.py")
+        build = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(build)
+        row = {
+            "session_id": "dr9k-1",
+            "turns": [
+                {"turn_index": 0, "prompt_text": tagged_words(30, "q"), "completion_tokens": 40, "retrieval_s": 0.5},
+                {"turn_index": 1, "prompt_text": tagged_words(60, "q"), "completion_tokens": 0, "retrieval_s": None},
+            ],
+        }
+        session = build.deepresearch_session(row)
+        self.assertEqual([t["osl_tokens"] for t in session["turns"]], [40, 1])
+        self.assertEqual([t["tool_ms"] for t in session["turns"]], [500.0, 0.0])
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "dr.jsonl"
+            path.write_text(json.dumps(session) + "\n")
+            trace = TrajectorySessionTrace(str(path), min_turns=1, num_sessions=1)
+        turns = trace.sessions()[0]
+        self.assertEqual([r.output_length for r in turns], [40, 1])
+        self.assertEqual(turns[0].messages, [{"role": "user", "content": tagged_words(30, "q")}])
+        self.assertEqual(turns[0].metadata["tool_wait_after_ms"], 500.0)
 
 
 class ProfileHashPins(unittest.TestCase):

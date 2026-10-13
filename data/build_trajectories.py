@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the session trajectory JSONL from ShareGPT chats or Claw-Eval traces."""
+"""Build the session trajectory JSONL from ShareGPT chats, Claw-Eval traces or DeepResearch-9k traces."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 CHAT_OUT = ROOT / "data" / "chat_trajectories.jsonl"
 CLAWEVAL_OUT = ROOT / "data" / "claweval_trajectories.jsonl"
+DEEPRESEARCH_OUT = ROOT / "data" / "deepresearch_trajectories.jsonl"
 HF_DATASET = "Aeala/ShareGPT_Vicuna_unfiltered"
 
 
@@ -343,6 +344,33 @@ def build_claweval(args: argparse.Namespace) -> int:
     return 0
 
 
+def deepresearch_session(row: dict[str, Any]) -> dict[str, Any]:
+    """Each turn's prompt_text already holds the whole context; its search time is the tool wait after it."""
+    turns = [
+        {
+            "turn_idx": t["turn_index"],
+            "messages": [{"role": "user", "content": t["prompt_text"]}],
+            "osl_tokens": max(1, t["completion_tokens"]),
+            "tool_ms": 1000.0 * (t.get("retrieval_s") or 0.0),
+        }
+        for t in row["turns"]
+    ]
+    return {"session_id": row["session_id"], "source": "deepresearch", "num_turns": len(turns), "turns": turns}
+
+
+def build_deepresearch(args: argparse.Namespace) -> int:
+    sessions = [deepresearch_session(r) for r in iter_records(args.trace) if r.get("turns")]
+    if not sessions:
+        print(f"[error] no sessions in {args.trace}")
+        return 1
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    with args.out.open("w", encoding="utf-8") as f:
+        for s in sessions:
+            f.write(json.dumps(s) + "\n")
+    print(f"[write] {args.out}: {len(sessions)} sessions, {sum(s['num_turns'] for s in sessions)} turns")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -371,6 +399,10 @@ def main() -> int:
                       help="sessions/sec when --lss-arrival=poisson")
     claw.add_argument("--lss-seed", type=int, default=42)
     claw.set_defaults(build=build_claweval)
+    dr = sub.add_parser("deepresearch", help="DeepResearch-9k traces (dr9k-v4flash.jsonl), with their recorded usage")
+    dr.add_argument("--trace", required=True, type=Path, help="the DeepResearch-9k trace JSONL")
+    dr.add_argument("--out", type=Path, default=DEEPRESEARCH_OUT)
+    dr.set_defaults(build=build_deepresearch)
     args = ap.parse_args()
     return args.build(args)
 
