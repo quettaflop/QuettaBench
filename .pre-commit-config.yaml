@@ -1,0 +1,57 @@
+default_install_hook_types:
+  - pre-commit
+  - commit-msg
+default_stages:
+  - pre-commit
+  - manual # CI
+repos:
+- repo: https://github.com/astral-sh/ruff-pre-commit
+  rev: v0.16.6
+  hooks:
+  - id: ruff-check
+    args: [--output-format, github]
+    # Same scope as `just lint`.
+    files: ^(quettabench|tests|tools)/
+  - id: ruff-format
+    files: ^(quettabench|tests|tools)/
+- repo: https://github.com/pre-commit/mirrors-mypy
+  rev: v2.3.1
+  hooks:
+  - id: mypy
+    # Scope and per-module ignores are in pyproject.toml; the default args would ignore every missing import.
+    args: []
+    pass_filenames: false
+    files: ^quettabench/
+    # Exact pins: numpy 2.3+ stubs need Python 3.12 syntax, and the target is 3.10.
+    additional_dependencies: [numpy==2.2.6, aiohttp==3.14.3, huggingface_hub==2.0.0, types-PyYAML==6.0.12.20260906]
+- repo: https://github.com/crate-ci/typos
+  rev: v1.43.5
+  hooks:
+  - id: typos
+    args: [--force-exclude]
+- repo: https://github.com/rhysd/actionlint
+  rev: v1.7.7
+  hooks:
+  - id: actionlint
+- repo: https://github.com/pre-commit/pre-commit-hooks
+  rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c # v6.0.0
+  hooks:
+  - id: check-yaml
+  - id: check-json
+  - id: end-of-file-fixer
+    exclude: ^tests/golden/fixtures/
+  - id: trailing-whitespace
+    exclude: ^tests/golden/fixtures/
+- repo: local
+  hooks:
+  - id: check-em-dash
+    name: No em-dash or en-dash under quettabench/ (write --)
+    entry: python tools/pre_commit/check_em_dash.py
+    language: python
+    files: ^quettabench/
+    types: [text]
+  - id: check-commit-msg
+    name: "Commit message: '<area>: <change>', <= 72 chars, no attribution trailers, no em-dash"
+    entry: python tools/pre_commit/check_commit_msg.py
+    language: python
+    stages: [commit-msg]

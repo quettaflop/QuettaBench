@@ -1,0 +1,18 @@
+world: 8
+timing_steps: 100
+max_seq_headroom: 28
+collective:
+  NCCL_ALGO: ''
+  NCCL_PROTO: ''
+  NCCL_P2P_LEVEL: ''
+  NCCL_IB_DISABLE: '1'
+  NCCL_SOCKET_IFNAME: ''
+  LLMSRV_NO_NVLS: ''
+  LLMSRV_TWOSHOT_MIN_BYTES: ''
+provision:
+  cache_root: /workspace/.qbench-cache
+  py: ''
+  vllm_spec: ''
+  quettaserve_repo: ''
+  quettaserve_commit: ''
+  nccl_lib: ''

@@ -1,0 +1,12 @@
+model: llama31_8b
+engine:
+  dtype: bfloat16
+  max_model_len: 17408
+  tp: 1
+  kv_cache_dtype: fp8
+  kv_bytes_per_token: 65536
+workload:
+  kind: grid
+mode:
+  mode: serve
+  grid: table_16k_bs64

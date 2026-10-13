@@ -1,0 +1,6 @@
+name: Llama-3.1-8B-Instruct
+dtype: float16
+weights_gib: 15
+max_model_len: 9216
+verified: true
+attention: dense

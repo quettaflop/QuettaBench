@@ -1,0 +1,64 @@
+{
+ "engine_unknown": {
+  "message": "unknown engine 'tgi'; known: quettaserve, vllm",
+  "type": "ValueError"
+ },
+ "ep_degree": {
+  "ep16_experts288": null,
+  "ep3_experts256": {
+   "message": "ep=3 does not divide 256 experts",
+   "type": "ValueError"
+  },
+  "ep7_experts288": {
+   "message": "ep=7 does not divide 288 experts",
+   "type": "ValueError"
+  },
+  "ep8_experts256": null
+ },
+ "link_profile": {
+  "message": "unknown link profile 'infiniband'; use pcie or nvlink",
+  "type": "ValueError"
+ },
+ "mla_without_kv_bytes_per_token": {
+  "capacity": [
+   "CAPACITY mode=FULL tp=1 dtype=bfloat16 kv_bytes_per_token=3747840 free_gib=28 kv_tokens=8079"
+  ],
+  "exit": null
+ },
+ "run_yaml_missing": "<REPO>/configs/runs/nope.yaml: no such file",
+ "serving_style": {
+  "EP8DP2": {
+   "message": "unknown serving_style 'EP8DP2'; use aggregated, disagg:<P>p<D>d, afd:<A>a<F>f, or ep<N>dp<M>",
+   "type": "ValueError"
+  },
+  "aggregate": {
+   "message": "unknown serving_style 'aggregate'; use aggregated, disagg:<P>p<D>d, afd:<A>a<F>f, or ep<N>dp<M>",
+   "type": "ValueError"
+  },
+  "disagg:0p1d": {
+   "message": "disagg needs >=1 prefill and >=1 decode: 'disagg:0p1d'",
+   "type": "ValueError"
+  },
+  "disagg:1p1d:x": {
+   "message": "unknown serving_style 'disagg:1p1d:x'; use aggregated, disagg:<P>p<D>d, afd:<A>a<F>f, or ep<N>dp<M>",
+   "type": "ValueError"
+  },
+  "disagg:2p": {
+   "message": "unknown serving_style 'disagg:2p'; use aggregated, disagg:<P>p<D>d, afd:<A>a<F>f, or ep<N>dp<M>",
+   "type": "ValueError"
+  },
+  "ep4": {
+   "message": "unknown serving_style 'ep4'; use aggregated, disagg:<P>p<D>d, afd:<A>a<F>f, or ep<N>dp<M>",
+   "type": "ValueError"
+  }
+ },
+ "grid_fit_unknown_grid": "unknown grid 'nope'; grids: llama, llama_single, table_big, table_16k_bs64, prof, deepseek, qwen, qwen3, smoke",
+ "grid_fit_unknown_prompt_mode": "unknown prompt_mode 'random'; use distinct, clone, corpus or trace",
+ "grid_fit_unverified": {
+  "deepseek": "deepseek is not validated yet; pass --allow-unverified to bring it up",
+  "glm53": "glm53 is not validated yet; pass --allow-unverified to bring it up",
+  "glm53flash": "glm53flash is not validated yet; pass --allow-unverified to bring it up",
+  "qwen": "qwen is not validated yet; pass --allow-unverified to bring it up",
+  "qwen3": "qwen3 is not validated yet; pass --allow-unverified to bring it up"
+ }
+}

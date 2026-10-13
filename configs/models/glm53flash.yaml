@@ -1,0 +1,10 @@
+name: GLM-5.3-Flash
+dtype: bfloat16
+weights_gib: 306
+max_model_len: 33280
+tp: 4
+kv_bytes_per_token: 11264
+quant: fp8
+ep: true
+verified: false
+attention: mla

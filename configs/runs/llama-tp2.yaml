@@ -1,0 +1,8 @@
+model: llama31_8b
+engine:
+  tp: 2
+workload:
+  kind: grid
+mode:
+  mode: serve
+  grid: llama_single

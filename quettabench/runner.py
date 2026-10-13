@@ -1,0 +1,403 @@
+"""qbench run: a run yaml to results/<run>/, one Config per matrix point."""
+
+import ast
+import dataclasses
+import importlib
+import json
+import os
+import re
+import shlex
+import shutil
+import sys
+import uuid
+from pathlib import Path
+
+from quettabench.config import env_map, loader
+from quettabench.config.schema import OTHER_ACCELERATORS, ConfigError, device_count
+from quettabench.engines import base, launcher
+from quettabench.metrics.results import RUN_MARKERS, RunWriter, redact
+from quettabench.modes import serve
+from quettabench.probes import base as probes_base
+from quettabench.workloads.grid import GridTrace
+from quettabench.workloads.live import (
+    PROFILES,
+    MooncakeTrace,
+    PromptJsonlTrace,
+    RealTrace,
+    ShareGPTTrace,
+    SmokeTrace,
+    get_profile,
+)
+from quettabench.workloads.sessions import (
+    ShareGPTSessionTrace,
+    TrajectorySessionTrace,
+    TurnPacing,
+    resolve_multi_turn_num_sessions,
+)
+
+# Refuse probes that need torchrun or whose output flag names a file.
+TORCHRUN_PROBES = ("collective", "reparallel", "vllm_allreduce")
+FILE_OUT_PROBES = ("serving_decode_grid", "serving_stage_split")
+
+TRAJECTORY_DATASETS = (
+    "swebench-multi-turn",
+    "terminalbench-multi-turn",
+    "osworld-multi-turn",
+    "deepresearch-multi-turn",
+)
+
+# Room left in the profile's isl_tokens window after a turn's prompt and output.
+CONTEXT_SAFETY_MARGIN = 256
+
+
+def single_turn_trace(profile, seed):
+    d = profile.dataset
+    if d == "test":
+        return SmokeTrace()
+    if d == "mooncake-trace":
+        return MooncakeTrace(profile.file_path, seed=seed)
+    if d == "jsonl":
+        return PromptJsonlTrace(profile.file_path, seed=seed)
+    if d == "sharegpt":
+        return ShareGPTTrace(
+            num_prompts=1000,
+            seed=seed,
+            system_prompt=profile.system_prompt,
+            max_isl_tokens=profile.isl_tokens,
+            max_osl_tokens=profile.osl_tokens,
+            context_safety_margin_tokens=CONTEXT_SAFETY_MARGIN,
+        )
+    if d == "sharegpt-multi-turn" or d in TRAJECTORY_DATASETS:
+        raise ValueError(f"Profile '{profile.name}' is multi-turn; run it with workload.kind=sessions")
+    raise ValueError(f"Unknown dataset type: {d}")
+
+
+def session_trace(profile, num_sessions, seed, **trace_kw):
+    if profile.dataset == "sharegpt-multi-turn":
+        return ShareGPTSessionTrace(
+            min_turns=profile.min_turns,
+            max_turns=profile.max_turns,
+            num_sessions=num_sessions,
+            seed=seed,
+            system_prompt=profile.system_prompt,
+            max_isl_tokens=profile.isl_tokens,
+            max_osl_tokens=profile.osl_tokens,
+            profile=profile,
+            **trace_kw,
+        )
+    if profile.dataset in TRAJECTORY_DATASETS:
+        return TrajectorySessionTrace(
+            profile.file_path,
+            min_turns=profile.min_turns,
+            max_turns=profile.max_turns,
+            num_sessions=num_sessions,
+            seed=seed,
+            max_isl_tokens=profile.isl_tokens,
+            max_osl_tokens=profile.osl_tokens,
+            context_safety_margin_tokens=CONTEXT_SAFETY_MARGIN,
+            profile=profile,
+            **trace_kw,
+        )
+    raise ValueError(f"Profile '{profile.name}' does not use a multi-turn dataset")
+
+
+def build_trace(cfg, tokenizer=None):
+    w = cfg.workload
+    if cfg.mode.grid is not None:
+        return GridTrace.from_config(cfg, tokenizer=tokenizer)
+    if w.source not in PROFILES:
+        return RealTrace.from_jsonl(w.source, seed=w.seed)
+    profile = get_profile(w.source)
+    if w.kind == "sessions":
+        pacing = TurnPacing(w.pacing, w.tool_wait_ms, w.human_wait_ms, w.use_recorded_waits, w.use_recorded_arrivals)
+        sessions, _ = resolve_multi_turn_num_sessions(profile, cfg.mode.concurrency, w.num_sessions)
+        return session_trace(
+            profile, sessions, w.seed, warmup=cfg.mode.warmup, pacing=pacing, max_turn_index=w.max_turn_index
+        )
+    trace = single_turn_trace(profile, w.seed)
+    if (
+        w.arrival == "trace"
+        and isinstance(trace, MooncakeTrace)
+        and trace.lap_ms == 0
+        and w.num_requests > len(trace.records)
+    ):
+        # Every lap would land on the first lap's times; a lap length is not invented.
+        raise ConfigError(
+            f"workload.arrival=trace: {profile.name}'s timestamps span 0 ms, so "
+            f"{w.num_requests} requests over its {len(trace.records)} records "
+            "wrap with no lap length; lower workload.num_requests or use "
+            "another arrival"
+        )
+    return trace.draw(w.num_requests, cfg.mode.warmup, profile)
+
+
+def launch_spec_lines(spec):
+    """Secrets are redacted."""
+    lines = [f"spec.{k} = {v!r}" for k, v in redact(dataclasses.asdict(spec)).items() if k != "cells"]
+    return lines + [
+        f"cell ctx={ctx} bs={bs} = {shlex.join(map(str, redact(cell.child_argv(cell.bench_argv))))}"
+        for ctx, bs, cell in spec.cells
+    ]
+
+
+def in_docker(cfg, adapter):
+    """Refused when nothing is launched: the driver would run the engine on the host."""
+    if cfg.hardware.launcher != "docker":
+        return False
+    if not adapter.needs_server(cfg):
+        raise ConfigError(
+            f"{cfg.run_name}: hardware.launcher=docker needs a launched server; "
+            "a grid run with mode.return_outputs builds vLLM in this process"
+        )
+    return True
+
+
+def dry_run(cfg, out):
+    print(f"== {cfg.run_name}")
+    print(cfg.dump(origins=True, scrub=redact))
+    if cfg.mode.mode != "probe":
+        adapter = base.get(cfg.engine.name)
+        spec = adapter.translate(cfg, out)
+        print("\n".join(launch_spec_lines(spec)))
+        print(f"launch = {'server' if adapter.needs_server(cfg) else 'none, the driver runs it'}")
+        if in_docker(cfg, adapter) and spec.server_argv:
+            # Dry run shows 0..n-1 unless visible_devices is set; a real run takes idle GPUs.
+            gpus = cfg.hardware.visible_devices or ",".join(str(i) for i in range(device_count(cfg.engine)))
+            argv = redact(launcher.docker_argv(spec, cfg, gpus, out))
+            print(f"docker = {shlex.join(map(str, argv))}")
+
+
+def is_probe(name):
+    """Read from source so no probe (or torch) is imported."""
+    module = sys.modules.get(f"quettabench.probes.{name}")
+    if module is not None:
+        return callable(getattr(module, "main", None))
+    if not re.fullmatch(r"[a-z][a-z0-9_]*", name or ""):
+        return False
+    path = Path(probes_base.__file__).with_name(f"{name}.py")
+    if not path.is_file():
+        return False
+    return any(isinstance(node, ast.FunctionDef) and node.name == "main" for node in ast.parse(path.read_text()).body)
+
+
+def check_probe(cfg):
+    name = cfg.mode.probe
+    if cfg.hardware.backend in OTHER_ACCELERATORS:
+        raise ConfigError(
+            f"{cfg.run_name}: the kernel probes time CUDA kernels (CUDA graphs, "
+            f"ncu, CUDA events); hardware.backend={cfg.hardware.backend} has none"
+        )
+    if not is_probe(name):
+        raise ConfigError(f"{cfg.run_name}: mode.probe {name!r} is not a module under quettabench/probes/ with a main")
+    if name in TORCHRUN_PROBES:
+        raise ConfigError(
+            f"{cfg.run_name}: probe {name} runs one process per rank under "
+            "torchrun; launch it with `just probe` or torchrun, not mode: probe"
+        )
+    if name in FILE_OUT_PROBES:
+        raise ConfigError(
+            f"{cfg.run_name}: probe {name} takes output file paths, not a run dir --out; run it with `just probe`"
+        )
+
+
+def run_probe(cfg, out):
+    check_probe(cfg)
+    argv = [*shlex.split(cfg.mode.probe_args), "--out", str(out)]
+    writer = RunWriter(out, cfg)
+    try:
+        gpus = cfg.hardware.visible_devices or launcher.idle_gpus(device_count(cfg.engine), cfg.hardware.backend)
+        env_map.export({"CUDA_VISIBLE_DEVICES": gpus})
+        writer.provenance["launch_env"] = {"CUDA_VISIBLE_DEVICES": gpus}
+        probe = importlib.import_module(f"quettabench.probes.{cfg.mode.probe}")
+        with probes_base.run_config(cfg, writer):
+            probe.main(argv)
+    except BaseException as e:
+        writer.fail(e)
+        raise
+    writer.finish({"probe": cfg.mode.probe, "argv": redact(argv)})
+
+
+def with_child_env(spec, pins, drop=()):
+    """Names in drop (exported by an earlier in-process point) are unset in the child."""
+    cells = tuple((ctx, bs, with_child_env(cell, pins, drop)) for ctx, bs, cell in spec.cells)
+    env_drop = (*spec.env_drop, *sorted(set(drop) - set(pins) - set(spec.env_drop)))
+    return dataclasses.replace(spec, env={**spec.env, **pins}, env_drop=env_drop, cells=cells)
+
+
+def in_process(cfg, adapter, spec):
+    return not adapter.needs_server(cfg) and not spec.bench_argv
+
+
+def refuse_mixed_in_process(cfgs):
+    """CUDA reads the first point's devices and pins for the whole process."""
+    seen, unnamed, points = set(), False, 0
+    for cfg in cfgs:
+        adapter = None if cfg.mode.mode == "probe" else base.get(cfg.engine.name)
+        if adapter is None or in_process(cfg, adapter, adapter.translate(cfg)):
+            hw = cfg.hardware
+            points += 1
+            unnamed = unnamed or not hw.visible_devices
+            seen.add(
+                (
+                    hw.visible_devices or device_count(cfg.engine),
+                    tuple(sorted((k, v) for k, v in hw.collective.items() if v)),
+                )
+            )
+    if len(seen) > 1:
+        raise ConfigError(
+            "in-process matrix points differ in GPUs or collective pins; "
+            "one process cannot change them, so run each point on its own"
+        )
+    if points > 1 and unnamed:
+        raise ConfigError(
+            f"{points} in-process matrix points share this process; "
+            "set hardware.visible_devices so they run on the same GPUs"
+        )
+
+
+def run_one(cfg, out, exported=None, server=None, keep=False):
+    """exported collects env names in-process points put into this process; server is a shared Handle."""
+    exported = set() if exported is None else exported
+    if cfg.mode.mode == "probe":
+        return run_probe(cfg, out)
+    # Opened first so a run that raises still leaves run.json.
+    writer = RunWriter(out, cfg)
+    try:
+        return serve_one(cfg, out, exported, writer, server, keep)
+    except BaseException as e:
+        writer.fail(e)
+        raise
+
+
+def reuse_groups(cfgs):
+    """Consecutive serve points with one engine and hardware config share a server."""
+    groups: list[list] = []
+    for cfg in cfgs:
+        prev = groups[-1][-1] if groups else None
+        if (
+            prev
+            and cfg.mode.mode == prev.mode.mode == "serve"
+            and (cfg.engine, cfg.hardware) == (prev.engine, prev.hardware)
+        ):
+            groups[-1].append(cfg)
+        else:
+            groups.append([cfg])
+    for group in groups:
+        if len(group) > 1 and not all(c.mode.reset_prefix_cache for c in group):
+            raise ConfigError(
+                f"--reuse-server: {group[0].run_name} and {len(group) - 1} more points share a server; "
+                "set mode.reset_prefix_cache=true so each starts with an empty prefix cache"
+            )
+    return groups
+
+
+def serve_one(cfg, out, exported, writer, server=None, keep=False):
+    """keep leaves the server up and returns its Handle; the caller stops it."""
+    adapter = base.get(cfg.engine.name)
+    spec = adapter.translate(cfg, out)
+    gpus = cfg.hardware.visible_devices or launcher.idle_gpus(device_count(cfg.engine), cfg.hardware.backend)
+    backend = "docker" if in_docker(cfg, adapter) else "local"
+    pins = {k: v for k, v in cfg.hardware.collective.items() if v}
+    visible, unset = launcher.visible_env(cfg.hardware.backend, gpus)
+    # docker gives cuda its GPUs by --gpus; others read this env.
+    if backend == "local" or cfg.hardware.backend in OTHER_ACCELERATORS:
+        pins.update(visible)
+    if in_process(cfg, adapter, spec):
+        exported.update(env_map.export(pins))
+    spec = with_child_env(spec, pins, {*exported, *unset})
+    writer.provenance["launch_env"] = redact(spec.env)
+    # Build the trace first so a bad workload fails before a long load.
+    trace = build_trace(cfg) if adapter.needs_server(cfg) else None
+    shared = isinstance(server, launcher.Handle)
+    if shared:
+        handle = server
+        out.mkdir(parents=True, exist_ok=True)
+        shutil.copy(handle.results_dir / "engine.json", out / "engine.json")
+        writer.provenance["server_started_by"] = handle.results_dir.name
+    elif adapter.needs_server(cfg):
+        handle = launcher.start(spec, out, backend=backend, cfg=cfg, gpus=gpus, timeout_s=cfg.hardware.ready_timeout_s)
+    else:
+        handle = launcher.NoServer(out)
+    try:
+        driver = adapter.driver(spec, handle, trace)
+        writer.bind(handle, driver)
+        if trace is None:
+            trace = build_trace(cfg, tokenizer=getattr(driver, "tokenizer", None))
+        serve.run(trace, driver, cfg.mode, writer, cfg.workload)
+    except BaseException:
+        if not shared:
+            handle.stop()
+        raise
+    if not shared and not keep:
+        handle.stop()
+    return handle
+
+
+def run_failed(out):
+    try:
+        return json.loads((out / "run.json").read_text())["run_status"]["status"] == "failed"
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+
+
+def clear_run_dir(out, overwrite, results_dir):
+    """requests.jsonl appends: a dir with files is refused unless overwrite or failed."""
+    if out.is_symlink():
+        raise ConfigError(f"{out} is a symlink; qbench empties only a run dir it made")
+    if not out.is_dir() or not any(out.iterdir()):
+        return
+    if out.resolve().parent != Path(results_dir).resolve():
+        raise ConfigError(f"{out} is not a run dir directly under {results_dir}")
+    if not any((out / marker).exists() for marker in RUN_MARKERS):
+        raise ConfigError(
+            f"{out} holds no {', '.join(RUN_MARKERS[:-1])} or {RUN_MARKERS[-1]}; "
+            "qbench did not make it, so it is never emptied"
+        )
+    if not (overwrite or run_failed(out)):
+        raise ConfigError(f"{out} already holds a run; pass --overwrite to replace it")
+    # os.rename moves the entry itself, never a symlink's target.
+    aside = out.parent / f".clearing-{uuid.uuid4().hex}-{out.name}"
+    os.rename(out, aside)
+    if aside.is_symlink() or not aside.is_dir():
+        os.rename(aside, out)
+        raise ConfigError(f"{out} became a symlink or a file while being emptied; left as it is")
+    # Markers first: a cut-short rmtree must not leave a dir that reads as a run.
+    for marker in RUN_MARKERS:
+        (aside / marker).unlink(missing_ok=True)
+    shutil.rmtree(aside)
+
+
+def main(
+    run_yaml,
+    overrides=(),
+    dry=False,
+    results_dir="results",
+    allow_unverified=False,
+    overwrite=False,
+    reuse_server=False,
+):
+    sets = [*overrides, *(["allow_unverified=true"] if allow_unverified else [])]
+    cfgs = loader.load(run_yaml, sets)
+    for cfg in cfgs:
+        if cfg.mode.mode == "probe":
+            check_probe(cfg)
+    if not dry:
+        refuse_mixed_in_process(cfgs)
+        for cfg in cfgs:
+            clear_run_dir(Path(results_dir) / cfg.run_name, overwrite, results_dir)
+    exported: set[str] = set()
+    if dry:
+        for cfg in cfgs:
+            dry_run(cfg, Path(results_dir) / cfg.run_name)
+        return 0
+    for group in reuse_groups(cfgs) if reuse_server else [[cfg] for cfg in cfgs]:
+        if len(group) == 1:
+            run_one(group[0], Path(results_dir) / group[0].run_name, exported)
+            continue
+        handle = run_one(group[0], Path(results_dir) / group[0].run_name, exported, keep=True)
+        try:
+            for cfg in group[1:]:
+                run_one(cfg, Path(results_dir) / cfg.run_name, exported, server=handle)
+        finally:
+            handle.stop()
+    return 0

@@ -1,0 +1,17 @@
+>>> ctx=1024 bs=1 world=1 max_seq=1152 link=nvlink nccl=auto/auto
+LOOP ctx=1024 bs=1 tp=1 kv=fp16 ms_per_step=3.912 k=100
+>>> ctx=1024 bs=16 world=1 max_seq=1152 link=nvlink nccl=auto/auto
+LOOP ctx=1024 bs=16 tp=1 kv=fp16 ms_per_step=4.807 k=100
+>>> ctx=4096 bs=64 world=1 max_seq=4224 link=nvlink nccl=auto/auto
+LOOP ctx=4096 bs=64 tp=1 kv=fp16 ms_per_step=15.002 k=100
+>>> ctx=4096 bs=8 world=1 max_seq=4224 link=nvlink nccl=auto/auto
+LOOP ctx=4096 bs=8 tp=1 kv=bf16 ms_per_step=5.600 k=100
+>>> ctx=100 bs=8 world=1 max_seq=228 link=nvlink nccl=auto/auto kern=rust ar=0 mode=eager gdn_dir=none
+LOOP ctx=100 bs=8 tp=1 kv=fp16 ms_per_step=4.420 k=100 gdn=Tiled mode=eager
+>>> ctx=100 bs=1 world=1 max_seq=228 link=nvlink nccl=auto/auto
+[batch_bench] world=1 bs=1 max_seq=228 layers=all prompt=100 steps=92: median 3.801 ms/step, mean 3.850, best 3.790 -> 263.1 tok/s (median)
+[batch_bench] world=1 bs=1 max_seq=228 layers=4 prompt=100 steps=92: median 0.501 ms/step, mean 0.510, best 0.499 -> 1996.0 tok/s (median)
+>>> ctx=8192 bs=1 world=1 max_seq=8320 link=nvlink nccl=auto/auto
+LOOP ctx=8192 bs=1 tp=1 kv=fp16 ms_per_step=4.950 k=100
+>>> ctx=2048 bs=4 world=2 max_seq=2176 link=nvlink nccl=auto/auto
+LOOP ctx=2048 bs=4 tp=2 kv=fp16 ms_per_step=4.100 k=100

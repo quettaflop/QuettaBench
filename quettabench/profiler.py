@@ -1,0 +1,228 @@
+"""Attach-only profiler: merges source sections into profile.json for a run."""
+
+import argparse
+import json
+import shlex
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+from quettabench.config.schema import OTHER_ACCELERATORS
+from quettabench.metrics.results import write_atomic
+from quettabench.profiling import energy_cost_accuracy, engine_side
+
+SOURCES = ("metrics", "energy", "cost", "gsm8k", "frontend", "pd_proxy_overhead", "kv_transfer", "kernels")
+# Energy first: it waits for the run to end.
+ORDER = ("energy", "metrics", "gsm8k", "frontend", "pd_proxy_overhead", "cost", "kv_transfer", "kernels")
+SECTION = {"gsm8k": "accuracy"}
+
+
+def read_json(path):
+    path = Path(path)
+    return json.loads(path.read_text()) if path.exists() else None
+
+
+def run_totals(run):
+    s = run.get("summary") or {}
+    return (s.get("out_tokens", s.get("total_output_tokens", 0)), s.get("wall_s", s.get("duration_s", 0.0)))
+
+
+def check_args(sources, args):
+    unknown = sorted(set(sources) - set(SOURCES))
+    if unknown:
+        raise ValueError(f"unknown source(s) {unknown}; known: {', '.join(SOURCES)}")
+    needs = {"cost": ("gpu_cost_hr",), "gsm8k": ("gsm8k_file", "gsm8k_n"), "kernels": ("kernel_steps",)}
+    for source in sources:
+        missing = [k for k in needs.get(source, ()) if args.get(k) is None]
+        if missing:
+            raise ValueError(f"source {source} needs {', '.join(missing)}")
+
+
+def measure_energy(
+    results_dir, engine, config, nvidia_smi="nvidia-smi", interval_s=1.0, energy_s=None, poll_s=0.5, timeout_s=86400
+):
+    """Window is "run" or "fixed"."""
+    run_json = Path(results_dir) / "run.json"
+    if energy_s is None and run_json.exists():
+        raise ValueError("run.json already exists: the run is over; pass energy_s for a fixed window")
+    sampler = energy_cost_accuracy.PowerSampler(
+        energy_cost_accuracy.energy_devices(engine, config), nvidia_smi=nvidia_smi, interval_s=interval_s
+    ).start()
+    deadline = time.monotonic() + (energy_s if energy_s is not None else timeout_s)
+    while time.monotonic() < deadline and (energy_s is not None or not run_json.exists()):
+        time.sleep(poll_s)
+    return sampler.stop(), "fixed" if energy_s is not None else "run"
+
+
+def _endpoint(engine):
+    if not engine or not engine.get("endpoint"):
+        raise ValueError("no engine.json endpoint to attach to")
+    return engine["endpoint"]
+
+
+def run_source(source, results_dir, engine, args, energy):
+    """run.json is read fresh: energy may have waited for it."""
+    run = read_json(Path(results_dir) / "run.json") or {}
+    config = run.get("config") or {}
+    model = args.get("served_model") or (config.get("engine") or {}).get("model")
+    if source == "energy":
+        samples, window = energy
+        devices = energy_cost_accuracy.energy_devices(engine, config)
+        section = energy_cost_accuracy.energy_section(samples, args.get("interval_s", 1.0), run_totals(run)[0], devices)
+        if window == "fixed":
+            section["joules_per_token"] = None
+        return {**section, "window": window}
+    if source == "metrics":
+        return engine_side.metrics_section(engine_side.scrape_metrics(_endpoint(engine)))
+    if source == "cost":
+        if not run:
+            raise ValueError("cost needs run.json")
+        out_tokens, wall_s = run_totals(run)
+        e = config.get("engine") or {}
+        return energy_cost_accuracy.cost_section(
+            args["gpu_cost_hr"], e.get("tp", 1) * e.get("pp", 1), wall_s, out_tokens
+        )
+    if source == "gsm8k":
+        items = energy_cost_accuracy.load_gsm8k(
+            args["gsm8k_file"], args.get("tokenizer") or model, args["gsm8k_n"], tokenizer=args.get("gsm8k_tokenizer")
+        )
+        generate = args.get("gsm8k_generate") or energy_cost_accuracy.http_generate(_endpoint(engine), model)
+        return energy_cost_accuracy.gsm8k_accuracy(generate, items)
+    if source == "frontend":
+        return engine_side.serving_frontend(_endpoint(engine), model, args.get("frontend_argv"))
+    if source == "pd_proxy_overhead":
+        return engine_side.pd_proxy_overhead(_endpoint(engine), model, args.get("pd_proxy_overhead_argv"))
+    if source == "kv_transfer":
+        return engine_side.kv_transfer(args.get("kv_transfer_run") or results_dir)
+    if source == "kernels":
+        return engine_side.kernel_summary(
+            results_dir, args["kernel_steps"], args.get("kernel_window"), args.get("kernel_subtract")
+        )
+    raise ValueError(f"unknown source {source}")
+
+
+def profile(results_dir, sources, **source_args):
+    """source_args are the flags in get_args, underscored."""
+    check_args(sources, source_args)
+    results_dir = Path(results_dir)
+    engine = read_json(results_dir / "engine.json") or {}
+    out = read_json(results_dir / "profile.json") or {}
+    backend = (((read_json(results_dir / "run.json") or {}).get("config") or {}).get("hardware") or {}).get("backend")
+    if "energy" in sources and backend in OTHER_ACCELERATORS:
+        raise ValueError(f"energy reads nvidia-smi, which needs hardware.backend=cuda; this run's is {backend}")
+    errors = {}
+    energy = None
+    for source in [s for s in ORDER if s in sources]:
+        try:
+            if source == "energy":
+                run = read_json(results_dir / "run.json") or {}
+                energy = measure_energy(
+                    results_dir,
+                    engine,
+                    run.get("config"),
+                    **{k: source_args[k] for k in ("nvidia_smi", "interval_s", "energy_s") if k in source_args},
+                )
+            out[SECTION.get(source, source)] = run_source(source, results_dir, engine, source_args, energy)
+        except Exception as e:  # noqa: BLE001  one broken source must not lose the others
+            errors[source] = f"{type(e).__name__}: {e}"
+    out["traces"] = engine_side.collect_armed_traces(results_dir, engine.get("instrumentation", "none"))
+    out["sources_run"] = sorted(set(out.get("sources_run", [])) | (set(sources) - set(errors)))
+    out["errors"] = errors
+    out["profiled_at"] = datetime.now(timezone.utc).isoformat()
+    write_atomic(results_dir / "profile.json", json.dumps(out, indent=2, sort_keys=True) + "\n")
+    return out
+
+
+def profile_tag_lines(profile):
+    """ENERGY_SUMMARY only for a run window."""
+    lines = []
+    e = profile.get("energy")
+    if e is not None and e.get("joules_per_token") is not None:
+        lines.append(
+            f"ENERGY_SUMMARY joules={e['joules']:.0f} "
+            f"joules_per_token={e['joules_per_token']:.3f} scope=gpu_board "
+            f"devices={e['devices']} samples={e['samples']}"
+        )
+    a = profile.get("accuracy")
+    if a is not None:
+        lines.append(f"ACCURACY_SUMMARY dataset=gsm8k exact_match={a['exact_match']:.3f} n={a['n']}")
+    c = profile.get("cost")
+    if c is not None:
+        lines.append(
+            f"COST_SUMMARY usd={c['usd']:.4f} usd_per_m_out_tokens={c['usd_per_m_out_tokens']:.2f} "
+            f"gpu_cost_hr={c['gpu_cost_hr']} devices={c['devices']} wall_s={c['wall_s']:.1f}"
+        )
+    return lines
+
+
+def print_profile_tag_lines(profile):
+    for line in profile_tag_lines(profile):
+        print(line, flush=True)
+
+
+def get_args(argv=None):
+    ap = argparse.ArgumentParser(
+        prog="qbench profile", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument("--run", required=True, help="results/<run> directory")
+    ap.add_argument(
+        "--source",
+        action="append",
+        required=True,
+        choices=SOURCES,
+        help="repeatable. metrics: one scrape of the endpoint; energy: board power until run.json "
+        "appears; cost: USD over the run's wall time; gsm8k: exact match through the endpoint; "
+        "frontend, pd_proxy_overhead: live-server probes; kv_transfer: a NIXL probe run's rows.jsonl; "
+        "kernels: per-kernel GPU time per decode step from the armed nsys trace",
+    )
+    ap.add_argument("--nvidia-smi", default="nvidia-smi")
+    ap.add_argument("--interval-s", type=float, default=1.0)
+    ap.add_argument("--energy-s", type=float, help="fixed energy window instead of the run's")
+    ap.add_argument("--gpu-cost-hr", type=float, help="USD per GPU-hour")
+    ap.add_argument("--gsm8k-file", help="GSM8k JSONL ({question, answer})")
+    ap.add_argument("--gsm8k-n", type=int)
+    ap.add_argument("--tokenizer", help="gsm8k tokenizer; default config engine.model")
+    ap.add_argument("--served-model", help="OpenAI model name; default config engine.model")
+    ap.add_argument(
+        "--frontend-args",
+        default="",
+        help='frontend source flags, e.g. "--gpu-label <gpu> --device-yaml ../QuettaSim/device_spec/<gpu>.yaml"',
+    )
+    ap.add_argument("--pd-proxy-overhead-args", default="", help="pd_proxy_overhead flags")
+    ap.add_argument(
+        "--kv-transfer-run",
+        help="the kv_transfer probe's run dir, results/probes/<gpu>/kv_transfer/<run-id>; default --run",
+    )
+    ap.add_argument("--kernel-steps", type=int, help="decode steps the kernels window holds")
+    ap.add_argument("--kernel-window", help="NVTX range the kernels source reads (default all)")
+    ap.add_argument("--kernel-subtract", help="NVTX range whose kernel totals come off first")
+    return ap, ap.parse_args(argv)
+
+
+def main(argv=None):
+    ap, a = get_args(argv)
+    args = {
+        "nvidia_smi": a.nvidia_smi,
+        "interval_s": a.interval_s,
+        "energy_s": a.energy_s,
+        "gpu_cost_hr": a.gpu_cost_hr,
+        "gsm8k_file": a.gsm8k_file,
+        "gsm8k_n": a.gsm8k_n,
+        "tokenizer": a.tokenizer,
+        "served_model": a.served_model,
+        "frontend_argv": shlex.split(a.frontend_args),
+        "pd_proxy_overhead_argv": shlex.split(a.pd_proxy_overhead_args),
+        "kv_transfer_run": a.kv_transfer_run,
+        "kernel_steps": a.kernel_steps,
+        "kernel_window": a.kernel_window,
+        "kernel_subtract": a.kernel_subtract,
+    }
+    try:
+        out = profile(a.run, a.source, **args)
+    except ValueError as e:
+        ap.error(str(e))
+    print_profile_tag_lines(out)
+    for source, message in out["errors"].items():
+        print(f"PROFILE_ERROR source={source} {message}", file=sys.stderr)
+    return 1 if out["errors"] else 0

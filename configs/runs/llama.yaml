@@ -1,0 +1,6 @@
+model: llama31_8b
+workload:
+  kind: grid
+mode:
+  mode: serve
+  grid: llama

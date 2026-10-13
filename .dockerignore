@@ -1,0 +1,9 @@
+.git
+results
+logs
+*.log
+.venv
+.claude
+.omc
+**/__pycache__
+data/*.jsonl

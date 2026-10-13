@@ -1,0 +1,572 @@
+{
+ "deepseek": {
+  "diff_grid_fit_vs_trace_serve": {},
+  "trace_serve": {
+   "disable_log_stats": true,
+   "dtype": "bfloat16",
+   "enable_expert_parallel": true,
+   "enable_prefix_caching": false,
+   "gpu_memory_utilization": 0.9,
+   "kv_cache_dtype": "fp8_ds_mla",
+   "max_model_len": 33280,
+   "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
+   "tensor_parallel_size": 8,
+   "trust_remote_code": true
+  },
+  "grid_fit": {
+   "disable_log_stats": true,
+   "dtype": "bfloat16",
+   "enable_expert_parallel": true,
+   "enable_prefix_caching": false,
+   "gpu_memory_utilization": 0.9,
+   "kv_cache_dtype": "fp8_ds_mla",
+   "max_model_len": 33280,
+   "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
+   "tensor_parallel_size": 8,
+   "trust_remote_code": true
+  },
+  "grid_fit_env_override": {
+   "disable_log_stats": true,
+   "dtype": "bfloat16",
+   "enable_expert_parallel": true,
+   "enable_prefix_caching": false,
+   "gpu_memory_utilization": 0.85,
+   "kv_cache_dtype": "fp8_ds_mla",
+   "max_model_len": 33280,
+   "model": "<MODEL>",
+   "pipeline_parallel_size": 2,
+   "tensor_parallel_size": 8,
+   "trust_remote_code": true
+  },
+  "grid_fit_nograph": {
+   "compilation_config": {
+    "cudagraph_mode": "NONE"
+   },
+   "disable_log_stats": true,
+   "dtype": "bfloat16",
+   "enable_expert_parallel": true,
+   "enable_prefix_caching": false,
+   "gpu_memory_utilization": 0.9,
+   "kv_cache_dtype": "fp8_ds_mla",
+   "max_model_len": 33280,
+   "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
+   "tensor_parallel_size": 8,
+   "trust_remote_code": true
+  }
+ },
+ "glm53": {
+  "diff_grid_fit_vs_trace_serve": {},
+  "trace_serve": {
+   "disable_log_stats": true,
+   "dtype": "bfloat16",
+   "enable_expert_parallel": true,
+   "enable_prefix_caching": false,
+   "gpu_memory_utilization": 0.9,
+   "max_model_len": 33280,
+   "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
+   "quantization": "fp8",
+   "tensor_parallel_size": 8,
+   "trust_remote_code": true
+  },
+  "grid_fit": {
+   "disable_log_stats": true,
+   "dtype": "bfloat16",
+   "enable_expert_parallel": true,
+   "enable_prefix_caching": false,
+   "gpu_memory_utilization": 0.9,
+   "max_model_len": 33280,
+   "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
+   "quantization": "fp8",
+   "tensor_parallel_size": 8,
+   "trust_remote_code": true
+  },
+  "grid_fit_env_override": {
+   "disable_log_stats": true,
+   "dtype": "bfloat16",
+   "enable_expert_parallel": true,
+   "enable_prefix_caching": false,
+   "gpu_memory_utilization": 0.85,
+   "max_model_len": 33280,
+   "model": "<MODEL>",
+   "pipeline_parallel_size": 2,
+   "quantization": "fp8",
+   "tensor_parallel_size": 8,
+   "trust_remote_code": true
+  },
+  "grid_fit_nograph": {
+   "compilation_config": {
+    "cudagraph_mode": "NONE"
+   },
+   "disable_log_stats": true,
+   "dtype": "bfloat16",
+   "enable_expert_parallel": true,
+   "enable_prefix_caching": false,
+   "gpu_memory_utilization": 0.9,
+   "max_model_len": 33280,
+   "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
+   "quantization": "fp8",
+   "tensor_parallel_size": 8,
+   "trust_remote_code": true
+  }
+ },
+ "glm53flash": {
+  "diff_grid_fit_vs_trace_serve": {},
+  "trace_serve": {
+   "disable_log_stats": true,
+   "dtype": "bfloat16",
+   "enable_expert_parallel": true,
+   "enable_prefix_caching": false,
+   "gpu_memory_utilization": 0.9,
+   "max_model_len": 33280,
+   "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
+   "quantization": "fp8",
+   "tensor_parallel_size": 4,
+   "trust_remote_code": true
+  },
+  "grid_fit": {
+   "disable_log_stats": true,
+   "dtype": "bfloat16",
+   "enable_expert_parallel": true,
+   "enable_prefix_caching": false,
+   "gpu_memory_utilization": 0.9,
+   "max_model_len": 33280,
+   "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
+   "quantization": "fp8",
+   "tensor_parallel_size": 4,
+   "trust_remote_code": true
+  },
+  "grid_fit_env_override": {
+   "disable_log_stats": true,
+   "dtype": "bfloat16",
+   "enable_expert_parallel": true,
+   "enable_prefix_caching": false,
+   "gpu_memory_utilization": 0.85,
+   "max_model_len": 33280,
+   "model": "<MODEL>",
+   "pipeline_parallel_size": 2,
+   "quantization": "fp8",
+   "tensor_parallel_size": 4,
+   "trust_remote_code": true
+  },
+  "grid_fit_nograph": {
+   "compilation_config": {
+    "cudagraph_mode": "NONE"
+   },
+   "disable_log_stats": true,
+   "dtype": "bfloat16",
+   "enable_expert_parallel": true,
+   "enable_prefix_caching": false,
+   "gpu_memory_utilization": 0.9,
+   "max_model_len": 33280,
+   "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
+   "quantization": "fp8",
+   "tensor_parallel_size": 4,
+   "trust_remote_code": true
+  }
+ },
+ "llama": {
+  "diff_grid_fit_vs_trace_serve": {},
+  "trace_serve": {
+   "disable_log_stats": true,
+   "dtype": "float16",
+   "enable_prefix_caching": false,
+   "gpu_memory_utilization": 0.9,
+   "max_model_len": 9216,
+   "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
+   "tensor_parallel_size": 1,
+   "trust_remote_code": true
+  },
+  "grid_fit": {
+   "disable_log_stats": true,
+   "dtype": "float16",
+   "enable_prefix_caching": false,
+   "gpu_memory_utilization": 0.9,
+   "max_model_len": 9216,
+   "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
+   "tensor_parallel_size": 1,
+   "trust_remote_code": true
+  },
+  "grid_fit_env_override": {
+   "disable_log_stats": true,
+   "dtype": "float16",
+   "enable_prefix_caching": false,
+   "gpu_memory_utilization": 0.85,
+   "max_model_len": 9216,
+   "model": "<MODEL>",
+   "pipeline_parallel_size": 2,
+   "tensor_parallel_size": 1,
+   "trust_remote_code": true
+  },
+  "grid_fit_nograph": {
+   "compilation_config": {
+    "cudagraph_mode": "NONE"
+   },
+   "disable_log_stats": true,
+   "dtype": "float16",
+   "enable_prefix_caching": false,
+   "gpu_memory_utilization": 0.9,
+   "max_model_len": 9216,
+   "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
+   "tensor_parallel_size": 1,
+   "trust_remote_code": true
+  }
+ },
+ "llama-big": {
+  "diff_grid_fit_vs_trace_serve": {},
+  "trace_serve": {
+   "disable_log_stats": true,
+   "dtype": "float16",
+   "enable_prefix_caching": false,
+   "gpu_memory_utilization": 0.9,
+   "max_model_len": 17408,
+   "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
+   "tensor_parallel_size": 1,
+   "trust_remote_code": true
+  },
+  "grid_fit": {
+   "disable_log_stats": true,
+   "dtype": "float16",
+   "enable_prefix_caching": false,
+   "gpu_memory_utilization": 0.9,
+   "max_model_len": 17408,
+   "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
+   "tensor_parallel_size": 1,
+   "trust_remote_code": true
+  },
+  "grid_fit_env_override": {
+   "disable_log_stats": true,
+   "dtype": "float16",
+   "enable_prefix_caching": false,
+   "gpu_memory_utilization": 0.85,
+   "max_model_len": 17408,
+   "model": "<MODEL>",
+   "pipeline_parallel_size": 2,
+   "tensor_parallel_size": 1,
+   "trust_remote_code": true
+  },
+  "grid_fit_nograph": {
+   "compilation_config": {
+    "cudagraph_mode": "NONE"
+   },
+   "disable_log_stats": true,
+   "dtype": "float16",
+   "enable_prefix_caching": false,
+   "gpu_memory_utilization": 0.9,
+   "max_model_len": 17408,
+   "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
+   "tensor_parallel_size": 1,
+   "trust_remote_code": true
+  }
+ },
+ "llama-big-fp8kv": {
+  "diff_grid_fit_vs_trace_serve": {},
+  "trace_serve": {
+   "disable_log_stats": true,
+   "dtype": "bfloat16",
+   "enable_prefix_caching": false,
+   "gpu_memory_utilization": 0.9,
+   "kv_cache_dtype": "fp8",
+   "max_model_len": 17408,
+   "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
+   "tensor_parallel_size": 1,
+   "trust_remote_code": true
+  },
+  "grid_fit": {
+   "disable_log_stats": true,
+   "dtype": "bfloat16",
+   "enable_prefix_caching": false,
+   "gpu_memory_utilization": 0.9,
+   "kv_cache_dtype": "fp8",
+   "max_model_len": 17408,
+   "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
+   "tensor_parallel_size": 1,
+   "trust_remote_code": true
+  },
+  "grid_fit_env_override": {
+   "disable_log_stats": true,
+   "dtype": "bfloat16",
+   "enable_prefix_caching": false,
+   "gpu_memory_utilization": 0.85,
+   "kv_cache_dtype": "fp8",
+   "max_model_len": 17408,
+   "model": "<MODEL>",
+   "pipeline_parallel_size": 2,
+   "tensor_parallel_size": 1,
+   "trust_remote_code": true
+  },
+  "grid_fit_nograph": {
+   "compilation_config": {
+    "cudagraph_mode": "NONE"
+   },
+   "disable_log_stats": true,
+   "dtype": "bfloat16",
+   "enable_prefix_caching": false,
+   "gpu_memory_utilization": 0.9,
+   "kv_cache_dtype": "fp8",
+   "max_model_len": 17408,
+   "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
+   "tensor_parallel_size": 1,
+   "trust_remote_code": true
+  }
+ },
+ "llama-tp1": {
+  "diff_grid_fit_vs_trace_serve": {},
+  "trace_serve": {
+   "disable_log_stats": true,
+   "dtype": "float16",
+   "enable_prefix_caching": false,
+   "gpu_memory_utilization": 0.9,
+   "max_model_len": 9216,
+   "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
+   "tensor_parallel_size": 1,
+   "trust_remote_code": true
+  },
+  "grid_fit": {
+   "disable_log_stats": true,
+   "dtype": "float16",
+   "enable_prefix_caching": false,
+   "gpu_memory_utilization": 0.9,
+   "max_model_len": 9216,
+   "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
+   "tensor_parallel_size": 1,
+   "trust_remote_code": true
+  },
+  "grid_fit_env_override": {
+   "disable_log_stats": true,
+   "dtype": "float16",
+   "enable_prefix_caching": false,
+   "gpu_memory_utilization": 0.85,
+   "max_model_len": 9216,
+   "model": "<MODEL>",
+   "pipeline_parallel_size": 2,
+   "tensor_parallel_size": 1,
+   "trust_remote_code": true
+  },
+  "grid_fit_nograph": {
+   "compilation_config": {
+    "cudagraph_mode": "NONE"
+   },
+   "disable_log_stats": true,
+   "dtype": "float16",
+   "enable_prefix_caching": false,
+   "gpu_memory_utilization": 0.9,
+   "max_model_len": 9216,
+   "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
+   "tensor_parallel_size": 1,
+   "trust_remote_code": true
+  }
+ },
+ "llama-tp2": {
+  "diff_grid_fit_vs_trace_serve": {},
+  "trace_serve": {
+   "disable_log_stats": true,
+   "dtype": "float16",
+   "enable_prefix_caching": false,
+   "gpu_memory_utilization": 0.9,
+   "max_model_len": 9216,
+   "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
+   "tensor_parallel_size": 2,
+   "trust_remote_code": true
+  },
+  "grid_fit": {
+   "disable_log_stats": true,
+   "dtype": "float16",
+   "enable_prefix_caching": false,
+   "gpu_memory_utilization": 0.9,
+   "max_model_len": 9216,
+   "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
+   "tensor_parallel_size": 2,
+   "trust_remote_code": true
+  },
+  "grid_fit_env_override": {
+   "disable_log_stats": true,
+   "dtype": "float16",
+   "enable_prefix_caching": false,
+   "gpu_memory_utilization": 0.85,
+   "max_model_len": 9216,
+   "model": "<MODEL>",
+   "pipeline_parallel_size": 2,
+   "tensor_parallel_size": 2,
+   "trust_remote_code": true
+  },
+  "grid_fit_nograph": {
+   "compilation_config": {
+    "cudagraph_mode": "NONE"
+   },
+   "disable_log_stats": true,
+   "dtype": "float16",
+   "enable_prefix_caching": false,
+   "gpu_memory_utilization": 0.9,
+   "max_model_len": 9216,
+   "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
+   "tensor_parallel_size": 2,
+   "trust_remote_code": true
+  }
+ },
+ "llama-tp4": {
+  "diff_grid_fit_vs_trace_serve": {},
+  "trace_serve": {
+   "disable_log_stats": true,
+   "dtype": "float16",
+   "enable_prefix_caching": false,
+   "gpu_memory_utilization": 0.9,
+   "max_model_len": 9216,
+   "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
+   "tensor_parallel_size": 4,
+   "trust_remote_code": true
+  },
+  "grid_fit": {
+   "disable_log_stats": true,
+   "dtype": "float16",
+   "enable_prefix_caching": false,
+   "gpu_memory_utilization": 0.9,
+   "max_model_len": 9216,
+   "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
+   "tensor_parallel_size": 4,
+   "trust_remote_code": true
+  },
+  "grid_fit_env_override": {
+   "disable_log_stats": true,
+   "dtype": "float16",
+   "enable_prefix_caching": false,
+   "gpu_memory_utilization": 0.85,
+   "max_model_len": 9216,
+   "model": "<MODEL>",
+   "pipeline_parallel_size": 2,
+   "tensor_parallel_size": 4,
+   "trust_remote_code": true
+  },
+  "grid_fit_nograph": {
+   "compilation_config": {
+    "cudagraph_mode": "NONE"
+   },
+   "disable_log_stats": true,
+   "dtype": "float16",
+   "enable_prefix_caching": false,
+   "gpu_memory_utilization": 0.9,
+   "max_model_len": 9216,
+   "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
+   "tensor_parallel_size": 4,
+   "trust_remote_code": true
+  }
+ },
+ "qwen": {
+  "diff_grid_fit_vs_trace_serve": null,
+  "trace_serve": {
+   "exit": "trace_serve: <REPO>/configs/runs/qwen.yaml [qwen]: attention=hybrid needs kv_bytes_per_token; the dense per-head formula overestimates its KV"
+  },
+  "grid_fit": {
+   "disable_log_stats": true,
+   "dtype": "bfloat16",
+   "enable_prefix_caching": false,
+   "gpu_memory_utilization": 0.9,
+   "max_model_len": 33280,
+   "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
+   "tensor_parallel_size": 1,
+   "trust_remote_code": true
+  },
+  "grid_fit_env_override": {
+   "disable_log_stats": true,
+   "dtype": "bfloat16",
+   "enable_prefix_caching": false,
+   "gpu_memory_utilization": 0.85,
+   "max_model_len": 33280,
+   "model": "<MODEL>",
+   "pipeline_parallel_size": 2,
+   "tensor_parallel_size": 1,
+   "trust_remote_code": true
+  },
+  "grid_fit_nograph": {
+   "compilation_config": {
+    "cudagraph_mode": "NONE"
+   },
+   "disable_log_stats": true,
+   "dtype": "bfloat16",
+   "enable_prefix_caching": false,
+   "gpu_memory_utilization": 0.9,
+   "max_model_len": 33280,
+   "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
+   "tensor_parallel_size": 1,
+   "trust_remote_code": true
+  }
+ },
+ "qwen3": {
+  "diff_grid_fit_vs_trace_serve": {},
+  "trace_serve": {
+   "disable_log_stats": true,
+   "dtype": "bfloat16",
+   "enable_prefix_caching": false,
+   "gpu_memory_utilization": 0.9,
+   "max_model_len": 40960,
+   "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
+   "tensor_parallel_size": 4,
+   "trust_remote_code": true
+  },
+  "grid_fit": {
+   "disable_log_stats": true,
+   "dtype": "bfloat16",
+   "enable_prefix_caching": false,
+   "gpu_memory_utilization": 0.9,
+   "max_model_len": 40960,
+   "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
+   "tensor_parallel_size": 4,
+   "trust_remote_code": true
+  },
+  "grid_fit_env_override": {
+   "disable_log_stats": true,
+   "dtype": "bfloat16",
+   "enable_prefix_caching": false,
+   "gpu_memory_utilization": 0.85,
+   "max_model_len": 40960,
+   "model": "<MODEL>",
+   "pipeline_parallel_size": 2,
+   "tensor_parallel_size": 4,
+   "trust_remote_code": true
+  },
+  "grid_fit_nograph": {
+   "compilation_config": {
+    "cudagraph_mode": "NONE"
+   },
+   "disable_log_stats": true,
+   "dtype": "bfloat16",
+   "enable_prefix_caching": false,
+   "gpu_memory_utilization": 0.9,
+   "max_model_len": 40960,
+   "model": "<MODEL>",
+   "pipeline_parallel_size": 1,
+   "tensor_parallel_size": 4,
+   "trust_remote_code": true
+  }
+ }
+}

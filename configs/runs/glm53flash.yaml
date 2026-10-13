@@ -1,0 +1,6 @@
+model: glm53flash
+workload:
+  kind: grid
+mode:
+  mode: serve
+  grid: deepseek

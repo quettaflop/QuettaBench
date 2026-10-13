@@ -1,0 +1,11 @@
+vLLM 2026-09-21T14:13:20Z (2.5d)  vllm 0.0.0+stub  STUB-GPU-48GiB  Llama-3.1-8B-Instruct  float16  grid llama  FULL  bench 0123abc  prompts distinct  eval_pos 50  nccl=auto/auto
+engine log times one synchronized step per iteration; the baseline is a pipelined slope. Not the same quantity, so ratios are withheld (QBENCH_ALLOW_METHOD_MISMATCH=1 to force).
+
+tp mismatch: engine rows at tp [2] have no baseline (baseline holds tp [1]); capture one per tp
+group                   ctx   bs   tp    ours ms   vllm ms   ours tok/s  vllm tok/s   ratio      r2
+decode_graph            100    1    1      3.610     4.004          277         250      -- 1.00000
+decode_batch           1024    1    1      3.912     4.059          256         246      -- 1.00000
+decode_batch           1024   16    1      4.807     4.939         3328        3240      -- 0.96050  LOW R2
+
+ours-only: 1024x1@tp2
+vLLM-only: 100x8, 100x16, 100x32, 100x64, 1024x8, 1024x32, 1024x64, 4096x1, 4096x8, 4096x16, 4096x32, 4096x64

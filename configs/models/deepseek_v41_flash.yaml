@@ -1,0 +1,9 @@
+name: DeepSeek-V4.1-Flash
+dtype: auto
+weights_gib: 475.3
+max_model_len: 1048576
+tp: 8
+kv_bytes_per_token: 890
+ep: true
+verified: false
+attention: mla

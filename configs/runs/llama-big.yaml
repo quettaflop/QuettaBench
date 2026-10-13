@@ -1,0 +1,9 @@
+model: llama31_8b
+engine:
+  max_model_len: 17408
+  tp: 1
+workload:
+  kind: grid
+mode:
+  mode: serve
+  grid: table_big

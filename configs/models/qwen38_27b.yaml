@@ -1,0 +1,13 @@
+name: Qwen3.8-27B
+dtype: bfloat16
+weights_gib: 54
+max_model_len: 40960
+tp: 4
+kv_bytes_per_token: 65536
+verified: false
+attention: hybrid
+quettaserve:
+  crate: qwen
+  test: decode_loop
+  env_prefix: QW
+  family: gdn

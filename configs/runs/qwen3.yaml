@@ -1,0 +1,6 @@
+model: qwen38_27b
+workload:
+  kind: grid
+mode:
+  mode: serve
+  grid: qwen3

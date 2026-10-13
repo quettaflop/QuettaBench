@@ -1,0 +1,20 @@
+name: DeepSeek-V4-Flash-0731
+dtype: bfloat16
+weights_gib: 156
+max_model_len: 33280
+tp: 8
+kv_cache_dtype: fp8_ds_mla
+kv_bytes_per_token: 24768
+ep: true
+verified: false
+attention: mla
+quettaserve:
+  crate: deepseek
+  test: batch_bench
+  env_prefix: DS
+  family: moe
+compare:
+  comm_bound_bs: 64
+provenance:
+  engine_commit: 8f99a55
+  checkpoint: ds-0731-tp8-fp4

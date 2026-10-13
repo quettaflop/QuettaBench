@@ -1,0 +1,6 @@
+model: deepseek_v4_flash
+workload:
+  kind: grid
+mode:
+  mode: serve
+  grid: deepseek

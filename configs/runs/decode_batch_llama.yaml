@@ -1,0 +1,9 @@
+# The model yaml's 9216 max_model_len would SKIP every cell; raised to fit ctx + top step point.
+model: llama31_8b
+engine:
+  max_model_len: 20480
+workload:
+  kind: grid
+mode:
+  mode: serve
+  grid: decode_batch
