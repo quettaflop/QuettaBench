@@ -35,6 +35,7 @@ class LaunchSpec:
     env_drop: tuple = ()
     cwd: str | None = None
     health_path: str = "/health"
+    served_name: str = ""  # the model name requests send; set when the server can also answer to a launch token
     port: int = 8000
     instrumentation: str = "none"
     image: str | None = None

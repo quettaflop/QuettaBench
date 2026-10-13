@@ -142,6 +142,7 @@ class VllmAdapter(EngineAdapter):
             engine_kwargs=kwargs,
             env=env,
             health_path="/health",
+            served_name=str(extra.get("served_model_name") or engine.model),
             port=engine.port,
             image=engine.image,
             instrumentation=engine.instrumentation,

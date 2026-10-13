@@ -5,11 +5,12 @@ import json
 import os
 import re
 import signal
+import socket
 import subprocess
 import time
 import urllib.error
 import urllib.request
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -18,6 +19,8 @@ from quettabench.config.schema import ConfigError
 from quettabench.metrics.results import redact, secret
 
 REPO = Path(__file__).resolve().parents[2]
+SERVED_NAME_FLAG = "--served-model-name"
+FOREIGN_GRACE_S = 10
 
 # http_proxy would route local or cluster-private endpoints through a proxy that answers 403.
 _DIRECT = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -174,15 +177,50 @@ def accelerator(backend="cuda"):
     return name, int(float(mib)) * 2**20
 
 
-def wait_healthy(proc, url, timeout_s, poll_s):
+def port_taken(port):
+    """True when something already accepts TCP connections where qbench will connect."""
+    try:
+        socket.create_connection(("127.0.0.1", port), timeout=1).close()
+    except OSError:
+        return False
+    return True
+
+
+def tagged(spec, token):
+    """The spec whose server also answers to token as a model name; vLLM keeps the first name for requests."""
+    argv = list(spec.server_argv)
+    if SERVED_NAME_FLAG in argv:
+        argv.insert(argv.index(SERVED_NAME_FLAG) + 2, token)
+    else:
+        argv += [SERVED_NAME_FLAG, spec.served_name, token]
+    return replace(spec, server_argv=tuple(argv))
+
+
+def lists_token(models_url, token, headers, timeout):
+    """True when /v1/models names token: only the server this launch started does."""
+    try:
+        with urlopen(urllib.request.Request(models_url, headers=headers), timeout=timeout) as resp:
+            return token in [m.get("id") for m in json.load(resp).get("data", [])]
+    except (urllib.error.URLError, ConnectionError, TimeoutError, ValueError, AttributeError):
+        return False
+
+
+def wait_healthy(proc, url, timeout_s, poll_s, owns=None):
+    """With owns, a 200 only counts once owns() is true. A server that answers but is not ours is waited on
+    for FOREIGN_GRACE_S (our own port bind may just be late), then refused instead of waiting out timeout_s."""
     deadline = time.monotonic() + timeout_s
+    foreign_since = None
     while time.monotonic() < deadline:
         if proc.poll() is not None:
             raise RuntimeError(f"server exited with {proc.returncode} before {url} answered")
         try:
             with urlopen(url, timeout=poll_s) as resp:
                 if resp.status == 200:
-                    return
+                    if owns is None or owns():
+                        return
+                    foreign_since = foreign_since or time.monotonic()
+                    if time.monotonic() - foreign_since > FOREIGN_GRACE_S:
+                        raise RuntimeError(f"another server answers on {url}; ours is still starting")
         except (urllib.error.URLError, ConnectionError, TimeoutError):
             pass
         time.sleep(poll_s)
@@ -245,6 +283,12 @@ def docker_secrets(spec):
 def start(spec, results_dir, *, backend="local", cfg=None, gpus="", timeout_s=1800, poll_s=1.0):
     if not spec.server_argv:
         raise ValueError(f"{spec.adapter}: the spec has no server to launch")
+    if port_taken(spec.port):
+        raise RuntimeError(f"port {spec.port} already answers; another server is running there")
+    token = ""
+    if spec.served_name:
+        token = f"qbench-{os.urandom(8).hex()}"
+        spec = tagged(spec, token)
     results_dir = Path(results_dir)
     results_dir.mkdir(parents=True, exist_ok=True)
     container = container_id = ""
@@ -278,7 +322,11 @@ def start(spec, results_dir, *, backend="local", cfg=None, gpus="", timeout_s=18
         spec.adapter, endpoint, proc.pid, results_dir, proc, accelerator(accel)[0], container, container_id, accel
     )
     try:
-        wait_healthy(proc, endpoint + spec.health_path, timeout_s, poll_s)
+        models = endpoint + "/v1/models"
+        # A keyed vLLM refuses /v1/models without its key.
+        headers = {"Authorization": f"Bearer {spec.env['VLLM_API_KEY']}"} if "VLLM_API_KEY" in spec.env else {}
+        owns = (lambda: lists_token(models, token, headers, poll_s)) if token else None
+        wait_healthy(proc, endpoint + spec.health_path, timeout_s, poll_s, owns)
         record = {
             "adapter": spec.adapter,
             "endpoint": endpoint,

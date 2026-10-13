@@ -6,7 +6,9 @@ import os
 import socket
 import sys
 import tempfile
+import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from unittest import mock
 
@@ -38,6 +40,18 @@ def alive(pid):
     except FileNotFoundError:
         return False
     return not stat.split(") ")[1].startswith("Z")
+
+
+class Foreign(BaseHTTPRequestHandler):
+    """A server some other run started: healthy, and its models are not ours."""
+
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b'{"data": [{"id": "other"}]}')
+
+    def log_message(self, *args):
+        pass
 
 
 class LocalLauncher(unittest.TestCase):
@@ -103,6 +117,51 @@ class LocalLauncher(unittest.TestCase):
     def test_refusals(self):
         with self.assertRaisesRegex(ValueError, "no server"):
             launcher.start(LaunchSpec(adapter="quettaserve"), self.dir)
+
+    def foreign_server(self):
+        server = HTTPServer(("127.0.0.1", self.port), Foreign)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+
+    def test_a_server_already_on_the_port_is_refused_before_launch(self):
+        self.foreign_server()
+        with mock.patch.object(launcher.subprocess, "Popen") as popen:
+            with self.assertRaisesRegex(RuntimeError, f"port {self.port} already answers"):
+                launcher.start(self.spec(served_name="m"), self.dir / "run", timeout_s=30, poll_s=0.1)
+        popen.assert_not_called()
+
+    def test_a_foreign_server_that_binds_while_ours_loads_is_refused_and_ours_stopped(self):
+        pidfile = self.dir / "pid"
+        sleeper = f"import os, time; open({str(pidfile)!r}, 'w').write(str(os.getpid())); time.sleep(60)"
+        spec = LaunchSpec(adapter="fake", port=self.port, served_name="m", server_argv=(sys.executable, "-c", sleeper))
+        self.foreign_server()
+        with (
+            mock.patch.object(launcher, "port_taken", return_value=False),
+            mock.patch.object(launcher, "FOREIGN_GRACE_S", 0.3),
+            self.assertRaisesRegex(RuntimeError, "another server answers on .*still starting"),
+        ):
+            launcher.start(spec, self.dir / "run", timeout_s=30, poll_s=0.1)
+        self.assertFalse(alive(int(pidfile.read_text())))
+
+    def test_our_server_passes_once_it_lists_the_token(self):
+        handle = self.start(served_name="llama")
+        argv = json.loads((self.dir / "run" / "engine.json").read_text())["launch_spec"]["server_argv"]
+        self.assertEqual(argv[-3], "--served-model-name")
+        self.assertEqual(argv[-2], "llama")
+        self.assertRegex(argv[-1], "^qbench-[0-9a-f]{16}$")
+        handle.stop(grace_s=5)
+
+    def test_the_token_follows_a_served_name_the_argv_already_sets(self):
+        spec = LaunchSpec(
+            adapter="vllm",
+            served_name="llama",
+            server_argv=("vllm", "serve", "--served-model-name", "llama", "--port", "1"),
+        )
+        self.assertEqual(
+            launcher.tagged(spec, "tok").server_argv,
+            ("vllm", "serve", "--served-model-name", "llama", "tok", "--port", "1"),
+        )
 
 
 DOCKER_YAML = launcher.REPO / "configs" / "runs" / "llama-tp1-docker.yaml"
@@ -228,6 +287,9 @@ class DockerStart(unittest.TestCase):
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp())
         fixed_name(self)
+        patch = mock.patch.object(launcher, "port_taken", return_value=False)
+        patch.start()
+        self.addCleanup(patch.stop)
 
     def run_mock(self, docker_rc=0, created="c0ffee\n"):
         def run(argv, **kw):
@@ -253,10 +315,12 @@ class DockerStart(unittest.TestCase):
             mock.patch.object(launcher, "wait_healthy") as healthy,
         ):
             handle = self.start(cfg, spec)
-            self.assertEqual(run.call_args_list[0].args[0], launcher.docker_argv(spec, cfg, "0", self.dir / "run"))
+            ours = launcher.tagged(spec, "qbench-abcdef")
+            self.assertEqual(run.call_args_list[0].args[0], launcher.docker_argv(ours, cfg, "0", self.dir / "run"))
             self.assertEqual(popen.call_args.args[0], ["docker", "logs", "-f", NAME])
             self.assertEqual(popen.call_args.kwargs["stdout"].name, str(self.dir / "run" / "server.log"))
-            healthy.assert_called_once_with(proc, "http://127.0.0.1:8000/health", 1800, 1.0)
+            healthy.assert_called_once()
+            self.assertEqual(healthy.call_args.args[:4], (proc, "http://127.0.0.1:8000/health", 1800, 1.0))
             record = json.loads((self.dir / "run" / "engine.json").read_text())
             self.assertEqual(
                 (record["pid"], record["container"], record["container_id"], record["image"]),

@@ -1,4 +1,4 @@
-"""Stand-in server: /health 200, one child alive, state.json; a taken port exits 98."""
+"""Stand-in server: /health 200, /v1/models lists the --served-model-name names, one child alive, state.json; a taken port exits 98."""
 
 import errno
 import http.server
@@ -13,12 +13,15 @@ if sys.argv[1] == "--child":
     sys.exit(0)
 
 port, state = int(sys.argv[1]), sys.argv[2]
+names = sys.argv[sys.argv.index("--served-model-name") + 1 :] if "--served-model-name" in sys.argv else []
 
 
 class Health(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        self.send_response(200 if self.path == "/health" else 404)
+        self.send_response(200 if self.path in ("/health", "/v1/models") else 404)
         self.end_headers()
+        if self.path == "/v1/models":
+            self.wfile.write(json.dumps({"data": [{"id": n} for n in names]}).encode())
 
     def log_message(self, *args):
         pass

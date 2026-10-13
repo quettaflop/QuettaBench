@@ -257,6 +257,14 @@ class GridDriver(unittest.TestCase):
         self.assertEqual(spec.server_argv[-2:], ("--served-model-name", "llama"))
         driver = vllm_adapter.ADAPTER.driver(spec, launcher.NoServer(Path("r"), endpoint="http://127.0.0.1:8000"))
         self.assertEqual(driver.model, "llama")
+        self.assertEqual(spec.served_name, "llama")
+
+    def test_the_launch_token_is_a_second_served_name_and_requests_keep_the_first(self):
+        spec = vllm_adapter.ADAPTER.translate(self.cfg())
+        tagged = launcher.tagged(spec, "tok")
+        self.assertEqual(tagged.server_argv[-3:], ("--served-model-name", spec.engine_kwargs["model"], "tok"))
+        driver = vllm_adapter.ADAPTER.driver(tagged, launcher.NoServer(Path("r"), endpoint="http://127.0.0.1:8000"))
+        self.assertEqual(driver.model, spec.served_name)
 
     def test_no_max_model_len_flag_when_unset(self):
         spec = vllm_adapter.ADAPTER.translate(self.cfg("engine.max_model_len=null"))
