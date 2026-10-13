@@ -4,6 +4,7 @@ import json
 import re
 import subprocess
 import threading
+import time
 import urllib.request
 
 from quettabench.engines import launcher
@@ -40,7 +41,13 @@ class PowerSampler:
         self._thread = threading.Thread(target=self._loop, daemon=True)
 
     def _loop(self):
-        while not self._stop.wait(self.interval_s):
+        # A fixed clock: each nvidia-smi call takes ~0.1 s, which a plain wait added to every interval, so a
+        # 5 s window held 4 samples and the energy read 20% low.
+        tick = time.monotonic()
+        while True:
+            tick += self.interval_s
+            if self._stop.wait(max(0.0, tick - time.monotonic())):
+                break
             try:
                 out = subprocess.run(self.cmd, capture_output=True, text=True, check=False).stdout
                 vals = [float(x) for x in out.split()]

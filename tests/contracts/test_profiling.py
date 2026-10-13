@@ -372,6 +372,16 @@ class Sampler(unittest.TestCase):
         self.assertNotIn("-i", sampler.cmd)
         self.assertEqual(set(samples), {460.0})
 
+    def test_a_slow_nvidia_smi_does_not_stretch_the_interval(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            smi = Path(tmp) / "slow_smi"
+            smi.write_text(f"#!{sys.executable}\nimport time\ntime.sleep(0.1)\nprint(100)\n")
+            smi.chmod(0o755)
+            sampler = energy_cost_accuracy.PowerSampler("0", nvidia_smi=str(smi), interval_s=0.2).start()
+            time.sleep(2.05)
+            # Ten intervals; a wait after each 0.1 s call would fit about seven.
+            self.assertGreaterEqual(len(sampler.stop()), 9)
+
     def test_bad_reply_or_missing_binary_is_skipped(self):
         for smi in ("/bin/echo", "/nonexistent/nvidia-smi"):
             with self.subTest(smi):
