@@ -23,6 +23,9 @@ class RequestResult:
     error_kind: str | None = None  # "timeout" | "http_error" | "client_error"
     # Without a usage block token counts are 0 and throughputs are meaningless.
     usage_reported: bool = False
+    # usage.prompt_tokens_details.cached_tokens: billed cached prompt tokens; None unless the server reports
+    # them (vLLM: --enable-prompt-tokens-details). Not the cache estimate below.
+    server_cached_tokens: int | None = None
     # Held out of the summary by --discard-first; still kept in per_request.
     excluded_from_summary: bool = False
 

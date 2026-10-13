@@ -29,7 +29,7 @@ from quettabench.engines.drivers import (
     PrefixCacheResetError,
     ReferenceDriver,
 )
-from quettabench.metrics.results import RunWriter
+from quettabench.metrics.results import RunWriter, jsonl_row
 from quettabench.metrics.step_fit import fit_run
 from quettabench.metrics.summary import RequestResult
 from quettabench.modes import serve
@@ -428,6 +428,15 @@ class CaptureTextTests(unittest.TestCase):
         )
         self.assertTrue(r.success, msg=r.error)
         self.assertEqual(r.generated_text, "Hello there")
+
+    def test_billed_cached_tokens_come_from_usage_and_reach_the_row(self):
+        usage = {"prompt_tokens": 4, "completion_tokens": 1, "prompt_tokens_details": {"cached_tokens": 3}}
+        r = _run(_ChatSession(_chat_sse([_delta("a"), {"choices": [{"delta": {}}], "usage": usage}])))
+        self.assertEqual(r.server_cached_tokens, 3)
+        self.assertEqual(jsonl_row(r)["server_cached_tokens"], 3)
+        plain = _run(_ChatSession(_chat_sse([_delta("a")])))
+        self.assertIsNone(plain.server_cached_tokens)
+        self.assertNotIn("server_cached_tokens", jsonl_row(plain))
 
     def test_reasoning_and_tool_calls_are_not_transcript_content(self):
         r = _run(

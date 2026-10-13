@@ -214,7 +214,7 @@ OPTIONAL_CACHE = (
     "new_prefill_blocks",
 )
 RATES = ("cache_hit_rate", "block_aligned_cache_hit_rate")
-NEW_FIELDS = ("ttft_basis", "ttft_rule", "accepted_tokens", "cell", "batch_wall_s", "logits")
+NEW_FIELDS = ("ttft_basis", "ttft_rule", "accepted_tokens", "server_cached_tokens", "cell", "batch_wall_s", "logits")
 
 
 def jsonl_row(r, **extra):

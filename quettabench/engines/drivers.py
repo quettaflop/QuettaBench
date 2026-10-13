@@ -93,6 +93,7 @@ async def _stream_chat(
     input_tokens = 0
     output_tokens = 0
     usage_reported = False
+    server_cached_tokens = None
     text_parts: list[str] = []
 
     try:
@@ -128,6 +129,7 @@ async def _stream_chat(
                     usage = chunk["usage"]
                     input_tokens = usage.get("prompt_tokens", 0)
                     output_tokens = usage.get("completion_tokens", 0)
+                    server_cached_tokens = (usage.get("prompt_tokens_details") or {}).get("cached_tokens")
                     usage_reported = True
 
                 choices = chunk.get("choices", [])
@@ -166,6 +168,7 @@ async def _stream_chat(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             usage_reported=usage_reported,
+            server_cached_tokens=server_cached_tokens,
             generated_text="".join(text_parts) if capture_text else None,
         )
 
@@ -182,6 +185,7 @@ async def _stream_chat(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             usage_reported=usage_reported,
+            server_cached_tokens=server_cached_tokens,
             error=f"timeout after {time.perf_counter() - start_time:.1f}s" if is_timeout else str(e),
             error_kind="timeout" if is_timeout else "client_error",
         )
@@ -231,6 +235,7 @@ async def _stream_completions(
     input_tokens = 0
     output_tokens = 0
     usage_reported = False
+    server_cached_tokens = None
 
     try:
         async with session.post(url, headers=headers, json=payload) as resp:
@@ -265,6 +270,7 @@ async def _stream_completions(
                     usage = chunk["usage"]
                     input_tokens = usage.get("prompt_tokens", 0)
                     output_tokens = usage.get("completion_tokens", 0)
+                    server_cached_tokens = (usage.get("prompt_tokens_details") or {}).get("cached_tokens")
                     usage_reported = True
 
                 choices = chunk.get("choices", [])
@@ -289,6 +295,7 @@ async def _stream_completions(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             usage_reported=usage_reported,
+            server_cached_tokens=server_cached_tokens,
         )
 
     except asyncio.CancelledError:
@@ -303,6 +310,7 @@ async def _stream_completions(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             usage_reported=usage_reported,
+            server_cached_tokens=server_cached_tokens,
             error=f"timeout after {time.perf_counter() - start_time:.1f}s" if is_timeout else str(e),
             error_kind="timeout" if is_timeout else "client_error",
         )
