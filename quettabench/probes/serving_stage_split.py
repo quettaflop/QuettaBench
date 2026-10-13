@@ -207,7 +207,6 @@ def launch_server(model, port, gpu_mem, max_model_len, api_key, hash_algo, run_d
         max_model_len=max_model_len,
         prefix_caching=True,
         vllm_flags=flags,
-        timeout_s=420,
     )
 
 

@@ -281,7 +281,6 @@ def launch_server(model, port, gpu_mem, max_model_len, api_key, run_dir, tp, max
             "api_key": api_key,
             "no_enable_log_requests": True,
         },
-        timeout_s=600,
     )
 
 
