@@ -38,7 +38,13 @@ class Parse(unittest.TestCase):
     def test_hit_rate_is_token_weighted_over_label_sets(self):
         # (800 + 400) hit tokens / (1000 + 600) queried tokens; _created is not a count.
         self.assertEqual(engine_side.prefix_cache_hit_rate(self.m), 0.75)
-        self.assertEqual(engine_side.counter_total(self.m, engine_side.QUERIES), 1600.0)
+        self.assertEqual(engine_side.counter_total(self.m, "vllm:gpu_prefix_cache_queries"), 1600.0)
+
+    def test_current_vllm_counter_names(self):
+        m = engine_side.parse_prometheus(
+            'vllm:prefix_cache_hits_total{engine="0"} 30\nvllm:prefix_cache_queries_total{engine="0"} 40\n'
+        )
+        self.assertEqual(engine_side.prefix_cache_hit_rate(m), 0.75)
 
     def test_unsuffixed_counters_and_absent_ones(self):
         m = engine_side.parse_prometheus("vllm:gpu_prefix_cache_hits 3\nvllm:gpu_prefix_cache_queries 4\n")

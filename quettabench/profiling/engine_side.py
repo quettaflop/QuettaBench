@@ -11,8 +11,11 @@ from pathlib import Path
 from quettabench.engines import launcher
 from quettabench.metrics.summary import counter_total, parse_prometheus
 
-HITS = "vllm:gpu_prefix_cache_hits"
-QUERIES = "vllm:gpu_prefix_cache_queries"
+# vLLM renamed gpu_prefix_cache_* to prefix_cache_*; the old names are still read.
+PREFIX_CACHE_COUNTERS = (
+    ("vllm:prefix_cache_hits", "vllm:prefix_cache_queries"),
+    ("vllm:gpu_prefix_cache_hits", "vllm:gpu_prefix_cache_queries"),
+)
 
 # Imported on demand: it needs QuettaSim, which the GPU-free profiler must not.
 FRONTEND = "quettabench.profiling.client_side"
@@ -25,10 +28,11 @@ TRACE_FILES = {
 
 
 def prefix_cache_hit_rate(metrics):
-    hits, queries = counter_total(metrics, HITS), counter_total(metrics, QUERIES)
-    if hits is None or not queries:
-        return None
-    return hits / queries
+    for hits_name, queries_name in PREFIX_CACHE_COUNTERS:
+        hits, queries = counter_total(metrics, hits_name), counter_total(metrics, queries_name)
+        if hits is not None and queries:
+            return hits / queries
+    return None
 
 
 def scrape_metrics(endpoint, timeout_s=10):
