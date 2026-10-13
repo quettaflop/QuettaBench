@@ -52,6 +52,7 @@ def fake_module(name: str) -> mock.MagicMock:
 torch = fake_module("torch")
 torch.cuda.get_device_name.return_value = "FAKE"
 torch.cuda.device_count.return_value = 8
+torch.version.hip = None
 torch.randn.return_value.numel.return_value = 4096
 dist = fake_module("torch.distributed")
 dist.get_rank.return_value = 0
