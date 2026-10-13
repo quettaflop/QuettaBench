@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           # No version matrix: on 3.10 (numpy 2.2) a golden drifts in the last float bit.
           python-version: "3.12"
