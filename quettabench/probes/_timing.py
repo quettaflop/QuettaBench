@@ -42,6 +42,11 @@ def device_name() -> str:
     return torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu"
 
 
+def l2_bytes() -> int:
+    """0 without a GPU."""
+    return getattr(torch.cuda.get_device_properties(0), "L2_cache_size", 0) if torch.cuda.is_available() else 0
+
+
 def device_capability() -> tuple[int, int]:
     return torch.cuda.get_device_capability()
 
@@ -100,8 +105,11 @@ def loop_time_us(call, iters: int, warmup: int) -> float:
     return time_once_ms(span) / iters * 1000.0
 
 
-def graph_time_us(fn, *, warmup: int = 10, reps: int = 50, reduce=min) -> float:
-    """fn must be shape-static with inputs pre-allocated; without a GPU it is eager timing."""
+def graph_time_us(fn, *, warmup: int = 10, reps: int = 50, reduce=min, min_calls: int = 1) -> float:
+    """fn must be shape-static with inputs pre-allocated; without a GPU it is eager timing.
+
+    Each graph holds at least min_calls calls of fn.
+    """
     if not torch.cuda.is_available():
         return event_time_us(fn, warmup, reps, reduce)
     for _ in range(3):
@@ -114,7 +122,7 @@ def graph_time_us(fn, *, warmup: int = 10, reps: int = 50, reduce=min) -> float:
     e0.record()
     torch.cuda.synchronize()
     est_us = s0.elapsed_time(e0) * 1000.0
-    iters = 32 if est_us < 30.0 else (8 if est_us < 200.0 else 1)
+    iters = max(min_calls, 32 if est_us < 30.0 else (8 if est_us < 200.0 else 1))
 
     side = torch.cuda.Stream()
     side.wait_stream(torch.cuda.current_stream())

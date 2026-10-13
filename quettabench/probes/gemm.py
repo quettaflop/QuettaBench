@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import itertools
+import math
 import os
 
 import torch
@@ -98,16 +100,19 @@ class Fp8Op:
             flush=True,
         )
 
-    def _time(self, run, graph: bool) -> float:
+    def _time(self, run, graph: bool, calls: int = 1) -> float:
         if graph:
-            return graph_time_us(run)
+            return graph_time_us(run, min_calls=calls)
         return event_time_us(run, WARMUP, REPS, min)
 
     # No torch._scaled_mm fallback: per-tensor scaling is faster than the checkpoint's per-block kernel.
     def gemm_us(self, m, n, k, dev, graph: bool = False) -> float:
         """Times the quant once per (m, k) for its fit."""
         x = torch.randn(m, k, device=dev, dtype=torch.bfloat16)
-        w = torch.randn(n, k, device=dev, dtype=torch.bfloat16).to(torch.float8_e4m3fn)
+        w = [
+            torch.randn(n, k, device=dev, dtype=torch.bfloat16).to(torch.float8_e4m3fn)
+            for _ in range(weight_copies(n * k))
+        ]
         bn, bk = FP8_WEIGHT_BLOCK
         # Positive O(1e-2) scales: a zero or NaN scale can trip a fast path.
         ws = torch.rand((n + bn - 1) // bn, (k + bk - 1) // bk, device=dev, dtype=torch.float32).mul_(0.01).add_(1e-4)
@@ -117,9 +122,10 @@ class Fp8Op:
                 self.quant_pts.append((m, k, self._time(lambda: self.quant(x), graph)))
             xq, xs = self.quant(x)
             ops = self.ops
-            return self._time(
-                lambda: ops.cutlass_scaled_mm(xq, w.T, out_dtype=torch.bfloat16, scale_a=xs, scale_b=ws.T), graph
+            run = rotating(
+                lambda wi: ops.cutlass_scaled_mm(xq, wi.T, out_dtype=torch.bfloat16, scale_a=xs, scale_b=ws.T), w
             )
+            return self._time(run, graph, len(w))
         finally:
             del x, w, ws
             _timing.empty_cache()
@@ -148,16 +154,26 @@ def time_matmul_fp8(op, m, n, k, dev, graph: bool = False) -> float:
     return op.gemm_us(m, n, k, dev, graph=graph)
 
 
+def weight_copies(weight_bytes: int) -> int:
+    """Enough weight copies to span twice L2: decode reads each layer's weights from memory, not cache."""
+    return max(1, math.ceil(2 * _timing.l2_bytes() / max(weight_bytes, 1)))
+
+
+def rotating(fn, weights):
+    """Calls fn with the next weight each time."""
+    it = itertools.cycle(weights)
+    return lambda: fn(next(it))
+
+
 def time_matmul(m, n, k, dev, dt, graph: bool = False) -> float:
     a = torch.randn(m, k, device=dev, dtype=dt)
-    b = torch.randn(k, n, device=dev, dtype=dt)
+    bs = [torch.randn(k, n, device=dev, dtype=dt) for _ in range(weight_copies(k * n * a.element_size()))]
+    run = rotating(lambda b: torch.matmul(a, b), bs)
     if graph:
-        us = graph_time_us(lambda: torch.matmul(a, b))
-        del a, b
-        _timing.empty_cache()
-        return us
-    us = event_time_us(lambda: torch.matmul(a, b), WARMUP, REPS, min)  # The table min-reduces too.
-    del a, b
+        us = graph_time_us(run, min_calls=len(bs))
+    else:
+        us = event_time_us(run, WARMUP, REPS, min)  # The table min-reduces too.
+    del a, bs
     _timing.empty_cache()
     return us
 

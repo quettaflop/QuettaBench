@@ -448,6 +448,21 @@ def test_gemm_ncu_reads_kernels_through_the_shared_parser():
     assert "Metric Value" not in (PROBES / "gemm.py").read_text()
 
 
+def test_gemm_rotates_enough_weights_to_span_twice_l2():
+    gemm = import_without_torch("gemm")
+    with mock.patch.object(gemm._timing, "l2_bytes", return_value=128 << 20):
+        assert gemm.weight_copies(32 << 20) == 8
+        assert gemm.weight_copies(112 << 20) == 3
+        assert gemm.weight_copies(1 << 30) == 1
+    with mock.patch.object(gemm._timing, "l2_bytes", return_value=0):
+        assert gemm.weight_copies(32 << 20) == 1
+    seen = []
+    run = gemm.rotating(seen.append, ["w0", "w1", "w2"])
+    for _ in range(4):
+        run()
+    assert seen == ["w0", "w1", "w2", "w0"]
+
+
 def test_ncu_without_counter_access_raises_its_error():
     timing = import_without_torch("gemm")._timing
     denied = (
