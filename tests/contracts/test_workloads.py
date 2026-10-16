@@ -499,6 +499,7 @@ class ProfileRegistryTests(unittest.TestCase):
                 "chat-singleturn",
                 "coding-singleturn",
                 "deepresearch-multiturn",
+                "deepsearch-multiturn",
                 "mooncake-trace",
                 "osworld-multiturn-long",
                 "osworld-multiturn-medium",
@@ -592,6 +593,7 @@ PINS = {
     "chat-singleturn": ("1b84966cb9c4facc", "84b2b4875f8a177f"),
     "coding-singleturn": ("15384d696a4d7a1b", "0359e7a0be1623a2"),
     "deepresearch-multiturn": ("3f95464ab226ff8f", "d156d90f6eafdc78"),
+    "deepsearch-multiturn": ("e4224f2a4551c063", "0926fec235949485"),
     "mooncake-trace": ("a03be7b0ed268d81", "b5ed59cd7a0d7aff"),
     "osworld-multiturn-long": ("762312f6b602cb88", "7c281ff0cc772773"),
     "osworld-multiturn-medium": ("29482f55adf89f20", "c8ecbee41859e40e"),
@@ -667,6 +669,7 @@ def write_fixtures(root):
         "data/terminalbench_trajectories.jsonl": trajectory_rows("tb"),
         "data/osworld_trajectories.jsonl": trajectory_rows("os"),
         "data/deepresearch_trajectories.jsonl": trajectory_rows("dr"),
+        "data/deepsearch_trajectories.jsonl": trajectory_rows("ds"),
     }
     for rel, rows in files.items():
         path = Path(root) / rel
@@ -764,10 +767,13 @@ def runnable():
 
 
 class DeepResearchTrajectories(unittest.TestCase):
-    def test_trace_rows_become_sessions_the_trajectory_loader_reads(self):
+    @classmethod
+    def setUpClass(cls):
         spec = importlib.util.spec_from_file_location("build_trajectories", ROOT / "data" / "build_trajectories.py")
-        build = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(build)
+        cls.build = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.build)
+
+    def test_trace_rows_become_sessions_the_trajectory_loader_reads(self):
         row = {
             "session_id": "dr9k-1",
             "turns": [
@@ -775,7 +781,7 @@ class DeepResearchTrajectories(unittest.TestCase):
                 {"turn_index": 1, "prompt_text": tagged_words(60, "q"), "completion_tokens": 0, "retrieval_s": None},
             ],
         }
-        session = build.deepresearch_session(row)
+        session = self.build.deepresearch_session(row)
         self.assertEqual([t["osl_tokens"] for t in session["turns"]], [40, 1])
         self.assertEqual([t["tool_ms"] for t in session["turns"]], [500.0, 0.0])
         with tempfile.TemporaryDirectory() as td:
@@ -786,6 +792,24 @@ class DeepResearchTrajectories(unittest.TestCase):
         self.assertEqual([r.output_length for r in turns], [40, 1])
         self.assertEqual(turns[0].messages, [{"role": "user", "content": tagged_words(30, "q")}])
         self.assertEqual(turns[0].metadata["tool_wait_after_ms"], 500.0)
+
+    def test_deepsearch_subcommand_tags_sessions_and_keeps_retrieval_s_over_tool_s(self):
+        row = {
+            "session_id": "dsqa-1",
+            "turns": [
+                {"turn_index": 0, "prompt_text": "q", "completion_tokens": 9, "retrieval_s": 0.5, "tool_s": 2.5},
+                {"turn_index": 1, "prompt_text": "q", "completion_tokens": 9, "tool_s": 2.5},
+            ],
+        }
+        with tempfile.TemporaryDirectory() as td:
+            trace_path, out = Path(td) / "dsqa.jsonl", Path(td) / "ds.jsonl"
+            trace_path.write_text(json.dumps(row) + "\n")
+            argv = ["build_trajectories", "deepsearch", "--trace", str(trace_path), "--out", str(out)]
+            with mock.patch.object(sys, "argv", argv), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(self.build.main(), 0)
+            session = json.loads(out.read_text())
+        self.assertEqual(session["source"], "deepsearch")
+        self.assertEqual([t["tool_ms"] for t in session["turns"]], [500.0, 2500.0])
 
 
 class ProfileHashPins(unittest.TestCase):

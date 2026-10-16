@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the session trajectory JSONL from ShareGPT chats, Claw-Eval traces or DeepResearch-9k traces."""
+"""Build the session trajectory JSONL from ShareGPT chats, Claw-Eval, DeepResearch-9k or DeepSearchQA traces."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ ROOT = HERE.parent
 CHAT_OUT = ROOT / "data" / "chat_trajectories.jsonl"
 CLAWEVAL_OUT = ROOT / "data" / "claweval_trajectories.jsonl"
 DEEPRESEARCH_OUT = ROOT / "data" / "deepresearch_trajectories.jsonl"
+DEEPSEARCH_OUT = ROOT / "data" / "deepsearch_trajectories.jsonl"
 HF_DATASET = "Aeala/ShareGPT_Vicuna_unfiltered"
 
 
@@ -344,22 +345,22 @@ def build_claweval(args: argparse.Namespace) -> int:
     return 0
 
 
-def deepresearch_session(row: dict[str, Any]) -> dict[str, Any]:
-    """Each turn's prompt_text already holds the whole context; its search time is the tool wait after it."""
+def deepresearch_session(row: dict[str, Any], source: str = "deepresearch") -> dict[str, Any]:
+    """Each turn's prompt_text holds the whole context; retrieval_s (DeepSearchQA: tool_s) is the tool wait after it."""
     turns = [
         {
             "turn_idx": t["turn_index"],
             "messages": [{"role": "user", "content": t["prompt_text"]}],
             "osl_tokens": max(1, t["completion_tokens"]),
-            "tool_ms": 1000.0 * (t.get("retrieval_s") or 0.0),
+            "tool_ms": 1000.0 * (t.get("retrieval_s") or t.get("tool_s") or 0.0),
         }
         for t in row["turns"]
     ]
-    return {"session_id": row["session_id"], "source": "deepresearch", "num_turns": len(turns), "turns": turns}
+    return {"session_id": row["session_id"], "source": source, "num_turns": len(turns), "turns": turns}
 
 
 def build_deepresearch(args: argparse.Namespace) -> int:
-    sessions = [deepresearch_session(r) for r in iter_records(args.trace) if r.get("turns")]
+    sessions = [deepresearch_session(r, args.source) for r in iter_records(args.trace) if r.get("turns")]
     if not sessions:
         print(f"[error] no sessions in {args.trace}")
         return 1
@@ -374,6 +375,7 @@ def build_deepresearch(args: argparse.Namespace) -> int:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
+    # The subcommand name is the session source tag.
     sub = ap.add_subparsers(dest="source", required=True)
     chat = sub.add_parser("chat", help="ShareGPT sessions, tokenized with --tokenizer")
     chat.add_argument("--out", type=Path, default=CHAT_OUT)
@@ -403,6 +405,10 @@ def main() -> int:
     dr.add_argument("--trace", required=True, type=Path, help="the DeepResearch-9k trace JSONL")
     dr.add_argument("--out", type=Path, default=DEEPRESEARCH_OUT)
     dr.set_defaults(build=build_deepresearch)
+    ds = sub.add_parser("deepsearch", help="DeepSearchQA traces (dsqa-v4flash.jsonl)")
+    ds.add_argument("--trace", required=True, type=Path, help="the DeepSearchQA trace JSONL")
+    ds.add_argument("--out", type=Path, default=DEEPSEARCH_OUT)
+    ds.set_defaults(build=build_deepresearch)
     args = ap.parse_args()
     return args.build(args)
 

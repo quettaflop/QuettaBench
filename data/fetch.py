@@ -20,6 +20,7 @@ DATASETS = [
 # Raw traces that build_trajectories.py converts: key under the bucket -> name in data/.
 TRACES = {
     "traces/deepresearch-9k_DeepSeek-V4-Flash-0731_rtx6000pro/dr9k-v4flash.jsonl": "dr9k-v4flash.jsonl",
+    "traces/not_keep/deepsearchqa_DeepSeek-V4-Flash-0731_not_complete_rtx6000pro/dsqa-v4flash.jsonl": "dsqa-v4flash.jsonl",
 }
 
 

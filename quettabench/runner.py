@@ -44,6 +44,7 @@ TRAJECTORY_DATASETS = (
     "terminalbench-multi-turn",
     "osworld-multi-turn",
     "deepresearch-multi-turn",
+    "deepsearch-multi-turn",
 )
 
 # Room left in the profile's isl_tokens window after a turn's prompt and output.

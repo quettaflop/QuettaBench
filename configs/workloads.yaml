@@ -119,6 +119,19 @@ deepresearch-multiturn:
   max_turns: 30
   num_sessions: 300
 
+deepsearch-multiturn:
+  # Built by data/build_trajectories.py deepsearch; longest recorded prompt+completion is 28603 tokens, so 32768 cuts no turn.
+  # The trace is an unfinished collection (stopped at 72 of 300 sessions after CUDA OOM; 60 of 72 end at the 30-turn cap, not
+  # an answer; dropped sessions may skew long, unmeasured). 72 sessions caps a run's effective concurrency.
+  <<: *agent
+  isl_tokens: 32768
+  osl_tokens: 16384
+  dataset: deepsearch-multi-turn
+  file_path: data/deepsearch_trajectories.jsonl
+  min_turns: 1
+  max_turns: 30
+  num_sessions: 72
+
 test:
   isl_tokens: 10
   osl_tokens: 20
