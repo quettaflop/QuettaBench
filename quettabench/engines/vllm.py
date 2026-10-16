@@ -2,7 +2,8 @@
 
 from pathlib import Path
 
-from quettabench.config.schema import ConfigError, parse_recipe, recipe_flag
+from quettabench.config.recipe import flag_index, flag_value, parse_recipe, with_port
+from quettabench.config.schema import ConfigError
 from quettabench.engines.base import (
     EngineAdapter,
     LaunchSpec,
@@ -21,9 +22,10 @@ SERVER_ENV = {
     "VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS": "1",  # sizes KV after graph capture
 }
 KWARGS = {"disable_log_stats": True, "trust_remote_code": True}
-# What a recipe run adds to the recipe: the cached-token metric reads this usage field.
+# What a recipe run adds to the recipe: the cached-token metric reads this usage field, and the dev-mode env
+# mounts the prefix-cache reset. The launcher also adds hardware.collective pins and the --served-model-name token.
 RECIPE_FLAGS = ("--enable-prompt-tokens-details",)
-RECIPE_ENV = {"VLLM_SERVER_DEV_MODE": "1"}
+RECIPE_ENV = {"VLLM_SERVER_DEV_MODE": SERVER_ENV["VLLM_SERVER_DEV_MODE"]}
 # extra.vllm.api_key goes in this env var: the startup log would print --api-key.
 API_KEY_ENV = "VLLM_API_KEY"
 
@@ -43,19 +45,6 @@ def switch_off(name):
 def unless(default, name):
     """A flag only when the value differs from the engine's own default."""
     return lambda v: [] if v == default else [name, str(v)]
-
-
-def with_port(flags, port):
-    """The recipe's flags with its --port value set to port; appended when the recipe has none."""
-    flags = list(flags)
-    for i, word in enumerate(flags):
-        if word == "--port" and i + 1 < len(flags):
-            flags[i + 1] = str(port)
-            return flags
-        if word.startswith("--port="):
-            flags[i] = f"--port={port}"
-            return flags
-    return [*flags, "--port", str(port)]
 
 
 def kw(key):
@@ -82,6 +71,7 @@ FIELDS = {
     "port": (flag("--port"), nothing),
     "tp": (flag("--tensor-parallel-size"), kw("tensor_parallel_size")),
     "pp": (unless(1, "--pipeline-parallel-size"), kw("pipeline_parallel_size")),
+    "dp": (unless(1, "--data-parallel-size"), kw_when("data_parallel_size", lambda v: v > 1)),
     "ep": (switch("--enable-expert-parallel"), kw_when("enable_expert_parallel", bool)),
     "dtype": (flag("--dtype"), kw("dtype")),
     "kv_cache_dtype": (unless("auto", "--kv-cache-dtype"), kw_when("kv_cache_dtype", lambda v: v != "auto")),
@@ -155,9 +145,8 @@ class VllmAdapter(EngineAdapter):
             exports, model, flags = parse_recipe(engine.recipe)
             server = [vllm_bin, SERVER_CMD, model, *with_port(flags, engine.port), *RECIPE_FLAGS]
             env = {**exports, **RECIPE_ENV}
-            served_name = recipe_flag(flags, "--served-model-name") or model
-            if served_name != model:
-                kwargs["served_model_name"] = served_name
+            served_name = flag_value(flag_index(flags), "--served-model-name") or model
+            kwargs = {"model": model, "served_model_name": served_name}
         if engine.instrumentation == "nsys":
             server = nsys_argv(cfg, run_dir) + server
         return LaunchSpec(
@@ -186,7 +175,7 @@ class VllmAdapter(EngineAdapter):
         return HttpDriver(
             endpoint,
             url=handle.endpoint + path,
-            model=spec.engine_kwargs.get("served_model_name") or spec.engine_kwargs["model"],
+            model=spec.served_name,
             api_key=spec.env.get(API_KEY_ENV, "test"),
             timeout=spec.timeout_s,
             accelerator=getattr(handle, "backend", "cuda"),

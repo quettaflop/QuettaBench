@@ -517,6 +517,8 @@ def meta(cfg, gpu, version, eval_pos, steps):
 
 
 def capacity(engine, gpu_bytes, kv_bytes_per_token):
+    if engine.gpu_util is None:
+        raise ConfigError("capacity needs engine.gpu_util; a recipe that does not set it leaves the engine default")
     gpu_gib = gpu_bytes / GIB
     free_gib = engine.tp * (gpu_gib * engine.gpu_util) - engine.weights_gib - engine.tp * RESERVE_GIB
     return free_gib, int(free_gib * GIB / kv_bytes_per_token) if free_gib > 0 else 0

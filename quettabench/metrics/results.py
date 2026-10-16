@@ -259,7 +259,7 @@ def measured_row(row, **extra):
 
 def provenance(cfg, handle=None, driver=None, launch_env=None):
     engine, hardware = cfg.engine, cfg.hardware
-    doc = {
+    return {
         "gpu": getattr(handle, "gpu", "") or "",
         "engine": engine.name,
         "engine_version": getattr(driver, "version", None),
@@ -273,9 +273,6 @@ def provenance(cfg, handle=None, driver=None, launch_env=None):
         "kv_cache_dtype": engine.kv_cache_dtype,
         "launch_env": redact(launch_env or {}),
     }
-    if engine.recipe:
-        doc["recipe"] = engine.recipe  # verbatim, so a reader can diff it against the website
-    return doc
 
 
 class RunWriter:

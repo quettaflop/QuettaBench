@@ -9,7 +9,7 @@ QuettaBench is a measurement harness. It has one command, `qbench`, with four su
 ## Layout
 
 - `quettabench/cli.py`, `runner.py`, `provision.py`: the command, the run sequence, and box setup. `runner.py` is the only code that starts a run.
-- `quettabench/config/`: schema (with the serving-topology rules), loader, env_map. The only place `os.environ` is read is `config/env_map.py`, enforced by `tests/contracts/test_env_map.py`; its allowlist only shrinks.
+- `quettabench/config/`: schema (with the serving-topology rules), loader, recipe (the pasted `vllm serve` command), env_map. The only place `os.environ` is read is `config/env_map.py`, enforced by `tests/contracts/test_env_map.py`; its allowlist only shrinks.
 - `quettabench/workloads/`: every request source is a `Trace` with a `workload_hash`. A source without a hash does not belong here.
 - `quettabench/engines/`: adapters translate a Config to a LaunchSpec from a field table; a field with no flag raises `UnsupportedField`, never a silent drop. Drivers are the only code in a run that talks to an engine. `launcher.py` is the only code that starts an engine server, for a run or a probe (`probes/base.py` `launch_vllm`); `BenchDriver` runs the QuettaServe bench, which is its own engine, once per grid cell. Other subprocesses are tools (nvidia-smi, amd-smi, neuron-ls, git, nsys export, docker, cargo in provision), never an engine.
 - `quettabench/modes/`: `serve.py`, nothing else: the request replay, the session dispatch and the grid cells. Nothing in `modes/` branches on the engine name; an engine difference is a driver.
@@ -24,7 +24,7 @@ QuettaBench is a measurement harness. It has one command, `qbench`, with four su
 - `data/`: fetch scripts. Never imported by `quettabench/`, enforced by `tests/contracts/test_imports.py`.
 - `docs/runbooks/`: the probe guide; with README.md and AGENTS.md the only docs.
 - `tests/golden/`: characterization fixtures of the measured behaviour. Change a fixture only with a dated line in `tests/golden/REPORT.md` saying why.
-- `tests/contracts/`: one test module per package area, not per module: `test_workloads.py` covers `workloads/` (sessions included), `test_probes.py` `probes/`, `test_adapters.py` the adapters, `test_export.py` `export/`, `test_profiling.py` `profiling/`, `test_metrics_summary.py` `metrics/summary.py` and `metrics/step_fit.py`, and `config/schema.py` is tested through `test_loader.py`; `provision.py` is tested in `tests/golden/test_provision.py` only. Plus `test_compare_contracts.py` (with `compare.py`'s tests), `test_imports.py` and the GPU smoke module `test_probes_gpu.py`; `helpers.py` and the `fake_*.py` modules are their plumbing.
+- `tests/contracts/`: one test module per package area, not per module: `test_workloads.py` covers `workloads/` (sessions included), `test_probes.py` `probes/`, `test_adapters.py` the adapters, `test_export.py` `export/`, `test_profiling.py` `profiling/`, `test_metrics_summary.py` `metrics/summary.py` and `metrics/step_fit.py`, and `config/schema.py` and `config/recipe.py` are tested through `test_loader.py`; `provision.py` is tested in `tests/golden/test_provision.py` only. Plus `test_compare_contracts.py` (with `compare.py`'s tests), `test_imports.py` and the GPU smoke module `test_probes_gpu.py`; `helpers.py` and the `fake_*.py` modules are their plumbing.
 - `tests/parity/`: `slope_gate.json`, the committed HTTP-vs-in-process slope gate, and the test that holds every cell to its rule.
 
 ## Deviations from QBENCH_STRUCTURE.md

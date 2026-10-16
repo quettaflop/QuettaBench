@@ -206,11 +206,11 @@ class CompareScripts(unittest.TestCase):
             self.assertFalse(schema.serving_style_compatible("afd:1a1f", "aggregated"))
             self.assertFalse(schema.serving_style_compatible("afd:1a1f", "disagg:1p1d"))
             # Pools are sized in GPUs: afd needs attn + ffn, not tp * pp.
-            engine = SimpleNamespace(serving_style="afd:2a6f", tp=4, pp=1)
+            engine = SimpleNamespace(serving_style="afd:2a6f", tp=4, pp=1, dp=1)
             self.assertEqual(schema.device_count(engine), 8)
-            engine = SimpleNamespace(serving_style="disagg:2p2d", tp=8, pp=1)
+            engine = SimpleNamespace(serving_style="disagg:2p2d", tp=8, pp=1, dp=1)
             self.assertEqual(schema.device_count(engine), 4)
-            engine = SimpleNamespace(serving_style="aggregated", tp=4, pp=2)
+            engine = SimpleNamespace(serving_style="aggregated", tp=4, pp=2, dp=1)
             self.assertEqual(schema.device_count(engine), 8)
             self.assertTrue(schema.serving_style_compatible("aggregated", "aggregated"))
         finally:

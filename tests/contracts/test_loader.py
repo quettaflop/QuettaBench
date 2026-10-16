@@ -7,7 +7,7 @@ from unittest import mock
 
 import yaml
 
-from quettabench.config import loader
+from quettabench.config import loader, recipe
 from quettabench.config.loader import ConfigError, load, parse_set
 from quettabench.config.schema import CHOICES
 from quettabench.engines import base as engine_base
@@ -410,6 +410,123 @@ class LoaderRules(unittest.TestCase):
         self.assertIn("engine.tp = 2  (run)", text)
         self.assertIn("hardware.collective.NCCL_ALGO = 'ring'  (hardware)", text)
         self.assertNotIn("(", self.one().dump(origins=False))
+
+    def recipe(self, text, engine=None, **kwargs):
+        """The loaded Config of a serve run whose engine.recipe is `vllm serve toy/m` plus text."""
+        run = {"engine": {"model": "toy/m", "recipe": f"vllm serve toy/m {text}", **(engine or {})}}
+        return self.one(run, **kwargs)
+
+    def test_recipe_layout_supersedes_the_model_yaml(self):
+        cfg = self.recipe("--tensor-parallel-size 2", model={"tp": 4})
+        e = cfg.engine
+        self.assertEqual((e.tp, e.pp, e.dp, e.ep, e.dtype, e.kv_cache_dtype), (2, 1, 1, False, "auto", "auto"))
+        self.assertEqual((e.max_model_len, e.gpu_util, e.prefix_caching, e.cudagraph), (None, None, None, True))
+        for field in ("tp", "dtype", "max_model_len", "gpu_util", "prefix_caching"):
+            self.assertEqual(cfg.origins[f"engine.{field}"], "recipe")
+
+    def test_recipe_values_are_recorded_as_set(self):
+        cfg = self.recipe("--gpu-memory-utilization 0.9 --max-model-len 1000 --enable-prefix-caching --enforce-eager")
+        e = cfg.engine
+        self.assertEqual((e.gpu_util, e.max_model_len, e.prefix_caching, e.cudagraph), (0.9, 1000, True, False))
+
+    def test_flag_spellings_read_as_vllm_reads_them(self):
+        cases = {
+            "-tp 2 -pp 2 -dp 2 -ep": {"tp": 2, "pp": 2, "dp": 2, "ep": True},
+            "--tensor_parallel_size=2 --data-parallel-size=4": {"tp": 2, "dp": 4},
+            "--enable-expert-parallel=true": {"ep": True},
+            "--enable-expert-parallel=false": {"ep": False},
+            "--enable-expert-parallel --no-enable-expert-parallel": {"ep": False},
+            "--no-enable-expert-parallel --enable-expert-parallel": {"ep": True},
+            "--no-enable-prefix-caching": {"prefix_caching": False},
+            "--enforce-eager": {"cudagraph": False},
+            "--kv_cache_dtype fp8 --dtype=bfloat16": {"kv_cache_dtype": "fp8", "dtype": "bfloat16"},
+            "--gpu-memory-utilization=0.8 --port 1": {"gpu_util": 0.8},
+        }
+        for text, want in cases.items():
+            with self.subTest(text):
+                engine = self.recipe(text).engine
+                self.assertEqual({k: getattr(engine, k) for k in want}, want)
+
+    def test_recipe_text_is_read_as_a_shell_would(self):
+        text = (
+            "# B300\r\nexport A=1 B='x y'  # env\r\n\r\n"
+            "vllm serve toy/m \\\r\n  --tensor-parallel-size 2 \\\r\n  # a comment\r\n"
+            '  --speculative-config \'{"a": "#b"}\' # note\r\n'
+        )
+        run = {"engine": {"model": "toy/m", "recipe": text.replace("  # a comment\r\n", "")}}
+        cfg = self.one(run)
+        self.assertEqual(cfg.engine.tp, 2)
+        exports, model, flags = recipe.parse_recipe(cfg.engine.recipe)
+        self.assertEqual((exports, model), ({"A": "1", "B": "x y"}, "toy/m"))
+        self.assertEqual(flags, ["--tensor-parallel-size", "2", "--speculative-config", '{"a": "#b"}'])
+
+    def test_a_recipe_that_is_not_one_serve_command_is_refused(self):
+        bad = {
+            "vllm serve toy/m\nvllm serve toy/m": "nothing may follow",
+            "vllm serve toy/m\nexport A=1": "nothing may follow",
+            "vllm serve toy/m && rm x": "shell operator '&&'",
+            "vllm serve toy/m; rm x": "shell operator ';'",
+            "vllm serve toy/m | tee x": "shell operator '|'",
+            "export A": "export wants K=V",
+            "export A=1": "no `vllm serve",
+            "python x.py": "must be `export",
+        }
+        for text, why in bad.items():
+            with self.subTest(text), self.assertRaisesRegex(ConfigError, why):
+                self.one({"engine": {"model": "toy/m", "recipe": text}})
+
+    def test_flags_qbench_cannot_read_are_refused(self):
+        bad = {
+            "--tensor-parallel 2": "abbreviates",
+            "--max-model 5": "abbreviates",
+            "--config c.yaml": "--config is refused",
+            "--api-key k": "VLLM_API_KEY",
+            "--max-model-len 1M": "not a plain int",
+            "--max-model-len=1k": "not a plain int",
+            "--enable-expert-parallel=maybe": "must be true or false",
+            "--no-enable-expert-parallel=true": "takes no value",
+        }
+        for text, why in bad.items():
+            with self.subTest(text), self.assertRaisesRegex(ConfigError, why):
+                self.recipe(text)
+
+    def test_a_recipe_needs_a_plain_vllm_serve_run(self):
+        cases = [
+            ({"engine": {"name": "quettaserve"}}, "needs engine.name=vllm"),
+            ({"mode": {"return_outputs": "text"}}, "needs engine.name=vllm over HTTP"),
+            ({"mode": {"grid": "toy"}, "workload": {"kind": "grid"}}, "mode.grid does not run with engine.recipe"),
+            ({"engine": {"extra": {"vllm": {"enforce_eager": True}}}}, "engine.extra.vllm does not apply"),
+            ({"engine": {"serving_style": "disagg:1p1d"}}, "serving_style=disagg:1p1d does not apply"),
+            ({"engine": {"model": "other/m"}}, "serves 'toy/m' but engine.model='other/m'"),
+        ]
+        for run, why in cases:
+            with self.subTest(why), self.assertRaisesRegex(ConfigError, why):
+                self.one({**run, "engine": {"model": "toy/m", "recipe": "vllm serve toy/m", **run.get("engine", {})}})
+
+    def test_an_explicit_field_that_differs_from_the_recipe_is_refused(self):
+        cases = [
+            (
+                {"gpu_util": 0.8},
+                [],
+                {},
+                "--gpu-memory-utilization 0.9",
+                "engine.gpu_util=0.8 but engine.recipe launches 0.9",
+            ),
+            ({}, ["engine.tp=4"], {}, "--tensor-parallel-size 2", "engine.tp=4 but engine.recipe launches 2"),
+            ({}, [], {"GPU_UTIL": "0.9"}, "", "engine.gpu_util=0.9 but engine.recipe launches None"),
+            ({"dp": 2}, [], {}, "", "engine.dp=2 but engine.recipe launches 1"),
+        ]
+        for engine, sets, env, text, why in cases:
+            with self.subTest(why), self.assertRaisesRegex(ConfigError, why):
+                self.recipe(text, engine, overrides=sets, env=env)
+        self.assertEqual(self.recipe("--gpu-memory-utilization 0.9", {"gpu_util": 0.9}).engine.gpu_util, 0.9)
+
+    def test_a_profile_that_needs_prefix_caching_needs_the_recipe_to_say_so(self):
+        run = {"mode": {"serve_profile": "single-turn"}}
+        with self.assertRaisesRegex(ConfigError, "engine.prefix_caching=None contradicts mode.serve_profile"):
+            self.one({**run, "engine": {"model": "toy/m", "recipe": "vllm serve toy/m"}})
+        run["engine"] = {"model": "toy/m", "recipe": "vllm serve toy/m --enable-prefix-caching"}
+        self.assertTrue(self.one(run).engine.prefix_caching)
 
 
 if __name__ == "__main__":

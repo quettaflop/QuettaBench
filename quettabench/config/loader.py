@@ -8,7 +8,7 @@ from pathlib import Path
 
 import yaml
 
-from quettabench.config import env_map
+from quettabench.config import env_map, recipe
 from quettabench.config.schema import (
     CHOICES,
     DICT_KEYS,
@@ -21,9 +21,7 @@ from quettabench.config.schema import (
     check_ep_legal,
     default_values,
     dict_field,
-    parse_recipe,
     parse_serving_style,
-    recipe_layout,
 )
 from quettabench.workloads import arrival, live
 
@@ -203,7 +201,7 @@ def _profile_prefix_caching(values, origins, where):
         return
     if origins.get("engine.prefix_caching", "default") not in NOT_ASKED:
         raise ConfigError(
-            f"{where}: engine.prefix_caching=False contradicts workload profile {source}, which requires prefix caching"
+            f"{where}: engine.prefix_caching={values['engine.prefix_caching']} contradicts workload profile {source}, which requires prefix caching"
         )
     values["engine.prefix_caching"] = True
     origins["engine.prefix_caching"] = "profile"
@@ -214,27 +212,38 @@ def _one_of(allowed):
     return ", ".join(words[:-1]) + " or " + words[-1]
 
 
-def _check_recipe(values, where):
-    """A recipe is launched as written, so what qbench records and sizes from the fields must match it."""
+def _apply_recipe(values, origins, where):
+    """A recipe is launched as written: its layout supersedes the model yaml's, and an explicit field may not differ.
+
+    A field the recipe does not set is recorded as the engine's own default (None where qbench cannot know it).
+    """
     if not values["engine.recipe"]:
         return
     if values["engine.name"] != "vllm" or values["mode.return_outputs"] != "none":
         raise ConfigError(f"{where}: engine.recipe is a `vllm serve` command; it needs engine.name=vllm over HTTP")
+    if values["mode.grid"] is not None:
+        raise ConfigError(f"{where}: mode.grid does not run with engine.recipe; use a serve run")
     if values["engine.extra"].get("vllm"):
         raise ConfigError(f"{where}: engine.extra.vllm does not apply with engine.recipe; put the flag in the recipe")
-    _, model, flags = parse_recipe(values["engine.recipe"])
+    if values["engine.serving_style"] != "aggregated":
+        raise ConfigError(
+            f"{where}: engine.serving_style={values['engine.serving_style']} does not apply with a recipe"
+        )
+    _, model, flags = recipe.parse_recipe(values["engine.recipe"])
     if model != values["engine.model"]:
         raise ConfigError(f"{where}: engine.recipe serves {model!r} but engine.model={values['engine.model']!r}")
     try:
-        layout = recipe_layout(flags)
+        launched = recipe.layout(flags)
     except ValueError as e:
         raise ConfigError(f"{where}: engine.recipe: {e}") from None
-    for name, launched in layout.items():
-        if values[f"engine.{name}"] != launched:
+    for name, value in launched.items():
+        path = f"engine.{name}"
+        if origins.get(path, "default") not in NOT_ASKED and values[path] != value:
             raise ConfigError(
-                f"{where}: engine.{name}={values[f'engine.{name}']!r} but engine.recipe launches {launched!r}; "
-                "set the field to match the recipe"
+                f"{where}: {path}={values[path]!r} but engine.recipe launches {value!r} "
+                "(None: the engine's default); drop the field or make the recipe say it"
             )
+        values[path], origins[path] = value, "recipe"
 
 
 def _validate(values, origins, allow_unverified, where):
@@ -249,6 +258,7 @@ def _validate(values, origins, allow_unverified, where):
             raise ConfigError(f"{where}: {path} must be a number, got {values[path]!r}")
         if (low is not None and values[path] < low) or (high is not None and values[path] > high):
             raise ConfigError(f"{where}: {path} must be in [{low}, {high or 'inf'}], got {values[path]!r}")
+    _apply_recipe(values, origins, where)
     # Schema rules raise ValueError; ConfigError makes the CLI print one line.
     try:
         parse_serving_style(values["engine.serving_style"])
@@ -257,7 +267,6 @@ def _validate(values, origins, allow_unverified, where):
             check_ep_legal(values["engine.tp"], values["engine.num_experts"])
     except ValueError as e:
         raise ConfigError(str(e)) from None
-    _check_recipe(values, where)
     if not values["engine.verified"] and not allow_unverified:
         raise ConfigError(f"{where}: {values['run_name']} is not validated yet; pass --allow-unverified to bring it up")
     backend = values["hardware.backend"]
