@@ -488,7 +488,7 @@ def resolve_kv_bytes_per_token(engine):
 
 
 def graph_mode(engine):
-    return "FULL" if engine.cudagraph else "NOGRAPH"
+    return "NOGRAPH" if engine.cudagraph is False else "FULL"
 
 
 def meta(cfg, gpu, version, eval_pos, steps):

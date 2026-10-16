@@ -12,7 +12,7 @@ import sys
 import uuid
 from pathlib import Path
 
-from quettabench.config import env_map, loader
+from quettabench.config import env_map, loader, recipe
 from quettabench.config.schema import OTHER_ACCELERATORS, ConfigError, device_count
 from quettabench.engines import base, launcher
 from quettabench.metrics.results import RUN_MARKERS, RunWriter, redact
@@ -306,6 +306,13 @@ def confirm_engine(cfg, driver):
             f"{cfg.run_name}: the server runs with enable_prefix_caching={caching.pop()}, "
             f"but this run needs {wanted}; set it in the recipe"
         )
+    _, _, flags = recipe.parse_recipe(cfg.engine.recipe)
+    pinned = recipe.flag_value(recipe.flag_index(flags), "--kv-cache-memory-bytes")
+    if pinned is not None:
+        # The server sizes the cache from this flag and ignores the utilization fraction, so that gauge is no fact.
+        engines = {e: {**r, "kv_cache_memory_bytes": pinned} for e, r in engines.items()}
+        for resolved in engines.values():
+            del resolved["gpu_memory_utilization"]
     first = next(iter(engines.values()))
     return first if all(e == first for e in engines.values()) else {"per_engine": engines}
 

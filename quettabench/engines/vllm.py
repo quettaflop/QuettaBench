@@ -47,12 +47,24 @@ def unless(default, name):
     return lambda v: [] if v == default else [name, str(v)]
 
 
+class Kw:
+    """The one kwargs entry a FIELDS row owns: `key` is the vllm.LLM argument, `value` replaces the field's."""
+
+    def __init__(self, key, keep=None, value=None):
+        self.key, self.keep, self.value = key, keep, value
+
+    def __call__(self, v):
+        if self.keep is not None and not self.keep(v):
+            return {}
+        return {self.key: v if self.value is None else self.value}
+
+
 def kw(key):
-    return lambda v: {key: v}
+    return Kw(key)
 
 
 def kw_when(key, keep):
-    return lambda v: {key: v} if keep(v) else {}
+    return Kw(key, keep)
 
 
 def nothing(v):
@@ -84,25 +96,27 @@ FIELDS = {
     ),
     "cudagraph": (
         switch_off("--enforce-eager"),
-        lambda v: {} if v else {"compilation_config": {"cudagraph_mode": "NONE"}},
+        Kw("compilation_config", lambda v: not v, {"cudagraph_mode": "NONE"}),
     ),
     "serving_style": (lambda v: [], aggregated_only),
 }
 SCALARS = (str, int, float, bool)
+# vllm.LLM argument -> the EngineCfg field that sets it.
+OWNED = {to_kwargs.key: name for name, (_, to_kwargs) in FIELDS.items() if isinstance(to_kwargs, Kw)}
 
 
-def extra_fragments(extra, taken):
-    """api_key is left to the env (API_KEY_ENV)."""
+def extra_fragments(extra):
+    """api_key is left to the env (API_KEY_ENV); a key a field owns is refused, so each fact has one spelling."""
     if not isinstance(extra, dict):
         raise UnsupportedField("vllm", "extra.vllm", "expected a mapping of flag: value")
     argv, kwargs = [], {}
     for key, value in extra.items():
         if key == "api_key":
             continue
-        if not isinstance(value, SCALARS) or key in taken:
-            raise UnsupportedField(
-                "vllm", f"extra.vllm.{key}", "a table field" if key in taken else "value must be a scalar"
-            )
+        if key in OWNED:
+            raise UnsupportedField("vllm", f"extra.vllm.{key}", f"set engine.{OWNED[key]} instead")
+        if not isinstance(value, SCALARS):
+            raise UnsupportedField("vllm", f"extra.vllm.{key}", "value must be a scalar")
         name = "--" + key.replace("_", "-")
         argv += [name] if value is True else [] if value is False else [name, str(value)]
         kwargs[key] = value
@@ -132,7 +146,7 @@ class VllmAdapter(EngineAdapter):
             argv += to_argv(value)
             kwargs.update(to_kwargs(value))
         extra = engine.extra.get("vllm", {})
-        extra_argv, extra_kwargs = extra_fragments(extra, kwargs)
+        extra_argv, extra_kwargs = extra_fragments(extra)
         kwargs.update(extra_kwargs)
         env = dict(SERVER_ENV)
         if extra.get("api_key") is not None:

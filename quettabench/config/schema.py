@@ -85,7 +85,7 @@ class EngineCfg:
     gpu_util: float | None = 0.9  # None: the recipe is silent, so the engine's own default
     prefix_caching: bool | None = False  # None: likewise
     serving_style: str = "aggregated"
-    cudagraph: bool = True  # false: --enforce-eager
+    cudagraph: bool | None = True  # false: --enforce-eager; None: a recipe's compilation config sets it
     port: int = 8000
     instrumentation: str = "none"  # armed at launch: none | nsys | torch
     image: str | None = None  # the server's docker image; required by hardware.launcher=docker

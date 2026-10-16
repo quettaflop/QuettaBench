@@ -278,7 +278,7 @@ def read_run(results_dir):
     grid = summary.get("grid") or {}
     meta = grid.get("meta") or {}
     engine = cfg["engine"]
-    mode = meta.get("mode") or ("FULL" if engine.get("cudagraph", True) else "NOGRAPH")
+    mode = meta.get("mode") or ("NOGRAPH" if engine.get("cudagraph") is False else "FULL")
     row_mode = "eager" if mode == "NOGRAPH" else "graph"
     kv = grid.get("kv") or prov.get("kv_cache_dtype")
 

@@ -188,6 +188,8 @@ class BoundDriver(unittest.TestCase):
             self.resolved(helpers.METRICS)
         with self.assertRaisesRegex(RuntimeError, "cannot read the server's resolved config"):
             self.resolved(helpers.cache_config_text(), models="not json")
+        with self.assertRaisesRegex(RuntimeError, "does not list 'm'"):
+            self.resolved(helpers.cache_config_text(), models='{"data": [{"id": "other"}]}')
         drv, _ = self.driver()
         with (
             mock.patch.object(drivers.launcher, "urlopen", side_effect=OSError("refused")),

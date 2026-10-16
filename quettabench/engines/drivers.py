@@ -477,7 +477,9 @@ class HttpDriver(Driver):
             raise RuntimeError(f"cannot read the server's resolved config from {base}: {e}") from None
         if not engines:
             raise RuntimeError(f"{base}/metrics has no vllm:cache_config_info; cannot confirm the server's defaults")
-        served = next((m for m in models if m.get("id") == self.model), models[0] if models else {})
+        served = next((m for m in models if m.get("id") == self.model), None)
+        if served is None:
+            raise RuntimeError(f"{base}/v1/models does not list {self.model!r}; cannot read its max_model_len")
         return {e: {**cfg, "max_model_len": served.get("max_model_len")} for e, cfg in engines.items()}
 
     def warmup(self):

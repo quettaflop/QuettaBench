@@ -192,6 +192,45 @@ class RecipeLaunch(unittest.TestCase):
             recipe_cfg(GLM_RECIPE.replace("--tensor-parallel-size 8", "--data-parallel-size eight"))
 
 
+class RecipeCompilation(unittest.TestCase):
+    DEEPSEEK = (
+        "vllm serve deepseek-ai/DeepSeek-V4.1-Flash \\\n"
+        "  --tensor-parallel-size 8 \\\n"
+        '  --compilation-config \'{"mode":"VLLM_COMPILE","cudagraph_mode":"FULL_AND_PIECEWISE",'
+        '"cudagraph_capture_sizes":[1,2,4,8]}\' \\\n'
+        "  --max-cudagraph-capture-size 8190\n"
+    )
+
+    def test_a_compilation_config_leaves_cudagraph_to_the_recipe(self):
+        cfg = recipe_cfg(self.DEEPSEEK)
+        self.assertIsNone(cfg.engine.cudagraph)
+        self.assertEqual(cfg.origins["engine.cudagraph"], "recipe")
+        argv = vllm_adapter.ADAPTER.translate(cfg).server_argv
+        _, _, flags = recipe.parse_recipe(self.DEEPSEEK)
+        self.assertEqual(list(argv[3 : 3 + len(flags) - 2]), flags[:-2])
+        self.assertIn(
+            '{"mode":"VLLM_COMPILE","cudagraph_mode":"FULL_AND_PIECEWISE","cudagraph_capture_sizes":[1,2,4,8]}', argv
+        )
+
+    def test_only_a_recipe_that_turns_graphs_off_says_false(self):
+        cases = {
+            "-O0": False,
+            "-O 0": False,
+            "-O=0": False,
+            "-O3": None,
+            '-cc \'{"cudagraph_mode":"NONE"}\'': False,
+            "--compilation-config.cudagraph_mode NONE": False,
+            '--compilation-config \'{"mode":"VLLM_COMPILE"}\'': None,
+            '-O0 --compilation-config \'{"cudagraph_mode":"FULL"}\'': None,
+            "--compilation-config {nojson": None,
+            "-O3 --enforce-eager": False,
+            "": True,
+        }
+        for flags, want in cases.items():
+            with self.subTest(flags):
+                self.assertIs(recipe_cfg(f"vllm serve zai-org/GLM-5.3 {flags}").engine.cudagraph, want)
+
+
 class KwargsMatchGridFit(unittest.TestCase):
     def test_every_run_yaml(self):
         for name in sorted(GOLDEN):
@@ -335,6 +374,15 @@ class Extra(unittest.TestCase):
         spec = engine_spec_for("llama", sets=["engine.extra.vllm={gdn_prefill_backend: triton}"])
         self.assertEqual(list(spec.server_argv[-2:]), ["--gdn-prefill-backend", "triton"])
         self.assertEqual(spec.engine_kwargs["gdn_prefill_backend"], "triton")
+
+    def test_a_key_a_field_owns_is_refused_whatever_the_field_holds(self):
+        for key, field in (
+            ("data_parallel_size", "dp"),
+            ("tensor_parallel_size", "tp"),
+            ("compilation_config", "cudagraph"),
+        ):
+            with self.subTest(key), self.assertRaisesRegex(base.UnsupportedField, f"set engine.{field} instead"):
+                engine_spec_for("llama", sets=[f"engine.extra.vllm={{{key}: 2}}"])
 
     def test_bad_shape_raises(self):
         for value in ("{speculative_config: {k: 1}}", "{tp: [1, 2]}", "notamapping", "{tensor_parallel_size: 2}"):

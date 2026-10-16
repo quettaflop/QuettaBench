@@ -475,8 +475,21 @@ class LoaderRules(unittest.TestCase):
             with self.subTest(text), self.assertRaisesRegex(ConfigError, why):
                 self.one({"engine": {"model": "toy/m", "recipe": text}})
 
+    def test_a_hash_begins_a_comment_only_at_the_start_of_a_word(self):
+        cases = {
+            "vllm serve toy/m --chat-template a#b": ["--chat-template", "a#b"],
+            "# whole line\nvllm serve toy/m --x 1": ["--x", "1"],
+            "vllm serve toy/m --x 1  # trailing": ["--x", "1"],
+            "vllm serve toy/m --x '#q' \"#r\" a\\#b": ["--x", "#q", "#r", "a#b"],
+        }
+        for text, flags in cases.items():
+            with self.subTest(text):
+                self.assertEqual(recipe.parse_recipe(text)[2], flags)
+
     def test_flags_qbench_cannot_read_are_refused(self):
         bad = {
+            "--data-parallel-size-local 2": "one node",
+            "--data_parallel_size_local=2": "one node",
             "--tensor-parallel 2": "abbreviates",
             "--max-model 5": "abbreviates",
             "--config c.yaml": "--config is refused",
@@ -489,6 +502,10 @@ class LoaderRules(unittest.TestCase):
         for text, why in bad.items():
             with self.subTest(text), self.assertRaisesRegex(ConfigError, why):
                 self.recipe(text)
+
+    def test_the_model_is_positional(self):
+        with self.assertRaisesRegex(ConfigError, "the model is positional"):
+            self.one({"engine": {"model": "toy/m", "recipe": "vllm serve --model toy/m"}})
 
     def test_a_recipe_needs_a_plain_vllm_serve_run(self):
         cases = [

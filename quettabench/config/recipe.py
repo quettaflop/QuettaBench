@@ -1,5 +1,6 @@
 """A pasted `vllm serve` recipe: its exports, model and flags, and the layout those flags launch."""
 
+import json
 import re
 import shlex
 from typing import NamedTuple
@@ -14,6 +15,7 @@ ALIASES = {
     "-pp": "--pipeline-parallel-size",
     "-dp": "--data-parallel-size",
     "-ep": "--enable-expert-parallel",
+    "-cc": "--compilation-config",
 }
 # layout field -> (flag, cast); a field the recipe does not set takes SILENT.
 VALUE_FLAGS = {
@@ -36,7 +38,7 @@ SILENT = {
     "gpu_util": None,
     "prefix_caching": None,
     "ep": False,
-    "cudagraph": True,
+    "cudagraph": True,  # None: the recipe's compilation config sets it
 }
 # name -> (flag that turns it on, flag that turns it off)
 SWITCH_FLAGS = {
@@ -45,6 +47,7 @@ SWITCH_FLAGS = {
     "eager": ("--enforce-eager", "--no-enforce-eager"),
 }
 REFUSED = {
+    "--data-parallel-size-local": "qbench runs one node; the GPU count is tp * pp * dp",
     "--config": "a config file hides flags from the recipe text; write them in the recipe",
     "--api-key": "the startup log would print it; `export VLLM_API_KEY=...` before the command instead",
 }
@@ -55,6 +58,8 @@ READ = {
     *(flag for flag, _ in VALUE_FLAGS.values()),
     *(flag for pair in SWITCH_FLAGS.values() for flag in pair),
 }
+# `-O3`, `-O 3` and `-O=3` all set the optimization level.
+OPTIMIZATION_LEVEL = re.compile(r"-O(\d*)")
 
 
 class Flag(NamedTuple):
@@ -85,14 +90,16 @@ def parse_recipe(text):
             raise ConfigError("engine.recipe must be `export K=V` lines, then `vllm serve <model> ...`")
     if serve is None:
         raise ConfigError("engine.recipe has no `vllm serve <model>` command")
+    if serve[2].startswith("-"):
+        raise ConfigError(f"engine.recipe: the model is positional, `vllm serve <model> ...`; got {serve[2]!r}")
     return exports, serve[2], serve[3:]
 
 
 def _words(line):
     """The shell words of one logical line, a trailing # comment dropped; shell operators are refused."""
-    lexer = shlex.shlex(line, posix=True, punctuation_chars=True)
+    lexer = shlex.shlex(_without_comment(line), posix=True, punctuation_chars=True)
     lexer.whitespace_split = True
-    lexer.commenters = "#"
+    lexer.commenters = ""
     try:
         words = list(lexer)
     except ValueError as e:
@@ -101,6 +108,28 @@ def _words(line):
         if set(word) <= PUNCTUATION:
             raise ConfigError(f"engine.recipe: shell operator {word!r}; the recipe is one plain command")
     return words
+
+
+def _without_comment(line):
+    """The line up to a # that begins a word outside quotes, as bash reads it; `a#b` stays whole."""
+    quote, starts = None, True
+    chars = iter(enumerate(line))
+    for i, char in chars:
+        if quote:
+            if char == quote:
+                quote = None
+            elif char == "\\" and quote == '"':
+                next(chars, None)
+        elif char == "#" and starts:
+            return line[:i]
+        elif char in "'\"":
+            quote, starts = char, False
+        elif char == "\\":
+            next(chars, None)
+            starts = False
+        else:
+            starts = char.isspace()
+    return line
 
 
 def flag_index(flags):
@@ -162,10 +191,39 @@ def layout(flags):
     for field, (on, off) in SWITCH_FLAGS.items():
         found = _switch(index, on, off)
         if field == "eager":
-            out["cudagraph"] = True if found is None else not found
+            if found:
+                out["cudagraph"] = False
+            elif found is None:
+                out["cudagraph"] = _compiled_cudagraph(index)
         elif found is not None:
             out[field] = found
     return out
+
+
+def _compiled_cudagraph(index):
+    """Graphs on (True) when the recipe sets no compilation; off when every one says off; else None (the recipe's config sets it)."""
+    says = []
+    for name, found in index.items():
+        if name == "--compilation-config":
+            for at in found:
+                says.append(_graphs_off(at.value))
+        elif name.startswith("--compilation-config."):
+            for at in found:
+                says.append(name.endswith(".cudagraph-mode") and str(at.value).upper() == "NONE")
+        elif (level := OPTIMIZATION_LEVEL.fullmatch(name)) or name == "--optimization-level":
+            for at in found:
+                says.append((level[1] if level and level[1] else at.value) == "0")
+    if not says:
+        return True
+    return False if all(says) else None
+
+
+def _graphs_off(text):
+    try:
+        config = json.loads(text)
+    except (TypeError, ValueError):
+        return False
+    return isinstance(config, dict) and str(config.get("cudagraph_mode", "")).upper() == "NONE"
 
 
 def _switch(index, on, off):

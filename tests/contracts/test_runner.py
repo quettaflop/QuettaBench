@@ -460,8 +460,8 @@ class ChatOverHttp(unittest.TestCase):
 class RecipeResolved(unittest.TestCase):
     """A recipe's silent defaults are read from the live server before the first request."""
 
-    def run_recipe(self, metrics, sets=("mode.serve_profile=single-turn",), models=None):
-        recipe = "vllm serve /w --tensor-parallel-size 2"
+    def run_recipe(self, metrics, sets=("mode.serve_profile=single-turn",), models=None, flags=""):
+        recipe = f"vllm serve /w --tensor-parallel-size 2 {flags}"
         (cfg,) = loader.load(
             RUNS[0].with_name("llama.yaml"),
             ["engine.model=/w", f"engine.recipe={recipe}", "hardware.visible_devices=0,1", "mode.grid=null", *sets],
@@ -510,6 +510,12 @@ class RecipeResolved(unittest.TestCase):
                 "max_model_len": 4096,
             },
         )
+
+    def test_a_pinned_kv_cache_size_replaces_the_utilization_fraction(self):
+        _, doc, _ = self.run_recipe(helpers.cache_config_text(), flags="--kv-cache-memory-bytes 4G")
+        resolved = doc["provenance"]["engine_resolved"]
+        self.assertNotIn("gpu_memory_utilization", resolved)
+        self.assertEqual(resolved["kv_cache_memory_bytes"], "4G")
 
     def test_engines_that_differ_are_recorded_one_by_one(self):
         _, doc, _ = self.run_recipe(helpers.cache_config_text(engines=2))
