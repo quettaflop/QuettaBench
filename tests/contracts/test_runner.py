@@ -17,7 +17,7 @@ import yaml
 from quettabench import cli, profiler, runner
 from quettabench.config import loader
 from quettabench.config.schema import ConfigError
-from quettabench.engines import launcher
+from quettabench.engines import drivers, launcher
 from quettabench.engines.base import LaunchSpec
 from quettabench.workloads.sessions import TrajectorySessionTrace
 from tests.contracts import helpers
@@ -455,6 +455,104 @@ class ChatOverHttp(unittest.TestCase):
         self.assertEqual(sent, sorted(json.dumps(r.messages) for r in trace.requests()))
         self.assertEqual(max(len(body["messages"]) for _, body in posts), 5)
         self.assertEqual([r["success"] for r in rows], [True] * 6)
+
+
+class RecipeResolved(unittest.TestCase):
+    """A recipe's silent defaults are read from the live server before the first request."""
+
+    def run_recipe(self, metrics, sets=("mode.serve_profile=single-turn",), models=None):
+        recipe = "vllm serve /w --tensor-parallel-size 2"
+        (cfg,) = loader.load(
+            RUNS[0].with_name("llama.yaml"),
+            ["engine.model=/w", f"engine.recipe={recipe}", "hardware.visible_devices=0,1", "mode.grid=null", *sets],
+            env={},
+        )
+        handle = mock.Mock(gpu="H200", endpoint="http://127.0.0.1:1")
+        replies = {"/metrics": metrics, "/v1/models": models or '{"data": [{"id": "/w", "max_model_len": 4096}]}'}
+
+        def urlopen(url, timeout):
+            reply = mock.MagicMock()
+            reply.__enter__.return_value = io.BytesIO(replies[url.removeprefix("http://127.0.0.1:1")].encode())
+            return reply
+
+        def measure(trace, driver, mode, writer, workload):
+            writer.finish({})
+
+        with (
+            tempfile.TemporaryDirectory() as td,
+            mock.patch.object(runner, "build_trace"),
+            mock.patch.object(runner.launcher, "start", return_value=handle),
+            mock.patch.object(runner.launcher, "idle_gpus", return_value="0,1"),
+            mock.patch.object(drivers.launcher, "urlopen", side_effect=urlopen),
+            mock.patch.object(runner.serve, "run", side_effect=measure) as served,
+        ):
+            out = Path(td, "run")
+            try:
+                runner.run_one(cfg, out)
+            except RuntimeError as e:
+                error = e
+            else:
+                error = None
+            doc = json.loads((out / "run.json").read_text())
+        return error, doc, served
+
+    def test_resolved_values_land_in_run_json(self):
+        error, doc, served = self.run_recipe(helpers.cache_config_text())
+        self.assertIsNone(error)
+        self.assertEqual(
+            doc["provenance"]["engine_resolved"],
+            {
+                "enable_prefix_caching": True,
+                "gpu_memory_utilization": 0.85,
+                "kv_cache_size_tokens": 82777364,
+                "block_size": 128,
+                "cache_dtype": "auto",
+                "max_model_len": 4096,
+            },
+        )
+
+    def test_engines_that_differ_are_recorded_one_by_one(self):
+        _, doc, _ = self.run_recipe(helpers.cache_config_text(engines=2))
+        self.assertEqual(sorted(doc["provenance"]["engine_resolved"]["per_engine"]), ["0", "1"])
+
+    def test_a_server_without_the_prefix_caching_the_profile_needs_fails_before_measuring(self):
+        error, doc, served = self.run_recipe(helpers.cache_config_text(prefix_caching=False))
+        self.assertRegex(str(error), "enable_prefix_caching=False, but this run needs True")
+        served.assert_not_called()
+        self.assertEqual(doc["run_status"]["status"], "failed")
+
+    def test_engines_that_disagree_on_prefix_caching_fail(self):
+        text = helpers.cache_config_text(prefix_caching=True) + helpers.cache_config_text(prefix_caching=False).replace(
+            'engine="0"', 'engine="1"'
+        )
+        error, _, served = self.run_recipe(text)
+        self.assertRegex(str(error), "engines disagree")
+        served.assert_not_called()
+
+    def test_a_server_that_cannot_say_fails(self):
+        error, _, served = self.run_recipe(helpers.METRICS)
+        self.assertRegex(str(error), "no vllm:cache_config_info")
+        served.assert_not_called()
+
+    def test_a_profile_that_does_not_care_still_records_what_ran(self):
+        error, doc, _ = self.run_recipe(helpers.cache_config_text(prefix_caching=False), sets=())
+        self.assertIsNone(error)
+        self.assertFalse(doc["provenance"]["engine_resolved"]["enable_prefix_caching"])
+
+    def test_a_run_without_a_recipe_asks_the_server_nothing(self):
+        (cfg,) = loader.load(RUNS[0].with_name("llama.yaml"), ["engine.model=/w", "mode.grid=null"], env={})
+        with (
+            tempfile.TemporaryDirectory() as td,
+            mock.patch.object(runner, "build_trace"),
+            mock.patch.object(runner.launcher, "start"),
+            mock.patch.object(runner.launcher, "idle_gpus", return_value="0"),
+            mock.patch.object(drivers.HttpDriver, "engine_resolved") as resolved,
+            mock.patch.object(runner.serve, "run", side_effect=lambda t, d, m, w, wl: w.finish({})),
+        ):
+            runner.run_one(cfg, Path(td, "run"))
+            doc = json.loads(Path(td, "run", "run.json").read_text())
+        resolved.assert_not_called()
+        self.assertNotIn("engine_resolved", doc["provenance"])
 
 
 class FailureRecord(unittest.TestCase):

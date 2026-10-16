@@ -292,6 +292,24 @@ def reuse_groups(cfgs):
     return groups
 
 
+def confirm_engine(cfg, driver):
+    """What the live server resolved for a recipe's silent defaults; refuses a server whose prefix caching the run cannot use."""
+    engines = driver.engine_resolved()
+    caching = {e["enable_prefix_caching"] for e in engines.values()}
+    if len(caching) > 1:
+        raise RuntimeError(f"{cfg.run_name}: the engines disagree on enable_prefix_caching: {engines}")
+    wanted = cfg.engine.prefix_caching
+    if wanted is None:
+        wanted = loader.wanted_prefix_caching(cfg.mode.serve_profile, cfg.workload.source, cfg.mode.grid)
+    if wanted is not None and caching != {wanted}:
+        raise RuntimeError(
+            f"{cfg.run_name}: the server runs with enable_prefix_caching={caching.pop()}, "
+            f"but this run needs {wanted}; set it in the recipe"
+        )
+    first = next(iter(engines.values()))
+    return first if all(e == first for e in engines.values()) else {"per_engine": engines}
+
+
 def serve_one(cfg, out, exported, writer, server=None, keep=False):
     """keep leaves the server up and returns its Handle; the caller stops it."""
     adapter = base.get(cfg.engine.name)
@@ -322,6 +340,8 @@ def serve_one(cfg, out, exported, writer, server=None, keep=False):
     try:
         driver = adapter.driver(spec, handle, trace)
         writer.bind(handle, driver)
+        if cfg.engine.recipe:
+            writer.provenance["engine_resolved"] = confirm_engine(cfg, driver)
         if trace is None:
             trace = build_trace(cfg, tokenizer=getattr(driver, "tokenizer", None))
         serve.run(trace, driver, cfg.mode, writer, cfg.workload)

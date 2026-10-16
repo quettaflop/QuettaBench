@@ -521,10 +521,17 @@ class LoaderRules(unittest.TestCase):
                 self.recipe(text, engine, overrides=sets, env=env)
         self.assertEqual(self.recipe("--gpu-memory-utilization 0.9", {"gpu_util": 0.9}).engine.gpu_util, 0.9)
 
-    def test_a_profile_that_needs_prefix_caching_needs_the_recipe_to_say_so(self):
+    def test_a_recipe_silent_on_prefix_caching_is_left_to_the_live_server(self):
+        for run in ({"mode": {"serve_profile": "single-turn"}}, {"workload": {"source": "chat-singleturn"}}):
+            cfg = self.one({**run, "engine": {"model": "toy/m", "recipe": "vllm serve toy/m"}})
+            self.assertIsNone(cfg.engine.prefix_caching)
+            self.assertEqual(cfg.origins["engine.prefix_caching"], "recipe")
+
+    def test_a_recipe_that_turns_off_what_a_profile_needs_is_refused(self):
         run = {"mode": {"serve_profile": "single-turn"}}
-        with self.assertRaisesRegex(ConfigError, "engine.prefix_caching=None contradicts mode.serve_profile"):
-            self.one({**run, "engine": {"model": "toy/m", "recipe": "vllm serve toy/m"}})
+        run["engine"] = {"model": "toy/m", "recipe": "vllm serve toy/m --no-enable-prefix-caching"}
+        with self.assertRaisesRegex(ConfigError, "engine.prefix_caching=False contradicts mode.serve_profile"):
+            self.one(run)
         run["engine"] = {"model": "toy/m", "recipe": "vllm serve toy/m --enable-prefix-caching"}
         self.assertTrue(self.one(run).engine.prefix_caching)
 

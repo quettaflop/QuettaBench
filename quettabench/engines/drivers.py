@@ -24,7 +24,7 @@ from quettabench.config import env_map
 from quettabench.config.schema import OTHER_ACCELERATORS, ConfigError
 from quettabench.engines import launcher
 from quettabench.engines.base import EngineAdapter, LaunchSpec, register
-from quettabench.metrics.summary import RequestResult, parse_prometheus, spec_decode_counts
+from quettabench.metrics.summary import RequestResult, cache_config, parse_prometheus, spec_decode_counts
 from quettabench.workloads.base import Request
 from quettabench.workloads.grid import distinct_ids
 
@@ -464,6 +464,21 @@ class HttpDriver(Driver):
                 return spec_decode_counts(parse_prometheus(resp.read().decode()))
         except (OSError, http.client.HTTPException, ValueError):
             return None
+
+    def engine_resolved(self):
+        """What the running server resolved, per engine: its cache config and max_model_len. Raises when it cannot say."""
+        base = server_base_url(self.url)
+        try:
+            with launcher.urlopen(f"{base}/metrics", timeout=10) as resp:
+                engines = cache_config(parse_prometheus(resp.read().decode()))
+            with launcher.urlopen(f"{base}/v1/models", timeout=10) as resp:
+                models = json.loads(resp.read())["data"]
+        except (OSError, http.client.HTTPException, ValueError, KeyError, TypeError) as e:
+            raise RuntimeError(f"cannot read the server's resolved config from {base}: {e}") from None
+        if not engines:
+            raise RuntimeError(f"{base}/metrics has no vllm:cache_config_info; cannot confirm the server's defaults")
+        served = next((m for m in models if m.get("id") == self.model), models[0] if models else {})
+        return {e: {**cfg, "max_model_len": served.get("max_model_len")} for e, cfg in engines.items()}
 
     def warmup(self):
         """The time is discarded."""

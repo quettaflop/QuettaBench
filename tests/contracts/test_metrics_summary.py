@@ -20,6 +20,7 @@ from quettabench.metrics.summary import (
     annotate_multi_turn_cache_estimate,
     annotate_request_observability,
     burst_recovery,
+    cache_config,
     first_error,
     parse_prometheus,
     pcts,
@@ -36,6 +37,7 @@ from quettabench.metrics.summary import (
 from quettabench.workloads.base import Request
 from quettabench.workloads.live import get_profile
 from quettabench.workloads.sessions import resolve_multi_turn_num_sessions
+from tests.contracts import helpers
 
 SEVEN = [3.0, 9.0, 1.0, 7.0, 5.0, 11.0, 13.0]
 TIES = [1.0, 2.0, 2.0, 2.0, 3.0]
@@ -875,6 +877,31 @@ def batch(ctx, bs, step, wall, phase="fit", attempt=0, tp=1):
 
 def attempt_rows(ctx, bs, walls, attempt):
     return [r for step, wall in zip(STEPS, walls) for r in batch(ctx, bs, step, wall, attempt=attempt)]
+
+
+class CacheConfigTest(unittest.TestCase):
+    def test_one_engine_reads_the_resolved_values(self):
+        self.assertEqual(
+            cache_config(parse_prometheus(helpers.cache_config_text())),
+            {
+                "0": {
+                    "enable_prefix_caching": True,
+                    "gpu_memory_utilization": 0.85,
+                    "kv_cache_size_tokens": 82777364,
+                    "block_size": 128,
+                    "cache_dtype": "auto",
+                }
+            },
+        )
+
+    def test_data_parallel_gives_one_entry_per_engine(self):
+        engines = cache_config(parse_prometheus(helpers.cache_config_text(engines=8, prefix_caching=False)))
+        self.assertEqual(sorted(engines), [str(i) for i in range(8)])
+        self.assertEqual({e["enable_prefix_caching"] for e in engines.values()}, {False})
+        self.assertEqual(engines["7"]["kv_cache_size_tokens"], 82777371)
+
+    def test_no_gauge_is_empty(self):
+        self.assertEqual(cache_config(parse_prometheus(helpers.METRICS)), {})
 
 
 class FitTest(unittest.TestCase):

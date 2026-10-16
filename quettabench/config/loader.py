@@ -183,8 +183,15 @@ def _apply(values, origins, layer, origin):
         origins[path] = origin
 
 
+def _recipe_silent(values, origins, path):
+    """A recipe that does not say is the server's default, which the runner reads back from the live server."""
+    return values[path] is None and origins.get(path) == "recipe"
+
+
 def _force(values, origins, path, value, by, where):
     """An explicit contrary setting is refused."""
+    if _recipe_silent(values, origins, path):
+        return
     if values[path] != value and origins.get(path, "default") != "default":
         raise ConfigError(
             f"{where}: {path}={values[path]!r} contradicts mode.serve_profile={values['mode.serve_profile']}"
@@ -193,11 +200,25 @@ def _force(values, origins, path, value, by, where):
     origins[path] = by
 
 
+SERVE_PROFILE_PREFIX_CACHING = {"stress-test": False, "single-turn": True, "multi-turn": True}
+
+
+def workload_needs_prefix_caching(source, grid):
+    return grid is None and source in live.PROFILES and live.get_profile(source).prefix_caching_required
+
+
+def wanted_prefix_caching(serve_profile, source, grid):
+    """What the run's profiles need of the server's prefix caching: True, False, or None for either."""
+    if serve_profile in SERVE_PROFILE_PREFIX_CACHING:
+        return SERVE_PROFILE_PREFIX_CACHING[serve_profile]
+    return True if workload_needs_prefix_caching(source, grid) else None
+
+
 def _profile_prefix_caching(values, origins, where):
     source = values["workload.source"]
-    if values["mode.grid"] is not None or source not in live.PROFILES:
+    if not workload_needs_prefix_caching(source, values["mode.grid"]):
         return
-    if values["engine.prefix_caching"] or not live.get_profile(source).prefix_caching_required:
+    if values["engine.prefix_caching"] or _recipe_silent(values, origins, "engine.prefix_caching"):
         return
     if origins.get("engine.prefix_caching", "default") not in NOT_ASKED:
         raise ConfigError(
@@ -287,9 +308,8 @@ def _validate(values, origins, allow_unverified, where):
     by = origins.get("mode.serve_profile", "default")
     if profile == "stress-test":
         _force(values, origins, "mode.ignore_eos", True, by, where)
-        _force(values, origins, "engine.prefix_caching", False, by, where)
-    elif profile in ("single-turn", "multi-turn"):
-        _force(values, origins, "engine.prefix_caching", True, by, where)
+    if profile in SERVE_PROFILE_PREFIX_CACHING:
+        _force(values, origins, "engine.prefix_caching", SERVE_PROFILE_PREFIX_CACHING[profile], by, where)
     _profile_prefix_caching(values, origins, where)
     # A single-turn profile draws num_requests; other sources set their own.
     source = values["workload.source"]

@@ -2,6 +2,7 @@
 
 import re
 import statistics
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 # Under this a gap is two tokens stamped by one event-loop wakeup, not a decode step.
@@ -914,6 +915,26 @@ def parse_prometheus(text):
         key = (name, tuple(sorted(LABEL.findall(labels)))) if labels else name
         out[key] = value
     return out
+
+
+# vllm:cache_config_info labels qbench records; values are quoted strings, one series per engine.
+CACHE_CONFIG: dict[str, Callable] = {
+    "enable_prefix_caching": lambda v: {"True": True, "False": False}[v],
+    "gpu_memory_utilization": float,
+    "kv_cache_size_tokens": int,
+    "block_size": int,
+    "cache_dtype": str,
+}
+
+
+def cache_config(metrics):
+    """The server's resolved cache config per engine id; {} when the gauge is absent."""
+    engines = {}
+    for key in metrics:
+        if isinstance(key, tuple) and key[0] == "vllm:cache_config_info":
+            labels = dict(key[1])
+            engines[labels.get("engine", "0")] = {name: cast(labels[name]) for name, cast in CACHE_CONFIG.items()}
+    return engines
 
 
 def counter_total(metrics, name):

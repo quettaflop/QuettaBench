@@ -165,6 +165,36 @@ class BoundDriver(unittest.TestCase):
             self.assertEqual((drv.version, drv.version), ("0.30.1", "0.30.1"))
         urlopen.assert_called_once_with("http://h:8000/version", timeout=10)
 
+    def resolved(self, metrics, models='{"data": [{"id": "m", "max_model_len": 131072}]}'):
+        replies = {"/metrics": metrics, "/v1/models": models}
+
+        def urlopen(url, timeout):
+            reply = mock.MagicMock()
+            reply.__enter__.return_value = io.BytesIO(replies[url.removeprefix("http://h:8000")].encode())
+            return reply
+
+        drv, _ = self.driver()
+        with mock.patch.object(drivers.launcher, "urlopen", side_effect=urlopen):
+            return drv.engine_resolved()
+
+    def test_engine_resolved_reads_the_cache_config_and_max_model_len(self):
+        got = self.resolved(helpers.cache_config_text(engines=2))
+        self.assertEqual(sorted(got), ["0", "1"])
+        self.assertEqual(got["0"]["enable_prefix_caching"], True)
+        self.assertEqual(got["1"]["max_model_len"], 131072)
+
+    def test_engine_resolved_refuses_to_guess(self):
+        with self.assertRaisesRegex(RuntimeError, "no vllm:cache_config_info"):
+            self.resolved(helpers.METRICS)
+        with self.assertRaisesRegex(RuntimeError, "cannot read the server's resolved config"):
+            self.resolved(helpers.cache_config_text(), models="not json")
+        drv, _ = self.driver()
+        with (
+            mock.patch.object(drivers.launcher, "urlopen", side_effect=OSError("refused")),
+            self.assertRaisesRegex(RuntimeError, "refused"),
+        ):
+            drv.engine_resolved()
+
     def test_send_routes_token_ids_and_sampling(self):
         drv, session = self.driver()
 

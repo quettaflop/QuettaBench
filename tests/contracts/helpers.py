@@ -32,6 +32,17 @@ vllm:label_escape{path="a\\"b"} 1.0 1712345678000
 """
 
 
+def cache_config_text(engines=1, prefix_caching=True, kv_tokens=82777364):
+    """vLLM 0.31.0's cache_config_info gauge, one series per engine."""
+    return "".join(
+        'vllm:cache_config_info{_block_size_resolved="True",block_size="128",cache_dtype="auto",'
+        'effective_attention_block_size="128",enable_mamba_shared_prefix_checkpoint="False",'
+        f'enable_prefix_caching="{prefix_caching}",engine="{i}",gpu_memory_utilization="0.85",'
+        f'is_attention_free="False",kv_cache_size_tokens="{kv_tokens + i}",model_name="a,b"}} 1.0\n'
+        for i in range(engines)
+    )
+
+
 @contextmanager
 def serve(metrics=METRICS):
     posts = []
