@@ -21,7 +21,9 @@ from quettabench.config.schema import (
     check_ep_legal,
     default_values,
     dict_field,
+    parse_recipe,
     parse_serving_style,
+    recipe_layout,
 )
 from quettabench.workloads import arrival, live
 
@@ -212,6 +214,29 @@ def _one_of(allowed):
     return ", ".join(words[:-1]) + " or " + words[-1]
 
 
+def _check_recipe(values, where):
+    """A recipe is launched as written, so what qbench records and sizes from the fields must match it."""
+    if not values["engine.recipe"]:
+        return
+    if values["engine.name"] != "vllm" or values["mode.return_outputs"] != "none":
+        raise ConfigError(f"{where}: engine.recipe is a `vllm serve` command; it needs engine.name=vllm over HTTP")
+    if values["engine.extra"].get("vllm"):
+        raise ConfigError(f"{where}: engine.extra.vllm does not apply with engine.recipe; put the flag in the recipe")
+    _, model, flags = parse_recipe(values["engine.recipe"])
+    if model != values["engine.model"]:
+        raise ConfigError(f"{where}: engine.recipe serves {model!r} but engine.model={values['engine.model']!r}")
+    try:
+        layout = recipe_layout(flags)
+    except ValueError as e:
+        raise ConfigError(f"{where}: engine.recipe: {e}") from None
+    for name, launched in layout.items():
+        if values[f"engine.{name}"] != launched:
+            raise ConfigError(
+                f"{where}: engine.{name}={values[f'engine.{name}']!r} but engine.recipe launches {launched!r}; "
+                "set the field to match the recipe"
+            )
+
+
 def _validate(values, origins, allow_unverified, where):
     # yaml reads `visible_devices: 0` as int 0, which would read as unset.
     if values["hardware.visible_devices"] is not None:
@@ -232,6 +257,7 @@ def _validate(values, origins, allow_unverified, where):
             check_ep_legal(values["engine.tp"], values["engine.num_experts"])
     except ValueError as e:
         raise ConfigError(str(e)) from None
+    _check_recipe(values, where)
     if not values["engine.verified"] and not allow_unverified:
         raise ConfigError(f"{where}: {values['run_name']} is not validated yet; pass --allow-unverified to bring it up")
     backend = values["hardware.backend"]

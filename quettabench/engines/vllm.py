@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from quettabench.config.schema import ConfigError
+from quettabench.config.schema import ConfigError, parse_recipe, recipe_flag
 from quettabench.engines.base import (
     EngineAdapter,
     LaunchSpec,
@@ -21,6 +21,9 @@ SERVER_ENV = {
     "VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS": "1",  # sizes KV after graph capture
 }
 KWARGS = {"disable_log_stats": True, "trust_remote_code": True}
+# What a recipe run adds to the recipe: the cached-token metric reads this usage field.
+RECIPE_FLAGS = ("--enable-prompt-tokens-details",)
+RECIPE_ENV = {"VLLM_SERVER_DEV_MODE": "1"}
 # extra.vllm.api_key goes in this env var: the startup log would print --api-key.
 API_KEY_ENV = "VLLM_API_KEY"
 
@@ -40,6 +43,19 @@ def switch_off(name):
 def unless(default, name):
     """A flag only when the value differs from the engine's own default."""
     return lambda v: [] if v == default else [name, str(v)]
+
+
+def with_port(flags, port):
+    """The recipe's flags with its --port value set to port; appended when the recipe has none."""
+    flags = list(flags)
+    for i, word in enumerate(flags):
+        if word == "--port" and i + 1 < len(flags):
+            flags[i + 1] = str(port)
+            return flags
+        if word.startswith("--port="):
+            flags[i] = f"--port={port}"
+            return flags
+    return [*flags, "--port", str(port)]
 
 
 def kw(key):
@@ -105,7 +121,7 @@ def extra_fragments(extra, taken):
 
 class VllmAdapter(EngineAdapter):
     name = "vllm"
-    supports = frozenset(FIELDS) | {"extra", "instrumentation", "image"}
+    supports = frozenset(FIELDS) | {"extra", "instrumentation", "image", "recipe"}
 
     def translate(self, cfg, run_dir=None):
         self.refuse_unsupported(cfg)
@@ -134,6 +150,14 @@ class VllmAdapter(EngineAdapter):
         py = cfg.hardware.provision.get("py")
         vllm_bin = str(Path(py).with_name("vllm")) if py else "vllm"
         server = [vllm_bin, SERVER_CMD, engine.model, *argv, *SERVER_FLAGS, *extra_argv]
+        served_name = str(extra.get("served_model_name") or engine.model)
+        if engine.recipe:
+            exports, model, flags = parse_recipe(engine.recipe)
+            server = [vllm_bin, SERVER_CMD, model, *with_port(flags, engine.port), *RECIPE_FLAGS]
+            env = {**exports, **RECIPE_ENV}
+            served_name = recipe_flag(flags, "--served-model-name") or model
+            if served_name != model:
+                kwargs["served_model_name"] = served_name
         if engine.instrumentation == "nsys":
             server = nsys_argv(cfg, run_dir) + server
         return LaunchSpec(
@@ -142,7 +166,7 @@ class VllmAdapter(EngineAdapter):
             engine_kwargs=kwargs,
             env=env,
             health_path="/health",
-            served_name=str(extra.get("served_model_name") or engine.model),
+            served_name=served_name,
             port=engine.port,
             image=engine.image,
             instrumentation=engine.instrumentation,

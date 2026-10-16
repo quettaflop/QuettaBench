@@ -1,6 +1,7 @@
 # Frozen run vocabulary; field defaults are the "default" precedence level.
 import dataclasses
 import re
+import shlex
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -88,6 +89,7 @@ class EngineCfg:
     port: int = 8000
     instrumentation: str = "none"  # armed at launch: none | nsys | torch
     image: str | None = None  # the server's docker image; required by hardware.launcher=docker
+    recipe: str | None = None  # vllm only: the `vllm serve` command from recipes.vllm.ai, pasted verbatim
     extra: Mapping[str, Any] = field(default_factory=dict)  # quettaserve bench block lives here
     # Facts the capacity gate needs (grid CAPACITY line).
     kv_bytes_per_token: int | None = None  # per token; None allowed only for dense
@@ -269,7 +271,57 @@ def device_count(engine):
         return style["attn"] + style["ffn"]
     if style["mode"] == "disagg":
         return style["prefill"] + style["decode"]
-    return engine.tp * engine.pp
+    recipe = getattr(engine, "recipe", None)  # some callers pass only the topology fields
+    data_parallel = recipe_flag(parse_recipe(recipe)[2], "--data-parallel-size") if recipe else None
+    return engine.tp * engine.pp * int(data_parallel or 1)
+
+
+# engine field -> (the recipe flag that sets it, its type); ep is the switch --enable-expert-parallel.
+RECIPE_LAYOUT_FLAGS = {
+    "tp": ("--tensor-parallel-size", int),
+    "pp": ("--pipeline-parallel-size", int),
+    "dtype": ("--dtype", str),
+    "kv_cache_dtype": ("--kv-cache-dtype", str),
+    "max_model_len": ("--max-model-len", int),
+    "gpu_util": ("--gpu-memory-utilization", float),
+}
+
+
+def parse_recipe(text):
+    """(exports, model, flags) of a pasted `vllm serve` command, its `export K=V` lines first."""
+    try:
+        words = shlex.split(text.replace("\\\n", " "))
+    except ValueError as e:
+        raise ConfigError(f"engine.recipe: {e}") from None
+    exports = {}
+    while words[:1] == ["export"]:
+        del words[0]
+        while words and "=" in words[0]:
+            key, _, value = words.pop(0).partition("=")
+            exports[key] = value
+    if words[:2] != ["vllm", "serve"] or len(words) < 3:
+        raise ConfigError("engine.recipe must be `vllm serve <model> ...`, optionally after `export K=V` lines")
+    return exports, words[2], words[3:]
+
+
+def recipe_flag(flags, name):
+    """The value of `--name v` or `--name=v`; None when the recipe does not pass it."""
+    for i, word in enumerate(flags):
+        if word == name and i + 1 < len(flags):
+            return flags[i + 1]
+        if word.startswith(name + "="):
+            return word.partition("=")[2]
+    return None
+
+
+def recipe_layout(flags):
+    """Each layout field's value as the recipe launches it, the schema default where the recipe is silent."""
+    defaults = default_values()
+    layout = {"ep": "--enable-expert-parallel" in flags}
+    for name, (flag, cast) in RECIPE_LAYOUT_FLAGS.items():
+        value = recipe_flag(flags, flag)
+        layout[name] = defaults[f"engine.{name}"] if value is None else cast(value)
+    return layout
 
 
 def check_ep_legal(ep, num_experts):

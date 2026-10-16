@@ -12,9 +12,10 @@ from unittest import mock
 
 from quettabench import cli
 from quettabench.config import loader
-from quettabench.config.schema import ConfigError
+from quettabench.config.schema import ConfigError, device_count
 from quettabench.engines import base, launcher, quettaserve, vllm as vllm_adapter
 from quettabench.engines.drivers import HttpDriver, InProcessDriver
+from quettabench.metrics import results
 from quettabench.profiling import engine_side
 from quettabench.workloads.base import Request
 from quettabench.workloads.grid import GridTrace
@@ -54,6 +55,122 @@ def engine_spec_for(name, env=None, sets=()):
     sets = [*PINNED, *UNBLOCK.get(name, ()), *sets]
     (cfg,) = loader.load(RUNS / f"{name}.yaml", sets, env=env or {})
     return vllm_adapter.ADAPTER.translate(cfg)
+
+
+# Commands as recipes.vllm.ai prints them (B300).
+QWEN_RECIPE = """export VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
+
+vllm serve Qwen/Qwen3.8-Flash-Next \\
+  --max-num-seqs 256 \\
+  --gpu-memory-utilization 0.90 \\
+  --enable-prefix-caching \\
+  --enable-expert-parallel \\
+  --port 8100 \\
+  --data-parallel-size 8 \\
+  --kv-cache-dtype fp8 \\
+  --attention-config.indexer_kv_dtype fp8 \\
+  --enable-auto-tool-choice \\
+  --tool-call-parser qwen3_coder \\
+  --reasoning-parser qwen3 \\
+  --speculative-config '{"method":"mtp","num_speculative_tokens":3}' \\
+  --language-model-only \\
+  --hf-overrides '{"text_config": {"rope_parameters": {"mrope_interleaved": true, "mrope_section": [11, 11, 10], "rope_type": "yarn", "rope_theta": 10000000, "partial_rotary_factor": 0.25, "factor": 4.0, "original_max_position_embeddings": 262144}}}' \\
+  --max-model-len 1000000
+"""
+NVFP4_RECIPE = """export VLLM_ENGINE_READY_TIMEOUT_S=3600
+
+vllm serve Inferact/Qwen3.8-2.4T-A95B-NVFP4 \\
+  --linear-backend flashinfer_cutedsl \\
+  --enable-expert-parallel \\
+  --port 8100 \\
+  --data-parallel-size 8 \\
+  --all2all-backend flashinfer_nvlink_one_sided \\
+  --enable-auto-tool-choice \\
+  --tool-call-parser qwen3_coder \\
+  --reasoning-parser qwen3 \\
+  --speculative-config '{"method":"mtp","num_speculative_tokens":3}'
+"""
+GLM_RECIPE = """vllm serve zai-org/GLM-5.3 \\
+  --kv-cache-dtype fp8_e4m3 \\
+  --enable-expert-parallel \\
+  --tensor-parallel-size 8 \\
+  --tool-call-parser glm47 \\
+  --enable-auto-tool-choice \\
+  --reasoning-parser glm47 \\
+  --speculative-config '{"method":"mtp","num_speculative_tokens":5}'
+"""
+# What the recipes launch, as the engine fields must say it.
+QWEN_LAYOUT = ["engine.ep=true", "engine.kv_cache_dtype=fp8", "engine.max_model_len=1000000"]
+GLM_LAYOUT = ["engine.ep=true", "engine.kv_cache_dtype=fp8_e4m3", "engine.tp=8"]
+
+
+def recipe_cfg(recipe, layout, sets=()):
+    """llama's run with every layout field at the schema default, then the recipe's own layout."""
+    model = recipe.split("vllm serve ")[1].split()[0]
+    quiet = ["engine.dtype=auto", "engine.max_model_len=null", "engine.kv_cache_dtype=auto", "engine.tp=1"]
+    quiet += ["engine.ep=false", "engine.gpu_util=0.9"]
+    (cfg,) = loader.load(
+        RUNS / "llama.yaml",
+        [*PINNED, *quiet, f"engine.model={model}", f"engine.recipe={json.dumps(recipe)}", *layout, *sets],
+        env={},
+    )
+    return cfg
+
+
+class RecipeLaunch(unittest.TestCase):
+    def test_recipe_is_the_argv_with_the_port_replaced(self):
+        spec = vllm_adapter.ADAPTER.translate(recipe_cfg(QWEN_RECIPE, QWEN_LAYOUT, ["engine.port=8200"]))
+        hf_overrides = (
+            '{"text_config": {"rope_parameters": {"mrope_interleaved": true, "mrope_section": [11, 11, 10], '
+            '"rope_type": "yarn", "rope_theta": 10000000, "partial_rotary_factor": 0.25, "factor": 4.0, '
+            '"original_max_position_embeddings": 262144}}}'
+        )
+        self.assertEqual(
+            list(spec.server_argv),
+            ["vllm", "serve", "Qwen/Qwen3.8-Flash-Next", "--max-num-seqs", "256", "--gpu-memory-utilization", "0.90"]
+            + ["--enable-prefix-caching", "--enable-expert-parallel", "--port", "8200", "--data-parallel-size", "8"]
+            + ["--kv-cache-dtype", "fp8", "--attention-config.indexer_kv_dtype", "fp8", "--enable-auto-tool-choice"]
+            + ["--tool-call-parser", "qwen3_coder", "--reasoning-parser", "qwen3"]
+            + ["--speculative-config", '{"method":"mtp","num_speculative_tokens":3}', "--language-model-only"]
+            + ["--hf-overrides", hf_overrides, "--max-model-len", "1000000", "--enable-prompt-tokens-details"],
+        )
+        self.assertEqual(spec.env, {"VLLM_ALLOW_LONG_MAX_MODEL_LEN": "1", "VLLM_SERVER_DEV_MODE": "1"})
+        self.assertEqual(spec.port, 8200)
+
+    def test_recipe_without_a_port_gets_the_engine_port(self):
+        spec = vllm_adapter.ADAPTER.translate(recipe_cfg(GLM_RECIPE, GLM_LAYOUT, ["engine.port=8300"]))
+        tail = ["--speculative-config", '{"method":"mtp","num_speculative_tokens":5}']
+        self.assertEqual(list(spec.server_argv[-5:]), [*tail, "--port", "8300", "--enable-prompt-tokens-details"])
+        self.assertEqual(spec.env, {"VLLM_SERVER_DEV_MODE": "1"})
+
+    def test_exports_are_the_only_env_besides_dev_mode(self):
+        spec = vllm_adapter.ADAPTER.translate(recipe_cfg(NVFP4_RECIPE, ["engine.ep=true"]))
+        self.assertEqual(spec.env, {"VLLM_ENGINE_READY_TIMEOUT_S": "3600", "VLLM_SERVER_DEV_MODE": "1"})
+
+    def test_nsys_still_prefixes_the_recipe(self):
+        cfg = recipe_cfg(GLM_RECIPE, GLM_LAYOUT, ["engine.instrumentation=nsys"])
+        argv = vllm_adapter.ADAPTER.translate(cfg, Path("results/r1")).server_argv
+        self.assertEqual(argv[:2], ("nsys", "profile"))
+        self.assertEqual(argv[argv.index("vllm") + 2], "zai-org/GLM-5.3")
+
+    def test_gpu_count_includes_data_parallel_and_run_json_keeps_the_text(self):
+        qwen = recipe_cfg(QWEN_RECIPE, QWEN_LAYOUT)
+        self.assertEqual(device_count(qwen.engine), 8)
+        self.assertEqual(results.provenance(qwen)["recipe"], QWEN_RECIPE)
+        self.assertNotIn("recipe", results.provenance(loader.load(RUNS / "llama.yaml", PINNED, env={})[0]))
+
+    def test_model_mismatch_is_refused(self):
+        with self.assertRaisesRegex(ConfigError, "serves 'zai-org/GLM-5.3' but engine.model='other/model'"):
+            recipe_cfg(GLM_RECIPE, GLM_LAYOUT, ["engine.model=other/model"])
+
+    def test_field_that_contradicts_the_recipe_is_refused(self):
+        for sets, field in ((["engine.kv_cache_dtype=auto"], "kv_cache_dtype"), (["engine.tp=4"], "tp")):
+            with self.subTest(field=field), self.assertRaisesRegex(ConfigError, f"engine.{field}=.*engine.recipe"):
+                recipe_cfg(GLM_RECIPE, GLM_LAYOUT, sets)
+
+    def test_extra_vllm_flags_are_refused(self):
+        with self.assertRaisesRegex(ConfigError, "engine.extra.vllm does not apply"):
+            recipe_cfg(GLM_RECIPE, GLM_LAYOUT, ["engine.extra.vllm={enforce_eager: true}"])
 
 
 class KwargsMatchGridFit(unittest.TestCase):
