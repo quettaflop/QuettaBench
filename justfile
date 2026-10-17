@@ -34,7 +34,7 @@ grid_size := "full"
 r2_endpoint := env_var_or_default("R2_ENDPOINT", "")
 r2_bucket := env_var_or_default("R2_BUCKET", "")
 # Backup of results/probes/ only, never QuettaSim's kernel_data.
-r2_prefix := "profiling/qbench_probes"
+r2_prefix := "results/probes"
 r2_profile := env_var_or_default("AWS_PROFILE", "r2")
 
 default:

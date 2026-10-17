@@ -992,7 +992,7 @@ def test_remote_probe_refuses_odd_names(argv, tmp_path, monkeypatch):
 
 def test_the_r2_mirror_has_its_own_prefix_and_never_deletes():
     text = JUSTFILE.read_text()
-    assert 'r2_prefix := "profiling/qbench_probes"' in text
+    assert 'r2_prefix := "results/probes"' in text
     assert "--delete" not in text and "mirror-up-prune" not in text
     assert "kernel_data" not in "".join(ln for ln in text.splitlines() if "r2_" in ln)
 
