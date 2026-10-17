@@ -34,7 +34,7 @@ def main() -> None:
     if not ENDPOINT:
         sys.exit("R2_ENDPOINT is unset; run this as just fetch")
     for name in DATASETS:
-        aws_s3("cp", f"s3://{BUCKET}/data/{name}", str(DEST / name))
+        aws_s3("cp", f"s3://{BUCKET}/traces/replay-data/{name}", str(DEST / name))
     for key, name in TRACES.items():
         aws_s3("cp", f"s3://{BUCKET}/{key}", str(DEST / name))
     print(f"datasets in {DEST}")

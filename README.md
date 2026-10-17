@@ -190,9 +190,10 @@ Canonical data lives on the `agent-bench` R2 bucket:
 
 | prefix | contents |
 |---|---|
-| `data/` | raw trajectory datasets (fetched by `just fetch`) |
-| `results/` | benchmark ground truth (synthetic_distributional, trace_replay, archived) |
-| `archive/` | earlier result snapshots |
+| `traces/` | public agent traces; replay datasets in `traces/replay-data/` (fetched by `just fetch`) |
+| `results/campaign-2026-10/` | public October campaign measurements |
+| `results/probes/` | probe run backups (`just mirror-up`) |
+| `results/legacy/` | historical benchmarks, profiling, dashboard exports and earlier snapshots |
 
 ## Known open items
 

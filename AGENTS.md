@@ -82,7 +82,7 @@ Every writer and every process starter, exactly:
 - `export/quettasim.py`: the QuettaSim tables at `--dest`, and the kernel tables, built from the ok probe runs' `rows.jsonl`, under `--kernel-dest` (QuettaSim's data root), outside the repo.
 - `provision.py`: outside the repo, the `cache_root` dirs, the QuettaServe `git clone`, `pip install`, the weights download and `cargo` builds; in the repo, `.env`.
 - `justfile` `image`: starts `docker build` of `docker/Dockerfile`, which writes the image `qbench:<short sha>` to the local docker store and nothing in the repo.
-- `justfile` `mirror-up`: uploads `results/probes/` to R2 under `profiling/qbench_probes/`, a backup of the probe runs and the second route out of the repo; it never deletes there and never writes QuettaSim's `profiling/kernel_data/`. `mirror-down` writes that prefix back into `results/probes/`.
+- `justfile` `mirror-up`: uploads `results/probes/` to R2 under `results/probes/`, a backup of the probe runs and the second route out of the repo; it never deletes there and never writes QuettaSim's kernel tables. `mirror-down` writes that prefix back into `results/probes/`.
 
 ## Laws
 
