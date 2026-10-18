@@ -181,7 +181,9 @@ class BenchmarkSummary:
     load_mode: str = ""
     # Sessions/s for multi-turn, requests/s for single-turn.
     target_rate: float = 0.0
+    # A session completes when its last planned turn succeeded; a failed or cut-short session counts as failed.
     sessions_completed: int = 0
+    sessions_failed: int = 0
     session_throughput: float = 0.0
     warmup_concurrency: int = 0
     num_requests: int = 0
@@ -421,8 +423,10 @@ def aggregate(
     load_mode: str = "",
     target_rate: float = 0.0,
     warmup_concurrency: int = 0,
+    planned_turns: dict | None = None,
 ) -> BenchmarkSummary:
-    """Requests held out by --discard-first are in no statistic, busy time included."""
+    """Requests held out by --discard-first are in no statistic, busy time included.
+    planned_turns maps a session id to the turns it was to run; without it a session with no failed turn counts."""
     excluded = sum(1 for r in results if r.excluded_from_summary)
     results = [r for r in results if not r.excluded_from_summary]
 
@@ -484,11 +488,20 @@ def aggregate(
             window_s = max(e for _, e in spans) - min(s for s, _ in spans)
     summary.measured_window_s = window_s
 
-    # Multi-turn open loop offers sessions, so the served rate counts session completions.
-    session_ids = {r.session_id for r in results if r.session_id is not None}
-    summary.sessions_completed = len(session_ids)
-    if session_ids and window_s > 0:
-        summary.session_throughput = len(session_ids) / window_s
+    # The served rate counts sessions that ran every planned turn successfully, not sessions that sent something.
+    by_session: dict = {}
+    for r in results:
+        if r.session_id is not None:
+            by_session.setdefault(r.session_id, []).append(r)
+    completed = [
+        sid
+        for sid, rs in by_session.items()
+        if all(r.success for r in rs) and (planned_turns is None or len(rs) == planned_turns.get(sid))
+    ]
+    summary.sessions_completed = len(completed)
+    summary.sessions_failed = len(by_session) - len(completed)
+    if completed and window_s > 0:
+        summary.session_throughput = len(completed) / window_s
 
     if window_s > 0:
         summary.request_throughput = summary.successful_requests / window_s

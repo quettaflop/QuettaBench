@@ -434,6 +434,7 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
         load_mode=f"{mode.load}-loop",
         target_rate=offered_rate(workload.arrival) if mode.load == "open" else 0.0,
         warmup_concurrency=(mode.warmup_concurrency or mode.concurrency) if mode.warmup else 0,
+        planned_turns={s[0].session_id: len(s) for s in trace.sessions()} if isinstance(trace, SessionTrace) else None,
     )
     summary = Summary(core, results)
     if by_turn is not None:
@@ -695,6 +696,8 @@ class SessionDispatcher:
         self.served: list = []
         self.prev_context, self.prev_output = {}, {}
         self.dead, self.warned = set(), False
+        # session_id -> (arrived, admitted, finished), seconds since start; the steady window reads these
+        self.session_times: dict = {}
         self.start = time.perf_counter()
         if self.open_loop:
             await self._open()
@@ -717,7 +720,9 @@ class SessionDispatcher:
             return time.perf_counter() - self.start
 
         dispatched = elapsed()
-        async with no_limit() if self.open_loop else self.slots:
+        # Per-session pacing admits agents, not requests: an admitted agent sends its next turn at once.
+        gated = not self.open_loop and self.pacing.pacing == "interleaved"
+        async with self.slots if gated else no_limit():
             granted = elapsed()
             result = await self.send(request, capture_text=True, request_id=self.request_id(sid, turn, index))
         annotate_request_observability(
@@ -827,19 +832,27 @@ class SessionDispatcher:
     async def _per_session(self):
         index = {(r.session_id, r.turn): i for i, r in enumerate(r for s in self.sessions for r in s)}
         print(
-            f"  Per-session pacing: {len(self.sessions)} sessions, "
-            f"{len(index)} requests, up to {self.mode.concurrency} in flight "
-            f"(no cross-session turn barrier)"
+            f"  Per-session pacing: {len(self.sessions)} sessions, {len(index)} requests, "
+            f"{self.mode.concurrency} agents at once; an agent runs its session's turns back to back, "
+            f"waits included, and the next session starts when one finishes"
         )
         self._print_waits()
         recorded = self.pacing.use_recorded_arrivals
         if recorded:
-            print("  Session starts: recorded arrival_time_ms (wait is outside the concurrency slot)")
+            print("  Session starts: recorded arrival_time_ms, then the wait for a free agent")
+        agents = asyncio.Semaphore(self.mode.concurrency)
+
+        def elapsed():
+            return time.perf_counter() - self.start
 
         async def session(turns):
+            arrived = turns[0].arrival_ts or 0.0
             if recorded:
-                await sleep_until_elapsed(self.start, turns[0].arrival_ts or 0.0)
-            await self._turns(turns, lambda r: index[(r.session_id, r.turn)])
+                await sleep_until_elapsed(self.start, arrived)
+            async with agents:
+                admitted = elapsed()
+                await self._turns(turns, lambda r: index[(r.session_id, r.turn)])
+                self.session_times[turns[0].session_id] = (arrived if recorded else admitted, admitted, elapsed())
 
         await asyncio.gather(*[session(s) for s in self.sessions])
         results = [r for v in self.by_turn.values() for r in v]

@@ -423,7 +423,7 @@ def session_trace(td):
         history, turns = [], []
         for t in range(3):
             history = [*history, {"role": "user", "content": f"s{s} t{t}"}]
-            turns.append({"turn_idx": t, "messages": history, "osl_tokens": 3})
+            turns.append({"turn_idx": t, "messages": history, "prompt_tokens": 4 + 2 * t, "osl_tokens": 3})
             history = [*history, {"role": "assistant", "content": f"reply {t}"}]
         sessions.append({"session_id": f"S{s}", "turns": turns})
     path = Path(td, "t.jsonl")

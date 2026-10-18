@@ -60,6 +60,7 @@
   "request_throughput": 2.0,
   "session_throughput": 0.6666666666666666,
   "sessions_completed": 2,
+  "sessions_failed": 0,
   "steady_median_ttft_ms": null,
   "steady_p99_ttft_ms": null,
   "successful_requests": 6,

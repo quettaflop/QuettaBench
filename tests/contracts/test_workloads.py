@@ -253,7 +253,13 @@ class MultiTurn(unittest.TestCase):
         sessions = []
         for s in range(3):
             turns = [
-                {"turn_idx": t, "messages": [{"role": "user", "content": f"s{s} t{t}"}], "osl_tokens": 2, "tool_ms": 5}
+                {
+                    "turn_idx": t,
+                    "messages": [{"role": "user", "content": f"s{s} t{t}"}],
+                    "prompt_tokens": 20 + t,
+                    "osl_tokens": 2,
+                    "tool_ms": 5,
+                }
                 for t in range(13 + s)
             ]
             sessions.append({"session_id": f"S{s}", "arrival_time_ms": 100 * s, "turns": turns})
@@ -406,6 +412,7 @@ class RealTraceWorkloadTests(unittest.TestCase):
                     {
                         "turn_idx": 0,
                         "messages": [{"role": "user", "content": words(50)}],
+                        "prompt_tokens": 60,
                         "osl_tokens": 20,
                     },
                     {
@@ -415,6 +422,7 @@ class RealTraceWorkloadTests(unittest.TestCase):
                             {"role": "assistant", "content": words(20)},
                             {"role": "user", "content": words(20)},
                         ],
+                        "prompt_tokens": 100,
                         "osl_tokens": 20,
                     },
                 ],
@@ -432,6 +440,7 @@ class RealTraceWorkloadTests(unittest.TestCase):
                     context_safety_margin_tokens=10,
                 )
 
+            # Budget is 120 - 20 - 10 = 90 prompt tokens: the recorded 60 fits, the recorded 100 does not.
             self.assertEqual(len(trace.sessions()), 1)
             turns = trace.sessions()[0]
             self.assertEqual(len(turns), 1)
@@ -439,10 +448,40 @@ class RealTraceWorkloadTests(unittest.TestCase):
             self.assertEqual(meta["source_session_id"], "trace-1")
             self.assertEqual(meta["source_turn_index"], 0)
             self.assertEqual(meta["trace_content_source"], "unit-trace")
-            self.assertLessEqual(
-                meta["planned_total_with_output_tokens"],
-                meta["context_window_tokens"] - meta["context_safety_margin_tokens"],
-            )
+            self.assertEqual(meta["planned_total_context_tokens"], 60)
+            self.assertEqual(meta["prompt_token_budget"], 90)
+            self.assertTrue(meta["truncated_by_context_limit"])
+            self.assertEqual((trace.sessions_cut, trace.sessions_dropped), (1, 0))
+
+    def test_trajectory_cut_uses_recorded_counts_not_words(self):
+        # Three words that the engine counted as 5000 tokens: the words would fit, the recorded count does not.
+        session = {
+            "session_id": "trace-3",
+            "source": "unit-trace",
+            "turns": [
+                {"turn_idx": 0, "messages": [{"role": "user", "content": "a b c"}], "prompt_tokens": 10, "osl_tokens": 5},
+                {"turn_idx": 1, "messages": [{"role": "user", "content": "a b c"}], "prompt_tokens": 5000, "osl_tokens": 5},
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "trace.jsonl"
+            path.write_text(json.dumps(session) + "\n", encoding="utf-8")
+            with contextlib.redirect_stdout(io.StringIO()):
+                trace = TrajectorySessionTrace(str(path), min_turns=1, num_sessions=1, max_isl_tokens=1000)
+        self.assertEqual(len(trace.sessions()[0]), 1)
+        self.assertTrue(trace.sessions()[0][0].metadata["truncated_by_context_limit"])
+
+    def test_trajectory_turn_without_recorded_counts_is_refused(self):
+        session = {
+            "session_id": "trace-4",
+            "turns": [{"turn_idx": 0, "messages": [{"role": "user", "content": words(50)}], "osl_tokens": 20}],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "trace.jsonl"
+            path.write_text(json.dumps(session) + "\n", encoding="utf-8")
+            with self.assertRaises(ValueError) as e:
+                TrajectorySessionTrace(str(path), min_turns=1, num_sessions=1)
+        self.assertIn("session trace-4 turn 0 has no recorded prompt_tokens", str(e.exception))
 
     def test_build_gives_trajectories_the_profile_window_and_margin(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -456,6 +495,7 @@ class RealTraceWorkloadTests(unittest.TestCase):
                             {
                                 "turn_idx": 0,
                                 "messages": [{"role": "user", "content": words(50)}],
+                                "prompt_tokens": 60,
                                 "osl_tokens": 20,
                             }
                         ],
@@ -553,27 +593,37 @@ class ProfileRegistryTests(unittest.TestCase):
     def test_multiturn_profiles_remain_explicitly_runnable(self):
         self.assertEqual(get_profile("swebench-multiturn-short").dataset, "swebench-multi-turn")
 
-    def test_multi_turn_num_sessions_uses_concurrency_floor(self):
+    def test_num_sessions_is_the_profile_or_the_override_never_the_concurrency(self):
         profile = get_profile("swebench-multiturn-short")
+        self.assertEqual(resolve_multi_turn_num_sessions(profile), (None, "all"))
+        self.assertEqual(resolve_multi_turn_num_sessions(profile, 5), (5, "cli"))
+        sized = dataclasses.replace(profile, num_sessions=8)
+        self.assertEqual(resolve_multi_turn_num_sessions(sized), (8, "profile"))
 
-        effective, source = resolve_multi_turn_num_sessions(
-            profile,
-            profile.num_sessions + 1,
-        )
+    def test_a_sample_is_the_same_at_every_concurrency(self):
+        samples = {}
+        for concurrency in (1, 4, 7):
+            cfg = profile_config("swebench-multiturn-short", "sessions")
+            cfg = dataclasses.replace(cfg, mode=dataclasses.replace(cfg.mode, concurrency=concurrency))
+            with fixture_cwd():
+                trace = runner.build_trace(cfg)
+            samples[concurrency] = (tuple(trace.sample), trace.source_meta()["sample_digest"])
+        self.assertEqual(len(set(samples.values())), 1)
+        self.assertEqual(len(samples[1][0]), len(trace.sessions()))
 
-        self.assertEqual(effective, profile.num_sessions + 1)
-        self.assertEqual(source, "concurrency_floor")
+    def test_a_short_file_is_refused_when_num_sessions_asks_for_more(self):
+        cfg = profile_config("swebench-multiturn-short", "sessions")
+        cfg = dataclasses.replace(cfg, workload=dataclasses.replace(cfg.workload, num_sessions=50))
+        with fixture_cwd(), self.assertRaises(ValueError) as e:
+            runner.build_trace(cfg)
+        self.assertIn("eligible sessions, fewer than the 50 asked for", str(e.exception))
 
-    def test_multi_turn_num_sessions_keeps_profile_default_when_large_enough(self):
-        profile = get_profile("chat-multiturn-short")
-
-        effective, source = resolve_multi_turn_num_sessions(
-            profile,
-            max(1, profile.num_sessions - 1),
-        )
-
-        self.assertEqual(effective, profile.num_sessions)
-        self.assertEqual(source, "profile_default")
+    def test_more_agents_than_sessions_is_refused(self):
+        cfg = profile_config("swebench-multiturn-short", "sessions")
+        cfg = dataclasses.replace(cfg, mode=dataclasses.replace(cfg.mode, concurrency=64))
+        with fixture_cwd(), self.assertRaises(ValueError) as e:
+            runner.build_trace(cfg)
+        self.assertIn("sessions cannot keep 64 agents busy at once", str(e.exception))
 
     def test_workload_num_sessions_sets_the_session_count(self):
         cfg = profile_config("swebench-multiturn-short", "sessions")
@@ -587,21 +637,24 @@ SEED = 7
 NUM_REQUESTS = 12
 WARMUP = 3
 
+# (workload hash, trace digest). The session digests moved twice without the workload hashes, the requests sent,
+# moving: when planned_total_context_tokens became the recorded prompt count, and when source_meta gained
+# sample_digest.
 PINS = {
-    "chat-multiturn-short": ("c51f134d3946f53d", "5e2d31c9032a7cb8"),
+    "chat-multiturn-short": ("c51f134d3946f53d", "d215cea35abaf327"),
     "chat-singleturn": ("1b84966cb9c4facc", "84b2b4875f8a177f"),
     "coding-singleturn": ("15384d696a4d7a1b", "0359e7a0be1623a2"),
-    "deepresearch-multiturn": ("3f95464ab226ff8f", "d156d90f6eafdc78"),
+    "deepresearch-multiturn": ("3f95464ab226ff8f", "58bed26271040a1d"),
     "mooncake-trace": ("a03be7b0ed268d81", "b5ed59cd7a0d7aff"),
-    "osworld-multiturn-long": ("762312f6b602cb88", "7c281ff0cc772773"),
-    "osworld-multiturn-medium": ("29482f55adf89f20", "c8ecbee41859e40e"),
-    "osworld-multiturn-short": ("ab09ce8e07b841c8", "387a35fabdd98d42"),
-    "swebench-multiturn-medium": ("f02e03a9e1282fc2", "d4ba4dd7703c762a"),
-    "swebench-multiturn-short": ("9f0aa9d6f98e5bd3", "2e44a22e09c81ea1"),
-    "terminalbench-multiturn-medium": ("6bc7cd20245181c3", "2f91359db9f0a799"),
-    "terminalbench-multiturn-short": ("2ab1e354437af5f0", "fb564412a27e3079"),
+    "osworld-multiturn-long": ("762312f6b602cb88", "7fc3bdb961070759"),
+    "osworld-multiturn-medium": ("29482f55adf89f20", "171af7ae4d96b8c6"),
+    "osworld-multiturn-short": ("ab09ce8e07b841c8", "2d6064606a8286f7"),
+    "swebench-multiturn-medium": ("f02e03a9e1282fc2", "535c422e6662bf57"),
+    "swebench-multiturn-short": ("9f0aa9d6f98e5bd3", "263bc53cf3a4b42a"),
+    "terminalbench-multiturn-medium": ("6bc7cd20245181c3", "4c273a6ae15c79b2"),
+    "terminalbench-multiturn-short": ("2ab1e354437af5f0", "05feedb3da524816"),
     "test": ("7ae706bdf8eeae1d", "a5c809ace7fb7a08"),
-    "cut": ("0e8b8a8de4442ecb", "c8f75cbcdd1e78dc"),
+    "cut": ("0e8b8a8de4442ecb", "306d053706f7b8a5"),
 }
 
 
@@ -634,7 +687,12 @@ def trajectory_rows(tag):
         turns, history = [], []
         for t in range(n):
             history = history + [{"role": "user", "content": tagged_words(5 + (k + t) % 40, f"{tag}{k}.{t}.")}]
-            turn = {"messages": list(history), "osl_tokens": 50 + (k * 13 + t) % 3000}
+            # Recorded counts on purpose unlike a word count, so a loader that estimated would show.
+            turn = {
+                "messages": list(history),
+                "prompt_tokens": 7 * (5 + (k + t) % 40) + 3,
+                "osl_tokens": 50 + (k * 13 + t) % 3000,
+            }
             if t % 3 == 0:
                 turn["turn_idx"] = t
             if t % 4 == 1:
@@ -771,11 +829,24 @@ class DeepResearchTrajectories(unittest.TestCase):
         row = {
             "session_id": "dr9k-1",
             "turns": [
-                {"turn_index": 0, "prompt_text": tagged_words(30, "q"), "completion_tokens": 40, "retrieval_s": 0.5},
-                {"turn_index": 1, "prompt_text": tagged_words(60, "q"), "completion_tokens": 0, "retrieval_s": None},
+                {
+                    "turn_index": 0,
+                    "prompt_text": tagged_words(30, "q"),
+                    "prompt_tokens": 61,
+                    "completion_tokens": 40,
+                    "retrieval_s": 0.5,
+                },
+                {
+                    "turn_index": 1,
+                    "prompt_text": tagged_words(60, "q"),
+                    "prompt_tokens": 133,
+                    "completion_tokens": 0,
+                    "retrieval_s": None,
+                },
             ],
         }
         session = build.deepresearch_session(row)
+        self.assertEqual([t["prompt_tokens"] for t in session["turns"]], [61, 133])
         self.assertEqual([t["osl_tokens"] for t in session["turns"]], [40, 1])
         self.assertEqual([t["tool_ms"] for t in session["turns"]], [500.0, 0.0])
         with tempfile.TemporaryDirectory() as td:
@@ -853,6 +924,7 @@ class TestTrajectoryLoadWaits(unittest.TestCase):
                 {
                     "turn_idx": 0,
                     "messages": [{"role": "user", "content": "hello world " * 20}],
+                    "prompt_tokens": 40,
                     "osl_tokens": 8,
                     "tool_ms": 40,
                 },
@@ -863,12 +935,14 @@ class TestTrajectoryLoadWaits(unittest.TestCase):
                         {"role": "assistant", "content": "ok"},
                         {"role": "user", "content": "next " * 20},
                     ],
+                    "prompt_tokens": 70,
                     "osl_tokens": 8,
                     "human_ms": 90,
                 },
                 {
                     "turn_idx": 2,
                     "messages": [{"role": "user", "content": "third " * 20}],
+                    "prompt_tokens": 25,
                     "osl_tokens": 8,
                 },
             ],

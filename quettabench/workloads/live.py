@@ -331,7 +331,7 @@ class WorkloadProfile:
     prefix_caching_required: bool = False  # server needs --enable-prefix-caching
     min_turns: int = 1
     max_turns: int = 1
-    num_sessions: int = 200
+    num_sessions: int | None = None  # None: every eligible session; a number is the same sample at every point
     active: bool = True  # False: runnable but hidden from default listings
 
 

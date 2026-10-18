@@ -350,6 +350,7 @@ def deepresearch_session(row: dict[str, Any]) -> dict[str, Any]:
         {
             "turn_idx": t["turn_index"],
             "messages": [{"role": "user", "content": t["prompt_text"]}],
+            "prompt_tokens": t["prompt_tokens"],
             "osl_tokens": max(1, t["completion_tokens"]),
             "tool_ms": 1000.0 * (t.get("retrieval_s") or 0.0),
         }

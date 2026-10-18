@@ -1,6 +1,7 @@
 """Multi-turn traces: sessions of ordered turns, plus the per-turn wait policy."""
 
 import asyncio
+import hashlib
 import itertools
 import json
 import random
@@ -78,8 +79,14 @@ class MultiTurnSession:
     arrival_time_ms: float = 0.0
 
 
+def sample_digest(ids):
+    """Names the sample: the sessions replayed, in order."""
+    return hashlib.sha256(json.dumps(list(ids)).encode()).hexdigest()[:16]
+
+
 class LoadedSessionTrace(SessionTrace):
-    """Turn 0 carries the recorded arrival."""
+    """Turn 0 carries the recorded arrival. The sample is every eligible session, or the first num_sessions of a
+    seeded shuffle; it is the same at every concurrency, and a file with fewer sessions than asked for is refused."""
 
     def __init__(
         self,
@@ -87,16 +94,26 @@ class LoadedSessionTrace(SessionTrace):
         path,
         reader,
         seed=42,
-        num_sessions=100,
+        num_sessions=None,
         warmup=0,
         max_turn_index=None,
         pacing=None,
         profile=None,
     ):
         random.Random(seed).shuffle(sessions)
-        sessions = sessions[:num_sessions]
+        if num_sessions is not None:
+            if len(sessions) < num_sessions:
+                raise ValueError(
+                    f"{path}: {len(sessions)} eligible sessions, fewer than the {num_sessions} asked for; "
+                    f"ask for at most {len(sessions)} so every point replays the same sample"
+                )
+            sessions = sessions[:num_sessions]
         if not sessions:
             raise ValueError("No multi-turn sessions loaded -- check ShareGPT dataset and filter bounds")
+        self.sample = [
+            str(s.turns[0].metadata.get("source_session_id", s.session_id) if s.turns[0].metadata else s.session_id)
+            for s in sessions
+        ]
         self.max_turns = max(len(s.turns) for s in sessions)
         print(f"Loaded {len(sessions)} sessions, max {self.max_turns} turns per session")
         reqs: list[Request] = []
@@ -128,6 +145,7 @@ class LoadedSessionTrace(SessionTrace):
             "path": p.file_path,
             "reqs": len(self.requests()),
             "sessions": len(self.replies),
+            "sample_digest": sample_digest(self.sample),
             "pacing": self.pacing.pacing,
         }
 
@@ -181,13 +199,26 @@ class ShareGPTSessionTrace(LoadedSessionTrace):
             if len(turns) < min_turns:
                 continue
             sessions.append(MultiTurnSession(len(sessions), turns, assistant_messages))
-            if len(sessions) >= num_sessions * 3:
+            if num_sessions is not None and len(sessions) >= num_sessions * 3:
                 break
         super().__init__(sessions, "sharegpt", "sharegpt-multi-turn", seed=seed, num_sessions=num_sessions, **trace_kw)
 
 
+def recorded_counts(path, entry, turn, index):
+    """The prompt and completion token counts the engine reported when the turn was recorded."""
+    try:
+        return int(turn["prompt_tokens"]), int(turn["osl_tokens"])
+    except KeyError as e:
+        raise ValueError(
+            f"{path}: session {entry.get('session_id')} turn {index} has no recorded {e.args[0]}; "
+            "a replay file carries the counts the serving engine reported, never an estimate"
+        ) from None
+
+
 class TrajectorySessionTrace(LoadedSessionTrace):
-    """{"session_id", "turns": [{"messages", "osl_tokens"}, ...]}."""
+    """{"session_id", "turns": [{"messages", "prompt_tokens", "osl_tokens"}, ...]}: each turn's whole context and
+    the token counts the engine reported when it was recorded. A session is cut at the first turn that does not fit
+    the window, and the last turn kept says so in truncated_by_context_limit."""
 
     def __init__(
         self,
@@ -202,33 +233,36 @@ class TrajectorySessionTrace(LoadedSessionTrace):
         **trace_kw,
     ):
         sessions: list[MultiTurnSession] = []
+        cut_sessions = dropped = 0
         with open(path) as f:
             lines = [json.loads(line) for line in (raw.strip() for raw in f) if line]
         for entry in lines:
             raw_turns = entry.get("turns", [])
             if len(raw_turns) < min_turns:
+                dropped += 1
                 continue
             turns: list[Request] = []
+            cut = False
             for t in raw_turns[:max_turns]:
-                messages = t["messages"]
-                osl = min(t.get("osl_tokens", 500), max_osl_tokens)
-                isl_est = sum(est_tokens(m.get("content", "")) for m in messages)
+                prompt_tokens, osl = recorded_counts(path, entry, t, len(turns))
+                osl = min(osl, max_osl_tokens)
                 prompt_budget = max_isl_tokens - osl - context_safety_margin_tokens
-                if prompt_budget < 1 or isl_est > prompt_budget:
+                if prompt_budget < 1 or prompt_tokens > prompt_budget:
+                    cut = True
                     break
                 turns.append(
                     Request(
                         [],
                         0,
                         output_length=osl,
-                        messages=messages,
+                        messages=t["messages"],
                         metadata={
                             "source_session_id": entry.get("session_id"),
                             "source_turn_index": t.get("turn_idx", t.get("turn_index", len(turns))),
                             "trace_content_source": entry.get("source"),
-                            "planned_total_context_tokens": isl_est,
+                            "planned_total_context_tokens": prompt_tokens,
                             "planned_output_tokens": osl,
-                            "planned_total_with_output_tokens": isl_est + osl,
+                            "planned_total_with_output_tokens": prompt_tokens + osl,
                             "context_window_tokens": max_isl_tokens,
                             "context_safety_margin_tokens": context_safety_margin_tokens,
                             "prompt_token_budget": prompt_budget,
@@ -237,10 +271,15 @@ class TrajectorySessionTrace(LoadedSessionTrace):
                         },
                     )
                 )
+            if cut and turns:
+                turns[-1].metadata["truncated_by_context_limit"] = True
             if len(turns) < min_turns:
+                dropped += 1
                 continue
+            cut_sessions += cut
             sessions.append(MultiTurnSession(len(sessions), turns, arrival_time_ms=session_arrival_ms(entry)))
         super().__init__(sessions, path, "trajectory", seed=seed, num_sessions=num_sessions, **trace_kw)
+        self.sessions_cut, self.sessions_dropped = cut_sessions, dropped
 
 
 def inter_turn_wait_s(
@@ -269,19 +308,9 @@ async def sleep_until_elapsed(benchmark_start: float, target_s: float) -> None:
 
 def resolve_multi_turn_num_sessions(
     profile,
-    concurrency: int,
     override: int | None = None,
-) -> tuple[int, str]:
-    if profile.mode != "multi-turn":
-        return profile.num_sessions, "profile_default"
-
+) -> tuple[int | None, str]:
+    """The sample size is fixed before the sweep: the run's override, else the profile's; None is every session."""
     if override is not None:
-        effective_num_sessions = max(override, concurrency)
-        if effective_num_sessions == override:
-            return effective_num_sessions, "cli"
-        return effective_num_sessions, "cli_concurrency_floor"
-
-    effective_num_sessions = max(profile.num_sessions, concurrency)
-    if effective_num_sessions == profile.num_sessions:
-        return effective_num_sessions, "profile_default"
-    return effective_num_sessions, "concurrency_floor"
+        return override, "cli"
+    return profile.num_sessions, "all" if profile.num_sessions is None else "profile"

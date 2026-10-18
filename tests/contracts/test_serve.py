@@ -1,5 +1,6 @@
 """serve.run over a Trace and a Driver with no server."""
 
+import asyncio
 import contextlib
 import copy
 import http.client
@@ -170,7 +171,37 @@ class SingleTurn(unittest.TestCase):
         self.assertEqual(ids[0], "agenticbench__p=t.jsonl__c=4__t=0__s=0__i=0")
 
 
+class TimedDriver(FakeDriver):
+    """Every request takes 5 ms; counts the sessions and requests open at once."""
+
+    def __init__(self):
+        super().__init__()
+        self.open_sessions: set = set()
+        self.inflight = 0
+        self.peak = {"sessions": 0, "requests": 0}
+
+    async def send(self, request, **kw):
+        self.open_sessions.add(request.session_id)
+        self.inflight += 1
+        self.peak["sessions"] = max(self.peak["sessions"], len(self.open_sessions))
+        self.peak["requests"] = max(self.peak["requests"], self.inflight)
+        await asyncio.sleep(0.005)
+        self.inflight -= 1
+        if request.turn == 2:
+            self.open_sessions.discard(request.session_id)
+        return await super().send(request, **kw)
+
+
 class Sessions(unittest.TestCase):
+    def test_an_agent_holds_its_slot_from_first_turn_to_last(self):
+        driver = TimedDriver()
+        summary, out = run(session_trace(12, 3), driver, ModeCfg(concurrency=3, warmup=0))
+        # 12 sessions through 3 agents: never more than 3 sessions open, and a turn never queues for a slot.
+        self.assertEqual(driver.peak, {"sessions": 3, "requests": 3})
+        self.assertLess(max(r.client_queue_wait_s for r in summary.rows), 0.001)
+        self.assertEqual(len(summary.rows), 36)
+        self.assertIn("3 agents at once", out)
+
     def test_replies_feed_later_turns(self):
         driver = FakeDriver()
         summary, _ = run(session_trace(), driver, ModeCfg(concurrency=2, warmup=0))

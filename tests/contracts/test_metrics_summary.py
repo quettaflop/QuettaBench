@@ -497,9 +497,22 @@ class TestOpenLoopUnits(unittest.TestCase):
 
     def test_session_throughput_counts_sessions_not_turns(self):
         s = aggregate(self._multi_turn(), duration_s=10.0, load_mode="open-loop", target_rate=0.4)
-        self.assertEqual(s.sessions_completed, 4)
+        self.assertEqual((s.sessions_completed, s.sessions_failed), (4, 0))
         self.assertAlmostEqual(s.session_throughput, 0.4)
         self.assertAlmostEqual(s.request_throughput, 2.0)
+
+    def test_a_session_with_a_failed_turn_is_not_completed(self):
+        rows = self._multi_turn()
+        rows[7].success = False  # session 1, turn 2
+        s = aggregate(rows, duration_s=10.0, load_mode="open-loop", target_rate=0.4)
+        self.assertEqual((s.sessions_completed, s.sessions_failed), (3, 1))
+        self.assertAlmostEqual(s.session_throughput, 0.3)
+
+    def test_a_session_short_of_its_planned_turns_is_not_completed(self):
+        rows = [r for r in self._multi_turn() if not (r.session_id == 2 and r.turn_index == 4)]
+        planned = {sid: 5 for sid in range(4)}
+        s = aggregate(rows, duration_s=10.0, load_mode="open-loop", target_rate=0.4, planned_turns=planned)
+        self.assertEqual((s.sessions_completed, s.sessions_failed), (3, 1))
 
     def test_single_turn_has_no_sessions_so_falls_back_to_requests(self):
         s = aggregate([_req(i, i + 1) for i in range(10)], duration_s=10.0, load_mode="open-loop", target_rate=1.0)
@@ -855,13 +868,12 @@ class RunnerCacheMetadataTests(unittest.TestCase):
         self.assertEqual(row["request_metadata"]["planned_new_prefill_tokens"], 75)
         self.assertAlmostEqual(row["client_queue_wait_ms"], 300.0)
 
-    def test_synthetic_multiturn_sessions_floor_at_concurrency(self):
+    def test_multiturn_session_count_ignores_concurrency(self):
         profile = get_profile("swebench-multiturn-short")
 
-        sessions, source = resolve_multi_turn_num_sessions(profile, concurrency=320)
+        sessions, source = resolve_multi_turn_num_sessions(profile, 320)
 
-        self.assertEqual(sessions, 320)
-        self.assertEqual(source, "concurrency_floor")
+        self.assertEqual((sessions, source), (320, "cli"))
 
 
 STEPS = [60, 230, 400]

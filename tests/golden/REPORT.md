@@ -4,6 +4,8 @@ Run `python3 -m pytest tests/golden -q`. `QBENCH_GOLDEN_REGEN=1` rewrites the fi
 
 ## Fixture changes
 
+2026-10-18: `aggregate_summary.json` gains `sessions_failed`, 0 here. `sessions_completed` now counts sessions whose every planned turn succeeded instead of sessions that sent anything; the fixture's sessions all succeed, so its value and every other value are as before.
+
 2026-10-12: `aggregate_summary.json` gains `itl_coalesced_frac`, 0.0 here. Every other value is as before.
 
 2026-10-12: `aggregate_summary.json` gains `steady_median_ttft_ms` and `steady_p99_ttft_ms`, null here because the fixture is not a closed-loop run. Every other value is as before.

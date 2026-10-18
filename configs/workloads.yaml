@@ -37,7 +37,8 @@ chat-multiturn-short:
   active: false
 
 swebench-multiturn-short:
-  # Turns are agent steps, not conversation rounds.
+  # Turns are agent steps, not conversation rounds. An agent profile replays every eligible session; num_sessions
+  # would take the first N of a seeded shuffle, the same N at every concurrency.
   <<: &agent {system_prompt: '', mode: multi-turn, prefix_caching_required: true, active: false}
   isl_tokens: 32768
   osl_tokens: 2000
@@ -45,7 +46,6 @@ swebench-multiturn-short:
   file_path: data/swebench_trajectories.jsonl
   min_turns: 13
   max_turns: 30
-  num_sessions: 100
 
 swebench-multiturn-medium:
   <<: *agent
@@ -55,7 +55,6 @@ swebench-multiturn-medium:
   file_path: data/swebench_trajectories.jsonl
   min_turns: 30
   max_turns: 80
-  num_sessions: 100
 
 terminalbench-multiturn-short:
   <<: *agent
@@ -65,7 +64,6 @@ terminalbench-multiturn-short:
   file_path: data/terminalbench_trajectories.jsonl
   min_turns: 2
   max_turns: 20
-  num_sessions: 100
 
 terminalbench-multiturn-medium:
   <<: *agent
@@ -75,7 +73,6 @@ terminalbench-multiturn-medium:
   file_path: data/terminalbench_trajectories.jsonl
   min_turns: 20
   max_turns: 60
-  num_sessions: 100
 
 osworld-multiturn-short:
   # WebArena browser agent: each page is an accessibility tree, about 3x the word-based token estimate.
@@ -86,7 +83,6 @@ osworld-multiturn-short:
   file_path: data/osworld_trajectories.jsonl
   min_turns: 2
   max_turns: 10
-  num_sessions: 50
 
 osworld-multiturn-medium:
   <<: *agent
@@ -96,7 +92,6 @@ osworld-multiturn-medium:
   file_path: data/osworld_trajectories.jsonl
   min_turns: 10
   max_turns: 20
-  num_sessions: 30
 
 osworld-multiturn-long:
   <<: *agent
@@ -106,7 +101,6 @@ osworld-multiturn-long:
   file_path: data/osworld_trajectories.jsonl
   min_turns: 20
   max_turns: 30
-  num_sessions: 20
 
 deepresearch-multiturn:
   # Built by data/build_trajectories.py deepresearch; output capped at 16384 of the trace's 65536 reasoning budget.
@@ -117,7 +111,6 @@ deepresearch-multiturn:
   file_path: data/deepresearch_trajectories.jsonl
   min_turns: 1
   max_turns: 30
-  num_sessions: 300
 
 test:
   isl_tokens: 10

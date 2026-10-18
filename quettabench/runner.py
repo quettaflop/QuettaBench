@@ -110,10 +110,17 @@ def build_trace(cfg, tokenizer=None):
     profile = get_profile(w.source)
     if w.kind == "sessions":
         pacing = TurnPacing(w.pacing, w.tool_wait_ms, w.human_wait_ms, w.use_recorded_waits, w.use_recorded_arrivals)
-        sessions, _ = resolve_multi_turn_num_sessions(profile, cfg.mode.concurrency, w.num_sessions)
-        return session_trace(
+        sessions, _ = resolve_multi_turn_num_sessions(profile, w.num_sessions)
+        trace = session_trace(
             profile, sessions, w.seed, warmup=cfg.mode.warmup, pacing=pacing, max_turn_index=w.max_turn_index
         )
+        loaded = len(trace.sessions())
+        if cfg.mode.load == "closed" and cfg.mode.concurrency > loaded:
+            raise ValueError(
+                f"{w.source}: {loaded} sessions cannot keep {cfg.mode.concurrency} agents busy at once; "
+                "lower mode.concurrency or widen the sample"
+            )
+        return trace
     trace = single_turn_trace(profile, w.seed)
     if (
         w.arrival == "trace"
