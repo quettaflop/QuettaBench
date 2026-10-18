@@ -461,7 +461,7 @@ class GoodputSweep(unittest.TestCase):
                 )
                 emit(q, r)
                 pairs.append((q, r))
-            return [r for _, r in pairs], None, pairs, 1.0 / workload.speed, None
+            return [r for _, r in pairs], None, pairs, 1.0 / workload.speed, None, None
 
         return measure
 

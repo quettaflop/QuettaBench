@@ -1,5 +1,6 @@
 """Aggregate request results into BenchmarkSummary; failures are counted apart."""
 
+import math
 import re
 import statistics
 from dataclasses import dataclass, field
@@ -61,7 +62,8 @@ class RequestResult:
     turn_index: int | None = None
     session_id: int | None = None
 
-    # From per-session prompt-token deltas, not engine-reported prefix-cache hits.
+    # From per-session prompt-token deltas: an upper bound on what a cache that kept every earlier token of the
+    # session could hit, never the engine's hit. The engine's count is server_cached_tokens above.
     previous_context_tokens: int | None = None
     total_context_tokens: int | None = None
     new_prefill_tokens: int | None = None
@@ -224,6 +226,10 @@ class BenchmarkSummary:
 
     total_input_tokens: int = 0
     total_output_tokens: int = 0
+    # The engine's own prefix-cache count summed over the requests that reported one, and that sum over their
+    # prompt tokens; None when the server reported nothing. The per-turn estimate is an upper bound, not this.
+    server_cached_tokens: int | None = None
+    server_cache_hit_rate: float | None = None
 
     mean_ttft_ms: float = 0.0
     median_ttft_ms: float = 0.0
@@ -326,7 +332,9 @@ PERCENTILE_METHODS = ("nearest", "linear")
 
 
 def percentile(values, p: float, method: str) -> float:
-    """ "nearest" raises on no values, "linear" returns 0.0; they disagree on most inputs."""
+    """ "nearest" is the nearest-rank value, the ceil(p/100 * n)-th smallest, so p50 of two values is the lower
+    one; it raises on no values. "linear" interpolates and returns 0.0 on no values. They disagree on most
+    inputs."""
     if method not in PERCENTILE_METHODS:
         raise ValueError(f"unknown percentile method {method!r}; expected one of {PERCENTILE_METHODS}")
     sorted_data = sorted(values)
@@ -334,7 +342,7 @@ def percentile(values, p: float, method: str) -> float:
     if method == "nearest":
         if not n:
             raise ValueError("nearest-rank percentile of no values")
-        return sorted_data[min(n - 1, int(p / 100 * n))]
+        return sorted_data[min(n - 1, max(0, math.ceil(p * n / 100) - 1))]
     if not n:
         return 0.0
     idx = (p / 100) * (n - 1)
@@ -350,8 +358,65 @@ def pcts(values, method: str) -> dict:
     return {f"p{q}": percentile(values, q, method) for q in (50, 90, 95, 99)}
 
 
+def steady_window(session_times: dict, concurrency: int) -> dict:
+    """The saturated part of a closed-loop session run, by the TensorRT-LLM trace-replay rule: it opens when the
+    excl-th session is admitted and closes when the (N - excl + 1)-th admitted session finishes, excl being the
+    agent count. It needs more than 2 * excl sessions; with fewer the run has no steady window, and no wall-clock
+    number stands in for it. session_times maps a session to (arrived, admitted, finished) seconds."""
+    n, excl = len(session_times), max(1, concurrency)
+    out: dict = {"valid": False, "sessions": n, "excluded_sessions": excl}
+    if n <= 2 * excl:
+        out["reason"] = f"{n} sessions; a steady window needs more than {2 * excl}"
+        return out
+    by_admission = sorted(session_times.values(), key=lambda t: t[1])
+    start, end = by_admission[excl - 1][1], by_admission[n - excl][2]
+    if end <= start:
+        out["reason"] = "the window closed before it opened"
+        return out
+    out.update(valid=True, start_s=start, end_s=end, window_s=end - start)
+    return out
+
+
+def steady_section(results, session_times: dict, concurrency: int) -> dict:
+    """Throughput from what completed inside the window, latency from requests that ran entirely inside it,
+    sessions from those that finished inside it with every turn successful."""
+    w = steady_window(session_times, concurrency)
+    if not w["valid"]:
+        return w
+    start, end, span = w["start_s"], w["end_s"], w["window_s"]
+    ok = [r for r in results if r is not None and r.success and r.completed_at_s is not None]
+    done = [r for r in ok if start <= r.completed_at_s <= end]
+    inside = [r for r in done if r.semaphore_acquired_at_s is not None and r.semaphore_acquired_at_s >= start]
+    failed = {r.session_id for r in results if r is not None and not r.success}
+    sessions_done = sum(1 for sid, (_, _, fin) in session_times.items() if start <= fin <= end and sid not in failed)
+    out_tok, in_tok = sum(r.output_tokens for r in done), sum(r.input_tokens for r in done)
+    w.update(
+        requests_completed=len(done),
+        requests_inside=len(inside),
+        sessions_completed=sessions_done,
+        request_throughput=len(done) / span,
+        sessions_per_hour=3600 * sessions_done / span,
+        output_token_throughput=out_tok / span,
+        input_token_throughput=in_tok / span,
+        total_token_throughput=(in_tok + out_tok) / span,
+        percentile_method="nearest",
+    )
+    series = {
+        "ttft_ms": [r.ttft * 1000 for r in inside if r.ttft is not None],
+        "tpot_ms": [r.tpot * 1000 for r in inside if r.tpot is not None],
+        "itl_ms": [t * 1000 for r in inside for t in (r.itl or [])],
+    }
+    for name, values in series.items():
+        w[name] = {p: percentile(values, p, "nearest") for p in (50, 90, 99)} if values else None
+    # AgentX's interactivity: per-agent generation speed from the p90 inter-token latency.
+    itl = w["itl_ms"]
+    w["interactivity_p90_tok_s"] = 1000 / itl[90] if itl and itl[90] > 0 else None
+    return w
+
+
 def steady_ttfts(indexed_ttfts, concurrency: int) -> list | None:
-    """TTFTs past the first `concurrency` dispatched; None when fewer than `concurrency` remain."""
+    """TTFTs past the first `concurrency` dispatched; None when fewer than `concurrency` remain. Single-turn
+    runs only: a request index says nothing about where a session run is, that is steady_window's job."""
     rest = [t for i, t in indexed_ttfts if i >= concurrency]
     return rest if len(rest) >= concurrency else None
 
@@ -448,6 +513,7 @@ def aggregate(
     itls: list[float] = []
     e2els = []
 
+    reported_cached, reported_input = 0, 0
     for pos, r in enumerate(results):
         if r.success:
             summary.successful_requests += 1
@@ -455,6 +521,9 @@ def aggregate(
             summary.total_output_tokens += r.output_tokens
             if r.usage_reported:
                 summary.usage_reported_requests += 1
+            if r.server_cached_tokens is not None:
+                reported_cached += r.server_cached_tokens
+                reported_input += r.input_tokens
 
             if r.ttft is not None:
                 ttfts.append(r.ttft * 1000)
@@ -551,6 +620,10 @@ def aggregate(
         summary.p90_e2el_ms = percentile(e2els, 90, "linear")
         summary.p99_e2el_ms = percentile(e2els, 99, "linear")
 
+    if reported_input > 0:
+        summary.server_cached_tokens = reported_cached
+        summary.server_cache_hit_rate = reported_cached / reported_input
+
     return summary
 
 
@@ -585,6 +658,8 @@ class TurnSummary:
     median_block_aligned_cache_hit_rate: float = 0.0
     avg_uncached_prefix_tail_tokens: float = 0.0
     median_uncached_prefix_tail_tokens: float = 0.0
+    # Engine-reported cached share of the prompt; None when the server reported nothing for this turn.
+    median_server_cache_hit_rate: float | None = None
     median_client_queue_wait_ms: float = 0.0
 
     def to_dict(self) -> dict:
@@ -613,10 +688,13 @@ def aggregate_per_turn(results_by_turn: dict[int, list]) -> list[TurnSummary]:
         block_cached_context_toks = []
         block_cache_hit_rates = []
         uncached_prefix_tail_toks = []
+        server_hit_rates = []
         client_queue_waits = []
 
         for r in results:
             if r.success:
+                if r.server_cached_tokens is not None and r.input_tokens > 0:
+                    server_hit_rates.append(r.server_cached_tokens / r.input_tokens)
                 ts.successful += 1
                 if r.ttft is not None:
                     ttfts.append(r.ttft * 1000)
@@ -681,6 +759,8 @@ def aggregate_per_turn(results_by_turn: dict[int, list]) -> list[TurnSummary]:
         if uncached_prefix_tail_toks:
             ts.avg_uncached_prefix_tail_tokens = statistics.mean(uncached_prefix_tail_toks)
             ts.median_uncached_prefix_tail_tokens = statistics.median(uncached_prefix_tail_toks)
+        if server_hit_rates:
+            ts.median_server_cache_hit_rate = statistics.median(server_hit_rates)
         if client_queue_waits:
             ts.median_client_queue_wait_ms = statistics.median(client_queue_waits)
 
@@ -749,20 +829,20 @@ def first_error(results) -> str:
 def print_multi_turn_summary(turn_summaries: list, overall: BenchmarkSummary) -> None:
     print_summary(overall)
     print(f"{'=' * 98}")
-    print(" Per-Turn Breakdown (prefix cache effect visible in TTFT trend)")
+    print(" Per-Turn Breakdown (Max hit: the prompt share an ideal cache could reuse; Server hit: what it did)")
     print(f"{'=' * 98}")
     print(
-        f" {'Turn':>4}  {'Reqs':>5}  {'Avg ISL':>8}  {'New p50':>8}  {'Cache p50':>9}  "
-        f"{'Hit p50':>7}  {'TTFT p50':>9}  {'TTFT p90':>9}  {'TPOT p50':>9}  {'E2EL p50':>9}"
+        f" {'Turn':>4}  {'Reqs':>5}  {'Avg ISL':>8}  {'New p50':>8}  {'Max hit':>7}  {'Srv hit':>7}  "
+        f"{'TTFT p50':>9}  {'TTFT p90':>9}  {'TPOT p50':>9}  {'E2EL p50':>9}"
     )
     print(
-        f" {'─' * 4}  {'─' * 5}  {'─' * 8}  {'─' * 8}  {'─' * 9}  {'─' * 7}  {'─' * 9}  {'─' * 9}  {'─' * 9}  {'─' * 9}"
+        f" {'─' * 4}  {'─' * 5}  {'─' * 8}  {'─' * 8}  {'─' * 7}  {'─' * 7}  {'─' * 9}  {'─' * 9}  {'─' * 9}  {'─' * 9}"
     )
     for ts in turn_summaries:
+        server = "    n/a" if ts.median_server_cache_hit_rate is None else f"{ts.median_server_cache_hit_rate * 100:>6.0f}%"
         print(
             f" {ts.turn_index + 1:>4}  {ts.successful:>5}  {ts.avg_input_tokens:>8.0f}  "
-            f"{ts.median_new_prefill_tokens:>8.0f}  {ts.median_cached_context_tokens:>9.0f}  "
-            f"{ts.median_cache_hit_rate * 100:>6.0f}%  "
+            f"{ts.median_new_prefill_tokens:>8.0f}  {ts.median_cache_hit_rate * 100:>6.0f}%  {server}  "
             f"{ts.median_ttft_ms:>8.1f}ms  {ts.p90_ttft_ms:>8.1f}ms  "
             f"{ts.median_tpot_ms:>8.1f}ms  {ts.median_e2el_ms:>8.1f}ms"
         )

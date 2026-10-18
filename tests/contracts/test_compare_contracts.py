@@ -835,7 +835,7 @@ class TraceWorkloads(unittest.TestCase):
         self.assertEqual(s["n"], 3)
         self.assertEqual(s["ttft_ms"]["p50"], 20.0)
         self.assertEqual(s["ttft_ms"]["p99"], 30.0)
-        self.assertEqual(s["tpot_ms"]["p50"], 7.0)
+        self.assertEqual(s["tpot_ms"]["p50"], 5.0)
         self.assertEqual(s["tpot_ms"]["p90"], 7.0)
         self.assertAlmostEqual(s["tok_s"], 3.5)
 

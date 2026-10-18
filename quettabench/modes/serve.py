@@ -29,6 +29,7 @@ from ..metrics.summary import (
     print_multi_turn_summary,
     print_summary,
     sla_verdict,
+    steady_section,
     success_rate_gate,
     summarize_serve,
     transient_gate,
@@ -221,7 +222,17 @@ async def measure(trace, driver, mode, emit, workload, request_id):
             results, by_turn = [r for _, r in pairs], None
         duration = time.perf_counter() - start
         spec = server_spec_decode_section(before, server_counters(driver) if before else None)
-    return results, by_turn, pairs, duration, spec
+    return results, by_turn, pairs, duration, spec, sessions.session_times if sessions is not None else None
+
+
+def steady_line(s: dict) -> str:
+    if not s["valid"]:
+        return f"Steady window: none ({s['reason']}); whole-run numbers include ramp and drain"
+    return (
+        f"Steady window: {s['start_s']:.1f} s to {s['end_s']:.1f} s of the run, {s['excluded_sessions']} sessions excluded "
+        f"each end: {s['output_token_throughput']:.1f} out tok/s, {s['sessions_per_hour']:.1f} sessions/h, "
+        f"{s['requests_inside']} requests fully inside"
+    )
 
 
 def serve_records(pairs, open_loop):
@@ -423,7 +434,7 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
     except RunAborted as e:
         print(e)
         stop(writer, None, "aborted", str(e), 1)
-    results, by_turn, pairs, duration, server_spec_decode = measured
+    results, by_turn, pairs, duration, server_spec_decode, session_times = measured
 
     core = aggregate(
         results=[r for r in results if r is not None],
@@ -451,6 +462,9 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
         {"goodput": goodput} if goodput else summary_sections(pairs, duration, mode, server_spec_decode)
     )
     print_summary_tag_lines(summary.sections)
+    if session_times is not None and mode.load == "closed":
+        summary.sections["steady"] = steady_section(results, session_times, mode.concurrency)
+        print(steady_line(summary.sections["steady"]), flush=True)
     if not ident["match"]:
         stop(writer, summary.to_dict(), "failed", "workload identity", IDENTITY_EXIT)
     if goodput and goodput["max_req_s"] is None:

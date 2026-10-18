@@ -58,6 +58,8 @@
   "p99_ttft_ms": 80.0,
   "profile": "p",
   "request_throughput": 2.0,
+  "server_cache_hit_rate": null,
+  "server_cached_tokens": null,
   "session_throughput": 0.6666666666666666,
   "sessions_completed": 2,
   "sessions_failed": 0,

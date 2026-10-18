@@ -27,7 +27,9 @@ from quettabench.metrics.summary import (
     print_summary,
     sla_verdict,
     spec_decode_counts,
+    steady_section,
     steady_ttfts,
+    steady_window,
     success_rate_gate,
     summarize_serve,
     transient_gate,
@@ -45,10 +47,10 @@ ARANGE = [float(i) for i in range(1000)]
 
 TABLE = [
     (SINGLE, {50: (42.0, 42.0), 90: (42.0, 42.0), 95: (42.0, 42.0), 99: (42.0, 42.0)}),
-    (TWO, {50: (20.0, 15.0), 90: (20.0, 19.0), 95: (20.0, 19.5), 99: (20.0, 19.900000000000002)}),
+    (TWO, {50: (10.0, 15.0), 90: (20.0, 19.0), 95: (20.0, 19.5), 99: (20.0, 19.900000000000002)}),
     (TIES, {50: (2.0, 2.0), 90: (3.0, 2.6), 95: (3.0, 2.8), 99: (3.0, 2.96)}),
     (SEVEN, {50: (7.0, 7.0), 90: (13.0, 11.8), 95: (13.0, 12.399999999999999), 99: (13.0, 12.879999999999999)}),
-    (ARANGE, {50: (500.0, 499.5), 90: (900.0, 899.1), 95: (950.0, 949.05), 99: (990.0, 989.01)}),
+    (ARANGE, {50: (499.0, 499.5), 90: (899.0, 899.1), 95: (949.0, 949.05), 99: (989.0, 989.01)}),
 ]
 
 
@@ -92,7 +94,8 @@ class ServeSummaryTest(unittest.TestCase):
         s = summarize_serve(self.RECORDS, 2.0, method="nearest")
         self.assertEqual(s["n"], 3)
         self.assertEqual(s["ttft_ms"], {"p50": 20.0, "p90": 30.0, "p95": 30.0, "p99": 30.0})
-        self.assertEqual(s["tpot_ms"], {"p50": 7.0, "p90": 7.0, "p95": 7.0, "p99": 7.0})
+        # Two TPOTs: the nearest-rank median is the lower one.
+        self.assertEqual(s["tpot_ms"], {"p50": 5.0, "p90": 7.0, "p95": 7.0, "p99": 7.0})
         self.assertEqual(s["req_s"], 1.5)
         self.assertEqual(s["tok_s"], 3.5)
 
@@ -513,6 +516,63 @@ class TestOpenLoopUnits(unittest.TestCase):
         planned = {sid: 5 for sid in range(4)}
         s = aggregate(rows, duration_s=10.0, load_mode="open-loop", target_rate=0.4, planned_turns=planned)
         self.assertEqual((s.sessions_completed, s.sessions_failed), (3, 1))
+
+    def test_the_server_count_is_the_cache_hit_and_the_estimate_only_its_ceiling(self):
+        # Turn 2 of two sessions repeats a 100-token prompt in full: the estimate says 100% could be reused;
+        # the engine reports 50 and 0 tokens actually reused.
+        rows = []
+        for sid, reported in ((0, 50), (1, 0)):
+            first, second = _req(0.0, 1.0, input_tokens=100), _req(1.0, 2.0, input_tokens=100)
+            second.server_cached_tokens = reported
+            for turn, r in enumerate((first, second)):
+                annotate_multi_turn_cache_estimate(r, sid, turn, previous_context_tokens=100 if turn else 0)
+            rows += [first, second]
+        s = aggregate(rows, duration_s=2.0)
+        self.assertEqual((s.server_cached_tokens, s.server_cache_hit_rate), (50, 0.25))
+        turns = aggregate_per_turn({0: rows[0::2], 1: rows[1::2]})
+        self.assertEqual(turns[1].median_cache_hit_rate, 1.0)
+        self.assertEqual(turns[1].median_server_cache_hit_rate, 0.25)
+        self.assertIsNone(turns[0].median_server_cache_hit_rate)
+
+    def test_a_server_that_reports_no_cached_tokens_leaves_the_hit_rate_none(self):
+        s = aggregate([_req(0.0, 1.0, input_tokens=100)], duration_s=1.0)
+        self.assertIsNone(s.server_cached_tokens)
+        self.assertIsNone(s.server_cache_hit_rate)
+
+    def test_steady_window_opens_at_the_excl_th_admission_and_closes_at_the_n_minus_excl_th_finish(self):
+        # 10 sessions through 2 agents, admitted two per second, each lasting 3 s: excl = 2, so the window opens
+        # when the 2nd session is admitted (0 s) and closes when the 9th admitted session finishes (4 + 3 = 7 s).
+        times = {sid: (0.0, float(sid // 2), float(sid // 2) + 3.0) for sid in range(10)}
+        w = steady_window(times, concurrency=2)
+        self.assertTrue(w["valid"])
+        self.assertEqual((w["start_s"], w["end_s"], w["window_s"], w["excluded_sessions"]), (0.0, 7.0, 7.0, 2))
+
+    def test_too_few_sessions_leave_no_steady_window_and_no_substitute(self):
+        times = {sid: (0.0, float(sid), float(sid) + 3.0) for sid in range(4)}
+        w = steady_window(times, concurrency=2)
+        self.assertFalse(w["valid"])
+        self.assertIn("4 sessions; a steady window needs more than 4", w["reason"])
+        self.assertNotIn("output_token_throughput", steady_section([], times, 2))
+
+    def test_steady_section_counts_only_what_completed_inside_the_window(self):
+        times = {sid: (0.0, float(sid // 2), float(sid // 2) + 3.0) for sid in range(10)}  # window 0 s to 7 s
+        rows = []
+        for sid, (_, admitted, finished) in times.items():
+            for t in range(3):
+                r = _req(admitted + t, admitted + t + 1.0)
+                r.session_id, r.turn_index = sid, t
+                r.semaphore_acquired_at_s, r.completed_at_s = admitted + t, admitted + t + 1.0
+                rows.append(r)
+        rows[-1].success = False  # session 9 fails on its last turn
+        s = steady_section(rows, times, concurrency=2)
+        done = [r for r in rows if r.success and r.completed_at_s <= 7.0]
+        self.assertEqual(s["requests_completed"], len(done))
+        self.assertAlmostEqual(s["output_token_throughput"], 5 * len(done) / 7.0)
+        # Sessions 0 to 7 finish by 6 s; sessions 8 and 9 finish at 7 s but 9 failed.
+        self.assertEqual(s["sessions_completed"], 9)
+        self.assertAlmostEqual(s["sessions_per_hour"], 3600 * 9 / 7.0)
+        self.assertEqual(s["ttft_ms"][50], 10.0)
+        self.assertAlmostEqual(s["interactivity_p90_tok_s"], 100.0)
 
     def test_single_turn_has_no_sessions_so_falls_back_to_requests(self):
         s = aggregate([_req(i, i + 1) for i in range(10)], duration_s=10.0, load_mode="open-loop", target_rate=1.0)

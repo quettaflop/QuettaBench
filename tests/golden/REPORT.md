@@ -4,6 +4,10 @@ Run `python3 -m pytest tests/golden -q`. `QBENCH_GOLDEN_REGEN=1` rewrites the fi
 
 ## Fixture changes
 
+2026-10-18: `aggregate_summary.json` gains `server_cached_tokens` and `server_cache_hit_rate`, null here because no request in the fixture carries an engine-reported cached count. These are the cache-hit metric; `cache_hit_rate` and the per-turn `median_cache_hit_rate` are the prompt share an ideal cache could reuse, an upper bound. Every other value is as before.
+
+2026-10-18: `percentiles.json` nearest-rank values moved one rank down where `p/100 * n` is a whole number: `arange_1000` p50/p90/p95/p99 are 499/899/949/989 (were 500/900/950/990) and `two` p50 is 10 (was 20). `percentile(..., "nearest")` now takes the ceil(p/100 * n)-th smallest value, the nearest-rank definition; it took the (floor(p/100 * n) + 1)-th, one rank high whenever the product was whole. Serve, SLA and burst percentiles in recorded runs are from the old rank; linear percentiles did not move.
+
 2026-10-18: `aggregate_summary.json` gains `sessions_failed`, 0 here. `sessions_completed` now counts sessions whose every planned turn succeeded instead of sessions that sent anything; the fixture's sessions all succeed, so its value and every other value are as before.
 
 2026-10-12: `aggregate_summary.json` gains `itl_coalesced_frac`, 0.0 here. Every other value is as before.
