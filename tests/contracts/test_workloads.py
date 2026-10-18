@@ -860,6 +860,34 @@ def runnable():
     return sorted(PROFILES)
 
 
+class ToolSchemas(unittest.TestCase):
+    TOOLS = [{"type": "function", "function": {"name": "bash", "parameters": {"type": "object"}}}]
+
+    def test_a_tool_schema_joins_the_hash_but_not_the_replay_row(self):
+        # A request without tools hashes as before: the PINS above cover that.
+        msgs = [{"role": "user", "content": "hi"}]
+        plain = Request([], 0, output_length=4, session_id=1, turn=0, messages=msgs)
+        with_tools = Request([], 0, output_length=4, session_id=1, turn=0, messages=msgs, tools=self.TOOLS)
+        self.assertNotEqual(workload_hash([plain]), workload_hash([with_tools]))
+        self.assertNotIn("tools", with_tools.to_dict())
+
+    def test_a_session_tool_schema_reaches_every_turn(self):
+        session = {
+            "session_id": "s",
+            "tools": self.TOOLS,
+            "turns": [
+                {"messages": [{"role": "user", "content": "a"}], "prompt_tokens": 5, "osl_tokens": 3},
+                {"messages": [{"role": "user", "content": "b"}], "prompt_tokens": 9, "osl_tokens": 3},
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "trace.jsonl"
+            path.write_text(json.dumps(session) + "\n")
+            with contextlib.redirect_stdout(io.StringIO()):
+                trace = TrajectorySessionTrace(str(path), min_turns=1, num_sessions=1)
+        self.assertEqual([r.tools for r in trace.sessions()[0]], [self.TOOLS, self.TOOLS])
+
+
 class DeepResearchTrajectories(unittest.TestCase):
     def test_trace_rows_become_sessions_the_trajectory_loader_reads(self):
         spec = importlib.util.spec_from_file_location("build_trajectories", ROOT / "data" / "build_trajectories.py")
@@ -907,11 +935,19 @@ def build_module():
 
 class NativeTrajectoryBuilders(unittest.TestCase):
     def test_swebench_native_takes_each_steps_counts_from_the_request_sidecar(self):
+        call = {"id": "c1", "type": "function", "function": {"name": "bash", "arguments": '{"command": "ls"}'}}
         messages = [
             {"role": "system", "content": "you are an agent"},
             {"role": "user", "content": "fix the bug"},
-            {"role": "assistant", "content": "look", "tool_calls": [{"function": {"arguments": "ls"}}]},
-            {"role": "tool", "content": ["a.py"]},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [call],
+                "reasoning_content": "list first",
+                "function_call": None,
+                "extra": {"response": {"id": "x"}},
+            },
+            {"role": "tool", "tool_call_id": "c1", "content": "a.py", "extra": {"returncode": 0}},
             {"role": "assistant", "content": "done"},
         ]
         sidecar = [
@@ -939,22 +975,27 @@ class NativeTrajectoryBuilders(unittest.TestCase):
             [(t["prompt_tokens"], t["osl_tokens"], t["tool_ms"]) for t in session["turns"]],
             [(500, 40, 500.0), (900, 300, 0.0)],
         )
+        # The request as mini-swe-agent sent it: native tool call, tool result and reasoning, no "extra", no nulls.
         self.assertEqual(
             session["turns"][1]["messages"][2:],
             [
-                {"role": "assistant", "content": "look\nls"},
-                {"role": "user", "content": '["a.py"]'},
+                {"role": "assistant", "content": "", "tool_calls": [call], "reasoning_content": "list first"},
+                {"role": "tool", "tool_call_id": "c1", "content": "a.py"},
             ],
         )
+        self.assertEqual(session["tools"], [build_module().MINI_SWE_AGENT_BASH_TOOL])
 
     def test_terminalbench_atif_takes_each_steps_counts_from_its_metrics(self):
         steps = [
             {"source": "user", "message": "the task"},
             {
                 "source": "agent",
-                "message": "try",
+                "message": "Analysis: fresh shell, é\nPlan: list files",
                 "metrics": {"prompt_tokens": 700, "completion_tokens": 120},
-                "tool_calls": [{"arguments": {"keystrokes": "ls\n"}}],
+                "tool_calls": [
+                    {"function_name": "bash_command", "arguments": {"keystrokes": "ls\n", "duration": 0.1}},
+                    {"function_name": "mark_task_complete", "arguments": {}},
+                ],
                 "observation": {"results": [{"content": "a b"}]},
             },
             {"source": "agent", "message": "ok", "metrics": {"prompt_tokens": 850, "completion_tokens": 9}},
@@ -969,11 +1010,18 @@ class NativeTrajectoryBuilders(unittest.TestCase):
             self.assertIsNone(build_module().atif_session(path, "terminalbench"), "a step without metrics")
         self.assertEqual((session["session_id"], session["run"], session["num_turns"]), ("s-1", "job-1", 2))
         self.assertEqual([(t["prompt_tokens"], t["osl_tokens"]) for t in session["turns"]], [(700, 120), (850, 9)])
+        # terminus-2's JSON reply, indented, raw unicode; task_complete only when the step marked it.
+        body = {
+            "analysis": "fresh shell, é",
+            "plan": "list files",
+            "commands": [{"keystrokes": "ls\n", "duration": 0.1}],
+        }
+        reply = json.dumps({**body, "task_complete": True}, indent=2, ensure_ascii=False)
         self.assertEqual(
             session["turns"][1]["messages"],
             [
                 {"role": "user", "content": "the task"},
-                {"role": "assistant", "content": 'try\n{"keystrokes": "ls\\n"}'},
+                {"role": "assistant", "content": reply},
                 {"role": "user", "content": "a b"},
             ],
         )
@@ -994,6 +1042,23 @@ class DataManifest(unittest.TestCase):
             if profile.dataset in runner.TRAJECTORY_DATASETS:
                 with self.subTest(profile=name):
                     self.assertIn(Path(profile.file_path).name, self.files)
+
+    def test_check_covers_built_files_and_refuses_a_missing_one(self):
+        with tempfile.TemporaryDirectory() as td:
+            dest = Path(td)
+            (dest / "built.jsonl").write_text("{}\n")
+            files = {"built.jsonl": {"sha256": self.fetch.sha256_of(dest / "built.jsonl")}}
+            (dest / "MANIFEST.json").write_text(json.dumps({"files": files}))
+            with (
+                mock.patch.object(self.fetch, "DEST", dest),
+                mock.patch.object(self.fetch, "MANIFEST", dest / "MANIFEST.json"),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                self.fetch.check()
+                (dest / "built.jsonl").unlink()
+                with self.assertRaises(SystemExit) as e:
+                    self.fetch.check()
+        self.assertIn("built.jsonl: not in", str(e.exception))
 
     def test_a_file_whose_digest_differs_is_removed_and_refused(self):
         with tempfile.TemporaryDirectory() as td:

@@ -31,6 +31,8 @@ class Request:
     source: str | None = None
     # Not in the replay schema; hashed only without token ids.
     messages: list | None = None
+    # The tool schema an agent sent with its messages; not in the replay schema, hashed like messages.
+    tools: list | None = None
     metadata: dict | None = None
 
     @property
@@ -38,7 +40,7 @@ class Request:
         return self.output_length
 
     def to_dict(self):
-        plain = replace(self, messages=None, metadata=None)
+        plain = replace(self, messages=None, tools=None, metadata=None)
         return {k: v for k, v in asdict(plain).items() if v is not None}
 
 
@@ -51,6 +53,7 @@ def messages_digest(messages):
 def request_digest(r):
     """Never generated tokens or timings."""
     messages = r.messages if isinstance(r, Request) else r.get("messages")
+    tools = r.tools if isinstance(r, Request) else r.get("tools")
     if isinstance(r, Request):
         r = r.to_dict()
     ids = r.get("prompt_token_ids") or []
@@ -66,6 +69,8 @@ def request_digest(r):
     ]
     if not ids and messages:
         parts.append(messages_digest(messages))
+    if not ids and tools:
+        parts.append(hashlib.sha256(json.dumps(tools, sort_keys=True, separators=(",", ":")).encode()).hexdigest())
     return hashlib.sha256("|".join(parts).encode()).hexdigest()
 
 

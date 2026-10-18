@@ -216,10 +216,10 @@ def recorded_counts(path, entry, turn, index):
 
 
 class TrajectorySessionTrace(LoadedSessionTrace):
-    """{"session_id", "turns": [{"messages", "prompt_tokens", "osl_tokens"}, ...]}: each turn's whole context and
-    the token counts the engine reported when it was recorded. A session is cut at the first turn whose prompt does
-    not fit the window or whose output passes the profile's cap, never clipped, and the last turn kept says so in
-    truncated_by_context_limit."""
+    """{"session_id", "tools"?, "turns": [{"messages", "prompt_tokens", "osl_tokens"}, ...]}: each turn's whole context,
+    the tool schema the agent sent with it, and the token counts the engine reported when it was recorded. A session
+    is cut at the first turn whose prompt does not fit the window or whose output passes the profile's cap, never
+    clipped, and the last turn kept says so in truncated_by_context_limit."""
 
     def __init__(
         self,
@@ -264,7 +264,8 @@ class TrajectorySessionTrace(LoadedSessionTrace):
                     "truncated_by_context_limit": False,
                     **turn_wait_metadata(t),
                 }
-                turns.append(Request([], 0, output_length=osl, messages=t["messages"], metadata=last))
+                tools = t.get("tools", entry.get("tools"))
+                turns.append(Request([], 0, output_length=osl, messages=t["messages"], tools=tools, metadata=last))
             if cut and turns:
                 last["truncated_by_context_limit"] = True
             if len(turns) < min_turns:

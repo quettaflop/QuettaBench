@@ -47,7 +47,7 @@ def _headers(api_key, extra_headers, request_id):
     return headers
 
 
-def _payload(model, prompt, max_tokens, temperature, ignore_eos, request_id, seed, min_tokens):
+def _payload(model, prompt, max_tokens, temperature, ignore_eos, request_id, seed, min_tokens, tools=None):
     payload = {
         "model": model,
         **prompt,
@@ -56,6 +56,8 @@ def _payload(model, prompt, max_tokens, temperature, ignore_eos, request_id, see
         "stream": True,
         "stream_options": {"include_usage": True},
     }
+    if tools:
+        payload["tools"] = tools
     if ignore_eos:
         payload["ignore_eos"] = True
     if request_id:
@@ -81,10 +83,13 @@ async def _stream_chat(
     seed: int | None = None,
     min_tokens: int = 0,
     capture_text: bool = False,
+    tools: list | None = None,
 ) -> RequestResult:
     """Each chunk with content, reasoning or tool_calls counts as a token."""
     headers = _headers(api_key, extra_headers, request_id)
-    payload = _payload(model, {"messages": messages}, max_tokens, temperature, ignore_eos, request_id, seed, min_tokens)
+    payload = _payload(
+        model, {"messages": messages}, max_tokens, temperature, ignore_eos, request_id, seed, min_tokens, tools
+    )
 
     start_time = time.perf_counter()
     ttft = None
@@ -215,7 +220,12 @@ async def _stream_completions(
     seed: int | None = None,
     min_tokens: int = 0,
     prompt_token_ids: list[int] | None = None,
+    tools: list | None = None,
 ) -> RequestResult:
+    if tools:
+        return RequestResult(
+            success=False, e2el=0.0, error="completions backend cannot send a tool schema", error_kind="client_error"
+        )
     prompt = resolve_prompt(prompt_token_ids, messages)
     if prompt is None:
         return RequestResult(
@@ -409,6 +419,8 @@ class HttpDriver(Driver):
             extra["prompt_token_ids"] = request.prompt_token_ids
         if capture_text:
             extra["capture_text"] = True
+        if request.tools:
+            extra["tools"] = request.tools
         return await self.send_request(
             session=self._http,
             url=self.url,

@@ -384,25 +384,37 @@ def build_deepresearch(args: argparse.Namespace) -> int:
     return 0
 
 
-def _tool_call_text(call: dict[str, Any]) -> str:
-    fn = call.get("function") or {}
-    return fn.get("arguments") or json.dumps(fn)
+# mini-swe-agent 2.4.6 sends this schema with every request (minisweagent/models/utils/actions_toolcall.py BASH_TOOL);
+# the server counts it in each step's prompt_tokens.
+MINI_SWE_AGENT_BASH_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "bash",
+        "description": "Execute a bash command",
+        "parameters": {
+            "type": "object",
+            "properties": {"command": {"type": "string", "description": "The bash command to execute"}},
+            "required": ["command"],
+        },
+    },
+}
 
 
 def swebench_native_session(run_dir: Path) -> dict[str, Any] | None:
-    """One mini-swe-agent session with its per-request sidecar: step k's context is every message before the k-th
-    assistant reply; its output length is the server's completion_tokens for that request, reasoning included. The
-    model's tool call is the assistant turn and the tool output a user turn, as in the Harbor SWE-bench sessions.
-    None when the sidecar and the trajectory disagree on the number of model calls (retries, malformed replies)."""
+    """One mini-swe-agent session with its per-request sidecar, each step's request as the agent sent it: every
+    earlier message without mini-swe-agent's "extra" key or empty fields (tool calls, tool results and the model's
+    reasoning included) and the bash tool schema. Its output length is the server's completion_tokens for that
+    request, reasoning included. None when the sidecar and the trajectory disagree on the number of model calls
+    (retries, malformed replies)."""
     trajs = sorted(run_dir.glob("*.traj.json"))
     sidecar = run_dir / "requests.jsonl"
     if not trajs or not sidecar.exists():
         return None
-    reqs = sorted((json.loads(line) for line in sidecar.open()), key=lambda r: r["turn_idx"])
+    reqs = sorted((json.loads(line) for line in sidecar.open()), key=lambda r: int(r["turn_idx"]))
     msgs = json.loads(trajs[0].read_text())["messages"]
     if sum(m["role"] == "assistant" for m in msgs) != len(reqs):
         return None
-    history: list[dict[str, str]] = []
+    history: list[dict[str, Any]] = []
     turns = []
     for m in msgs:
         if m["role"] == "assistant":
@@ -411,22 +423,16 @@ def swebench_native_session(run_dir: Path) -> dict[str, Any] | None:
             turns.append({
                 "turn_idx": len(turns),
                 "messages": [dict(h) for h in history],
-                "prompt_tokens": r["prompt_tokens"],
-                "osl_tokens": max(1, r["completion_tokens"]),
+                "prompt_tokens": int(r["prompt_tokens"]),
+                "osl_tokens": max(1, int(r["completion_tokens"])),
                 "tool_ms": tool_ms,
             })
-            text = "\n".join([m.get("content") or ""] + [_tool_call_text(c) for c in m.get("tool_calls") or []])
-            history.append({"role": "assistant", "content": text.strip()})
-        else:
-            content = m.get("content")
-            history.append({
-                "role": m["role"] if m["role"] in ("system", "user") else "user",
-                "content": content if isinstance(content, str) else json.dumps(content),
-            })
+        history.append({k: v for k, v in m.items() if k != "extra" and v is not None})
     return {
         "session_id": run_dir.name,
         "source": "swebench",
         "run": reqs[0].get("run_id"),
+        "tools": [MINI_SWE_AGENT_BASH_TOOL],
         "num_turns": len(turns),
         "turns": turns,
     }
@@ -448,9 +454,25 @@ def build_swebench_native(args: argparse.Namespace) -> int:
     return 0
 
 
+def terminus_reply(step: dict[str, Any]) -> str:
+    """The reply terminus-2 (parser json) asked the model for, rebuilt from the step's parsed fields: ATIF keeps the
+    analysis, plan and commands, not the model's text. Indented JSON with raw unicode reproduces the recorded
+    prompt_tokens within 1% on 80% of steps; the model's own whitespace is not recorded."""
+    analysis, _, plan = (step.get("message") or "").partition("\nPlan: ")
+    calls = step.get("tool_calls") or []
+    body: dict[str, Any] = {
+        "analysis": analysis.removeprefix("Analysis: "),
+        "plan": plan,
+        "commands": [c.get("arguments") for c in calls if c.get("function_name") == "bash_command"],
+    }
+    if any(c.get("function_name") == "mark_task_complete" for c in calls):
+        body["task_complete"] = True
+    return json.dumps(body, indent=2, ensure_ascii=False)
+
+
 def atif_session(path: Path, source: str) -> dict[str, Any] | None:
-    """One Harbor ATIF trajectory: step k's context is the task plus every earlier step (the model's message and the
-    keystrokes it sent as the assistant turn, the terminal output as a user turn); its output length is the server's
+    """One Harbor ATIF trajectory: step k's context is the task plus every earlier step (the model's reply rebuilt as
+    terminus-2's JSON as the assistant turn, the terminal output as a user turn); its output length is the server's
     completion_tokens from the step's metrics. None when an agent step has no recorded metrics."""
     traj = json.loads(path.read_text())
     history: list[dict[str, str]] = []
@@ -470,8 +492,7 @@ def atif_session(path: Path, source: str) -> dict[str, Any] | None:
             "prompt_tokens": metrics.get("prompt_tokens"),
             "osl_tokens": max(1, metrics["completion_tokens"]),
         })
-        calls = [json.dumps(c.get("arguments")) for c in step.get("tool_calls") or []]
-        history.append({"role": "assistant", "content": "\n".join([step.get("message") or ""] + calls).strip()})
+        history.append({"role": "assistant", "content": terminus_reply(step)})
         results = (step.get("observation") or {}).get("results") or []
         output = "\n".join(r.get("content", "") for r in results if isinstance(r, dict))
         if output:

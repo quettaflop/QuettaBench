@@ -3,8 +3,8 @@
   "prefix": "campaign-2026-10/workloads",
   "files": {
     "swebench_native_trajectories.jsonl": {
-      "sha256": "3f57d5313564a27a92a7ef0eb5af0ccc4fe6f8361ad76104def733049cb7e22d",
-      "built_by": "data/build_trajectories.py swebench-native",
+      "sha256": "ee33b744eb1b11ff685074bbb0e2d711be34a5fafab2ab30375ac9dea5cbf4e5",
+      "built_by": "data/build_trajectories.py swebench-native --runs data/raw/swebench_native_c8 (just fetch builds it)",
       "source": "sources/swebench-verified_qwen38-flash-next_native_2026-09-10 (mini-swe-agent run qwen-native-c8-2026-09-10, 8 agents)",
       "benchmark": "SWE-bench Verified",
       "agent": "mini-swe-agent",
@@ -13,13 +13,28 @@
       "token_counts": "prompt_tokens and completion_tokens the serving engine reported per request",
       "sessions": 154,
       "turns": 5112,
-      "steps_min_median_max": [11, 31, 78],
-      "prompt_tokens_p10_p50_p90_max": [5348, 19141, 37711, 49011],
-      "osl_tokens_p10_p50_p90_max": [99, 237, 872, 6103]
+      "steps_min_median_max": [
+        11,
+        31,
+        78
+      ],
+      "prompt_tokens_p10_p50_p90_max": [
+        5348,
+        19141,
+        37711,
+        49011
+      ],
+      "osl_tokens_p10_p50_p90_max": [
+        99,
+        237,
+        872,
+        6103
+      ],
+      "request_fidelity": "5112 of 5112 steps rebuild the recorded prompt_tokens exactly (chat template + bash tool schema)"
     },
     "terminalbench_qwen_trajectories.jsonl": {
-      "sha256": "1b998063816a383f75ef8b892a0f0133d3eb55604f5b7060cc06141694cc9bac",
-      "built_by": "data/build_trajectories.py terminalbench-atif",
+      "sha256": "7db96516a41392160c27b0aaa284174eb753fc564e14a9f7f789efbdfb2735b3",
+      "built_by": "data/build_trajectories.py terminalbench-atif --jobs data/raw/terminalbench_jobs (just fetch builds it)",
       "source": "sources/terminalbench-2-1_qwen38-flash-next_2026-08-27 (Harbor jobs 2026-08-27__22-17-10 and 2026-08-27__22-40-28)",
       "benchmark": "Terminal-Bench 2.1",
       "agent": "terminus-2",
@@ -28,23 +43,42 @@
       "token_counts": "prompt_tokens and completion_tokens from each step's ATIF metrics",
       "sessions": 74,
       "turns": 1563,
-      "steps_min_median_max": [1, 17, 83],
-      "prompt_tokens_p10_p50_p90_max": [2411, 15338, 38147, 63086],
-      "osl_tokens_p10_p50_p90_max": [180, 816, 6892, 41638]
+      "steps_min_median_max": [
+        1,
+        17,
+        83
+      ],
+      "prompt_tokens_p10_p50_p90_max": [
+        2411,
+        15338,
+        38147,
+        63086
+      ],
+      "osl_tokens_p10_p50_p90_max": [
+        180,
+        816,
+        6892,
+        41638
+      ],
+      "request_fidelity": "rebuilt / recorded prompt_tokens: p1 0.993, p50 1.000, p99 1.055; 1270 of 1563 steps within 1%, 506 exact; the model's reply text is not recorded, so its JSON whitespace is rebuilt"
     },
     "deepresearch_trajectories.jsonl": {
-      "sha256": "75b7eda226f1c2bf156b407483e374ee68d7bdf954b0c252a4fca4024ab36b96",
-      "built_by": "data/build_trajectories.py deepresearch --trace data/dr9k-v4flash.jsonl",
+      "sha256": "8dbc1998b62a6726a4e444895574f6cd6f15a2a5281997c411acdb9ecaf69347",
+      "built_by": "data/build_trajectories.py deepresearch --trace data/dr9k-v4flash.jsonl (just fetch builds it)",
       "benchmark": "DeepResearch-9k",
       "model": "DeepSeek-V4-Flash",
-      "token_counts": "prompt_tokens and completion_tokens recorded in the trace"
+      "token_counts": "prompt_tokens and completion_tokens recorded in the trace",
+      "sessions": 300,
+      "turns": 2253
     },
     "deepsearch_trajectories.jsonl": {
-      "sha256": "b26d49abb5c74142e441458369d8e7869e4cebee9d7193325065aa6da1e5dd78",
-      "built_by": "data/build_trajectories.py deepsearch --trace data/dsqa-v4flash.jsonl",
+      "sha256": "6e8d01670e3f55ad5b1b2783c244a5d71bd4e84112bfd32e1a1db69860a1e9c1",
+      "built_by": "data/build_trajectories.py deepsearch --trace data/dsqa-v4flash.jsonl (just fetch builds it)",
       "benchmark": "DeepSearchQA",
       "model": "DeepSeek-V4-Flash",
-      "token_counts": "prompt_tokens and completion_tokens recorded in the trace"
+      "token_counts": "prompt_tokens and completion_tokens recorded in the trace",
+      "sessions": 72,
+      "turns": 2025
     },
     "coding_agent_prompts.jsonl": {
       "sha256": "f32f4e012f1077eb768066ffd647a7d72cdae02f4e89a3443e9bafbe90d2ec13",

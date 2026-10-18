@@ -202,6 +202,32 @@ class BoundDriver(unittest.TestCase):
         self.assertEqual(self.stub.posts[0][1]["messages"], msgs)
         self.assertEqual(result.generated_text, "hey")
 
+    def test_a_request_with_a_tool_schema_sends_it_and_one_without_sends_none(self):
+        drv, session = self.driver("chat", [{"choices": [{"delta": {"content": "x"}}]}])
+        tools = [{"type": "function", "function": {"name": "bash", "parameters": {"type": "object"}}}]
+        msgs = [{"role": "user", "content": "hi"}]
+
+        async def go():
+            async with session(1):
+                await drv.send(Request([], 0, output_length=2, messages=msgs, tools=tools))
+                await drv.send(Request([], 0, output_length=2, messages=msgs))
+
+        asyncio.run(go())
+        self.assertEqual(self.stub.posts[0][1]["tools"], tools)
+        self.assertNotIn("tools", self.stub.posts[1][1])
+
+    def test_completions_refuses_a_tool_schema(self):
+        drv, session = self.driver("completions", [{"choices": [{"text": "x"}]}])
+        request = Request([], 0, output_length=2, messages=[{"role": "user", "content": "hi"}], tools=[{}])
+
+        async def go():
+            async with session(1):
+                return await drv.send(request)
+
+        result = asyncio.run(go())
+        self.assertEqual((result.success, result.error_kind), (False, "client_error"))
+        self.assertIn("cannot send a tool schema", result.error)
+
     def test_run_yields_in_request_order(self):
         drv, session = self.driver()
         with mock.patch.object(drv, "session", session):

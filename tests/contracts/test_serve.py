@@ -174,8 +174,9 @@ class SingleTurn(unittest.TestCase):
 class TimedDriver(FakeDriver):
     """Every request takes 5 ms; counts the sessions and requests open at once."""
 
-    def __init__(self):
+    def __init__(self, last_turn=2):
         super().__init__()
+        self.last_turn = last_turn
         self.open_sessions: set = set()
         self.inflight = 0
         self.peak = {"sessions": 0, "requests": 0}
@@ -187,7 +188,7 @@ class TimedDriver(FakeDriver):
         self.peak["requests"] = max(self.peak["requests"], self.inflight)
         await asyncio.sleep(0.005)
         self.inflight -= 1
-        if request.turn == 2:
+        if request.turn == self.last_turn:
             self.open_sessions.discard(request.session_id)
         return await super().send(request, **kw)
 
@@ -201,6 +202,24 @@ class Sessions(unittest.TestCase):
         self.assertLess(max(r.client_queue_wait_s for r in summary.rows), 0.001)
         self.assertEqual(len(summary.rows), 36)
         self.assertIn("3 agents at once", out)
+
+    def test_agents_keep_their_slots_through_recorded_waits_and_the_run_has_a_steady_window(self):
+        trace = session_trace(60, 5)
+        for r in trace.requests():
+            r.metadata = {"tool_wait_after_ms": 3.0}
+        trace.pacing = TurnPacing("per-session", use_recorded_waits=True)
+        driver = TimedDriver(last_turn=4)
+        summary, _ = run(trace, driver, ModeCfg(concurrency=8, warmup=0))
+        # A session's waits count as open: still 8 sessions at most, 8 requests at most, no queue for a slot.
+        self.assertEqual(driver.peak, {"sessions": 8, "requests": 8})
+        # Waiting for a slot would cost a whole 5 ms request; below that is event-loop jitter under 8 coroutines.
+        self.assertLess(max(r.client_queue_wait_s for r in summary.rows), 0.005)
+        self.assertEqual(len(summary.rows), 300)
+        steady = summary.sections["steady"]
+        self.assertTrue(steady["valid"], steady)
+        self.assertEqual((steady["sessions"], steady["excluded_sessions"]), (60, 8))
+        last_finish = max(r.completed_at_s for r in summary.rows)
+        self.assertTrue(0.0 <= steady["start_s"] < steady["end_s"] <= last_finish)
 
     def test_replies_feed_later_turns(self):
         driver = FakeDriver()

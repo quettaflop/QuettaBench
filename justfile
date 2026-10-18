@@ -154,6 +154,11 @@ profile-gpu gpu=gpu:
 # Trajectory datasets from R2 into data/, each checked against data/MANIFEST.json
 fetch:
     R2_ENDPOINT={{r2_endpoint}} AWS_PROFILE={{r2_profile}} {{python_bin}} data/fetch.py
+    {{python_bin}} data/build_trajectories.py deepresearch --trace data/dr9k-v4flash.jsonl
+    {{python_bin}} data/build_trajectories.py deepsearch --trace data/dsqa-v4flash.jsonl
+    {{python_bin}} data/build_trajectories.py swebench-native --runs data/raw/swebench_native_c8
+    {{python_bin}} data/build_trajectories.py terminalbench-atif --jobs data/raw/terminalbench_jobs
+    {{python_bin}} data/fetch.py --check
 
 mirror-preview:
     aws --profile {{r2_profile}} --endpoint-url {{r2_endpoint}} s3 sync {{probe_results_dir}}/ s3://{{r2_bucket}}/{{r2_prefix}}/ --dryrun --exclude '*/__pycache__/*' --exclude '*.pyc'
