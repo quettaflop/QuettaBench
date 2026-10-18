@@ -1,0 +1,50 @@
+# H200 verification of fix/session-replay: agent session replay on the September Qwen traces, one server for every point.
+# Engine block copied verbatim from the campaign's h200_qwen_nf_agents_low.yaml (vLLM recipe DEP8 flags, H200 fit).
+# Export VLLM_PLE_CPU_OFFLOAD=1 VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 first.
+# Warmup 0 so the prefix cache starts empty, as it does for the AIPerf parity run on a fresh server.
+# terminalbench at concurrency 32 has 34 sessions, N <= 2C: its steady section must say valid: false.
+model: qwen38_flash_next
+engine:
+  model: Qwen/Qwen3.8-Flash-Next
+  dtype: auto
+  tp: 1
+  ep: true
+  gpu_util: 0.85
+  max_model_len: 1000000
+  prefix_caching: true
+  extra:
+    vllm:
+      max_num_seqs: 256
+      moe_backend: triton
+      no_enable_flashinfer_autotune: true
+      data_parallel_size: 8
+      enable_auto_tool_choice: true
+      tool_call_parser: qwen3_coder
+      reasoning_parser: qwen3
+      speculative_config: '{"method":"mtp","num_speculative_tokens":3}'
+      language_model_only: true
+      hf_overrides: '{"text_config": {"rope_parameters": {"mrope_interleaved": true, "mrope_section": [11, 11, 10], "rope_type": "yarn", "rope_theta": 10000000, "partial_rotary_factor": 0.25, "factor":
+        4.0, "original_max_position_embeddings": 262144}}}'
+      enable_prompt_tokens_details: true
+workload:
+  kind: sessions
+mode:
+  mode: serve
+  load: closed
+  warmup: 0
+  reset_prefix_cache: true
+  exact_output_length: true
+  temperature: 0.0
+  timeout: 3600
+hardware:
+  link_profile: nvlink
+  visible_devices: 0,1,2,3,4,5,6,7
+  ready_timeout_s: 10800
+matrix:
+  workload.source:
+  - swebench-qwen-multiturn-medium
+  - terminalbench-qwen-multiturn-medium
+  mode.concurrency:
+  - 8
+  - 16
+  - 32

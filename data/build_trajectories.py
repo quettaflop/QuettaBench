@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Build the session trajectory JSONL from ShareGPT chats, Claw-Eval traces or DeepResearch-9k traces."""
+"""Build the session trajectory JSONL from ShareGPT chats, Claw-Eval traces, DeepResearch-9k or DeepSearchQA traces,
+mini-swe-agent SWE-bench runs or Harbor Terminal-Bench ATIF trajectories. Every agent builder writes the prompt_tokens
+and completion_tokens the serving engine reported per step; a step without them ends the session's eligibility."""
 
 from __future__ import annotations
 
@@ -18,6 +20,9 @@ ROOT = HERE.parent
 CHAT_OUT = ROOT / "data" / "chat_trajectories.jsonl"
 CLAWEVAL_OUT = ROOT / "data" / "claweval_trajectories.jsonl"
 DEEPRESEARCH_OUT = ROOT / "data" / "deepresearch_trajectories.jsonl"
+DEEPSEARCH_OUT = ROOT / "data" / "deepsearch_trajectories.jsonl"
+SWEBENCH_NATIVE_OUT = ROOT / "data" / "swebench_native_trajectories.jsonl"
+TERMINALBENCH_ATIF_OUT = ROOT / "data" / "terminalbench_qwen_trajectories.jsonl"
 HF_DATASET = "Aeala/ShareGPT_Vicuna_unfiltered"
 
 
@@ -344,31 +349,163 @@ def build_claweval(args: argparse.Namespace) -> int:
     return 0
 
 
-def deepresearch_session(row: dict[str, Any]) -> dict[str, Any]:
-    """Each turn's prompt_text already holds the whole context; its search time is the tool wait after it."""
+def deepresearch_session(row: dict[str, Any], source: str = "deepresearch") -> dict[str, Any]:
+    """Each turn's prompt_text already holds the whole context; its search time (retrieval_s, or tool_s in the
+    DeepSearchQA traces) is the tool wait after it."""
     turns = [
         {
             "turn_idx": t["turn_index"],
             "messages": [{"role": "user", "content": t["prompt_text"]}],
             "prompt_tokens": t["prompt_tokens"],
             "osl_tokens": max(1, t["completion_tokens"]),
-            "tool_ms": 1000.0 * (t.get("retrieval_s") or 0.0),
+            "tool_ms": 1000.0 * (t.get("retrieval_s") or t.get("tool_s") or 0.0),
         }
         for t in row["turns"]
     ]
-    return {"session_id": row["session_id"], "source": "deepresearch", "num_turns": len(turns), "turns": turns}
+    return {"session_id": row["session_id"], "source": source, "num_turns": len(turns), "turns": turns}
+
+
+def write_sessions(sessions: list[dict[str, Any]], out: Path) -> None:
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with out.open("w", encoding="utf-8") as f:
+        for s in sessions:
+            f.write(json.dumps(s) + "\n")
+    steps = sorted(s["num_turns"] for s in sessions)
+    print(f"[write] {out}: {len(sessions)} sessions, {sum(steps)} turns, "
+          f"steps {steps[0]}-{steps[-1]} (median {steps[len(steps) // 2]})")
 
 
 def build_deepresearch(args: argparse.Namespace) -> int:
-    sessions = [deepresearch_session(r) for r in iter_records(args.trace) if r.get("turns")]
+    sessions = [deepresearch_session(r, args.source) for r in iter_records(args.trace) if r.get("turns")]
     if not sessions:
         print(f"[error] no sessions in {args.trace}")
         return 1
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    with args.out.open("w", encoding="utf-8") as f:
-        for s in sessions:
-            f.write(json.dumps(s) + "\n")
-    print(f"[write] {args.out}: {len(sessions)} sessions, {sum(s['num_turns'] for s in sessions)} turns")
+    write_sessions(sessions, args.out)
+    return 0
+
+
+def _tool_call_text(call: dict[str, Any]) -> str:
+    fn = call.get("function") or {}
+    return fn.get("arguments") or json.dumps(fn)
+
+
+def swebench_native_session(run_dir: Path) -> dict[str, Any] | None:
+    """One mini-swe-agent session with its per-request sidecar: step k's context is every message before the k-th
+    assistant reply; its output length is the server's completion_tokens for that request, reasoning included. The
+    model's tool call is the assistant turn and the tool output a user turn, as in the Harbor SWE-bench sessions.
+    None when the sidecar and the trajectory disagree on the number of model calls (retries, malformed replies)."""
+    trajs = sorted(run_dir.glob("*.traj.json"))
+    sidecar = run_dir / "requests.jsonl"
+    if not trajs or not sidecar.exists():
+        return None
+    reqs = sorted((json.loads(line) for line in sidecar.open()), key=lambda r: r["turn_idx"])
+    msgs = json.loads(trajs[0].read_text())["messages"]
+    if sum(m["role"] == "assistant" for m in msgs) != len(reqs):
+        return None
+    history: list[dict[str, str]] = []
+    turns = []
+    for m in msgs:
+        if m["role"] == "assistant":
+            r = reqs[len(turns)]
+            tool_ms = sum(1000.0 * (t["t_end"] - t["t_start"]) for t in r.get("tool_calls") or [])
+            turns.append({
+                "turn_idx": len(turns),
+                "messages": [dict(h) for h in history],
+                "prompt_tokens": r["prompt_tokens"],
+                "osl_tokens": max(1, r["completion_tokens"]),
+                "tool_ms": tool_ms,
+            })
+            text = "\n".join([m.get("content") or ""] + [_tool_call_text(c) for c in m.get("tool_calls") or []])
+            history.append({"role": "assistant", "content": text.strip()})
+        else:
+            content = m.get("content")
+            history.append({
+                "role": m["role"] if m["role"] in ("system", "user") else "user",
+                "content": content if isinstance(content, str) else json.dumps(content),
+            })
+    return {
+        "session_id": run_dir.name,
+        "source": "swebench",
+        "run": reqs[0].get("run_id"),
+        "num_turns": len(turns),
+        "turns": turns,
+    }
+
+
+def build_swebench_native(args: argparse.Namespace) -> int:
+    sessions, skipped = [], []
+    for d in sorted(p for p in args.runs.iterdir() if p.is_dir()):
+        s = swebench_native_session(d)
+        if s:
+            sessions.append(s)
+        else:
+            skipped.append(d.name)
+    if not sessions:
+        print(f"[error] no usable sessions in {args.runs}")
+        return 1
+    write_sessions(sessions, args.out)
+    print(f"[skip] {len(skipped)} sessions where sidecar and trajectory disagree on model calls: {' '.join(skipped)}")
+    return 0
+
+
+def atif_session(path: Path, source: str) -> dict[str, Any] | None:
+    """One Harbor ATIF trajectory: step k's context is the task plus every earlier step (the model's message and the
+    keystrokes it sent as the assistant turn, the terminal output as a user turn); its output length is the server's
+    completion_tokens from the step's metrics. None when an agent step has no recorded metrics."""
+    traj = json.loads(path.read_text())
+    history: list[dict[str, str]] = []
+    turns = []
+    for step in traj.get("steps") or []:
+        if step.get("source") != "agent":
+            if step.get("message"):
+                role = "system" if step.get("source") == "system" else "user"
+                history.append({"role": role, "content": step["message"]})
+            continue
+        metrics = step.get("metrics") or {}
+        if not metrics.get("completion_tokens"):
+            return None
+        turns.append({
+            "turn_idx": len(turns),
+            "messages": [dict(h) for h in history],
+            "prompt_tokens": metrics.get("prompt_tokens"),
+            "osl_tokens": max(1, metrics["completion_tokens"]),
+        })
+        calls = [json.dumps(c.get("arguments")) for c in step.get("tool_calls") or []]
+        history.append({"role": "assistant", "content": "\n".join([step.get("message") or ""] + calls).strip()})
+        results = (step.get("observation") or {}).get("results") or []
+        output = "\n".join(r.get("content", "") for r in results if isinstance(r, dict))
+        if output:
+            history.append({"role": "user", "content": output})
+    if not turns:
+        return None
+    return {
+        "session_id": traj.get("session_id") or path.parent.parent.name,
+        "source": source,
+        "run": path.parts[-4],
+        "num_turns": len(turns),
+        "turns": turns,
+    }
+
+
+def build_terminalbench_atif(args: argparse.Namespace) -> int:
+    """One session per task: a task tried in several Harbor jobs keeps its latest trial."""
+    by_task: dict[str, tuple[str, Path]] = {}
+    for p in sorted(args.jobs.glob("*/*/agent/trajectory.json")):
+        task, job = p.parts[-3].split("__")[0], p.parts[-4]
+        if task not in by_task or job > by_task[task][0]:
+            by_task[task] = (job, p)
+    sessions, skipped = [], []
+    for task, (_, p) in sorted(by_task.items()):
+        s = atif_session(p, "terminalbench")
+        if s:
+            sessions.append(s)
+        else:
+            skipped.append(task)
+    if not sessions:
+        print(f"[error] no usable sessions in {args.jobs}")
+        return 1
+    write_sessions(sessions, args.out)
+    print(f"[skip] {len(skipped)} tasks without per-step metrics: {' '.join(skipped)}")
     return 0
 
 
@@ -403,7 +540,21 @@ def main() -> int:
     dr = sub.add_parser("deepresearch", help="DeepResearch-9k traces (dr9k-v4flash.jsonl), with their recorded usage")
     dr.add_argument("--trace", required=True, type=Path, help="the DeepResearch-9k trace JSONL")
     dr.add_argument("--out", type=Path, default=DEEPRESEARCH_OUT)
-    dr.set_defaults(build=build_deepresearch)
+    dr.set_defaults(build=build_deepresearch, source="deepresearch")
+    ds = sub.add_parser("deepsearch", help="DeepSearchQA traces (dsqa-v4flash.jsonl), the same session shape")
+    ds.add_argument("--trace", required=True, type=Path, help="the DeepSearchQA trace JSONL")
+    ds.add_argument("--out", type=Path, default=DEEPSEARCH_OUT)
+    ds.set_defaults(build=build_deepresearch, source="deepsearch")
+    sw = sub.add_parser("swebench-native", help="mini-swe-agent SWE-bench runs with per-request sidecars")
+    sw.add_argument("--runs", required=True, type=Path,
+                    help="run directory: one <instance>/ with *.traj.json and requests.jsonl each")
+    sw.add_argument("--out", type=Path, default=SWEBENCH_NATIVE_OUT)
+    sw.set_defaults(build=build_swebench_native)
+    tb = sub.add_parser("terminalbench-atif", help="Harbor Terminal-Bench ATIF trajectories with per-step metrics")
+    tb.add_argument("--jobs", required=True, type=Path,
+                    help="Harbor jobs directory: <job>/<trial>/agent/trajectory.json")
+    tb.add_argument("--out", type=Path, default=TERMINALBENCH_ATIF_OUT)
+    tb.set_defaults(build=build_terminalbench_atif)
     args = ap.parse_args()
     return args.build(args)
 

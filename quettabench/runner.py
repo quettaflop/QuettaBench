@@ -42,7 +42,6 @@ FILE_OUT_PROBES = ("serving_decode_grid", "serving_stage_split")
 TRAJECTORY_DATASETS = (
     "swebench-multi-turn",
     "terminalbench-multi-turn",
-    "osworld-multi-turn",
     "deepresearch-multi-turn",
 )
 

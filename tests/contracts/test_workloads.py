@@ -245,7 +245,7 @@ class SingleTurn(unittest.TestCase):
 
     def test_multi_turn_profile_is_refused_single_turn(self):
         with self.assertRaisesRegex(ValueError, "is multi-turn; run it with workload.kind=sessions"):
-            runner.build_trace(config("swebench-multiturn-short"))
+            runner.build_trace(config("swebench-qwen-multiturn-medium"))
 
 
 class MultiTurn(unittest.TestCase):
@@ -452,6 +452,8 @@ class RealTraceWorkloadTests(unittest.TestCase):
             self.assertEqual(meta["prompt_token_budget"], 90)
             self.assertTrue(meta["truncated_by_context_limit"])
             self.assertEqual((trace.sessions_cut, trace.sessions_dropped), (1, 0))
+            source = trace.source_meta()
+            self.assertEqual((source["sessions_cut"], source["sessions_dropped"]), (1, 0))
 
     def test_trajectory_cut_uses_recorded_counts_not_words(self):
         # Three words that the engine counted as 5000 tokens: the words would fit, the recorded count does not.
@@ -459,8 +461,18 @@ class RealTraceWorkloadTests(unittest.TestCase):
             "session_id": "trace-3",
             "source": "unit-trace",
             "turns": [
-                {"turn_idx": 0, "messages": [{"role": "user", "content": "a b c"}], "prompt_tokens": 10, "osl_tokens": 5},
-                {"turn_idx": 1, "messages": [{"role": "user", "content": "a b c"}], "prompt_tokens": 5000, "osl_tokens": 5},
+                {
+                    "turn_idx": 0,
+                    "messages": [{"role": "user", "content": "a b c"}],
+                    "prompt_tokens": 10,
+                    "osl_tokens": 5,
+                },
+                {
+                    "turn_idx": 1,
+                    "messages": [{"role": "user", "content": "a b c"}],
+                    "prompt_tokens": 5000,
+                    "osl_tokens": 5,
+                },
             ],
         }
         with tempfile.TemporaryDirectory() as tmp:
@@ -470,6 +482,36 @@ class RealTraceWorkloadTests(unittest.TestCase):
                 trace = TrajectorySessionTrace(str(path), min_turns=1, num_sessions=1, max_isl_tokens=1000)
         self.assertEqual(len(trace.sessions()[0]), 1)
         self.assertTrue(trace.sessions()[0][0].metadata["truncated_by_context_limit"])
+
+    def test_a_recorded_output_past_the_cap_cuts_the_session_instead_of_clipping(self):
+        session = {
+            "session_id": "trace-5",
+            "source": "unit-trace",
+            "turns": [
+                {
+                    "turn_idx": 0,
+                    "messages": [{"role": "user", "content": "a"}],
+                    "prompt_tokens": 10,
+                    "osl_tokens": 1500,
+                },
+                {
+                    "turn_idx": 1,
+                    "messages": [{"role": "user", "content": "a"}],
+                    "prompt_tokens": 20,
+                    "osl_tokens": 6000,
+                },
+                {"turn_idx": 2, "messages": [{"role": "user", "content": "a"}], "prompt_tokens": 30, "osl_tokens": 100},
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "trace.jsonl"
+            path.write_text(json.dumps(session) + "\n", encoding="utf-8")
+            with contextlib.redirect_stdout(io.StringIO()):
+                trace = TrajectorySessionTrace(str(path), min_turns=1, num_sessions=1, max_osl_tokens=2000)
+        turns = trace.sessions()[0]
+        self.assertEqual([r.output_length for r in turns], [1500])
+        self.assertTrue(turns[-1].metadata["truncated_by_context_limit"])
+        self.assertEqual(trace.sessions_cut, 1)
 
     def test_trajectory_turn_without_recorded_counts_is_refused(self):
         session = {
@@ -539,14 +581,12 @@ class ProfileRegistryTests(unittest.TestCase):
                 "chat-singleturn",
                 "coding-singleturn",
                 "deepresearch-multiturn",
+                "deepsearch-multiturn",
                 "mooncake-trace",
-                "osworld-multiturn-long",
-                "osworld-multiturn-medium",
-                "osworld-multiturn-short",
-                "swebench-multiturn-medium",
-                "swebench-multiturn-short",
-                "terminalbench-multiturn-medium",
-                "terminalbench-multiturn-short",
+                "swebench-qwen-multiturn-long",
+                "swebench-qwen-multiturn-medium",
+                "terminalbench-qwen-multiturn-long",
+                "terminalbench-qwen-multiturn-medium",
                 "test",
             ],
         )
@@ -591,10 +631,10 @@ class ProfileRegistryTests(unittest.TestCase):
         self.assertIn(str(active_profiles()), str(e.exception))
 
     def test_multiturn_profiles_remain_explicitly_runnable(self):
-        self.assertEqual(get_profile("swebench-multiturn-short").dataset, "swebench-multi-turn")
+        self.assertEqual(get_profile("swebench-qwen-multiturn-medium").dataset, "swebench-multi-turn")
 
     def test_num_sessions_is_the_profile_or_the_override_never_the_concurrency(self):
-        profile = get_profile("swebench-multiturn-short")
+        profile = get_profile("swebench-qwen-multiturn-medium")
         self.assertEqual(resolve_multi_turn_num_sessions(profile), (None, "all"))
         self.assertEqual(resolve_multi_turn_num_sessions(profile, 5), (5, "cli"))
         sized = dataclasses.replace(profile, num_sessions=8)
@@ -602,8 +642,8 @@ class ProfileRegistryTests(unittest.TestCase):
 
     def test_a_sample_is_the_same_at_every_concurrency(self):
         samples = {}
-        for concurrency in (1, 4, 7):
-            cfg = profile_config("swebench-multiturn-short", "sessions")
+        for concurrency in (1, 2, 4):
+            cfg = profile_config("swebench-qwen-multiturn-medium", "sessions")
             cfg = dataclasses.replace(cfg, mode=dataclasses.replace(cfg.mode, concurrency=concurrency))
             with fixture_cwd():
                 trace = runner.build_trace(cfg)
@@ -612,25 +652,25 @@ class ProfileRegistryTests(unittest.TestCase):
         self.assertEqual(len(samples[1][0]), len(trace.sessions()))
 
     def test_a_short_file_is_refused_when_num_sessions_asks_for_more(self):
-        cfg = profile_config("swebench-multiturn-short", "sessions")
+        cfg = profile_config("swebench-qwen-multiturn-medium", "sessions")
         cfg = dataclasses.replace(cfg, workload=dataclasses.replace(cfg.workload, num_sessions=50))
         with fixture_cwd(), self.assertRaises(ValueError) as e:
             runner.build_trace(cfg)
         self.assertIn("eligible sessions, fewer than the 50 asked for", str(e.exception))
 
     def test_more_agents_than_sessions_is_refused(self):
-        cfg = profile_config("swebench-multiturn-short", "sessions")
+        cfg = profile_config("swebench-qwen-multiturn-medium", "sessions")
         cfg = dataclasses.replace(cfg, mode=dataclasses.replace(cfg.mode, concurrency=64))
         with fixture_cwd(), self.assertRaises(ValueError) as e:
             runner.build_trace(cfg)
         self.assertIn("sessions cannot keep 64 agents busy at once", str(e.exception))
 
     def test_workload_num_sessions_sets_the_session_count(self):
-        cfg = profile_config("swebench-multiturn-short", "sessions")
-        cfg = dataclasses.replace(cfg, workload=dataclasses.replace(cfg.workload, num_sessions=5))
+        cfg = profile_config("swebench-qwen-multiturn-medium", "sessions")
+        cfg = dataclasses.replace(cfg, workload=dataclasses.replace(cfg.workload, num_sessions=3))
         with fixture_cwd():
             trace = runner.build_trace(cfg)
-        self.assertEqual(len(trace.sessions()), 5)
+        self.assertEqual(len(trace.sessions()), 3)
 
 
 SEED = 7
@@ -644,17 +684,15 @@ PINS = {
     "chat-multiturn-short": ("c51f134d3946f53d", "d215cea35abaf327"),
     "chat-singleturn": ("1b84966cb9c4facc", "84b2b4875f8a177f"),
     "coding-singleturn": ("15384d696a4d7a1b", "0359e7a0be1623a2"),
-    "deepresearch-multiturn": ("3f95464ab226ff8f", "58bed26271040a1d"),
+    "deepresearch-multiturn": ("3f95464ab226ff8f", "450a66c0f483912c"),
     "mooncake-trace": ("a03be7b0ed268d81", "b5ed59cd7a0d7aff"),
-    "osworld-multiturn-long": ("762312f6b602cb88", "7fc3bdb961070759"),
-    "osworld-multiturn-medium": ("29482f55adf89f20", "171af7ae4d96b8c6"),
-    "osworld-multiturn-short": ("ab09ce8e07b841c8", "2d6064606a8286f7"),
-    "swebench-multiturn-medium": ("f02e03a9e1282fc2", "535c422e6662bf57"),
-    "swebench-multiturn-short": ("9f0aa9d6f98e5bd3", "263bc53cf3a4b42a"),
-    "terminalbench-multiturn-medium": ("6bc7cd20245181c3", "4c273a6ae15c79b2"),
-    "terminalbench-multiturn-short": ("2ab1e354437af5f0", "05feedb3da524816"),
+    "deepsearch-multiturn": ("e4224f2a4551c063", "c73dd0a534aaf5c6"),
+    "swebench-qwen-multiturn-long": ("36475a9de1586a56", "a120626bde4dbd37"),
+    "swebench-qwen-multiturn-medium": ("152d31a287902055", "f527e7b37aa6562a"),
+    "terminalbench-qwen-multiturn-long": ("304c01f98afc8c32", "b0fa0236459cb27e"),
+    "terminalbench-qwen-multiturn-medium": ("36d005dbd2cb0786", "41e24dcfe327593d"),
     "test": ("7ae706bdf8eeae1d", "a5c809ace7fb7a08"),
-    "cut": ("0e8b8a8de4442ecb", "306d053706f7b8a5"),
+    "cut": ("a7ffbc60a718ff0d", "a6528d34506b8052"),
 }
 
 
@@ -721,10 +759,10 @@ def write_fixtures(root):
             }
             for i in range(4)
         ],
-        "data/swebench_trajectories.jsonl": trajectory_rows("swe"),
-        "data/terminalbench_trajectories.jsonl": trajectory_rows("tb"),
-        "data/osworld_trajectories.jsonl": trajectory_rows("os"),
+        "data/swebench_native_trajectories.jsonl": trajectory_rows("swe"),
+        "data/terminalbench_qwen_trajectories.jsonl": trajectory_rows("tb"),
         "data/deepresearch_trajectories.jsonl": trajectory_rows("dr"),
+        "data/deepsearch_trajectories.jsonl": trajectory_rows("ds"),
     }
     for rel, rows in files.items():
         path = Path(root) / rel
@@ -765,7 +803,8 @@ def profile_config(name, kind, max_turn_index=None):
         workload=WorkloadCfg(
             kind=kind, source=name, seed=SEED, num_requests=NUM_REQUESTS, max_turn_index=max_turn_index
         ),
-        mode=ModeCfg(concurrency=4, warmup=WARMUP),
+        # Two agents: the long agent profiles have three eligible fixture sessions.
+        mode=ModeCfg(concurrency=2, warmup=WARMUP),
     )
 
 
@@ -859,6 +898,115 @@ class DeepResearchTrajectories(unittest.TestCase):
         self.assertEqual(turns[0].metadata["tool_wait_after_ms"], 500.0)
 
 
+def build_module():
+    spec = importlib.util.spec_from_file_location("build_trajectories", ROOT / "data" / "build_trajectories.py")
+    build = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(build)
+    return build
+
+
+class NativeTrajectoryBuilders(unittest.TestCase):
+    def test_swebench_native_takes_each_steps_counts_from_the_request_sidecar(self):
+        messages = [
+            {"role": "system", "content": "you are an agent"},
+            {"role": "user", "content": "fix the bug"},
+            {"role": "assistant", "content": "look", "tool_calls": [{"function": {"arguments": "ls"}}]},
+            {"role": "tool", "content": ["a.py"]},
+            {"role": "assistant", "content": "done"},
+        ]
+        sidecar = [
+            {"turn_idx": 1, "prompt_tokens": 900, "completion_tokens": 300, "run_id": "run-1"},
+            {
+                "turn_idx": 0,
+                "prompt_tokens": 500,
+                "completion_tokens": 40,
+                "run_id": "run-1",
+                "tool_calls": [{"t_start": 1.0, "t_end": 1.5}],
+            },
+        ]
+        with tempfile.TemporaryDirectory() as td:
+            run = Path(td) / "astropy__astropy-1"
+            run.mkdir()
+            (run / "x.traj.json").write_text(json.dumps({"messages": messages}))
+            (run / "requests.jsonl").write_text("".join(json.dumps(r) + "\n" for r in sidecar))
+            session = build_module().swebench_native_session(run)
+            (run / "requests.jsonl").write_text(json.dumps(sidecar[0]) + "\n")
+            self.assertIsNone(build_module().swebench_native_session(run), "one sidecar row for two model calls")
+        self.assertEqual(
+            (session["session_id"], session["run"], session["num_turns"]), ("astropy__astropy-1", "run-1", 2)
+        )
+        self.assertEqual(
+            [(t["prompt_tokens"], t["osl_tokens"], t["tool_ms"]) for t in session["turns"]],
+            [(500, 40, 500.0), (900, 300, 0.0)],
+        )
+        self.assertEqual(
+            session["turns"][1]["messages"][2:],
+            [
+                {"role": "assistant", "content": "look\nls"},
+                {"role": "user", "content": '["a.py"]'},
+            ],
+        )
+
+    def test_terminalbench_atif_takes_each_steps_counts_from_its_metrics(self):
+        steps = [
+            {"source": "user", "message": "the task"},
+            {
+                "source": "agent",
+                "message": "try",
+                "metrics": {"prompt_tokens": 700, "completion_tokens": 120},
+                "tool_calls": [{"arguments": {"keystrokes": "ls\n"}}],
+                "observation": {"results": [{"content": "a b"}]},
+            },
+            {"source": "agent", "message": "ok", "metrics": {"prompt_tokens": 850, "completion_tokens": 9}},
+        ]
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "job-1" / "task__trial" / "agent" / "trajectory.json"
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps({"session_id": "s-1", "steps": steps}))
+            session = build_module().atif_session(path, "terminalbench")
+            steps[2]["metrics"] = {}
+            path.write_text(json.dumps({"session_id": "s-1", "steps": steps}))
+            self.assertIsNone(build_module().atif_session(path, "terminalbench"), "a step without metrics")
+        self.assertEqual((session["session_id"], session["run"], session["num_turns"]), ("s-1", "job-1", 2))
+        self.assertEqual([(t["prompt_tokens"], t["osl_tokens"]) for t in session["turns"]], [(700, 120), (850, 9)])
+        self.assertEqual(
+            session["turns"][1]["messages"],
+            [
+                {"role": "user", "content": "the task"},
+                {"role": "assistant", "content": 'try\n{"keystrokes": "ls\\n"}'},
+                {"role": "user", "content": "a b"},
+            ],
+        )
+
+
+class DataManifest(unittest.TestCase):
+    def setUp(self):
+        spec = importlib.util.spec_from_file_location("fetch", ROOT / "data" / "fetch.py")
+        self.fetch = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.fetch)
+        self.files = self.fetch.manifest()
+
+    def test_every_fetched_file_and_every_agent_profile_file_has_a_sha256(self):
+        for name in self.fetch.DATASETS + self.fetch.TRACES:
+            with self.subTest(file=name):
+                self.assertRegex(self.files[name]["sha256"], r"^[0-9a-f]{64}$")
+        for name, profile in PROFILES.items():
+            if profile.dataset in runner.TRAJECTORY_DATASETS:
+                with self.subTest(profile=name):
+                    self.assertIn(Path(profile.file_path).name, self.files)
+
+    def test_a_file_whose_digest_differs_is_removed_and_refused(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "x.jsonl"
+            path.write_text("{}\n")
+            self.fetch.verify(path, self.fetch.sha256_of(path))
+            self.assertTrue(path.exists())
+            with self.assertRaises(SystemExit) as e:
+                self.fetch.verify(path, "0" * 64)
+            self.assertIn("is not the manifest's", str(e.exception))
+            self.assertFalse(path.exists())
+
+
 class ProfileHashPins(unittest.TestCase):
     def test_every_runnable_profile_is_pinned(self):
         self.assertEqual(sorted(PINS), sorted(runnable() + ["cut"]))
@@ -866,7 +1014,7 @@ class ProfileHashPins(unittest.TestCase):
     def test_profiles_build_the_pinned_traces(self):
         with fixture_cwd():
             got = {name: pinned_build(name) for name in runnable()}
-            got["cut"] = pinned_build("swebench-multiturn-short", max_turn_index=3)
+            got["cut"] = pinned_build("swebench-qwen-multiturn-medium", max_turn_index=3)
         for name, pin in PINS.items():
             with self.subTest(profile=name):
                 self.assertEqual(got[name], pin)

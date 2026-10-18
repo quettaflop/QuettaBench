@@ -151,10 +151,9 @@ profile-gpu gpu=gpu:
     @echo "  just gdn {{gpu}}     # Qwen3.5 hybrids only"
     @echo "Then route the tables to QuettaSim: just export --only kernel_tables --results results/probes --kernel-dest <QuettaSim data root, e.g. ../QuettaSim/data>"
 
-# Trajectory datasets from R2 into data/
+# Trajectory datasets from R2 into data/, each checked against data/MANIFEST.json
 fetch:
     R2_ENDPOINT={{r2_endpoint}} AWS_PROFILE={{r2_profile}} {{python_bin}} data/fetch.py
-    {{python_bin}} data/build_trajectories.py deepresearch --trace data/dr9k-v4flash.jsonl
 
 mirror-preview:
     aws --profile {{r2_profile}} --endpoint-url {{r2_endpoint}} s3 sync {{probe_results_dir}}/ s3://{{r2_bucket}}/{{r2_prefix}}/ --dryrun --exclude '*/__pycache__/*' --exclude '*.pyc'

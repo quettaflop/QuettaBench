@@ -217,8 +217,9 @@ def recorded_counts(path, entry, turn, index):
 
 class TrajectorySessionTrace(LoadedSessionTrace):
     """{"session_id", "turns": [{"messages", "prompt_tokens", "osl_tokens"}, ...]}: each turn's whole context and
-    the token counts the engine reported when it was recorded. A session is cut at the first turn that does not fit
-    the window, and the last turn kept says so in truncated_by_context_limit."""
+    the token counts the engine reported when it was recorded. A session is cut at the first turn whose prompt does
+    not fit the window or whose output passes the profile's cap, never clipped, and the last turn kept says so in
+    truncated_by_context_limit."""
 
     def __init__(
         self,
@@ -243,43 +244,39 @@ class TrajectorySessionTrace(LoadedSessionTrace):
                 continue
             turns: list[Request] = []
             cut = False
+            last: dict = {}
             for t in raw_turns[:max_turns]:
                 prompt_tokens, osl = recorded_counts(path, entry, t, len(turns))
-                osl = min(osl, max_osl_tokens)
                 prompt_budget = max_isl_tokens - osl - context_safety_margin_tokens
-                if prompt_budget < 1 or prompt_tokens > prompt_budget:
+                if osl > max_osl_tokens or prompt_budget < 1 or prompt_tokens > prompt_budget:
                     cut = True
                     break
-                turns.append(
-                    Request(
-                        [],
-                        0,
-                        output_length=osl,
-                        messages=t["messages"],
-                        metadata={
-                            "source_session_id": entry.get("session_id"),
-                            "source_turn_index": t.get("turn_idx", t.get("turn_index", len(turns))),
-                            "trace_content_source": entry.get("source"),
-                            "planned_total_context_tokens": prompt_tokens,
-                            "planned_output_tokens": osl,
-                            "planned_total_with_output_tokens": prompt_tokens + osl,
-                            "context_window_tokens": max_isl_tokens,
-                            "context_safety_margin_tokens": context_safety_margin_tokens,
-                            "prompt_token_budget": prompt_budget,
-                            "truncated_by_context_limit": False,
-                            **turn_wait_metadata(t),
-                        },
-                    )
-                )
+                last = {
+                    "source_session_id": entry.get("session_id"),
+                    "source_turn_index": t.get("turn_idx", t.get("turn_index", len(turns))),
+                    "trace_content_source": entry.get("source"),
+                    "planned_total_context_tokens": prompt_tokens,
+                    "planned_output_tokens": osl,
+                    "planned_total_with_output_tokens": prompt_tokens + osl,
+                    "context_window_tokens": max_isl_tokens,
+                    "context_safety_margin_tokens": context_safety_margin_tokens,
+                    "prompt_token_budget": prompt_budget,
+                    "truncated_by_context_limit": False,
+                    **turn_wait_metadata(t),
+                }
+                turns.append(Request([], 0, output_length=osl, messages=t["messages"], metadata=last))
             if cut and turns:
-                turns[-1].metadata["truncated_by_context_limit"] = True
+                last["truncated_by_context_limit"] = True
             if len(turns) < min_turns:
                 dropped += 1
                 continue
             cut_sessions += cut
             sessions.append(MultiTurnSession(len(sessions), turns, arrival_time_ms=session_arrival_ms(entry)))
-        super().__init__(sessions, path, "trajectory", seed=seed, num_sessions=num_sessions, **trace_kw)
         self.sessions_cut, self.sessions_dropped = cut_sessions, dropped
+        super().__init__(sessions, path, "trajectory", seed=seed, num_sessions=num_sessions, **trace_kw)
+
+    def source_meta(self):
+        return {**super().source_meta(), "sessions_cut": self.sessions_cut, "sessions_dropped": self.sessions_dropped}
 
 
 def inter_turn_wait_s(

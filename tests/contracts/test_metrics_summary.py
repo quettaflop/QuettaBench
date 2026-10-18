@@ -929,7 +929,7 @@ class RunnerCacheMetadataTests(unittest.TestCase):
         self.assertAlmostEqual(row["client_queue_wait_ms"], 300.0)
 
     def test_multiturn_session_count_ignores_concurrency(self):
-        profile = get_profile("swebench-multiturn-short")
+        profile = get_profile("swebench-qwen-multiturn-medium")
 
         sessions, source = resolve_multi_turn_num_sessions(profile, 320)
 

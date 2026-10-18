@@ -839,7 +839,9 @@ def print_multi_turn_summary(turn_summaries: list, overall: BenchmarkSummary) ->
         f" {'─' * 4}  {'─' * 5}  {'─' * 8}  {'─' * 8}  {'─' * 7}  {'─' * 7}  {'─' * 9}  {'─' * 9}  {'─' * 9}  {'─' * 9}"
     )
     for ts in turn_summaries:
-        server = "    n/a" if ts.median_server_cache_hit_rate is None else f"{ts.median_server_cache_hit_rate * 100:>6.0f}%"
+        server = (
+            "    n/a" if ts.median_server_cache_hit_rate is None else f"{ts.median_server_cache_hit_rate * 100:>6.0f}%"
+        )
         print(
             f" {ts.turn_index + 1:>4}  {ts.successful:>5}  {ts.avg_input_tokens:>8.0f}  "
             f"{ts.median_new_prefill_tokens:>8.0f}  {ts.median_cache_hit_rate * 100:>6.0f}%  {server}  "

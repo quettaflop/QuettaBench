@@ -48,7 +48,7 @@ One line each; everything else follows section 2 "Target layout".
 - A run that measured no rows for a table exports no table for it; the per-probe CSVs wrote a header-only table, which replaced (or, without `--append`, reset) the earlier runs' rows.
 - `profiling/kv_transfer.py` stays its own module: it is a torchrun target (`-m quettabench.profiling.kv_transfer`) and the tool name in the kernel manifest.
 - `tests/` has `golden/`, `contracts/`, `parity/` and `_stubs/` (the vllm, torch and transformers stand-ins the golden CPU runs import): the probe contracts and GPU smoke tests live in `contracts/`.
-- `data/` keeps `download_agent_trajectories.py` and `download_coding_prompts.py` apart: section 2's `fetch.py` merge is not done.
+- `data/` keeps `download_coding_prompts.py` apart from `fetch.py`: section 2's merge is not done. `fetch.py` pulls the built trajectory files and raw traces listed in `data/MANIFEST.json` and refuses one whose sha256 differs; `build_trajectories.py` rebuilds the agent files from the raw runs (`swebench-native`, `terminalbench-atif`, `deepresearch`, `deepsearch`), every step with the token counts the serving engine reported.
 - `tools/pre_commit/` (the commit-message and em-dash hooks) and `docker/` (the qbench plus vLLM image `just image` builds) sit outside section 2's tree.
 - The root also holds plumbing outside section 2's tree: `.github/`, `.pre-commit-config.yaml`, `_typos.toml`, `.dockerignore` and `LICENSE`.
 - `data/truncate_checkpoint.py` builds the layer-truncated vLLM checkpoint for truncated-model runs; it is not a fetch script.
@@ -58,7 +58,7 @@ One line each; everything else follows section 2 "Target layout".
 - `probes/gemm.py`, `flash_attn.py`, `gdn.py`, `vllm_allreduce.py`, `reparallel.py` and `profiling/kv_transfer.py` read `os.environ` themselves: they run as `python -m` modules outside the Config path (under torchrun or on a remote host that gets only the probe package), so torchrun's `RANK`, `WORLD_SIZE`, `LOCAL_RANK`, `LOCAL_WORLD_SIZE` and the `--ncu-bin` default `NCU_BIN` reach them only through the environment.
 - `serving_decode_grid.py`, `serving_stage_split.py` and `profiling/client_side.py` write their own CSV/JSON at `--out`, not `ProbeRow`s through `metrics/results.py`: `export/quettasim.py` reads the serving probes' files by name and in their own schema, and frontend's `--out` is a standalone dump beside the result `engine_side.py` puts in `profile.json`; `run_recorded` still writes the serving probes' `run.json`.
 - `probes/gemm.py` and `probes/moe.py` hold the GEMM shapes and MoE geometries they time: probe grids, not model configs, so they are not read from `configs/models/`.
-- `data/` scripts are not under the env rule: `fetch.py` reads `AWS_PROFILE`, `R2_ENDPOINT` and `R2_BUCKET`, the two download scripts take `--credentials` (default `$GOOGLE_APPLICATION_CREDENTIALS`) and need `google-cloud-storage`, and `truncate_checkpoint.py` reads `TMPDIR`. They are one-off data tools outside the package.
+- `data/` scripts are not under the env rule: `fetch.py` reads `AWS_PROFILE`, `R2_ENDPOINT`, `R2_BUCKET` and `R2_WORKLOADS_PREFIX`, `download_coding_prompts.py` takes `--credentials` (default `$GOOGLE_APPLICATION_CREDENTIALS`) and needs `google-cloud-storage`, and `truncate_checkpoint.py` reads `TMPDIR`. They are one-off data tools outside the package.
 - `probes/moe.py --routing` writes a safetensors dump of one MoE block, not `ProbeRow`s: it is an engine-side diff input, not a table.
 - `config/loader.py` runs `nvidia-smi topo -m` on cuda to pick the NCCL link profile when `hardware.link_profile` is `auto`; it only reads the topology.
 - `just mirror-up` is a second route out of the repo beside `export/quettasim.py`: it uploads `results/probes/` to R2 as a backup of the probe runs.
@@ -105,6 +105,8 @@ Every writer and every process starter, exactly:
 - Imports at the top of the file, except torch, vLLM, GPU-only and optional packages, imported where used so the CPU paths and tests load without them, and transformers and datasets, imported where used because they load slowly and only tokenizing paths need them; a new one goes in `OPTIONAL_PACKAGES` in `tests/contracts/test_imports.py`. No inline python in shell or justfile recipes. A recipe calls into the package where it can; `gpu-info`, `image`, `hooks`, `test`, `lint`, `fetch` and the `mirror-*` recipes call host tools (ssh, the backend's device tool (nvidia-smi, amd-smi, neuron-ls), docker, pre-commit, pytest, ruff, aws) or `data/fetch.py` and `data/build_trajectories.py` instead, and `gpu-info` and `profile-gpu` run more than one line.
 - Measured before kept: an optimization lands with the measurement that justifies it, and a feature lands with its measurement.
 - Report every number, including the ones that weaken a claim.
+- A session-run number names its window: whole-run (ramp and drain included) or `sections.steady`. A run with N <= 2C sessions has no steady window and says so; no whole-run number stands in for it (law 4).
+- A trajectory file carries the token counts the engine reported, never an estimate, and `data/MANIFEST.json` describes every file a profile reads; a replay on a file the manifest does not describe is not comparable.
 
 ## Where to look
 

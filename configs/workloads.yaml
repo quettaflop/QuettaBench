@@ -1,5 +1,6 @@
 # Keys are WorkloadProfile's fields; omitted keys take its defaults.
-# Sessions are cut where a word-count estimate (1.35 tokens per word) passes isl_tokens; real agent prompts run 1.2x to 3x that estimate.
+# A session is cut at the first turn whose recorded prompt_tokens passes isl_tokens; agent files carry the counts the
+# serving engine reported for every turn, never an estimate.
 
 chat-singleturn:
   # Chat-sized caps, safe for 4K-context cells.
@@ -36,79 +37,69 @@ chat-multiturn-short:
   max_turns: 5
   active: false
 
-swebench-multiturn-short:
+swebench-qwen-multiturn-medium:
   # Turns are agent steps, not conversation rounds. An agent profile replays every eligible session; num_sessions
   # would take the first N of a seeded shuffle, the same N at every concurrency.
+  # Qwen3.8-Flash-Next mini-swe-agent runs on SWE-bench Verified (2026-09-10), each step with the prompt_tokens and
+  # completion_tokens the server reported (data/build_trajectories.py swebench-native). Sessions of 30+ steps, the
+  # first 49 steps.
   <<: &agent {system_prompt: '', mode: multi-turn, prefix_caching_required: true, active: false}
-  isl_tokens: 32768
-  osl_tokens: 2000
+  isl_tokens: 65536
+  osl_tokens: 8192
   dataset: swebench-multi-turn
-  file_path: data/swebench_trajectories.jsonl
-  min_turns: 13
-  max_turns: 30
+  file_path: data/swebench_native_trajectories.jsonl
+  min_turns: 30
+  max_turns: 49
 
-swebench-multiturn-medium:
+swebench-qwen-multiturn-long:
+  # The same runs, sessions of 50+ steps in full; the longest is 78, where the agent's 49K context ends it.
   <<: *agent
   isl_tokens: 65536
-  osl_tokens: 2000
+  osl_tokens: 8192
   dataset: swebench-multi-turn
-  file_path: data/swebench_trajectories.jsonl
-  min_turns: 30
+  file_path: data/swebench_native_trajectories.jsonl
+  min_turns: 50
   max_turns: 80
 
-terminalbench-multiturn-short:
-  <<: *agent
-  isl_tokens: 32768
-  osl_tokens: 2000
-  dataset: terminalbench-multi-turn
-  file_path: data/terminalbench_trajectories.jsonl
-  min_turns: 2
-  max_turns: 20
-
-terminalbench-multiturn-medium:
-  <<: *agent
-  isl_tokens: 65536
-  osl_tokens: 2000
-  dataset: terminalbench-multi-turn
-  file_path: data/terminalbench_trajectories.jsonl
-  min_turns: 20
-  max_turns: 60
-
-osworld-multiturn-short:
-  # WebArena browser agent: each page is an accessibility tree, about 3x the word-based token estimate.
-  <<: *agent
-  isl_tokens: 32768
-  osl_tokens: 500
-  dataset: osworld-multi-turn
-  file_path: data/osworld_trajectories.jsonl
-  min_turns: 2
-  max_turns: 10
-
-osworld-multiturn-medium:
-  <<: *agent
-  isl_tokens: 65536
-  osl_tokens: 500
-  dataset: osworld-multi-turn
-  file_path: data/osworld_trajectories.jsonl
-  min_turns: 10
-  max_turns: 20
-
-osworld-multiturn-long:
+terminalbench-qwen-multiturn-medium:
+  # Qwen3.8-Flash-Next terminus-2 runs on Terminal-Bench 2.1 (Harbor, 2026-08-27), each step with the counts the
+  # server reported (data/build_trajectories.py terminalbench-atif). Sessions of 20+ steps, the first 39 steps.
   <<: *agent
   isl_tokens: 131072
-  osl_tokens: 500
-  dataset: osworld-multi-turn
-  file_path: data/osworld_trajectories.jsonl
+  osl_tokens: 49152
+  dataset: terminalbench-multi-turn
+  file_path: data/terminalbench_qwen_trajectories.jsonl
   min_turns: 20
-  max_turns: 30
+  max_turns: 39
+
+terminalbench-qwen-multiturn-long:
+  # The same runs, sessions of 40+ steps in full; the longest is 83.
+  <<: *agent
+  isl_tokens: 131072
+  osl_tokens: 49152
+  dataset: terminalbench-multi-turn
+  file_path: data/terminalbench_qwen_trajectories.jsonl
+  min_turns: 40
+  max_turns: 100
 
 deepresearch-multiturn:
-  # Built by data/build_trajectories.py deepresearch; output capped at 16384 of the trace's 65536 reasoning budget.
+  # Built by data/build_trajectories.py deepresearch. The cap is the trace's 65536 reasoning budget, so no recorded
+  # output cuts a session; a session is cut only where a prompt no longer fits beside its output.
   <<: *agent
-  isl_tokens: 32768
-  osl_tokens: 16384
+  isl_tokens: 131072
+  osl_tokens: 65536
   dataset: deepresearch-multi-turn
   file_path: data/deepresearch_trajectories.jsonl
+  min_turns: 1
+  max_turns: 30
+
+deepsearch-multiturn:
+  # Built by data/build_trajectories.py deepsearch from the DeepSearchQA trace; the same session shape as deepresearch.
+  <<: *agent
+  isl_tokens: 131072
+  osl_tokens: 65536
+  dataset: deepresearch-multi-turn
+  file_path: data/deepsearch_trajectories.jsonl
   min_turns: 1
   max_turns: 30
 
