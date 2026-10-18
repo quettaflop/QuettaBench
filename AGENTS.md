@@ -105,7 +105,7 @@ Every writer and every process starter, exactly:
 - Imports at the top of the file, except torch, vLLM, GPU-only and optional packages, imported where used so the CPU paths and tests load without them, and transformers and datasets, imported where used because they load slowly and only tokenizing paths need them; a new one goes in `OPTIONAL_PACKAGES` in `tests/contracts/test_imports.py`. No inline python in shell or justfile recipes. A recipe calls into the package where it can; `gpu-info`, `image`, `hooks`, `test`, `lint`, `fetch` and the `mirror-*` recipes call host tools (ssh, the backend's device tool (nvidia-smi, amd-smi, neuron-ls), docker, pre-commit, pytest, ruff, aws) or `data/fetch.py` and `data/build_trajectories.py` instead, and `gpu-info` and `profile-gpu` run more than one line.
 - Measured before kept: an optimization lands with the measurement that justifies it, and a feature lands with its measurement.
 - Report every number, including the ones that weaken a claim.
-- A session-run number names its window: whole-run (ramp and drain included) or `sections.steady`. A run with no more sessions than agents has no steady window and says so; no whole-run number stands in for it (law 4).
+- A session-run number names its window: whole-run (ramp and drain included) or `sections.steady`. A run with 2C sessions or fewer has no steady window and says so; no whole-run number stands in for it (law 4).
 - A trajectory file carries the token counts the engine reported, never an estimate, and `data/MANIFEST.json` describes every file a profile reads; a replay on a file the manifest does not describe is not comparable.
 
 ## Where to look

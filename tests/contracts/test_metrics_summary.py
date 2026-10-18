@@ -571,19 +571,18 @@ class TestOpenLoopUnits(unittest.TestCase):
         self.assertTrue(w["valid"], w)
         self.assertEqual((w["start_s"], w["end_s"], w["window_s"], w["agents"]), (0.0, 5.0, 5.0, 2))
 
-    def test_no_more_sessions_than_agents_leaves_no_steady_window_and_no_substitute(self):
-        times = {0: (0.0, 0.0, 3.0), 1: (0.0, 0.0, 9.0)}
+    def test_two_sessions_per_agent_or_fewer_leave_no_steady_window_and_no_substitute(self):
+        # Three sessions for two agents: the agents are full from 0 s to 2 s, but that is their synchronized first
+        # sessions, not a steady state. TB at 32 agents on 34 sessions is this case.
+        times = {0: (0.0, 0.0, 1.0), 1: (0.0, 0.0, 3.0), 2: (0.0, 1.0, 2.0), 3: (0.0, 2.0, 4.0)}
         w = steady_window(times, concurrency=2)
         self.assertFalse(w["valid"])
-        self.assertIn("2 sessions for 2 agents", w["reason"])
+        self.assertIn("4 sessions for 2 agents; a steady window needs more than 4", w["reason"])
         self.assertNotIn("output_token_throughput", steady_section([], times, 2))
-        # Three sessions: S2 waits for S0's agent, so the agents are full from 0 s until S2 finishes at 2 s.
-        w = steady_window({0: (0.0, 0.0, 1.0), 1: (0.0, 0.0, 3.0), 2: (0.0, 1.0, 2.0)}, concurrency=2)
-        self.assertEqual((w["valid"], w["start_s"], w["end_s"]), (True, 0.0, 2.0))
 
     def test_an_agent_left_idle_by_recorded_arrivals_voids_the_window(self):
         # S2 arrives only at 2 s although S0 freed its agent at 1 s: one agent sat idle for 1 s inside the window.
-        times = {0: (0.0, 0.0, 1.0), 1: (0.0, 0.0, 3.0), 2: (2.0, 2.0, 4.0), 3: (3.0, 3.0, 5.0)}
+        times = {0: (0.0, 0.0, 1.0), 1: (0.0, 0.0, 3.0), 2: (2.0, 2.0, 4.0), 3: (3.0, 3.0, 5.0), 4: (5.0, 5.0, 7.0)}
         w = steady_window(times, concurrency=2)
         self.assertFalse(w["valid"])
         self.assertIn("an agent was idle 1.000 s from 1.000 s", w["reason"])

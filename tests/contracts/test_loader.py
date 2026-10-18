@@ -329,6 +329,44 @@ class LoaderRules(unittest.TestCase):
             with self.subTest(matrix), self.assertRaisesRegex(ConfigError, "points share run_name"):
                 self.load({"matrix": matrix})
 
+    def test_one_engine_flag_is_set_inside_its_extra_block(self):
+        run = {"engine": {"extra": {"vllm": {"language_model_only": True, "max_num_seqs": 8}}}}
+        cfg = self.one(run, ["engine.extra.vllm.max_num_seqs=64", "engine.extra.vllm.served_model_name=m"])
+        self.assertEqual(
+            cfg.engine.extra["vllm"], {"language_model_only": True, "max_num_seqs": 64, "served_model_name": "m"}
+        )
+        self.assertEqual(cfg.origins["engine.extra.vllm.max_num_seqs"], "cli")
+        # A whole block from a higher layer replaces a flag a lower layer set.
+        cfg = self.one(
+            {"matrix": {"engine.extra.vllm.max_num_seqs": [64]}}, ["engine.extra.vllm={enforce_eager: true}"]
+        )
+        self.assertEqual(cfg.engine.extra["vllm"], {"enforce_eager": True})
+        with self.assertRaisesRegex(ConfigError, "unknown key 'engine.extra.vllm.a.b'"):
+            self.load(overrides=["engine.extra.vllm.a.b=1"])
+        with self.assertRaisesRegex(ConfigError, "engine.extra.vllm is not a mapping"):
+            self.load({"engine": {"extra": {"vllm": "x"}}}, ["engine.extra.vllm.max_num_seqs=64"])
+
+    def test_a_matrix_axis_of_joined_paths_moves_them_together(self):
+        matrix = {"mode.concurrency+engine.extra.vllm.max_num_seqs": [[8, 64], [32, 256]], "engine.tp": [1, 2]}
+        got = [
+            (c.run_name, c.mode.concurrency, c.engine.extra["vllm"]["max_num_seqs"], c.engine.tp)
+            for c in self.load({"matrix": matrix})
+        ]
+        self.assertEqual(
+            got,
+            [
+                ("r-tp1-concurrency8-max_num_seqs64", 8, 64, 1),
+                ("r-tp1-concurrency32-max_num_seqs256", 32, 256, 1),
+                ("r-tp2-concurrency8-max_num_seqs64", 8, 64, 2),
+                ("r-tp2-concurrency32-max_num_seqs256", 32, 256, 2),
+            ],
+        )
+        for bad in ([[8]], [8, 32], [[8, 1, 2]]):
+            with self.subTest(bad), self.assertRaisesRegex(ConfigError, "lists 2 values, one per path"):
+                self.load({"matrix": {"mode.concurrency+engine.tp": bad}})
+        with self.assertRaisesRegex(ConfigError, "matrix: unknown key 'engine.tpp'"):
+            self.load({"matrix": {"mode.concurrency+engine.tpp": [[8, 1]]}})
+
     def test_matrix_key_is_checked(self):
         with self.assertRaisesRegex(ConfigError, "matrix: unknown key 'engine.tpp'"):
             self.load({"matrix": {"engine.tpp": [1]}})

@@ -355,11 +355,14 @@ HANDOVER_S = 0.05
 
 def steady_window(session_times: dict, concurrency: int, end_s: float | None = None) -> dict:
     """The span in which every agent is busy: from the last free agent filled to the first finish after the last
-    admission, or to end_s for a recycled replay. Invalid, with the reason, when the agents never fill or one sits idle."""
+    admission, or to end_s for a recycled replay. Invalid, with the reason, with 2C sessions or fewer or when an
+    agent sits idle."""
     n, c = len(session_times), max(1, concurrency)
     out: dict = {"valid": False, "sessions": n, "agents": c}
-    if n <= c:
-        out["reason"] = f"{n} sessions for {c} agents; no session waits for a free agent, so no agent stays busy"
+    # Every agent starts its first session at once; with no more than 2C sessions the agents have barely turned
+    # over by the last admission, and the window is mostly that synchronized start.
+    if n <= 2 * c:
+        out["reason"] = f"{n} sessions for {c} agents; a steady window needs more than {2 * c}"
         return out
     times = sorted(session_times.values(), key=lambda t: t[1])
     start, last_admitted = times[c - 1][1], times[-1][1]

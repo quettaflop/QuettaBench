@@ -86,6 +86,10 @@ def _check_path(path, where):
         allowed = DICT_KEYS[df]
         if "." not in key and (allowed is None or key in allowed):
             return
+        # engine.extra.<engine>.<flag> sets one flag in one engine's extra block
+        engine, _, flag = key.partition(".")
+        if df == "engine.extra" and engine and flag and "." not in flag:
+            return
     raise ConfigError(f"{where}: unknown key {path!r}")
 
 
@@ -177,7 +181,13 @@ def _apply(values, origins, layer, origin):
     for path, value in layer.items():
         df = dict_field(path)
         if df is not None and path != df:
-            values[df] = {**values[df], path[len(df) + 1 :]: value}
+            key, _, flag = path[len(df) + 1 :].partition(".")
+            if flag:
+                block = values[df].get(key) or {}
+                if not isinstance(block, dict):
+                    raise ConfigError(f"{origin}: {df}.{key} is not a mapping, so {path} cannot set a flag in it")
+                value = {**block, flag: value}
+            values[df] = {**values[df], key: value}
         else:
             values[path] = value
         origins[path] = origin
@@ -398,11 +408,17 @@ def load(run_yaml, overrides=(), env=None):
     run = {}
     for section in SECTIONS:
         run.update(_flatten(raw.get(section) or {}, f"{section}.", run_path))
-    matrix = raw.get("matrix") or {}
-    for path, choices in matrix.items():
-        _check_path(path, f"{run_path} matrix")
+    # An axis is one path, or several joined by "+" that move together: each choice lists one value per path.
+    axes = []
+    for key, choices in (raw.get("matrix") or {}).items():
+        paths = [p.strip() for p in key.split("+")]
+        for path in paths:
+            _check_path(path, f"{run_path} matrix")
         if not isinstance(choices, list) or not choices:
-            raise ConfigError(f"{run_path} matrix: {path!r} needs a non-empty list")
+            raise ConfigError(f"{run_path} matrix: {key!r} needs a non-empty list")
+        if len(paths) > 1 and any(not isinstance(c, list) or len(c) != len(paths) for c in choices):
+            raise ConfigError(f"{run_path} matrix: each choice of {key!r} lists {len(paths)} values, one per path")
+        axes.append([dict(zip(paths, c)) if len(paths) > 1 else {key: c} for c in choices])
 
     from_env = env_map.read_env(env)
     detect = {k: from_env.pop(k) for k in list(from_env) if k.startswith("detect.")}
@@ -413,8 +429,8 @@ def load(run_yaml, overrides=(), env=None):
     grids, step_points = _read_grids(configs)
 
     out = []
-    for combo in itertools.product(*matrix.values()):
-        point = dict(zip(matrix, combo))
+    for combo in itertools.product(*axes):
+        point = {p: v for part in combo for p, v in part.items()}
         run_layer, cli_layer = {**run, **point}, dict(cli)
         named_by = cli_layer if "run_name" in cli else run_layer
         base = cli.get("run_name", run_path.stem)
