@@ -93,11 +93,12 @@ async def _stream_chat(
 
     start_time = time.perf_counter()
     ttft = None
-    itl = []
+    itl: list[float] = []
     last_token_time = start_time
     input_tokens = 0
     output_tokens = 0
     usage_reported = False
+    done = False
     server_cached_tokens = None
     text_parts: list[str] = []
 
@@ -121,12 +122,25 @@ async def _stream_chat(
                 data_str = line[len("data:") :].strip()
 
                 if data_str == "[DONE]":
+                    done = True
                     break
 
                 try:
                     chunk = json.loads(data_str)
                 except json.JSONDecodeError:
                     continue
+                if chunk.get("error"):
+                    return RequestResult(
+                        success=False,
+                        ttft=ttft,
+                        itl=itl,
+                        e2el=time.perf_counter() - start_time,
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                        usage_reported=usage_reported,
+                        error=f"server error in stream: {json.dumps(chunk['error'])[:200]}",
+                        error_kind="server_error",
+                    )
 
                 now = time.perf_counter()
 
@@ -165,6 +179,18 @@ async def _stream_chat(
                     last_token_time = now
 
         e2el = time.perf_counter() - start_time
+        if not done:
+            return RequestResult(
+                success=False,
+                ttft=ttft,
+                itl=itl,
+                e2el=e2el,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                usage_reported=usage_reported,
+                error="stream ended without [DONE]; the reply is incomplete",
+                error_kind="incomplete_stream",
+            )
         return RequestResult(
             success=True,
             ttft=ttft,
@@ -240,11 +266,12 @@ async def _stream_completions(
 
     start_time = time.perf_counter()
     ttft = None
-    itl = []
+    itl: list[float] = []
     last_token_time = start_time
     input_tokens = 0
     output_tokens = 0
     usage_reported = False
+    done = False
     server_cached_tokens = None
 
     try:
@@ -267,12 +294,25 @@ async def _stream_completions(
                 data_str = line[len("data:") :].strip()
 
                 if data_str == "[DONE]":
+                    done = True
                     break
 
                 try:
                     chunk = json.loads(data_str)
                 except json.JSONDecodeError:
                     continue
+                if chunk.get("error"):
+                    return RequestResult(
+                        success=False,
+                        ttft=ttft,
+                        itl=itl,
+                        e2el=time.perf_counter() - start_time,
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                        usage_reported=usage_reported,
+                        error=f"server error in stream: {json.dumps(chunk['error'])[:200]}",
+                        error_kind="server_error",
+                    )
 
                 now = time.perf_counter()
 
@@ -297,6 +337,18 @@ async def _stream_completions(
                         last_token_time = now
 
         e2el = time.perf_counter() - start_time
+        if not done:
+            return RequestResult(
+                success=False,
+                ttft=ttft,
+                itl=itl,
+                e2el=e2el,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                usage_reported=usage_reported,
+                error="stream ended without [DONE]; the reply is incomplete",
+                error_kind="incomplete_stream",
+            )
         return RequestResult(
             success=True,
             ttft=ttft,

@@ -2,12 +2,13 @@
 
 import asyncio
 import dataclasses
+import gc
 import itertools
 import json
 import os
 import sys
 import time
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 
 from huggingface_hub import snapshot_download
@@ -26,6 +27,7 @@ from ..metrics.summary import (
     annotate_request_observability,
     burst_recovery,
     first_error,
+    percentile,
     print_multi_turn_summary,
     print_summary,
     sla_verdict,
@@ -116,6 +118,14 @@ def arrival_offsets(trace, workload) -> list:
     return [t / workload.speed for t in injected]
 
 
+def enforce_output_length(mode, request, result):
+    """exact_output_length: a reply shorter than planned is a failed request, not a faster one."""
+    if mode.exact_output_length and result.success and result.output_tokens != request.max_tokens:
+        result.success = False
+        result.error = f"{result.output_tokens} output tokens, {request.max_tokens} planned"
+        result.error_kind = "short_output"
+
+
 async def warmup(trace, driver, mode, count, multi_turn):
     """So connections exist before timing; abort when none succeeds."""
     if multi_turn and not mode.reset_prefix_cache:
@@ -178,6 +188,7 @@ async def replay(trace, driver, mode, emit, offsets, request_id):
             semaphore_acquired_at_s=granted,
             completed_at_s=time.perf_counter() - start,
         )
+        enforce_output_length(mode, request, result)
         if i < mode.discard_first:
             result.excluded_from_summary = True
         emit(request, result)
@@ -199,6 +210,70 @@ def server_counters(driver):
     return counters() if counters else None
 
 
+class ClientHealth:
+    """How late the client's own event loop ran while it measured. A late loop reads a chunk late, so a latency
+    stamped then is the client's, not the server's. The loop's lateness is sampled every 10 ms, and every
+    garbage-collector pass, which stops the loop, is timed."""
+
+    INTERVAL_S = 0.01
+
+    def __init__(self):
+        self.lag_s: list[float] = []
+        self.gc_s: list[tuple[int, float]] = []
+        self._gc_start: float | None = None
+        self._task: asyncio.Task | None = None
+
+    def _gc(self, phase, info):
+        if phase == "start":
+            self._gc_start = time.perf_counter()
+        elif self._gc_start is not None:
+            self.gc_s.append((info["generation"], time.perf_counter() - self._gc_start))
+            self._gc_start = None
+
+    async def _sample(self):
+        loop = asyncio.get_running_loop()
+        while True:
+            t = loop.time()
+            await asyncio.sleep(self.INTERVAL_S)
+            self.lag_s.append(loop.time() - t - self.INTERVAL_S)
+
+    def start(self):
+        gc.callbacks.append(self._gc)
+        self._task = asyncio.get_running_loop().create_task(self._sample())
+
+    async def stop(self):
+        gc.callbacks.remove(self._gc)
+        if self._task is not None:
+            self._task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._task
+
+    def section(self) -> dict:
+        lag = sorted(x * 1000 for x in self.lag_s)
+        out: dict = {"loop_lag_samples": len(lag), "loop_lag_ms": None}
+        if lag:
+            out["loop_lag_ms"] = {
+                "50": percentile(lag, 50, "nearest"),
+                "99": percentile(lag, 99, "nearest"),
+                "max": lag[-1],
+            }
+        pauses = [s * 1000 for _, s in self.gc_s]
+        out.update(
+            gc_passes=len(pauses),
+            gc_gen2_passes=sum(1 for g, _ in self.gc_s if g == 2),
+            gc_pause_ms={"max": max(pauses, default=0.0), "total": sum(pauses)},
+        )
+        return out
+
+
+def client_line(c: dict) -> str:
+    lag = c["loop_lag_ms"] or {"99": 0.0, "max": 0.0}
+    return (
+        f"Client: event loop late by {lag['99']:.1f} ms at p99, {lag['max']:.1f} ms at most; "
+        f"{c['gc_passes']} gc passes ({c['gc_gen2_passes']} full), longest {c['gc_pause_ms']['max']:.1f} ms"
+    )
+
+
 async def measure(trace, driver, mode, emit, workload, request_id):
     multi = isinstance(trace, SessionTrace)
     offsets = None if multi else arrival_offsets(trace, workload)
@@ -215,23 +290,30 @@ async def measure(trace, driver, mode, emit, workload, request_id):
         if mode.reset_prefix_cache:
             print(f"Prefix cache: {await driver.reset()}")
         before = server_counters(driver)
-        if sessions is not None:
-            results, by_turn, pairs, start = await sessions.run()
-        else:
-            pairs, start = await replay(trace, driver, mode, emit, offsets, request_id)
-            results, by_turn = [r for _, r in pairs], None
-        duration = time.perf_counter() - start
+        health = ClientHealth()
+        health.start()
+        try:
+            if sessions is not None:
+                results, by_turn, pairs, start = await sessions.run()
+            else:
+                pairs, start = await replay(trace, driver, mode, emit, offsets, request_id)
+                results, by_turn = [r for _, r in pairs], None
+            duration = time.perf_counter() - start
+        finally:
+            await health.stop()
         spec = server_spec_decode_section(before, server_counters(driver) if before else None)
-    return results, by_turn, pairs, duration, spec, sessions.session_times if sessions is not None else None
+    session_times = sessions.session_times if sessions is not None else None
+    return results, by_turn, pairs, duration, spec, session_times, health.section()
 
 
 def steady_line(s: dict) -> str:
     if not s["valid"]:
         return f"Steady window: none ({s['reason']}); whole-run numbers include ramp and drain"
+    tl = s["timeline"]["output_tok_s"]
     return (
-        f"Steady window: {s['start_s']:.1f} s to {s['end_s']:.1f} s of the run, {s['excluded_sessions']} sessions excluded "
-        f"each end: {s['output_token_throughput']:.1f} out tok/s, {s['sessions_per_hour']:.1f} sessions/h, "
-        f"{s['requests_inside']} requests fully inside"
+        f"Steady window: {s['start_s']:.1f} s to {s['end_s']:.1f} s of the run, all {s['agents']} agents busy: "
+        f"{s['output_token_throughput']:.1f} out tok/s (per-bin min {tl['min']:.1f}, max {tl['max']:.1f}), "
+        f"{s['sessions_per_hour']:.1f} sessions/h, {s['requests_inside']} requests fully inside"
     )
 
 
@@ -434,7 +516,7 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
     except RunAborted as e:
         print(e)
         stop(writer, None, "aborted", str(e), 1)
-    results, by_turn, pairs, duration, server_spec_decode, session_times = measured
+    results, by_turn, pairs, duration, server_spec_decode, session_times, client = measured
 
     core = aggregate(
         results=[r for r in results if r is not None],
@@ -462,6 +544,9 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
         {"goodput": goodput} if goodput else summary_sections(pairs, duration, mode, server_spec_decode)
     )
     print_summary_tag_lines(summary.sections)
+    if client is not None:
+        summary.sections["client"] = client
+        print(client_line(client), flush=True)
     if session_times is not None and mode.load == "closed":
         summary.sections["steady"] = steady_section(results, session_times, mode.concurrency)
         print(steady_line(summary.sections["steady"]), flush=True)
@@ -748,6 +833,7 @@ class SessionDispatcher:
             semaphore_acquired_at_s=granted,
             completed_at_s=elapsed(),
         )
+        enforce_output_length(self.mode, request, result)
         annotate_multi_turn_cache_estimate(
             result,
             session_id=sid,

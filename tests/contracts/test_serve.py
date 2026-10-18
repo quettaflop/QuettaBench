@@ -3,11 +3,13 @@
 import asyncio
 import contextlib
 import copy
+import gc
 import http.client
 import io
 import json
 import os
 import tempfile
+import time
 import unittest
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -31,8 +33,9 @@ from tests.golden._harness import DENSE_CONFIG, RUNS, grid_argv, run_grid_cli
 class FakeDriver:
     model, version = "m", None
 
-    def __init__(self, fail=lambda r: False):
+    def __init__(self, fail=lambda r: False, short=None):
         self.fail, self.sent, self.resets = fail, [], 0
+        self.short = short or {}  # (session, turn) -> output tokens to return instead of the planned length
 
     @asynccontextmanager
     async def session(self, concurrency, open_loop=False):
@@ -42,7 +45,7 @@ class FakeDriver:
         self.sent.append((copy.deepcopy(request.messages), request_id, sampling))
         if self.fail(request):
             return RequestResult(success=False, e2el=0.01, error="boom", error_kind="http_error")
-        n = request.max_tokens or 4
+        n = self.short.get((request.session_id, request.turn), request.max_tokens or 4)
         return RequestResult(
             success=True,
             ttft=0.001,
@@ -217,9 +220,52 @@ class Sessions(unittest.TestCase):
         self.assertEqual(len(summary.rows), 300)
         steady = summary.sections["steady"]
         self.assertTrue(steady["valid"], steady)
-        self.assertEqual((steady["sessions"], steady["excluded_sessions"]), (60, 8))
+        self.assertEqual((steady["sessions"], steady["agents"]), (60, 8))
+        # 8 agents, each in flight 5 ms of every 8 ms (3 ms tool wait): about 5 requests in flight on average.
+        self.assertAlmostEqual(steady["timeline"]["requests_in_flight"]["mean"], 5.0, delta=1.0)
+        self.assertLess(steady["timeline"]["requests_in_flight"]["max"], 8.0)
         last_finish = max(r.completed_at_s for r in summary.rows)
         self.assertTrue(0.0 <= steady["start_s"] < steady["end_s"] <= last_finish)
+
+    def test_client_health_times_a_stalled_loop_and_each_gc_pass(self):
+        async def go():
+            health = serve.ClientHealth()
+            health.start()
+            await asyncio.sleep(0.05)
+            time.sleep(0.06)  # the loop cannot run while this blocks
+            gc.collect()
+            await asyncio.sleep(0.03)
+            await health.stop()
+            return health.section()
+
+        c = asyncio.run(go())
+        self.assertGreaterEqual(c["loop_lag_ms"]["max"], 50.0)
+        self.assertLess(c["loop_lag_ms"]["50"], 50.0)
+        self.assertGreaterEqual((c["gc_passes"], c["gc_gen2_passes"]), (1, 1))
+        self.assertIn("event loop late by", serve.client_line(c))
+
+    def test_a_session_run_records_client_health(self):
+        summary, out = run(session_trace(4, 2), FakeDriver(), ModeCfg(concurrency=2, warmup=0))
+        self.assertGreater(summary.sections["client"]["loop_lag_samples"], -1)
+        self.assertIn("Client: event loop late by", out)
+
+    def test_a_short_reply_is_a_failed_turn_under_exact_output_length(self):
+        # Session 1's second turn comes back one token long: the turn fails, the session stops there, and the run
+        # fails the identity gate because the session's last turn was never sent.
+        with tempfile.TemporaryDirectory() as td:
+            code, out = run(
+                session_trace(),
+                FakeDriver(short={(1, 1): 1}),
+                ModeCfg(concurrency=2, warmup=0, exact_output_length=True, min_success_rate=0.0),
+                results_dir=td,
+            )
+            rows = [json.loads(x) for x in (Path(td) / "requests.jsonl").read_text().splitlines()]
+        bad = [r for r in rows if not r["success"]]
+        self.assertEqual(
+            [(r["session_id"], r["turn_index"], r["error"]) for r in bad], [(1, 1, "1 output tokens, 2 planned")]
+        )
+        self.assertEqual(code, 3)
+        self.assertIn("WORKLOAD_MISMATCH", out)
 
     def test_replies_feed_later_turns(self):
         driver = FakeDriver()
@@ -480,7 +526,7 @@ class GoodputSweep(unittest.TestCase):
                 )
                 emit(q, r)
                 pairs.append((q, r))
-            return [r for _, r in pairs], None, pairs, 1.0 / workload.speed, None, None
+            return [r for _, r in pairs], None, pairs, 1.0 / workload.speed, None, None, None
 
         return measure
 

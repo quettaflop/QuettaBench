@@ -82,18 +82,11 @@ class RequestResult:
 
     @property
     def tpot(self) -> float | None:
-        """Falls back to (e2el - ttft) / (output_tokens - 1) when ITL covers under 80% of tokens."""
-        decode_time = None
-        if self.e2el is not None and self.ttft is not None and self.output_tokens > 1:
-            decode_time = self.e2el - self.ttft
-        if self.itl:
-            incomplete = self.output_tokens > 1 and len(self.itl) < 0.8 * (self.output_tokens - 1)
-            if incomplete and decode_time is not None:
-                return decode_time / (self.output_tokens - 1)
-            return sum(self.itl) / len(self.itl)
-        if decode_time is not None:
-            return decode_time / (self.output_tokens - 1)
-        return None
+        """(e2el - ttft) / (output_tokens - 1): decode time per generated token, the same whatever the server's
+        chunking; None without a first token or a second output token. Chunk gaps are in itl, not here."""
+        if self.e2el is None or self.ttft is None or self.output_tokens < 2:
+            return None
+        return (self.e2el - self.ttft) / (self.output_tokens - 1)
 
 
 def annotate_request_observability(
@@ -358,18 +351,35 @@ def pcts(values, method: str) -> dict:
     return {f"p{q}": percentile(values, q, method) for q in (50, 90, 95, 99)}
 
 
+HANDOVER_S = 0.05
+
+
 def steady_window(session_times: dict, concurrency: int) -> dict:
-    """The saturated part of a closed-loop session run, by the TensorRT-LLM trace-replay rule: it opens when the
-    excl-th session is admitted and closes when the (N - excl + 1)-th admitted session finishes, excl being the
-    agent count. It needs more than 2 * excl sessions; with fewer the run has no steady window, and no wall-clock
-    number stands in for it. session_times maps a session to (arrived, admitted, finished) seconds."""
-    n, excl = len(session_times), max(1, concurrency)
-    out: dict = {"valid": False, "sessions": n, "excluded_sessions": excl}
-    if n <= 2 * excl:
-        out["reason"] = f"{n} sessions; a steady window needs more than {2 * excl}"
+    """The part of a closed-loop session run in which every agent is busy: from the admission that fills the last
+    free agent to the first finish after the last admission, when the backlog is empty and agents start to go idle.
+    Sessions of very different lengths cannot stretch it into the drain. It needs more sessions than agents, and the
+    agents must stay full throughout: a run whose sessions wait for recorded arrival times can leave an agent idle,
+    and then has no steady window. session_times maps a session to (arrived, admitted, finished) seconds."""
+    n, c = len(session_times), max(1, concurrency)
+    out: dict = {"valid": False, "sessions": n, "agents": c}
+    if n <= c:
+        out["reason"] = f"{n} sessions for {c} agents; no session waits for a free agent, so no agent stays busy"
         return out
-    by_admission = sorted(session_times.values(), key=lambda t: t[1])
-    start, end = by_admission[excl - 1][1], by_admission[n - excl][2]
+    times = sorted(session_times.values(), key=lambda t: t[1])
+    start, last_admitted = times[c - 1][1], times[-1][1]
+    end = min(fin for _, adm, fin in times if fin > last_admitted)
+    # A freed agent takes the next session microseconds after the last one finishes; an agent idle for longer
+    # than HANDOVER_S inside the window was waiting for a session's recorded arrival.
+    open_now, idle_since = 0, None
+    for t, d in sorted([(adm, 1) for _, adm, _ in times] + [(fin, -1) for _, _, fin in times]):
+        open_now += d
+        if open_now < c and idle_since is None:
+            idle_since = t
+        elif open_now >= c and idle_since is not None:
+            if idle_since >= start and t - idle_since > HANDOVER_S and idle_since < end:
+                out["reason"] = f"an agent was idle {t - idle_since:.3f} s from {idle_since:.3f} s inside the window"
+                return out
+            idle_since = None
     if end <= start:
         out["reason"] = "the window closed before it opened"
         return out
@@ -377,9 +387,53 @@ def steady_window(session_times: dict, concurrency: int) -> dict:
     return out
 
 
-def steady_section(results, session_times: dict, concurrency: int) -> dict:
-    """Throughput from what completed inside the window, latency from requests that ran entirely inside it,
-    sessions from those that finished inside it with every turn successful."""
+def chunk_times(r) -> list[float]:
+    """When each streamed chunk reached the client, seconds since the run's start."""
+    if r.semaphore_acquired_at_s is None or r.ttft is None:
+        return [r.completed_at_s] if r.completed_at_s is not None else []
+    t = r.semaphore_acquired_at_s + r.ttft
+    out = [t]
+    for gap in r.itl or []:
+        t += gap
+        out.append(t)
+    return out
+
+
+def tokens_by_arrival(ok, start: float, end: float, widths: list[float]) -> tuple[float, float, list[float]]:
+    """Output tokens that arrived inside [start, end], in total and per bin, with the prompt tokens of requests whose
+    first token arrived inside. A request's output is spread evenly over its chunks, so one that straddles an edge
+    counts only its share inside."""
+    bin_s, out_tok, in_tok, bins = widths[0], 0.0, 0.0, [0.0] * len(widths)
+    for r in ok:
+        chunks = chunk_times(r)
+        if chunks and start <= chunks[0] <= end:
+            in_tok += r.input_tokens
+        per_chunk = r.output_tokens / len(chunks) if chunks else 0.0
+        for t in chunks:
+            if start <= t <= end:
+                out_tok += per_chunk
+                bins[min(len(bins) - 1, int((t - start) // bin_s))] += per_chunk
+    return out_tok, in_tok, bins
+
+
+def in_flight_by_bin(ok, start: float, widths: list[float]) -> list[float]:
+    """Mean requests in flight per bin: each request adds the share of the bin it spent between dispatch and
+    completion."""
+    bin_s, inflight = widths[0], [0.0] * len(widths)
+    for r in ok:
+        if r.semaphore_acquired_at_s is None:
+            continue
+        a, b = max(r.semaphore_acquired_at_s, start), r.completed_at_s
+        for i in range(max(0, int((a - start) // bin_s)), min(len(widths), int((b - start) // bin_s) + 1)):
+            lo = start + i * bin_s
+            inflight[i] += max(0.0, min(b, lo + widths[i]) - max(a, lo)) / widths[i]
+    return inflight
+
+
+def steady_section(results, session_times: dict, concurrency: int, bin_s: float = 10.0) -> dict:
+    """Throughput from tokens that arrived inside the window, request and session rates from completions inside it,
+    latency from requests that started and finished inside it. The timeline bins output tok/s and requests in flight
+    every bin_s, to show the window was steady and not merely full."""
     w = steady_window(session_times, concurrency)
     if not w["valid"]:
         return w
@@ -389,7 +443,11 @@ def steady_section(results, session_times: dict, concurrency: int) -> dict:
     inside = [r for r in done if r.semaphore_acquired_at_s is not None and r.semaphore_acquired_at_s >= start]
     failed = {r.session_id for r in results if r is not None and not r.success}
     sessions_done = sum(1 for sid, (_, _, fin) in session_times.items() if start <= fin <= end and sid not in failed)
-    out_tok, in_tok = sum(r.output_tokens for r in done), sum(r.input_tokens for r in done)
+    widths = [min(bin_s, span - i * bin_s) for i in range(max(1, math.ceil(span / bin_s)))]
+    out_tok, in_tok, bins = tokens_by_arrival(ok, start, end, widths)
+    inflight = in_flight_by_bin(ok, start, widths)
+    rates = [x / wd for x, wd in zip(bins, widths)]
+    mean_rate = sum(rates) / len(rates)
     w.update(
         requests_completed=len(done),
         requests_inside=len(inside),
@@ -399,18 +457,35 @@ def steady_section(results, session_times: dict, concurrency: int) -> dict:
         output_token_throughput=out_tok / span,
         input_token_throughput=in_tok / span,
         total_token_throughput=(in_tok + out_tok) / span,
+        timeline={
+            "bin_s": bin_s,
+            "bins": len(rates),
+            "output_tok_s": {
+                "min": min(rates),
+                "mean": mean_rate,
+                "max": max(rates),
+                "cv": statistics.pstdev(rates) / mean_rate if mean_rate > 0 else None,
+            },
+            "requests_in_flight": {"min": min(inflight), "mean": sum(inflight) / len(inflight), "max": max(inflight)},
+        },
         percentile_method="nearest",
     )
     series = {
         "ttft_ms": [r.ttft * 1000 for r in inside if r.ttft is not None],
-        "tpot_ms": [r.tpot * 1000 for r in inside if r.tpot is not None],
-        "itl_ms": [t * 1000 for r in inside for t in (r.itl or [])],
+        # (E2E - TTFT) / (output tokens - 1) per request: AIPerf's and AgentX's inter-token latency.
+        "tpot_ms": [
+            (r.e2el - r.ttft) * 1000 / (r.output_tokens - 1)
+            for r in inside
+            if r.e2el is not None and r.ttft is not None and r.output_tokens > 1
+        ],
+        # Gaps between streamed chunks, pooled: AIPerf's inter-chunk latency, not its ITL.
+        "chunk_gap_ms": [t * 1000 for r in inside for t in (r.itl or [])],
     }
     for name, values in series.items():
         w[name] = {p: percentile(values, p, "nearest") for p in (50, 90, 99)} if values else None
-    # AgentX's interactivity: per-agent generation speed from the p90 inter-token latency.
-    itl = w["itl_ms"]
-    w["interactivity_p90_tok_s"] = 1000 / itl[90] if itl and itl[90] > 0 else None
+    # AgentX's interactivity: 1 / its p90 inter-token latency, which is per request.
+    tpot = w["tpot_ms"]
+    w["interactivity_p90_tok_s"] = 1000 / tpot[90] if tpot and tpot[90] > 0 else None
     return w
 
 
@@ -596,7 +671,9 @@ def aggregate(
         summary.median_ttft_ms = statistics.median(ttfts)
         summary.p90_ttft_ms = percentile(ttfts, 90, "linear")
         summary.p99_ttft_ms = percentile(ttfts, 99, "linear")
-        steady = steady_ttfts(steady_pairs, concurrency) if load_mode == "closed-loop" else None
+        # Single-turn runs only: a session run's request index is session-major, not dispatch order, and its
+        # steady numbers come from steady_section.
+        steady = steady_ttfts(steady_pairs, concurrency) if load_mode == "closed-loop" and not by_session else None
         if steady:
             summary.steady_median_ttft_ms = statistics.median(steady)
             summary.steady_p99_ttft_ms = percentile(steady, 99, "linear")
@@ -785,19 +862,21 @@ def success_rate_gate(summary, min_rate: float) -> tuple[str, str | None]:
 
 
 def usage_gate(summary, allow_missing: bool) -> tuple[str, str | None]:
-    """Every token count and throughput would read 0."""
-    if summary.successful_requests == 0 or summary.usage_reported_requests > 0:
+    """Every successful response must carry a usage block: a token count not from the server is a guess, and
+    throughputs built on a zero are understated."""
+    missing = summary.successful_requests - summary.usage_reported_requests
+    if summary.successful_requests == 0 or missing == 0:
         return "pass", None
+    what = f"{missing} of {summary.successful_requests} successful responses carried no usage block"
     if allow_missing:
         return "warn", (
-            "WARNING: no usage block in any response; token counts and throughputs "
-            "are zero-filled. Continuing because --allow-missing-usage was passed."
+            f"WARNING: {what}; their token counts are zero-filled and every throughput "
+            "is understated. Continuing because --allow-missing-usage was passed."
         )
     return "abort", (
-        "ABORT: no response carried a usage block, so every token count and "
-        "throughput in this run would be 0 rather than measured. The server must "
-        "honour stream_options.include_usage. Pass --allow-missing-usage to record "
-        "the run anyway (latency metrics stay valid; token metrics do not)."
+        f"ABORT: {what}, so their token counts and every throughput built on them "
+        "would be 0 rather than measured. The server must honour stream_options.include_usage. "
+        "Pass --allow-missing-usage to record the run anyway."
     )
 
 

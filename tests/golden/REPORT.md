@@ -4,6 +4,8 @@ Run `python3 -m pytest tests/golden -q`. `QBENCH_GOLDEN_REGEN=1` rewrites the fi
 
 ## Fixture changes
 
+2026-10-18: `aggregate_summary.json` TPOT fields moved: `summary.mean_tpot_ms` 22.4 to 24.6, `summary.median_tpot_ms` 20.5 to 23.5, `summary.p90_tpot_ms` 26.2 to 27.6, `summary.p99_tpot_ms` 29.62 to 29.76, and `per_request_tpot_s` for requests 0 to 3 from 0.0205 (the mean chunk gap) to 0.0225, 0.023, 0.0235 and 0.024 (decode time over 40 tokens), request 6 from 0.05 to null (one output token). `RequestResult.tpot` is now (e2el - ttft) / (output_tokens - 1) for every request; it averaged the streamed chunk gaps when chunks covered 80% of the tokens, so two servers chunking the same decode differently read different TPOTs. Chunk gaps stay in `itl`. Every other value is as before.
+
 2026-10-18: `aggregate_summary.json` gains `server_cached_tokens` and `server_cache_hit_rate`, null here because no request in the fixture carries an engine-reported cached count. These are the cache-hit metric; `cache_hit_rate` and the per-turn `median_cache_hit_rate` are the prompt share an ideal cache could reuse, an upper bound. Every other value is as before.
 
 2026-10-18: `percentiles.json` nearest-rank values moved one rank down where `p/100 * n` is a whole number: `arange_1000` p50/p90/p95/p99 are 499/899/949/989 (were 500/900/950/990) and `two` p50 is 10 (was 20). `percentile(..., "nearest")` now takes the ceil(p/100 * n)-th smallest value, the nearest-rank definition; it took the (floor(p/100 * n) + 1)-th, one rank high whenever the product was whole. Serve, SLA and burst percentiles in recorded runs are from the old rank; linear percentiles did not move.

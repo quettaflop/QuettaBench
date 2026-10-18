@@ -211,7 +211,12 @@ class GateTest(unittest.TestCase):
         verdict, msg = usage_gate(_summary(10, 10, 0), True)
         self.assertEqual(verdict, "warn")
         self.assertIn("--allow-missing-usage was passed", msg)
-        self.assertEqual(usage_gate(_summary(10, 10, 3), False), ("pass", None))
+        # Every successful response must report usage; three of ten is an abort, not a pass.
+        verdict, msg = usage_gate(_summary(10, 10, 3), False)
+        self.assertEqual(verdict, "abort")
+        self.assertIn("7 of 10 successful responses carried no usage block", msg)
+        self.assertEqual(usage_gate(_summary(10, 10, 10), False), ("pass", None))
+        self.assertEqual(usage_gate(_summary(10, 8, 8, {"timeout": 2}), False), ("pass", None))
         self.assertEqual(usage_gate(_summary(10, 0, 0), False), ("pass", None))
 
     def test_transient(self):
@@ -498,6 +503,17 @@ class TestOpenLoopUnits(unittest.TestCase):
                 out.append(r)
         return out
 
+    def test_a_session_run_has_no_index_based_steady_ttft(self):
+        single = [_req(i * 0.1, i * 0.1 + 0.5) for i in range(12)]
+        for i, r in enumerate(single):
+            r.request_index = i
+        self.assertIsNotNone(
+            aggregate(single, duration_s=2.0, load_mode="closed-loop", concurrency=2).steady_median_ttft_ms
+        )
+        s = aggregate(self._multi_turn(), duration_s=10.0, load_mode="closed-loop", concurrency=2)
+        self.assertIsNone(s.steady_median_ttft_ms)
+        self.assertIsNone(s.steady_p99_ttft_ms)
+
     def test_session_throughput_counts_sessions_not_turns(self):
         s = aggregate(self._multi_turn(), duration_s=10.0, load_mode="open-loop", target_rate=0.4)
         self.assertEqual((s.sessions_completed, s.sessions_failed), (4, 0))
@@ -539,40 +555,82 @@ class TestOpenLoopUnits(unittest.TestCase):
         self.assertIsNone(s.server_cached_tokens)
         self.assertIsNone(s.server_cache_hit_rate)
 
-    def test_steady_window_opens_at_the_excl_th_admission_and_closes_at_the_n_minus_excl_th_finish(self):
-        # 10 sessions through 2 agents, admitted two per second, each lasting 3 s: excl = 2, so the window opens
-        # when the 2nd session is admitted (0 s) and closes when the 9th admitted session finishes (4 + 3 = 7 s).
-        times = {sid: (0.0, float(sid // 2), float(sid // 2) + 3.0) for sid in range(10)}
+    def test_steady_window_is_the_interval_with_every_agent_busy(self):
+        # Two agents, six sessions of very unequal length: S5 runs 97 s. The last admission is S6 at 4 s and the
+        # first finish after it is S6 at 5 s, so the window is 0 s to 5 s. The old rule, the (N - C + 1)-th admitted
+        # session's finish, would have closed it at S5's 100 s and reported 95 s of drain as steady.
+        times = {
+            1: (0.0, 0.0, 1.0),
+            2: (0.0, 0.0, 3.0),
+            3: (0.0, 1.0, 2.0),
+            4: (0.0, 2.0, 4.0),
+            5: (0.0, 3.0, 100.0),
+            6: (0.0, 4.0, 5.0),
+        }
         w = steady_window(times, concurrency=2)
-        self.assertTrue(w["valid"])
-        self.assertEqual((w["start_s"], w["end_s"], w["window_s"], w["excluded_sessions"]), (0.0, 7.0, 7.0, 2))
+        self.assertTrue(w["valid"], w)
+        self.assertEqual((w["start_s"], w["end_s"], w["window_s"], w["agents"]), (0.0, 5.0, 5.0, 2))
 
-    def test_too_few_sessions_leave_no_steady_window_and_no_substitute(self):
-        times = {sid: (0.0, float(sid), float(sid) + 3.0) for sid in range(4)}
+    def test_no_more_sessions_than_agents_leaves_no_steady_window_and_no_substitute(self):
+        times = {0: (0.0, 0.0, 3.0), 1: (0.0, 0.0, 9.0)}
         w = steady_window(times, concurrency=2)
         self.assertFalse(w["valid"])
-        self.assertIn("4 sessions; a steady window needs more than 4", w["reason"])
+        self.assertIn("2 sessions for 2 agents", w["reason"])
         self.assertNotIn("output_token_throughput", steady_section([], times, 2))
+        # Three sessions: S2 waits for S0's agent, so the agents are full from 0 s until S2 finishes at 2 s.
+        w = steady_window({0: (0.0, 0.0, 1.0), 1: (0.0, 0.0, 3.0), 2: (0.0, 1.0, 2.0)}, concurrency=2)
+        self.assertEqual((w["valid"], w["start_s"], w["end_s"]), (True, 0.0, 2.0))
 
-    def test_steady_section_counts_only_what_completed_inside_the_window(self):
-        times = {sid: (0.0, float(sid // 2), float(sid // 2) + 3.0) for sid in range(10)}  # window 0 s to 7 s
+    def test_an_agent_left_idle_by_recorded_arrivals_voids_the_window(self):
+        # S2 arrives only at 2 s although S0 freed its agent at 1 s: one agent sat idle for 1 s inside the window.
+        times = {0: (0.0, 0.0, 1.0), 1: (0.0, 0.0, 3.0), 2: (2.0, 2.0, 4.0), 3: (3.0, 3.0, 5.0)}
+        w = steady_window(times, concurrency=2)
+        self.assertFalse(w["valid"])
+        self.assertIn("an agent was idle 1.000 s from 1.000 s", w["reason"])
+
+    def _two_agents_ten_sessions(self):
+        # Two agents, 1 s turns of 5 tokens; sessions 0 to 8 have 3 turns, session 9 has 6: the window is 0 s to
+        # 15 s (S8 finishes first after the last admission at 12 s) and S9's last three turns fall in the drain.
+        turns = {sid: 6 if sid == 9 else 3 for sid in range(10)}
+        times = {sid: (0.0, 3.0 * (sid // 2), 3.0 * (sid // 2) + turns[sid]) for sid in range(10)}
         rows = []
-        for sid, (_, admitted, finished) in times.items():
-            for t in range(3):
+        for sid, (_, admitted, _) in times.items():
+            for t in range(turns[sid]):
                 r = _req(admitted + t, admitted + t + 1.0)
                 r.session_id, r.turn_index = sid, t
                 r.semaphore_acquired_at_s, r.completed_at_s = admitted + t, admitted + t + 1.0
                 rows.append(r)
-        rows[-1].success = False  # session 9 fails on its last turn
-        s = steady_section(rows, times, concurrency=2)
-        done = [r for r in rows if r.success and r.completed_at_s <= 7.0]
-        self.assertEqual(s["requests_completed"], len(done))
-        self.assertAlmostEqual(s["output_token_throughput"], 5 * len(done) / 7.0)
-        # Sessions 0 to 7 finish by 6 s; sessions 8 and 9 finish at 7 s but 9 failed.
-        self.assertEqual(s["sessions_completed"], 9)
-        self.assertAlmostEqual(s["sessions_per_hour"], 3600 * 9 / 7.0)
+        return rows, times
+
+    def test_steady_section_counts_tokens_by_arrival_and_shows_the_window_was_steady(self):
+        rows, times = self._two_agents_ten_sessions()
+        next(r for r in rows if (r.session_id, r.turn_index) == (8, 2)).success = False
+        s = steady_section(rows, times, concurrency=2, bin_s=5.0)
+        self.assertEqual((s["start_s"], s["end_s"]), (0.0, 15.0))
+        done = [r for r in rows if r.success and r.completed_at_s <= 15.0]
+        self.assertEqual((s["requests_completed"], s["requests_inside"]), (len(done), len(done)))
+        self.assertAlmostEqual(s["output_token_throughput"], 5 * len(done) / 15.0)
+        self.assertEqual(s["sessions_completed"], 8)  # S0 to S7; S8 failed a turn, S9 is still running
+        self.assertAlmostEqual(s["sessions_per_hour"], 3600 * 8 / 15.0)
         self.assertEqual(s["ttft_ms"][50], 10.0)
-        self.assertAlmostEqual(s["interactivity_p90_tok_s"], 100.0)
+        # Every request: (1000 - 10) ms over 4 tokens after the first, so 247.5 ms per token.
+        self.assertAlmostEqual(s["tpot_ms"][90], 247.5)
+        self.assertAlmostEqual(s["interactivity_p90_tok_s"], 1000 / 247.5)
+        self.assertEqual(s["chunk_gap_ms"][50], 10.0)
+        tl = s["timeline"]
+        self.assertEqual((tl["bin_s"], tl["bins"]), (5.0, 3))
+        self.assertAlmostEqual(tl["output_tok_s"]["max"], 10.0)
+        self.assertAlmostEqual(tl["output_tok_s"]["min"], 9.0)  # the failed turn's tokens are missing from the last bin
+        self.assertAlmostEqual(tl["requests_in_flight"]["max"], 2.0)
+        self.assertAlmostEqual(tl["requests_in_flight"]["min"], 1.8)
+
+    def test_a_request_straddling_the_window_edge_counts_only_its_tokens_inside(self):
+        rows, times = self._two_agents_ten_sessions()
+        # Stretch S9's third turn (14 s to 15 s) so its five chunks arrive at 14.01, 14.51, 15.01, 15.51 and 16.01 s.
+        r = next(r for r in rows if (r.session_id, r.turn_index) == (9, 2))
+        r.itl, r.e2el, r.completed_at_s = [0.5] * 4, 2.02, 16.02
+        s = steady_section(rows, times, concurrency=2, bin_s=5.0)
+        self.assertAlmostEqual(s["output_token_throughput"], (5 * 29 + 2) / 15.0)
 
     def test_single_turn_has_no_sessions_so_falls_back_to_requests(self):
         s = aggregate([_req(i, i + 1) for i in range(10)], duration_s=10.0, load_mode="open-loop", target_rate=1.0)

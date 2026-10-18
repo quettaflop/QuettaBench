@@ -409,6 +409,36 @@ class PinnedOutputTests(unittest.TestCase):
         self.assertEqual(session.payload["min_tokens"], 120)
         self.assertEqual(session.payload["max_tokens"], 120)
 
+    def test_a_stream_that_ends_without_done_is_an_incomplete_failure_with_its_timings(self):
+        session = _ChatSession(_chat_sse([_delta("a"), _delta("b")])[:-1])
+        r = asyncio.run(
+            send_request(
+                session=session,
+                url="http://stub/v1/chat/completions",
+                model="m",
+                messages=[{"role": "user", "content": "hi"}],
+                max_tokens=2,
+            )
+        )
+        self.assertEqual((r.success, r.error_kind), (False, "incomplete_stream"))
+        self.assertIn("without [DONE]", r.error)
+        self.assertIsNotNone(r.ttft)
+        self.assertEqual(len(r.itl), 1)
+
+    def test_an_error_payload_in_the_stream_is_a_server_error(self):
+        lines = _chat_sse([_delta("a"), {"error": {"message": "context length exceeded", "type": "invalid_request"}}])
+        r = asyncio.run(
+            send_request(
+                session=_ChatSession(lines),
+                url="http://stub/v1/chat/completions",
+                model="m",
+                messages=[{"role": "user", "content": "hi"}],
+                max_tokens=2,
+            )
+        )
+        self.assertEqual((r.success, r.error_kind), (False, "server_error"))
+        self.assertIn("context length exceeded", r.error)
+
     def test_absent_unless_asked(self):
         session = _ChatSession(_chat_sse([_delta("a")]))
         asyncio.run(
@@ -517,34 +547,30 @@ except ModuleNotFoundError:
     HAVE_AIOHTTP = False
 
 
-class TestTpotCoverageGuard(unittest.TestCase):
-    def test_full_coverage_keeps_mean_itl(self):
+class TestTpot(unittest.TestCase):
+    """One formula, (e2el - ttft) / (output_tokens - 1), whatever the server's chunking."""
+
+    def test_decode_time_per_generated_token(self):
         r = RequestResult(success=True, ttft=0.05, e2el=1.05, itl=[0.01] * 99, output_tokens=100)
-        self.assertAlmostEqual(r.tpot, 0.01)
+        self.assertAlmostEqual(r.tpot, 1.0 / 99)
 
-    def test_sparse_coverage_falls_back_to_wall_clock(self):
-        # gpt-oss-on-vllm signature: 54 chunks for 269 tokens, one giant gap.
-        itl = [2.505] + [0.0104] * 53
-        r = RequestResult(success=True, ttft=0.25, e2el=3.32, itl=itl, output_tokens=269)
-        # Wall clock gives ~11.5 ms/token; mean(itl) would say ~57.
+    def test_chunking_does_not_change_it(self):
+        # gpt-oss-on-vllm signature: 54 chunks for 269 tokens, one giant gap; mean(itl) would say 57 ms/token.
+        r = RequestResult(success=True, ttft=0.25, e2el=3.32, itl=[2.505] + [0.0104] * 53, output_tokens=269)
         self.assertAlmostEqual(r.tpot, (3.32 - 0.25) / 268)
-        self.assertLess(r.tpot, 0.013)
 
-    def test_short_outputs_keep_mean_itl(self):
+    def test_short_outputs_use_the_same_formula(self):
         r = RequestResult(success=True, ttft=0.05, e2el=0.10, itl=[0.011, 0.012], output_tokens=3)
-        self.assertAlmostEqual(r.tpot, (0.011 + 0.012) / 2)
+        self.assertAlmostEqual(r.tpot, 0.05 / 2)
 
-    def test_no_itl_falls_back(self):
+    def test_without_chunk_gaps(self):
         r = RequestResult(success=True, ttft=0.4, e2el=2.4, itl=[], output_tokens=201)
         self.assertAlmostEqual(r.tpot, 2.0 / 200)
 
-    def test_no_itl_no_ttft_is_none(self):
-        r = RequestResult(success=True, e2el=2.4, output_tokens=201)
-        self.assertIsNone(r.tpot)
-
-    def test_sparse_coverage_without_wall_clock_keeps_mean(self):
-        r = RequestResult(success=True, itl=[0.5, 0.01], output_tokens=100)
-        self.assertAlmostEqual(r.tpot, 0.255)
+    def test_none_without_a_first_or_second_token(self):
+        self.assertIsNone(RequestResult(success=True, e2el=2.4, output_tokens=201).tpot)
+        self.assertIsNone(RequestResult(success=True, ttft=0.1, e2el=0.3, output_tokens=1).tpot)
+        self.assertIsNone(RequestResult(success=True, itl=[0.5, 0.01], output_tokens=100).tpot)
 
 
 def _sse(payload) -> bytes:
