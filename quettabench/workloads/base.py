@@ -44,13 +44,17 @@ class Request:
         return {k: v for k, v in asdict(plain).items() if v is not None}
 
 
-def messages_digest(messages):
-    """Assistant content left out because a live run writes replies there."""
-    plain = [{k: v for k, v in m.items() if not (m.get("role") == "assistant" and k == "content")} for m in messages]
+def messages_digest(messages, live_replies=False):
+    """Everything sent. With live_replies the assistant content is left out, because the run writes the engine's
+    replies there before later turns go out."""
+    plain = [
+        {k: v for k, v in m.items() if not (live_replies and m.get("role") == "assistant" and k == "content")}
+        for m in messages
+    ]
     return hashlib.sha256(json.dumps(plain, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
-def request_digest(r):
+def request_digest(r, live_replies=False):
     """Never generated tokens or timings."""
     messages = r.messages if isinstance(r, Request) else r.get("messages")
     tools = r.tools if isinstance(r, Request) else r.get("tools")
@@ -68,15 +72,15 @@ def request_digest(r):
         str(r.get("turn", "")),
     ]
     if not ids and messages:
-        parts.append(messages_digest(messages))
+        parts.append(messages_digest(messages, live_replies))
     if not ids and tools:
         parts.append(hashlib.sha256(json.dumps(tools, sort_keys=True, separators=(",", ":")).encode()).hexdigest())
     return hashlib.sha256("|".join(parts).encode()).hexdigest()
 
 
-def workload_hash(reqs):
+def workload_hash(reqs, live_replies=False):
     """Independent of order."""
-    digs = sorted(request_digest(r) for r in reqs)
+    digs = sorted(request_digest(r, live_replies) for r in reqs)
     h = hashlib.sha256()
     h.update(str(len(digs)).encode())
     for d in digs:
@@ -89,6 +93,9 @@ class Trace(ABC):
     """supports_spec: requests carry real assistant tokens to score acceptance against."""
 
     supports_spec: bool = False
+    # True when the run splices the engine's replies into later turns, so assistant content is not part of
+    # what the trace sends.
+    live_replies: bool = False
 
     @abstractmethod
     def requests(self) -> list[Request]:
@@ -99,7 +106,7 @@ class Trace(ABC):
         """Provenance for the results file: path, reader, sources."""
 
     def workload_hash(self) -> str:
-        return workload_hash(self.requests())
+        return workload_hash(self.requests(), self.live_replies)
 
     def warmup_requests(self, n) -> list[Request]:
         """The trace's own, cycled."""

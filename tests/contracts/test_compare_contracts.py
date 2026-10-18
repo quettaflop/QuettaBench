@@ -656,7 +656,11 @@ class TableParity(unittest.TestCase):
 
         self.assertNotEqual(workload_hash(chat("a")), workload_hash(chat("b")))
         # Assistant content is the engine's reply in a live session, so it does not count.
-        self.assertEqual(workload_hash(chat("a", "x")), workload_hash(chat("a", "y")))
+        # A recorded reply is sent, so it is hashed; a live reply (the run writes the engine's answer there) is not.
+        self.assertNotEqual(workload_hash(chat("a", "x")), workload_hash(chat("a", "y")))
+        self.assertEqual(
+            workload_hash(chat("a", "x"), live_replies=True), workload_hash(chat("a", "y"), live_replies=True)
+        )
         ids = [Request([1, 2, 3], 3, output_length=8)]
         with_messages = [Request([1, 2, 3], 3, output_length=8, messages=chat("a")[0].messages)]
         self.assertEqual(workload_hash(ids), workload_hash(with_messages))

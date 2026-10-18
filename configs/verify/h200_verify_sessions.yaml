@@ -28,6 +28,7 @@ engine:
       enable_prompt_tokens_details: true
 workload:
   kind: sessions
+  use_recorded_waits: true  # an agent waits as long as it did while its tools ran
 mode:
   mode: serve
   load: closed

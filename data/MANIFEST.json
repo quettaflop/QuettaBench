@@ -3,7 +3,7 @@
   "prefix": "campaign-2026-10/workloads",
   "files": {
     "swebench_native_trajectories.jsonl": {
-      "sha256": "ee33b744eb1b11ff685074bbb0e2d711be34a5fafab2ab30375ac9dea5cbf4e5",
+      "sha256": "9a6c0eb015f5af1a019f535afa9a02ce8394f345c0175927fe0d26af6f6a0cbe",
       "built_by": "data/build_trajectories.py swebench-native --runs data/raw/swebench_native_c8 (just fetch builds it)",
       "source": "sources/swebench-verified_qwen38-flash-next_native_2026-09-10 (mini-swe-agent run qwen-native-c8-2026-09-10, 8 agents)",
       "benchmark": "SWE-bench Verified",
@@ -30,10 +30,11 @@
         872,
         6103
       ],
-      "request_fidelity": "5112 of 5112 steps rebuild the recorded prompt_tokens exactly (chat template + bash tool schema)"
+      "request_fidelity": "5112 of 5112 steps rebuild the recorded prompt_tokens exactly (chat template + bash tool schema)",
+      "recorded_waits": "tool_ms is the sidecar's reply end to next request sent: p50 0.27 s, p90 4.2 s, max 82 s per step; p50 42 s, max 895 s per session; every session"
     },
     "terminalbench_qwen_trajectories.jsonl": {
-      "sha256": "7db96516a41392160c27b0aaa284174eb753fc564e14a9f7f789efbdfb2735b3",
+      "sha256": "e53c3655cf2cb4c78405774b293148adb0fea2ea0d455bff61716f480cbb26f9",
       "built_by": "data/build_trajectories.py terminalbench-atif --jobs data/raw/terminalbench_jobs (just fetch builds it)",
       "source": "sources/terminalbench-2-1_qwen38-flash-next_2026-08-27 (Harbor jobs 2026-08-27__22-17-10 and 2026-08-27__22-40-28)",
       "benchmark": "Terminal-Bench 2.1",
@@ -60,7 +61,8 @@
         6892,
         41638
       ],
-      "request_fidelity": "rebuilt / recorded prompt_tokens: p1 0.993, p50 1.000, p99 1.055; 1270 of 1563 steps within 1%, 506 exact; the model's reply text is not recorded, so its JSON whitespace is rebuilt"
+      "request_fidelity": "rebuilt / recorded prompt_tokens: p1 0.993, p50 1.000, p99 1.055; 1270 of 1563 steps within 1%, 506 exact; the model's reply text is not recorded, so its JSON whitespace is rebuilt",
+      "recorded_waits": "tool_ms is telemetry.jsonl's model end to next model start: p50 5.2 s, p90 60 s, max 780 s per step; p50 215 s, max 4335 s per session; 65 of 74 sessions (recorded_waits false on the other 9, whose telemetry has a different number of model rows than the trajectory has steps)"
     },
     "deepresearch_trajectories.jsonl": {
       "sha256": "8dbc1998b62a6726a4e444895574f6cd6f15a2a5281997c411acdb9ecaf69347",

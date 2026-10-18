@@ -4,6 +4,10 @@ Run `python3 -m pytest tests/golden -q`. `QBENCH_GOLDEN_REGEN=1` rewrites the fi
 
 ## Fixture changes
 
+2026-10-18: no fixture changed; the session digests in `tests/contracts/test_workloads.py` moved because `source_meta()` carries `strata` (the stratum counts of a stratified sample, null otherwise). Workload hashes did not move.
+
+2026-10-18: no fixture changed; the trajectory and chat session digests in `tests/contracts/test_workloads.py` moved because `source_meta()` now carries `file_sha256`, the replayed file's digest, and `run.json` gains `summary.trace` (the source metadata with the sample's session ids in order). `workload_hash` now hashes recorded assistant content; a trace whose replies are live (ShareGPT placeholders) leaves it out as before. The fixture trajectories have no assistant turns, so their workload hashes did not move.
+
 2026-10-18: `aggregate_summary.json` TPOT fields moved: `summary.mean_tpot_ms` 22.4 to 24.6, `summary.median_tpot_ms` 20.5 to 23.5, `summary.p90_tpot_ms` 26.2 to 27.6, `summary.p99_tpot_ms` 29.62 to 29.76, and `per_request_tpot_s` for requests 0 to 3 from 0.0205 (the mean chunk gap) to 0.0225, 0.023, 0.0235 and 0.024 (decode time over 40 tokens), request 6 from 0.05 to null (one output token). `RequestResult.tpot` is now (e2el - ttft) / (output_tokens - 1) for every request; it averaged the streamed chunk gaps when chunks covered 80% of the tokens, so two servers chunking the same decode differently read different TPOTs. Chunk gaps stay in `itl`. Every other value is as before.
 
 2026-10-18: `aggregate_summary.json` gains `server_cached_tokens` and `server_cache_hit_rate`, null here because no request in the fixture carries an engine-reported cached count. These are the cache-hit metric; `cache_hit_rate` and the per-turn `median_cache_hit_rate` are the prompt share an ideal cache could reuse, an upper bound. Every other value is as before.

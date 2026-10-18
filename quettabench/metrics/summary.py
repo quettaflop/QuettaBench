@@ -325,9 +325,8 @@ PERCENTILE_METHODS = ("nearest", "linear")
 
 
 def percentile(values, p: float, method: str) -> float:
-    """ "nearest" is the nearest-rank value, the ceil(p/100 * n)-th smallest, so p50 of two values is the lower
-    one; it raises on no values. "linear" interpolates and returns 0.0 on no values. They disagree on most
-    inputs."""
+    """ "nearest" is the ceil(p/100 * n)-th smallest value and raises on no values; "linear" interpolates and returns
+    0.0 on no values."""
     if method not in PERCENTILE_METHODS:
         raise ValueError(f"unknown percentile method {method!r}; expected one of {PERCENTILE_METHODS}")
     sorted_data = sorted(values)
@@ -354,12 +353,9 @@ def pcts(values, method: str) -> dict:
 HANDOVER_S = 0.05
 
 
-def steady_window(session_times: dict, concurrency: int) -> dict:
-    """The part of a closed-loop session run in which every agent is busy: from the admission that fills the last
-    free agent to the first finish after the last admission, when the backlog is empty and agents start to go idle.
-    Sessions of very different lengths cannot stretch it into the drain. It needs more sessions than agents, and the
-    agents must stay full throughout: a run whose sessions wait for recorded arrival times can leave an agent idle,
-    and then has no steady window. session_times maps a session to (arrived, admitted, finished) seconds."""
+def steady_window(session_times: dict, concurrency: int, end_s: float | None = None) -> dict:
+    """The span in which every agent is busy: from the last free agent filled to the first finish after the last
+    admission, or to end_s for a recycled replay. Invalid, with the reason, when the agents never fill or one sits idle."""
     n, c = len(session_times), max(1, concurrency)
     out: dict = {"valid": False, "sessions": n, "agents": c}
     if n <= c:
@@ -367,7 +363,7 @@ def steady_window(session_times: dict, concurrency: int) -> dict:
         return out
     times = sorted(session_times.values(), key=lambda t: t[1])
     start, last_admitted = times[c - 1][1], times[-1][1]
-    end = min(fin for _, adm, fin in times if fin > last_admitted)
+    end = end_s if end_s is not None else min(fin for _, adm, fin in times if fin > last_admitted)
     # A freed agent takes the next session microseconds after the last one finishes; an agent idle for longer
     # than HANDOVER_S inside the window was waiting for a session's recorded arrival.
     open_now, idle_since = 0, None
@@ -400,9 +396,8 @@ def chunk_times(r) -> list[float]:
 
 
 def tokens_by_arrival(ok, start: float, end: float, widths: list[float]) -> tuple[float, float, list[float]]:
-    """Output tokens that arrived inside [start, end], in total and per bin, with the prompt tokens of requests whose
-    first token arrived inside. A request's output is spread evenly over its chunks, so one that straddles an edge
-    counts only its share inside."""
+    """Output tokens that arrived inside [start, end], in total and per bin, and the prompt tokens of requests whose
+    first token did; a request's output is spread evenly over its chunks."""
     bin_s, out_tok, in_tok, bins = widths[0], 0.0, 0.0, [0.0] * len(widths)
     for r in ok:
         chunks = chunk_times(r)
@@ -430,11 +425,12 @@ def in_flight_by_bin(ok, start: float, widths: list[float]) -> list[float]:
     return inflight
 
 
-def steady_section(results, session_times: dict, concurrency: int, bin_s: float = 10.0) -> dict:
-    """Throughput from tokens that arrived inside the window, request and session rates from completions inside it,
-    latency from requests that started and finished inside it. The timeline bins output tok/s and requests in flight
-    every bin_s, to show the window was steady and not merely full."""
-    w = steady_window(session_times, concurrency)
+def steady_section(
+    results, session_times: dict, concurrency: int, bin_s: float = 10.0, end_s: float | None = None
+) -> dict:
+    """The steady window's throughput, rates and latency percentiles, with a per-bin timeline that shows the window
+    held. Takes the dispatcher's session_times and the run's agent count."""
+    w = steady_window(session_times, concurrency, end_s)
     if not w["valid"]:
         return w
     start, end, span = w["start_s"], w["end_s"], w["window_s"]

@@ -115,6 +115,9 @@ class WorkloadCfg:
     use_recorded_arrivals: bool = False
     max_turn_index: int | None = None
     num_sessions: int | None = None  # None: the profile's count; at least concurrency
+    # Order the sample round-robin across strata of turn count and prompt size (and, with num_sessions, take each
+    # stratum's share), so the sessions open at any moment mix like the whole sample.
+    stratified: bool = False
 
 
 @dataclass(frozen=True)
@@ -130,6 +133,8 @@ class ModeCfg:
     temperature: float = 0.0
     sampling_seed: int | None = None
     exact_output_length: bool = False
+    # Recycled replay: the agents draw the sample in a cycle for this long, each play salted; 0 plays each once.
+    duration_s: float = 0.0
     timeout: int = 120
     min_success_rate: float = 0.75
     reset_prefix_cache: bool = False  # POST the engine's prefix-cache reset after warmup

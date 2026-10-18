@@ -28,6 +28,7 @@ HF_DATASET = "Aeala/ShareGPT_Vicuna_unfiltered"
 
 def _load_tokenizer(name: str):
     from transformers import AutoTokenizer
+
     return AutoTokenizer.from_pretrained(name)
 
 
@@ -95,23 +96,31 @@ def build_chat(args: argparse.Namespace) -> int:
                     continue
                 if args.max_context_tokens and input_tokens > args.max_context_tokens:
                     break
-                turns.append({
-                    "turn_idx": idx,
-                    "messages": new_msgs,
-                    "input_tokens": int(input_tokens),
-                    "output_tokens": int(output_tokens),
-                })
+                turns.append(
+                    {
+                        "turn_idx": idx,
+                        "messages": new_msgs,
+                        "input_tokens": int(input_tokens),
+                        "output_tokens": int(output_tokens),
+                    }
+                )
                 history = history + new_msgs + [{"role": "assistant", "content": assistant}]
 
             if len(turns) < args.min_turns:
                 skipped += 1
                 continue
-            fh.write(json.dumps({
-                "session_id": str(item.get("id") or f"sharegpt_{i}"),
-                "source": "sharegpt",
-                "num_turns": len(turns),
-                "turns": turns,
-            }, ensure_ascii=False) + "\n")
+            fh.write(
+                json.dumps(
+                    {
+                        "session_id": str(item.get("id") or f"sharegpt_{i}"),
+                        "source": "sharegpt",
+                        "num_turns": len(turns),
+                        "turns": turns,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
             sessions += 1
             turns_total += len(turns)
             if sessions % 500 == 0:
@@ -119,8 +128,7 @@ def build_chat(args: argparse.Namespace) -> int:
 
     size_mb = out_path.stat().st_size / 1e6
     print(f"[chat-traj] WROTE {out_path}", flush=True)
-    print(f"[chat-traj] sessions={sessions} turns={turns_total} "
-          f"skipped={skipped} size={size_mb:.1f} MB", flush=True)
+    print(f"[chat-traj] sessions={sessions} turns={turns_total} skipped={skipped} size={size_mb:.1f} MB", flush=True)
     print(f"[chat-traj] dataset={HF_DATASET} tokenizer={args.tokenizer}", flush=True)
     if not sessions:
         print("[chat-traj] FAIL: no sessions written", file=sys.stderr)
@@ -138,11 +146,16 @@ def build_chat(args: argparse.Namespace) -> int:
             elif len(set(toks)) == 1:
                 flat += 1
     multi = grew + flat
-    print(f"[chat-traj] self-check: strictly-growing context {grew}/{multi} "
-          f"multi-turn sessions (flat: {flat})", flush=True)
+    print(
+        f"[chat-traj] self-check: strictly-growing context {grew}/{multi} multi-turn sessions (flat: {flat})",
+        flush=True,
+    )
     if multi and grew / multi < 0.9:
-        print("[chat-traj] FAIL: context is not growing across turns -- the token "
-              "counter is wrong; refusing to ship this artifact", file=sys.stderr)
+        print(
+            "[chat-traj] FAIL: context is not growing across turns -- the token "
+            "counter is wrong; refusing to ship this artifact",
+            file=sys.stderr,
+        )
         return 1
     return 0
 
@@ -246,8 +259,7 @@ def convert_trace(path: Path) -> dict[str, Any] | None:
     }
 
 
-def write_llmservingsim(sessions: list[dict[str, Any]], out: Path,
-                        arrival: str, rate: float, seed: int) -> None:
+def write_llmservingsim(sessions: list[dict[str, Any]], out: Path, arrival: str, rate: float, seed: int) -> None:
     """Only the session carries an arrival time; sub-requests chain on tool_duration_ns."""
     rng = random.Random(seed)
 
@@ -272,18 +284,23 @@ def write_llmservingsim(sessions: list[dict[str, Any]], out: Path,
             else:
                 clock_ns += int(rng.expovariate(rate) * 1e9)
                 arrival_ns = clock_ns
-            f.write(json.dumps({
-                "session_id": s["session_id"],
-                "arrival_time_ns": arrival_ns,
-                "sub_requests": [
+            f.write(
+                json.dumps(
                     {
-                        "input_toks": t["input_tokens"],
-                        "output_toks": t["output_tokens"],
-                        "tool_duration_ns": int(round(t.get("tool_ms", 0.0) * 1e6)),
+                        "session_id": s["session_id"],
+                        "arrival_time_ns": arrival_ns,
+                        "sub_requests": [
+                            {
+                                "input_toks": t["input_tokens"],
+                                "output_toks": t["output_tokens"],
+                                "tool_duration_ns": int(round(t.get("tool_ms", 0.0) * 1e6)),
+                            }
+                            for t in s["turns"]
+                        ],
                     }
-                    for t in s["turns"]
-                ],
-            }) + "\n")
+                )
+                + "\n"
+            )
     print(f"[write] {out}  (LLMServingSim agentic, arrival={arrival})")
 
 
@@ -325,8 +342,7 @@ def build_claweval(args: argparse.Namespace) -> int:
             f.write(json.dumps(s) + "\n")
 
     if args.lss_out:
-        write_llmservingsim(sessions, args.lss_out, args.lss_arrival,
-                            args.lss_rate, args.lss_seed)
+        write_llmservingsim(sessions, args.lss_out, args.lss_arrival, args.lss_rate, args.lss_seed)
 
     turn_counts = [s["num_turns"] for s in sessions]
     all_ctx = [t["input_tokens"] for s in sessions for t in s["turns"]]
@@ -336,14 +352,20 @@ def build_claweval(args: argparse.Namespace) -> int:
     print(f"[write] {args.out}")
     print(f"  trace files      : {len(files)}  (skipped, no usable turns: {empty})")
     print(f"  sessions         : {len(sessions)}")
-    print(f"  turns            : {sum(turn_counts)}  "
-          f"(min={min(turn_counts)} p50={statistics.median(turn_counts):.0f} max={max(turn_counts)})")
+    print(
+        f"  turns            : {sum(turn_counts)}  "
+        f"(min={min(turn_counts)} p50={statistics.median(turn_counts):.0f} max={max(turn_counts)})"
+    )
     print(f"  context tokens   : p50={statistics.median(all_ctx):,.0f} max={max(all_ctx):,}")
     print(f"  output tokens    : p50={statistics.median(all_out):,.0f} max={max(all_out):,}")
     print(f"  turns w/ thinking: {thinking} ({thinking * 100 // max(1, sum(turn_counts))}%)")
     print("  turn buckets:")
-    for lo, hi, label in [(1, 5, "short (1-5)"), (5, 10, "medium (5-10)"),
-                          (10, 20, "long (10-20)"), (20, 1000, "xl (20+)")]:
+    for lo, hi, label in [
+        (1, 5, "short (1-5)"),
+        (5, 10, "medium (5-10)"),
+        (10, 20, "long (10-20)"),
+        (20, 1000, "xl (20+)"),
+    ]:
         n = sum(1 for t in turn_counts if lo <= t < hi)
         print(f"    {label}: {n} sessions")
     return 0
@@ -371,8 +393,10 @@ def write_sessions(sessions: list[dict[str, Any]], out: Path) -> None:
         for s in sessions:
             f.write(json.dumps(s) + "\n")
     steps = sorted(s["num_turns"] for s in sessions)
-    print(f"[write] {out}: {len(sessions)} sessions, {sum(steps)} turns, "
-          f"steps {steps[0]}-{steps[-1]} (median {steps[len(steps) // 2]})")
+    print(
+        f"[write] {out}: {len(sessions)} sessions, {sum(steps)} turns, "
+        f"steps {steps[0]}-{steps[-1]} (median {steps[len(steps) // 2]})"
+    )
 
 
 def build_deepresearch(args: argparse.Namespace) -> int:
@@ -400,12 +424,17 @@ MINI_SWE_AGENT_BASH_TOOL = {
 }
 
 
+def wait_after_ms(reqs: list[dict[str, Any]], k: int) -> float:
+    """The recorded gap from reply k's end to request k+1's send, in ms; 0 after the last."""
+    if k + 1 >= len(reqs):
+        return 0.0
+    return max(0.0, 1000.0 * (float(reqs[k + 1]["t_request_sent"]) - float(reqs[k]["t_response_done"])))
+
+
 def swebench_native_session(run_dir: Path) -> dict[str, Any] | None:
-    """One mini-swe-agent session with its per-request sidecar, each step's request as the agent sent it: every
-    earlier message without mini-swe-agent's "extra" key or empty fields (tool calls, tool results and the model's
-    reasoning included) and the bash tool schema. Its output length is the server's completion_tokens for that
-    request, reasoning included. None when the sidecar and the trajectory disagree on the number of model calls
-    (retries, malformed replies)."""
+    """One session from a mini-swe-agent run directory (*.traj.json and requests.jsonl): each step's request as the
+    agent sent it, with the sidecar's token counts and wait. None when the sidecar and the trajectory disagree on
+    the number of model calls."""
     trajs = sorted(run_dir.glob("*.traj.json"))
     sidecar = run_dir / "requests.jsonl"
     if not trajs or not sidecar.exists():
@@ -419,14 +448,15 @@ def swebench_native_session(run_dir: Path) -> dict[str, Any] | None:
     for m in msgs:
         if m["role"] == "assistant":
             r = reqs[len(turns)]
-            tool_ms = sum(1000.0 * (t["t_end"] - t["t_start"]) for t in r.get("tool_calls") or [])
-            turns.append({
-                "turn_idx": len(turns),
-                "messages": [dict(h) for h in history],
-                "prompt_tokens": int(r["prompt_tokens"]),
-                "osl_tokens": max(1, int(r["completion_tokens"])),
-                "tool_ms": tool_ms,
-            })
+            turns.append(
+                {
+                    "turn_idx": len(turns),
+                    "messages": [dict(h) for h in history],
+                    "prompt_tokens": int(r["prompt_tokens"]),
+                    "osl_tokens": max(1, int(r["completion_tokens"])),
+                    "tool_ms": wait_after_ms(reqs, len(turns)),
+                }
+            )
         history.append({k: v for k, v in m.items() if k != "extra" and v is not None})
     return {
         "session_id": run_dir.name,
@@ -455,9 +485,8 @@ def build_swebench_native(args: argparse.Namespace) -> int:
 
 
 def terminus_reply(step: dict[str, Any]) -> str:
-    """The reply terminus-2 (parser json) asked the model for, rebuilt from the step's parsed fields: ATIF keeps the
-    analysis, plan and commands, not the model's text. Indented JSON with raw unicode reproduces the recorded
-    prompt_tokens within 1% on 80% of steps; the model's own whitespace is not recorded."""
+    """The JSON reply terminus-2 asked the model for, rebuilt from the step's parsed fields; the model's own text is
+    not recorded."""
     analysis, _, plan = (step.get("message") or "").partition("\nPlan: ")
     calls = step.get("tool_calls") or []
     body: dict[str, Any] = {
@@ -470,10 +499,21 @@ def terminus_reply(step: dict[str, Any]) -> str:
     return json.dumps(body, indent=2, ensure_ascii=False)
 
 
+def telemetry_gaps_ms(path: Path) -> list[float]:
+    """From Harbor's telemetry.jsonl: per model call, ms from its end to the next call's start; 0 after the last,
+    [] without the file."""
+    if not path.exists():
+        return []
+    rows = [json.loads(line) for line in path.open() if line.strip()]
+    calls = sorted((r for r in rows if r.get("kind") == "model"), key=lambda r: (int(r["turn_id"]), r["model_start"]))
+    gaps = [max(0.0, 1000.0 * (b["model_start"] - a["model_end"])) for a, b in zip(calls, calls[1:])]
+    return gaps + [0.0] if calls else []
+
+
 def atif_session(path: Path, source: str) -> dict[str, Any] | None:
-    """One Harbor ATIF trajectory: step k's context is the task plus every earlier step (the model's reply rebuilt as
-    terminus-2's JSON as the assistant turn, the terminal output as a user turn); its output length is the server's
-    completion_tokens from the step's metrics. None when an agent step has no recorded metrics."""
+    """One session from a Harbor ATIF trajectory.json: the rebuilt terminus-2 reply as each assistant turn, the
+    terminal output as the user turn, token counts from the step metrics, waits from telemetry.jsonl. None when a
+    step lacks metrics."""
     traj = json.loads(path.read_text())
     history: list[dict[str, str]] = []
     turns = []
@@ -486,12 +526,14 @@ def atif_session(path: Path, source: str) -> dict[str, Any] | None:
         metrics = step.get("metrics") or {}
         if not metrics.get("completion_tokens"):
             return None
-        turns.append({
-            "turn_idx": len(turns),
-            "messages": [dict(h) for h in history],
-            "prompt_tokens": metrics.get("prompt_tokens"),
-            "osl_tokens": max(1, metrics["completion_tokens"]),
-        })
+        turns.append(
+            {
+                "turn_idx": len(turns),
+                "messages": [dict(h) for h in history],
+                "prompt_tokens": metrics.get("prompt_tokens"),
+                "osl_tokens": max(1, metrics["completion_tokens"]),
+            }
+        )
         history.append({"role": "assistant", "content": terminus_reply(step)})
         results = (step.get("observation") or {}).get("results") or []
         output = "\n".join(r.get("content", "") for r in results if isinstance(r, dict))
@@ -499,10 +541,16 @@ def atif_session(path: Path, source: str) -> dict[str, Any] | None:
             history.append({"role": "user", "content": output})
     if not turns:
         return None
+    gaps = telemetry_gaps_ms(path.with_name("telemetry.jsonl"))
+    recorded_waits = len(gaps) == len(turns)
+    if recorded_waits:
+        for turn, gap in zip(turns, gaps):
+            turn["tool_ms"] = gap
     return {
         "session_id": traj.get("session_id") or path.parent.parent.name,
         "source": source,
         "run": path.parts[-4],
+        "recorded_waits": recorded_waits,
         "num_turns": len(turns),
         "turns": turns,
     }
@@ -527,35 +575,41 @@ def build_terminalbench_atif(args: argparse.Namespace) -> int:
         return 1
     write_sessions(sessions, args.out)
     print(f"[skip] {len(skipped)} tasks without per-step metrics: {' '.join(skipped)}")
+    print(f"[waits] {sum(s['recorded_waits'] for s in sessions)} of {len(sessions)} sessions carry recorded waits")
     return 0
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="source", required=True)
     chat = sub.add_parser("chat", help="ShareGPT sessions, tokenized with --tokenizer")
     chat.add_argument("--out", type=Path, default=CHAT_OUT)
-    chat.add_argument("--tokenizer", required=True,
-                      help="local model dir or HF id; counts are recorded with the artifact")
+    chat.add_argument(
+        "--tokenizer", required=True, help="local model dir or HF id; counts are recorded with the artifact"
+    )
     chat.add_argument("--max-sessions", type=int, default=4000)
     chat.add_argument("--min-turns", type=int, default=2)
-    chat.add_argument("--max-turns", type=int, default=20,
-                      help="matches the chat-multiturn profile's max_turns")
-    chat.add_argument("--max-context-tokens", type=int, default=32768,
-                      help="truncate a session once its context exceeds this (0 = no cap)")
+    chat.add_argument("--max-turns", type=int, default=20, help="matches the chat-multiturn profile's max_turns")
+    chat.add_argument(
+        "--max-context-tokens",
+        type=int,
+        default=32768,
+        help="truncate a session once its context exceeds this (0 = no cap)",
+    )
     chat.set_defaults(build=build_chat)
     claw = sub.add_parser("claweval", help="Claw-Eval traces, with their server-reported usage")
-    claw.add_argument("--traces", required=True, type=Path,
-                      help="Claw-Eval run directory containing *.jsonl traces")
-    claw.add_argument("--out", type=Path, default=CLAWEVAL_OUT,
-                      help=f"output QuettaBench trajectory JSONL (default: {CLAWEVAL_OUT})")
-    claw.add_argument("--lss-out", type=Path, default=None,
-                      help="also emit LLMServingSim *agentic* JSONL to this path")
-    claw.add_argument("--lss-arrival", choices=("real", "poisson"), default="real",
-                      help="LLMServingSim session arrival model (default: real, from trace_start)")
-    claw.add_argument("--lss-rate", type=float, default=1.0,
-                      help="sessions/sec when --lss-arrival=poisson")
+    claw.add_argument("--traces", required=True, type=Path, help="Claw-Eval run directory containing *.jsonl traces")
+    claw.add_argument(
+        "--out", type=Path, default=CLAWEVAL_OUT, help=f"output QuettaBench trajectory JSONL (default: {CLAWEVAL_OUT})"
+    )
+    claw.add_argument("--lss-out", type=Path, default=None, help="also emit LLMServingSim *agentic* JSONL to this path")
+    claw.add_argument(
+        "--lss-arrival",
+        choices=("real", "poisson"),
+        default="real",
+        help="LLMServingSim session arrival model (default: real, from trace_start)",
+    )
+    claw.add_argument("--lss-rate", type=float, default=1.0, help="sessions/sec when --lss-arrival=poisson")
     claw.add_argument("--lss-seed", type=int, default=42)
     claw.set_defaults(build=build_claweval)
     dr = sub.add_parser("deepresearch", help="DeepResearch-9k traces (dr9k-v4flash.jsonl), with their recorded usage")
@@ -567,13 +621,18 @@ def main() -> int:
     ds.add_argument("--out", type=Path, default=DEEPSEARCH_OUT)
     ds.set_defaults(build=build_deepresearch, source="deepsearch")
     sw = sub.add_parser("swebench-native", help="mini-swe-agent SWE-bench runs with per-request sidecars")
-    sw.add_argument("--runs", required=True, type=Path,
-                    help="run directory: one <instance>/ with *.traj.json and requests.jsonl each")
+    sw.add_argument(
+        "--runs",
+        required=True,
+        type=Path,
+        help="run directory: one <instance>/ with *.traj.json and requests.jsonl each",
+    )
     sw.add_argument("--out", type=Path, default=SWEBENCH_NATIVE_OUT)
     sw.set_defaults(build=build_swebench_native)
     tb = sub.add_parser("terminalbench-atif", help="Harbor Terminal-Bench ATIF trajectories with per-step metrics")
-    tb.add_argument("--jobs", required=True, type=Path,
-                    help="Harbor jobs directory: <job>/<trial>/agent/trajectory.json")
+    tb.add_argument(
+        "--jobs", required=True, type=Path, help="Harbor jobs directory: <job>/<trial>/agent/trajectory.json"
+    )
     tb.add_argument("--out", type=Path, default=TERMINALBENCH_ATIF_OUT)
     tb.set_defaults(build=build_terminalbench_atif)
     args = ap.parse_args()

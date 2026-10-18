@@ -1,9 +1,11 @@
 """Multi-turn traces: sessions of ordered turns, plus the per-turn wait policy."""
 
 import asyncio
+import collections
 import hashlib
 import itertools
 import json
+import os
 import random
 import time
 from collections.abc import Mapping
@@ -79,6 +81,59 @@ class MultiTurnSession:
     arrival_time_ms: float = 0.0
 
 
+def quartile(values: list, v) -> int:
+    """1 to 4: which quarter of values v falls in."""
+    ordered = sorted(values)
+    cuts = [ordered[min(len(ordered) - 1, int(q * len(ordered)))] for q in (0.25, 0.5, 0.75)]
+    return 1 + sum(v > c for c in cuts)
+
+
+def prompt_size(session) -> int:
+    last = session.turns[-1]
+    return int((last.metadata or {}).get("planned_total_context_tokens") or last.prompt_len or 0)
+
+
+def stratify(sessions: list, take: int | None) -> tuple[list, dict]:
+    """Order sessions round-robin across turn-count and prompt-size quartile strata; with take, each stratum gives
+    its share. Returns the order and each session's stratum."""
+    turns, sizes = [len(s.turns) for s in sessions], [prompt_size(s) for s in sessions]
+    strata: dict[str, list] = {}
+    for s, t, z in zip(sessions, turns, sizes):
+        strata.setdefault(f"turns_q{quartile(turns, t)}.prompt_q{quartile(sizes, z)}", []).append(s)
+    if take is not None:
+        shares = {k: take * len(v) / len(sessions) for k, v in strata.items()}
+        counts = {k: int(x) for k, x in shares.items()}
+        for k in sorted(shares, key=lambda k: shares[k] - counts[k], reverse=True)[: take - sum(counts.values())]:
+            counts[k] += 1
+        strata = {k: v[: counts[k]] for k, v in strata.items() if counts[k]}
+    order = [s for group in itertools.zip_longest(*strata.values()) for s in group if s is not None]
+    return order, {s.session_id: k for k, v in strata.items() for s in v}
+
+
+def play(turns: list, seed: int, number: int) -> list:
+    """One salted play of a session for a recycled replay: a fresh [rid:...] tag on the first user turn, so the play
+    misses the prefix cache its earlier plays left; session_id becomes "<session>#<number>"."""
+    salt = hashlib.sha256(f"{seed}:{turns[0].session_id}:{number}".encode()).hexdigest()[:12]
+    sid = f"{turns[0].session_id}#{number}"
+    out = []
+    for r in turns:
+        messages = [dict(m) for m in r.messages or []]
+        for m in messages:
+            if m.get("role") == "user":
+                m["content"] = f"[rid:{salt}]\n\n{m.get('content') or ''}"
+                break
+        out.append(replace(r, session_id=sid, messages=messages, metadata=dict(r.metadata or {}, play=number)))
+    return out
+
+
+def sha256_file(path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 def sample_digest(ids):
     """Names the sample: the sessions replayed, in order."""
     return hashlib.sha256(json.dumps(list(ids)).encode()).hexdigest()[:16]
@@ -99,14 +154,21 @@ class LoadedSessionTrace(SessionTrace):
         max_turn_index=None,
         pacing=None,
         profile=None,
+        stratified=False,
     ):
+        # The replayed file's digest, the one data/MANIFEST.json lists; None when the source is not a file.
+        self.file_sha256 = sha256_file(path) if isinstance(path, str) and os.path.isfile(path) else None
         random.Random(seed).shuffle(sessions)
-        if num_sessions is not None:
-            if len(sessions) < num_sessions:
-                raise ValueError(
-                    f"{path}: {len(sessions)} eligible sessions, fewer than the {num_sessions} asked for; "
-                    f"ask for at most {len(sessions)} so every point replays the same sample"
-                )
+        if num_sessions is not None and len(sessions) < num_sessions:
+            raise ValueError(
+                f"{path}: {len(sessions)} eligible sessions, fewer than the {num_sessions} asked for; "
+                f"ask for at most {len(sessions)} so every point replays the same sample"
+            )
+        # session_id -> stratum, for a stratified sample; the summary counts sessions and plays by it.
+        self.stratum_of: dict | None = None
+        if stratified and sessions:
+            sessions, self.stratum_of = stratify(sessions, num_sessions)
+        elif num_sessions is not None:
             sessions = sessions[:num_sessions]
         if not sessions:
             raise ValueError("No multi-turn sessions loaded -- check ShareGPT dataset and filter bounds")
@@ -114,6 +176,7 @@ class LoadedSessionTrace(SessionTrace):
             str(s.turns[0].metadata.get("source_session_id", s.session_id) if s.turns[0].metadata else s.session_id)
             for s in sessions
         ]
+        self.live_replies = any(s.assistant_messages for s in sessions)
         self.max_turns = max(len(s.turns) for s in sessions)
         print(f"Loaded {len(sessions)} sessions, max {self.max_turns} turns per session")
         reqs: list[Request] = []
@@ -137,15 +200,17 @@ class LoadedSessionTrace(SessionTrace):
 
     def source_meta(self):
         if self.profile is None:
-            return super().source_meta()
+            return {**super().source_meta(), "file_sha256": self.file_sha256}
         p = self.profile
         return {
             "profile": p.name,
             "dataset": p.dataset,
             "path": p.file_path,
+            "file_sha256": self.file_sha256,
             "reqs": len(self.requests()),
             "sessions": len(self.replies),
             "sample_digest": sample_digest(self.sample),
+            "strata": dict(collections.Counter(self.stratum_of.values())) if self.stratum_of else None,
             "pacing": self.pacing.pacing,
         }
 
@@ -216,10 +281,9 @@ def recorded_counts(path, entry, turn, index):
 
 
 class TrajectorySessionTrace(LoadedSessionTrace):
-    """{"session_id", "tools"?, "turns": [{"messages", "prompt_tokens", "osl_tokens"}, ...]}: each turn's whole context,
-    the tool schema the agent sent with it, and the token counts the engine reported when it was recorded. A session
-    is cut at the first turn whose prompt does not fit the window or whose output passes the profile's cap, never
-    clipped, and the last turn kept says so in truncated_by_context_limit."""
+    """Sessions from a trajectory JSONL: {"session_id", "tools"?, "turns": [{"messages", "prompt_tokens", "osl_tokens"}]}.
+    A session is cut at the first turn past the window or the output cap; the last turn kept says so in
+    truncated_by_context_limit."""
 
     def __init__(
         self,

@@ -1,6 +1,7 @@
 """Send a Trace's requests through a Driver; one RequestResult row per request."""
 
 import asyncio
+import collections
 import dataclasses
 import gc
 import itertools
@@ -39,7 +40,7 @@ from ..metrics.summary import (
 )
 from ..workloads.arrival import offered_rate, parse_arrival, rebase_arrivals
 from ..workloads.base import Request, workload_hash
-from ..workloads.sessions import SessionTrace, inter_turn_wait_s, sleep_until_elapsed
+from ..workloads.sessions import SessionTrace, inter_turn_wait_s, play, sleep_until_elapsed
 
 TRACE_REQUEST_ID_PREFIX = "agenticbench"
 IDENTITY_EXIT = 3
@@ -211,9 +212,8 @@ def server_counters(driver):
 
 
 class ClientHealth:
-    """How late the client's own event loop ran while it measured. A late loop reads a chunk late, so a latency
-    stamped then is the client's, not the server's. The loop's lateness is sampled every 10 ms, and every
-    garbage-collector pass, which stops the loop, is timed."""
+    """Samples how late the event loop runs and times gc passes while a run measures: start() before the pass,
+    stop() after, section() for run.json."""
 
     INTERVAL_S = 0.01
 
@@ -274,7 +274,23 @@ def client_line(c: dict) -> str:
     )
 
 
-async def measure(trace, driver, mode, emit, workload, request_id):
+@dataclass
+class Measurement:
+    """What one measured pass produced, before any gate or summary reads it."""
+
+    results: list
+    by_turn: dict | None
+    pairs: list
+    duration: float
+    spec_decode: dict | None
+    session_times: dict | None = None
+    client: dict | None = None
+    # Recycled replay: the plays started, each a salted copy of a session's turns, and the deadline.
+    plays: list | None = None
+    deadline_s: float | None = None
+
+
+async def measure(trace, driver, mode, emit, workload, request_id) -> Measurement:
     multi = isinstance(trace, SessionTrace)
     offsets = None if multi else arrival_offsets(trace, workload)
     sessions: SessionDispatcher | None = None
@@ -302,8 +318,19 @@ async def measure(trace, driver, mode, emit, workload, request_id):
         finally:
             await health.stop()
         spec = server_spec_decode_section(before, server_counters(driver) if before else None)
-    session_times = sessions.session_times if sessions is not None else None
-    return results, by_turn, pairs, duration, spec, session_times, health.section()
+    if sessions is None:
+        return Measurement(results, by_turn, pairs, duration, spec, client=health.section())
+    return Measurement(
+        results,
+        by_turn,
+        pairs,
+        duration,
+        spec,
+        sessions.session_times,
+        health.section(),
+        sessions.plays or None,
+        sessions.deadline_s,
+    )
 
 
 def steady_line(s: dict) -> str:
@@ -435,9 +462,9 @@ def sweep(trace, driver, mode, writer, workload, request_id):
             )
         )
         section = {"max_req_s": None, "speed": None, "fail_bound": fail_bound, "probes": probes}
-        if not identity(trace, served(out[2]))["match"]:
+        if not identity(trace, served(out.pairs))["match"]:
             return out, {**section, "iterations": len(probes) + 1}
-        s = summarize_serve(serve_records(out[2], True), out[3], "nearest")
+        s = summarize_serve(serve_records(out.pairs, True), out.duration, "nearest")
         bound = sla_verdict(s, mode.sla_ttft_ms, mode.sla_tpot_ms)
         probe = {"speed": speed, "verdict": "FAIL" if bound else "PASS", "bound": bound, "req_s": s["req_s"]}
         print(goodput_probe_line(probe), flush=True)
@@ -477,14 +504,16 @@ def served(pairs):
     return [q for q, _ in pairs]
 
 
-def identity(trace, served) -> dict:
-    expected, replayed = trace.workload_hash(), workload_hash(served)
+def identity(trace, served, planned=None) -> dict:
+    """planned: the requests a recycled replay started, whose hash replaces the trace's."""
+    expected = workload_hash(planned, trace.live_replies) if planned is not None else trace.workload_hash()
+    replayed = workload_hash(served, trace.live_replies)
     return {
         "expected": expected,
         "replayed": replayed,
         "match": expected == replayed,
         "n": len(served),
-        "of": len(trace.requests()),
+        "of": len(planned) if planned is not None else len(trace.requests()),
     }
 
 
@@ -516,7 +545,16 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
     except RunAborted as e:
         print(e)
         stop(writer, None, "aborted", str(e), 1)
-    results, by_turn, pairs, duration, server_spec_decode, session_times, client = measured
+    results, by_turn, pairs, duration = measured.results, measured.by_turn, measured.pairs, measured.duration
+    server_spec_decode, session_times, client = measured.spec_decode, measured.session_times, measured.client
+    plays = measured.plays
+    planned = [r for p in plays for r in p] if plays else None
+    if plays:
+        planned_turns = {p[0].session_id: len(p) for p in plays}
+    elif isinstance(trace, SessionTrace):
+        planned_turns = {s[0].session_id: len(s) for s in trace.sessions()}
+    else:
+        planned_turns = None
 
     core = aggregate(
         results=[r for r in results if r is not None],
@@ -527,7 +565,7 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
         load_mode=f"{mode.load}-loop",
         target_rate=offered_rate(workload.arrival) if mode.load == "open" else 0.0,
         warmup_concurrency=(mode.warmup_concurrency or mode.concurrency) if mode.warmup else 0,
-        planned_turns={s[0].session_id: len(s) for s in trace.sessions()} if isinstance(trace, SessionTrace) else None,
+        planned_turns=planned_turns,
     )
     summary = Summary(core, results)
     if by_turn is not None:
@@ -539,7 +577,23 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
     enforce(success_rate_gate(core, mode.min_success_rate), writer, summary)
     enforce(usage_gate(core, mode.allow_missing_usage), writer, summary)
 
-    ident = summary.sections["workload"] = identity(trace, served(pairs))
+    ident = summary.sections["workload"] = identity(trace, served(pairs), planned)
+    if plays:
+        stratum_of = getattr(trace, "stratum_of", None)
+        summary.sections["plays"] = {
+            "sessions": len(trace.sessions()),
+            "plays": len(plays),
+            "duration_s": measured.deadline_s,
+            "salt": "first user turn of every play",
+            # Plays per stratum: a stratified order keeps these within one of each other per pass.
+            "plays_by_stratum": dict(
+                collections.Counter(stratum_of[int(str(p[0].session_id).split("#")[0])] for p in plays)
+            )
+            if stratum_of
+            else None,
+        }
+    # What was replayed, for a reader of run.json alone: the file and its digest, and the sessions in order.
+    summary.sections["trace"] = {**trace.source_meta(), "sample": list(getattr(trace, "sample", []))}
     summary.sections.update(
         {"goodput": goodput} if goodput else summary_sections(pairs, duration, mode, server_spec_decode)
     )
@@ -548,7 +602,7 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
         summary.sections["client"] = client
         print(client_line(client), flush=True)
     if session_times is not None and mode.load == "closed":
-        summary.sections["steady"] = steady_section(results, session_times, mode.concurrency)
+        summary.sections["steady"] = steady_section(results, session_times, mode.concurrency, end_s=measured.deadline_s)
         print(steady_line(summary.sections["steady"]), flush=True)
     if not ident["match"]:
         stop(writer, summary.to_dict(), "failed", "workload identity", IDENTITY_EXIT)
@@ -797,8 +851,12 @@ class SessionDispatcher:
         self.dead, self.warned = set(), False
         # session_id -> (arrived, admitted, finished), seconds since start; the steady window reads these
         self.session_times: dict = {}
+        self.plays: list = []
+        self.deadline_s: float | None = None
         self.start = time.perf_counter()
-        if self.open_loop:
+        if self.mode.duration_s > 0:
+            await self._recycled()
+        elif self.open_loop:
             await self._open()
         elif self.pacing.pacing == "per-session":
             await self._per_session()
@@ -958,6 +1016,35 @@ class SessionDispatcher:
         results = [r for v in self.by_turn.values() for r in v]
         if results and not any(r is not None and r.success for r in results):
             raise RunAborted(f"ABORT: All {len(results)} requests failed. First error: {first_error(results)}")
+
+    async def _recycled(self):
+        """mode.duration_s: each agent draws the next session from a cycle over the sample, plays it to the end and
+        draws again until the deadline; every play is salted (play())."""
+        if self.open_loop or self.pacing.pacing != "per-session":
+            raise ConfigError("mode.duration_s needs closed-loop, per-session pacing")
+        if self.trace.live_replies:
+            raise ConfigError("mode.duration_s needs recorded replies; this trace fills its replies from the engine")
+        n, agents, self.deadline_s = len(self.sessions), self.mode.concurrency, self.mode.duration_s
+        print(
+            f"  Recycled replay: {n} sessions in a cycle, {agents} agents for {self.deadline_s:g} s; a play started "
+            "before the deadline runs to its end, and every play carries its own salt"
+        )
+        self._print_waits()
+        draws, indexes = itertools.count(), itertools.count()
+
+        def elapsed():
+            return time.perf_counter() - self.start
+
+        async def agent():
+            while elapsed() < self.deadline_s:
+                k = next(draws)
+                turns = play(self.sessions[k % n], self.workload.seed, k // n)
+                self.plays.append(turns)
+                admitted = elapsed()
+                await self._turns(turns, lambda r: next(indexes))
+                self.session_times[turns[0].session_id] = (admitted, admitted, elapsed())
+
+        await asyncio.gather(*[agent() for _ in range(agents)])
 
     async def _interleaved(self):
         for turn in range(self.max_turns):

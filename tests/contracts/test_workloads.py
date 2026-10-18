@@ -45,6 +45,8 @@ from quettabench.workloads.sessions import (
     TrajectorySessionTrace,
     TurnPacing,
     inter_turn_wait_s,
+    play,
+    quartile,
     resolve_multi_turn_num_sessions,
     session_arrival_ms,
     turn_wait_metadata,
@@ -640,6 +642,14 @@ class ProfileRegistryTests(unittest.TestCase):
         sized = dataclasses.replace(profile, num_sessions=8)
         self.assertEqual(resolve_multi_turn_num_sessions(sized), (8, "profile"))
 
+    def test_run_metadata_names_the_file_by_its_digest(self):
+        cfg = profile_config("swebench-qwen-multiturn-medium", "sessions")
+        with fixture_cwd():
+            trace = runner.build_trace(cfg)
+            digest = hashlib.sha256(Path("data/swebench_native_trajectories.jsonl").read_bytes()).hexdigest()
+        self.assertEqual(trace.source_meta()["file_sha256"], digest)
+        self.assertFalse(trace.live_replies)
+
     def test_a_sample_is_the_same_at_every_concurrency(self):
         samples = {}
         for concurrency in (1, 2, 4):
@@ -681,18 +691,18 @@ WARMUP = 3
 # moving: when planned_total_context_tokens became the recorded prompt count, and when source_meta gained
 # sample_digest.
 PINS = {
-    "chat-multiturn-short": ("c51f134d3946f53d", "d215cea35abaf327"),
+    "chat-multiturn-short": ("c51f134d3946f53d", "40b315fc6465cb47"),
     "chat-singleturn": ("1b84966cb9c4facc", "84b2b4875f8a177f"),
     "coding-singleturn": ("15384d696a4d7a1b", "0359e7a0be1623a2"),
-    "deepresearch-multiturn": ("3f95464ab226ff8f", "450a66c0f483912c"),
+    "deepresearch-multiturn": ("3f95464ab226ff8f", "8bf116898d7c5194"),
     "mooncake-trace": ("a03be7b0ed268d81", "b5ed59cd7a0d7aff"),
-    "deepsearch-multiturn": ("e4224f2a4551c063", "c73dd0a534aaf5c6"),
-    "swebench-qwen-multiturn-long": ("36475a9de1586a56", "a120626bde4dbd37"),
-    "swebench-qwen-multiturn-medium": ("152d31a287902055", "f527e7b37aa6562a"),
-    "terminalbench-qwen-multiturn-long": ("304c01f98afc8c32", "b0fa0236459cb27e"),
-    "terminalbench-qwen-multiturn-medium": ("36d005dbd2cb0786", "41e24dcfe327593d"),
+    "deepsearch-multiturn": ("e4224f2a4551c063", "1fa603749728bb24"),
+    "swebench-qwen-multiturn-long": ("36475a9de1586a56", "bca67f88cb7b7a38"),
+    "swebench-qwen-multiturn-medium": ("152d31a287902055", "d8e06228cacd6f44"),
+    "terminalbench-qwen-multiturn-long": ("304c01f98afc8c32", "210e58a633b92bcf"),
+    "terminalbench-qwen-multiturn-medium": ("36d005dbd2cb0786", "4b344bf51bfcc23a"),
     "test": ("7ae706bdf8eeae1d", "a5c809ace7fb7a08"),
-    "cut": ("a7ffbc60a718ff0d", "a6528d34506b8052"),
+    "cut": ("a7ffbc60a718ff0d", "e4826a83481ff78e"),
 }
 
 
@@ -860,8 +870,81 @@ def runnable():
     return sorted(PROFILES)
 
 
+class StratifiedOrder(unittest.TestCase):
+    def build(self, stratified, num_sessions=None):
+        cfg = profile_config("deepsearch-multiturn", "sessions")
+        cfg = dataclasses.replace(
+            cfg, workload=dataclasses.replace(cfg.workload, stratified=stratified, num_sessions=num_sessions)
+        )
+        with fixture_cwd():
+            return runner.build_trace(cfg)
+
+    def test_the_order_round_robins_the_strata_and_the_sample_is_the_same_set(self):
+        plain, ordered = self.build(False), self.build(True)
+        self.assertEqual(sorted(plain.sample), sorted(ordered.sample))
+        self.assertNotEqual(plain.sample, ordered.sample)
+        strata = ordered.source_meta()["strata"]
+        self.assertEqual(sum(strata.values()), len(ordered.sample))
+        self.assertIsNone(plain.source_meta()["strata"])
+        # The first sessions come one from each stratum before any stratum repeats.
+        sessions = ordered.sessions()
+        keys = [
+            f"turns_q{quartile([len(s) for s in sessions], len(s))}."
+            f"prompt_q{quartile([s[-1].metadata['planned_total_context_tokens'] for s in sessions], s[-1].metadata['planned_total_context_tokens'])}"
+            for s in sessions
+        ]
+        first = keys[: len(strata)]
+        self.assertEqual(len(set(first)), len(first))
+
+    def test_with_num_sessions_each_stratum_contributes_its_share(self):
+        ordered = self.build(True, num_sessions=6)
+        whole = self.build(True).source_meta()["strata"]
+        taken = ordered.source_meta()["strata"]
+        self.assertEqual(sum(taken.values()), 6)
+        for key, n in taken.items():
+            self.assertLessEqual(abs(n - 6 * whole[key] / sum(whole.values())), 1.0)
+
+
+class Plays(unittest.TestCase):
+    def test_a_play_salts_the_first_user_turn_and_names_itself(self):
+        msgs = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "ask"},
+            {"role": "assistant", "content": "said"},
+            {"role": "user", "content": "more"},
+        ]
+        turns = [
+            Request([], 0, order=i, output_length=3, session_id=7, turn=i, messages=msgs[: 2 * i + 2]) for i in range(2)
+        ]
+        first, second = play(turns, 42, 0), play(turns, 42, 1)
+        self.assertEqual([r.session_id for r in second], ["7#1", "7#1"])
+        self.assertEqual(second[1].messages[0], {"role": "system", "content": "sys"})
+        self.assertRegex(second[1].messages[1]["content"], r"^\[rid:[0-9a-f]{12}\]\n\nask$")
+        self.assertEqual(second[1].messages[2:], msgs[2:])
+        self.assertNotEqual(first[0].messages[1], second[0].messages[1])
+        self.assertEqual(second[1].messages[1]["content"][:18], second[0].messages[1]["content"][:18])
+        self.assertEqual(turns[1].messages[1], {"role": "user", "content": "ask"})  # the trace is untouched
+        self.assertEqual(second[0].metadata["play"], 1)
+        self.assertNotEqual(workload_hash(first), workload_hash(second))
+
+
 class ToolSchemas(unittest.TestCase):
     TOOLS = [{"type": "function", "function": {"name": "bash", "parameters": {"type": "object"}}}]
+
+    def test_recorded_assistant_content_joins_the_hash_and_live_replies_do_not(self):
+        a = [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "one"},
+            {"role": "user", "content": "go"},
+        ]
+        b = [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "two"},
+            {"role": "user", "content": "go"},
+        ]
+        ra, rb = (Request([], 0, output_length=4, session_id=1, turn=1, messages=m) for m in (a, b))
+        self.assertNotEqual(workload_hash([ra]), workload_hash([rb]))
+        self.assertEqual(workload_hash([ra], live_replies=True), workload_hash([rb], live_replies=True))
 
     def test_a_tool_schema_joins_the_hash_but_not_the_replay_row(self):
         # A request without tools hashes as before: the PINS above cover that.
@@ -951,13 +1034,21 @@ class NativeTrajectoryBuilders(unittest.TestCase):
             {"role": "assistant", "content": "done"},
         ]
         sidecar = [
-            {"turn_idx": 1, "prompt_tokens": 900, "completion_tokens": 300, "run_id": "run-1"},
+            {
+                "turn_idx": 1,
+                "prompt_tokens": 900,
+                "completion_tokens": 300,
+                "run_id": "run-1",
+                "t_request_sent": 12.5,
+                "t_response_done": 14.0,
+            },
             {
                 "turn_idx": 0,
                 "prompt_tokens": 500,
                 "completion_tokens": 40,
                 "run_id": "run-1",
-                "tool_calls": [{"t_start": 1.0, "t_end": 1.5}],
+                "t_request_sent": 8.0,
+                "t_response_done": 10.0,
             },
         ]
         with tempfile.TemporaryDirectory() as td:
@@ -973,7 +1064,7 @@ class NativeTrajectoryBuilders(unittest.TestCase):
         )
         self.assertEqual(
             [(t["prompt_tokens"], t["osl_tokens"], t["tool_ms"]) for t in session["turns"]],
-            [(500, 40, 500.0), (900, 300, 0.0)],
+            [(500, 40, 2500.0), (900, 300, 0.0)],  # 10.0 s reply end to 12.5 s next send; nothing after the last
         )
         # The request as mini-swe-agent sent it: native tool call, tool result and reasoning, no "extra", no nulls.
         self.assertEqual(
@@ -1000,16 +1091,28 @@ class NativeTrajectoryBuilders(unittest.TestCase):
             },
             {"source": "agent", "message": "ok", "metrics": {"prompt_tokens": 850, "completion_tokens": 9}},
         ]
+        telemetry = [
+            {"kind": "model", "turn_id": 1, "model_start": 100.0, "model_end": 102.0},
+            {"kind": "tool", "turn_id": 1, "tool_start": 102.1, "tool_end": 103.0},
+            {"kind": "model", "turn_id": 2, "model_start": 103.5, "model_end": 104.0},
+        ]
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "job-1" / "task__trial" / "agent" / "trajectory.json"
             path.parent.mkdir(parents=True)
             path.write_text(json.dumps({"session_id": "s-1", "steps": steps}))
+            bare = build_module().atif_session(path, "terminalbench")
+            path.with_name("telemetry.jsonl").write_text("".join(json.dumps(r) + "\n" for r in telemetry))
             session = build_module().atif_session(path, "terminalbench")
             steps[2]["metrics"] = {}
             path.write_text(json.dumps({"session_id": "s-1", "steps": steps}))
             self.assertIsNone(build_module().atif_session(path, "terminalbench"), "a step without metrics")
         self.assertEqual((session["session_id"], session["run"], session["num_turns"]), ("s-1", "job-1", 2))
         self.assertEqual([(t["prompt_tokens"], t["osl_tokens"]) for t in session["turns"]], [(700, 120), (850, 9)])
+        # 102.0 s model end to 103.5 s next model start; nothing after the last call. Without telemetry, no waits.
+        self.assertEqual([t["tool_ms"] for t in session["turns"]], [1500.0, 0.0])
+        self.assertTrue(session["recorded_waits"])
+        self.assertFalse(bare["recorded_waits"])
+        self.assertNotIn("tool_ms", bare["turns"][0])
         # terminus-2's JSON reply, indented, raw unicode; task_complete only when the step marked it.
         body = {
             "analysis": "fresh shell, é",

@@ -1,6 +1,7 @@
 """serve.run over a Trace and a Driver with no server."""
 
 import asyncio
+import collections
 import contextlib
 import copy
 import gc
@@ -82,6 +83,20 @@ def session_trace(sessions=2, turns=3):
             history = history + [placeholders[t]]
     trace = SessionTrace(reqs, "s.jsonl", "jsonl")
     trace.replies, trace.pacing = replies, TurnPacing("per-session")
+    return trace
+
+
+def recorded_trace(sessions=5, turns=2):
+    """Sessions whose assistant turns are recorded, as a trajectory file's are: nothing is filled in live."""
+    reqs = []
+    for s in range(sessions):
+        history = []
+        for t in range(turns):
+            history = history + [{"role": "user", "content": f"s{s}t{t}"}]
+            reqs.append(Request([], 0, order=len(reqs), output_length=2, session_id=s, turn=t, messages=list(history)))
+            history = history + [{"role": "assistant", "content": f"recorded {s} {t}"}]
+    trace = SessionTrace(reqs, "r.jsonl", "jsonl")
+    trace.pacing = TurnPacing("per-session")
     return trace
 
 
@@ -243,6 +258,48 @@ class Sessions(unittest.TestCase):
         self.assertLess(c["loop_lag_ms"]["50"], 50.0)
         self.assertGreaterEqual((c["gc_passes"], c["gc_gen2_passes"]), (1, 1))
         self.assertIn("event loop late by", serve.client_line(c))
+
+    def test_a_recycled_replay_keeps_every_agent_busy_to_the_deadline_with_a_salt_per_play(self):
+        driver = TimedDriver(last_turn=1)
+        summary, out = run(recorded_trace(5, 2), driver, ModeCfg(concurrency=4, warmup=0, duration_s=0.08))
+        plays = summary.sections["plays"]
+        self.assertGreater(plays["plays"], 5)  # 5 sessions, more plays: the sample was recycled
+        self.assertEqual((plays["sessions"], plays["duration_s"]), (5, 0.08))
+        self.assertEqual(driver.peak, {"sessions": 4, "requests": 4})
+        by_play = collections.Counter(r.session_id for r in summary.rows)
+        self.assertEqual(set(by_play.values()), {2})  # every play ran to its end, the ones past the deadline too
+        self.assertTrue(any(str(sid).endswith("#1") for sid in by_play))
+        self.assertTrue(all(r.success for r in summary.rows))
+        salts = {m[0]["content"][:18] for m, _, _ in driver.sent if len(m) == 1}
+        self.assertEqual(len(salts), plays["plays"])
+        self.assertTrue(all(s.startswith("[rid:") for s in salts))
+        self.assertTrue(summary.sections["workload"]["match"])
+        self.assertNotIn("WORKLOAD_MISMATCH", out)
+        steady = summary.sections["steady"]
+        self.assertTrue(steady["valid"], steady)
+        self.assertEqual(steady["end_s"], 0.08)
+        self.assertIn("Recycled replay: 5 sessions in a cycle, 4 agents for 0.08 s", out)
+        self.assertIsNone(plays["plays_by_stratum"])
+
+    def test_a_recycled_replay_counts_plays_per_stratum(self):
+        trace = recorded_trace(5, 2)
+        trace.stratum_of = {s: "long" if s % 2 else "short" for s in range(5)}
+        summary, _ = run(trace, TimedDriver(last_turn=1), ModeCfg(concurrency=2, warmup=0, duration_s=0.05))
+        by_stratum = summary.sections["plays"]["plays_by_stratum"]
+        self.assertEqual(sum(by_stratum.values()), summary.sections["plays"]["plays"])
+        self.assertEqual(set(by_stratum), {"long", "short"})
+
+    def test_a_recycled_replay_refuses_a_trace_that_fills_replies_live(self):
+        trace = session_trace()
+        trace.live_replies = True
+        with self.assertRaisesRegex(ConfigError, "needs recorded replies"):
+            run(trace, FakeDriver(), ModeCfg(concurrency=2, warmup=0, duration_s=0.05))
+
+    def test_run_json_carries_the_trace_and_its_sample(self):
+        with tempfile.TemporaryDirectory() as td:
+            run(session_trace(3, 2), FakeDriver(), ModeCfg(concurrency=2, warmup=0), results_dir=td)
+            section = json.loads((Path(td) / "run.json").read_text())["summary"]["trace"]
+        self.assertEqual((section["path"], section["sample"]), ("s.jsonl", []))
 
     def test_a_session_run_records_client_health(self):
         summary, out = run(session_trace(4, 2), FakeDriver(), ModeCfg(concurrency=2, warmup=0))
@@ -526,7 +583,7 @@ class GoodputSweep(unittest.TestCase):
                 )
                 emit(q, r)
                 pairs.append((q, r))
-            return [r for _, r in pairs], None, pairs, 1.0 / workload.speed, None, None, None
+            return serve.Measurement([r for _, r in pairs], None, pairs, 1.0 / workload.speed, None)
 
         return measure
 
