@@ -29,6 +29,14 @@ class RequestResult:
     server_cached_tokens: int | None = None
     # Seconds to the stream's close: e2el ends at the last token chunk, this after the usage chunk and [DONE].
     stream_closed_s: float | None = None
+    # perf_counter when the driver started the request's clock, just before the POST; not written. sent_at_s is
+    # the same instant on the run clock, the base of ttft, e2el and stream_closed_s.
+    sent_perf_s: float | None = None
+    sent_at_s: float | None = None
+    # One entry per token event (ttft, then each itl gap): the delta characters it carried, and the server's
+    # cumulative completion_tokens on it under mode.chunk_usage (None when the server sent none).
+    chunk_chars: list | None = None
+    chunk_tokens: list | None = None
     # Held out of the summary by --discard-first; still kept in per_request.
     excluded_from_summary: bool = False
 
@@ -100,8 +108,13 @@ def annotate_request_observability(
     dispatch_started_at_s: float,
     semaphore_acquired_at_s: float,
     completed_at_s: float,
+    run_start: float | None = None,
 ) -> RequestResult:
+    """Times are seconds on the run clock; run_start is that clock's perf_counter zero, which puts the driver's
+    sent_perf_s on it."""
     result.request_index = request_index
+    if run_start is not None and result.sent_perf_s is not None:
+        result.sent_at_s = result.sent_perf_s - run_start
     result.max_tokens_requested = int(getattr(request, "max_tokens", 0) or 0)
     messages = getattr(request, "messages", None) or ()
     result.message_count = len(messages)
@@ -186,8 +199,9 @@ class BenchmarkSummary:
     num_requests: int = 0
     duration_s: float = 0.0
 
-    # duration_s, or the span of the kept requests under --discard-first.
+    # What every whole-run rate divides by, and what it is: the kept requests' first send to last completion.
     measured_window_s: float = 0.0
+    measured_window: str = ""
     excluded_requests: int = 0
 
     successful_requests: int = 0
@@ -406,11 +420,18 @@ def steady_window(
     return out
 
 
+def sent_at(r) -> float | None:
+    """When the driver sent r, on the run clock; the slot grant for a driver that stamps no send."""
+    return r.sent_at_s if r.sent_at_s is not None else r.semaphore_acquired_at_s
+
+
 def chunk_times(r) -> list[float]:
-    """When each streamed chunk reached the client, seconds since the run's start."""
-    if r.semaphore_acquired_at_s is None or r.ttft is None:
-        return [r.completed_at_s] if r.completed_at_s is not None else []
-    t = r.semaphore_acquired_at_s + r.ttft
+    """When each streamed chunk reached the client, seconds since the run's start: the first at the send plus TTFT,
+    each later one an ITL gap after the one before. None without a chunk."""
+    sent = sent_at(r)
+    if sent is None or r.ttft is None:
+        return []
+    t = sent + r.ttft
     out = [t]
     for gap in r.itl or []:
         t += gap
@@ -418,31 +439,64 @@ def chunk_times(r) -> list[float]:
     return out
 
 
+def chunk_shares(r, n: int) -> list[float]:
+    """The output tokens each of a request's n chunks carried: the server's own counts when every chunk has one
+    (each the rise in cumulative completion_tokens), else output_tokens in proportion to each chunk's delta
+    characters; with no characters at all the finish chunk carries everything. Never negative."""
+    counts = r.chunk_tokens
+    if counts and len(counts) == n and all(c is not None for c in counts):
+        return [max(0, c - prev) for prev, c in zip([0, *counts[:-1]], counts)]
+    chars = r.chunk_chars if r.chunk_chars and len(r.chunk_chars) == n else []
+    total = sum(chars)
+    if total > 0:
+        return [r.output_tokens * c / total for c in chars]
+    return [0.0] * (n - 1) + [float(r.output_tokens)]
+
+
 def tokens_by_arrival(ok, start: float, end: float, widths: list[float]) -> tuple[float, float, list[float]]:
-    """Output tokens that arrived inside [start, end], in total and per bin, and the prompt tokens of requests whose
-    first token did; a request's output is spread evenly over its chunks."""
+    """Output tokens whose chunk arrived inside [start, end], in total and per bin (chunk_shares), and the prompt
+    tokens of requests whose first chunk did."""
     bin_s, out_tok, in_tok, bins = widths[0], 0.0, 0.0, [0.0] * len(widths)
     for r in ok:
         chunks = chunk_times(r)
         if chunks and start <= chunks[0] <= end:
             in_tok += r.input_tokens
-        per_chunk = r.output_tokens / len(chunks) if chunks else 0.0
-        for t in chunks:
+        for t, share in zip(chunks, chunk_shares(r, len(chunks))):
             if start <= t <= end:
-                out_tok += per_chunk
-                bins[min(len(bins) - 1, int((t - start) // bin_s))] += per_chunk
+                out_tok += share
+                bins[min(len(bins) - 1, int((t - start) // bin_s))] += share
     return out_tok, in_tok, bins
 
 
-def in_flight_by_bin(ok, start: float, widths: list[float]) -> list[float]:
-    """Mean requests in flight per bin: each request adds the share of the bin it spent between dispatch and
-    completion."""
+def bin_widths(span: float, bin_s: float) -> list[float]:
+    """bin_s bins over span seconds; a last bin shorter than half of bin_s folds into the one before it, so no sliver
+    of a bin stands as a rate of its own. Every bin but the last is bin_s wide."""
+    widths = [min(bin_s, span - i * bin_s) for i in range(max(1, math.ceil(span / bin_s)))]
+    if len(widths) > 1 and widths[-1] < bin_s / 2:
+        tail = widths.pop()
+        widths[-1] += tail
+    return widths
+
+
+def width_weighted(values: list[float], widths: list[float]) -> dict:
+    """min, mean, max and cv of per-bin values, the mean and cv weighted by each bin's width."""
+    total = sum(widths)
+    mean = sum(v * w for v, w in zip(values, widths)) / total
+    sd = math.sqrt(sum(w * (v - mean) ** 2 for v, w in zip(values, widths)) / total)
+    return {"min": min(values), "mean": mean, "max": max(values), "cv": sd / mean if mean > 0 else None}
+
+
+def in_flight_by_bin(results, start: float, widths: list[float]) -> list[float]:
+    """Mean requests in flight per bin: each request, failed ones too, adds the share of the bin it spent between
+    its send and its completion."""
     bin_s, inflight = widths[0], [0.0] * len(widths)
-    for r in ok:
-        if r.semaphore_acquired_at_s is None:
+    for r in results:
+        sent, b = sent_at(r), r.completed_at_s
+        if sent is None or b is None:
             continue
-        a, b = max(r.semaphore_acquired_at_s, start), r.completed_at_s
-        for i in range(max(0, int((a - start) // bin_s)), min(len(widths), int((b - start) // bin_s) + 1)):
+        a = max(sent, start)
+        first = min(len(widths) - 1, max(0, int((a - start) // bin_s)))
+        for i in range(first, min(len(widths), int((b - start) // bin_s) + 1)):
             lo = start + i * bin_s
             inflight[i] += max(0.0, min(b, lo + widths[i]) - max(a, lo)) / widths[i]
     return inflight
@@ -485,20 +539,17 @@ def steady_section(
     start, end, span = w["start_s"], w["end_s"], w["window_s"]
     w["ramp"] = {
         "ttft_ms": ttft_ms_summary(
-            r
-            for r in results
-            if r is not None and r.semaphore_acquired_at_s is not None and r.semaphore_acquired_at_s < start
+            r for r in results if r is not None and sent_at(r) is not None and sent_at(r) < start
         )
     }
     ok = [r for r in results if r is not None and r.success and r.completed_at_s is not None]
     done = [r for r in ok if start <= r.completed_at_s <= end]
-    inside = [r for r in done if r.semaphore_acquired_at_s is not None and r.semaphore_acquired_at_s >= start]
+    inside = [r for r in done if sent_at(r) is not None and sent_at(r) >= start]
     sessions_done = len(done_ids)
-    widths = [min(bin_s, span - i * bin_s) for i in range(max(1, math.ceil(span / bin_s)))]
+    widths = bin_widths(span, bin_s)
     out_tok, in_tok, bins = tokens_by_arrival(ok, start, end, widths)
-    inflight = in_flight_by_bin(ok, start, widths)
+    inflight = in_flight_by_bin([r for r in results if r is not None], start, widths)
     rates = [x / wd for x, wd in zip(bins, widths)]
-    mean_rate = sum(rates) / len(rates)
     w.update(
         requests_completed=len(done),
         requests_inside=len(inside),
@@ -511,13 +562,8 @@ def steady_section(
         timeline={
             "bin_s": bin_s,
             "bins": len(rates),
-            "output_tok_s": {
-                "min": min(rates),
-                "mean": mean_rate,
-                "max": max(rates),
-                "cv": statistics.pstdev(rates) / mean_rate if mean_rate > 0 else None,
-            },
-            "requests_in_flight": {"min": min(inflight), "mean": sum(inflight) / len(inflight), "max": max(inflight)},
+            "output_tok_s": width_weighted(rates, widths),
+            "requests_in_flight": {k: v for k, v in width_weighted(inflight, widths).items() if k != "cv"},
         },
         percentile_method="nearest",
     )
@@ -672,15 +718,14 @@ def aggregate(
             if r.error:
                 summary.errors.append(r.error)
 
-    window_s = duration_s
-    if excluded:
-        spans = [
-            (r.semaphore_acquired_at_s, r.completed_at_s)
-            for r in results
-            if r.semaphore_acquired_at_s is not None and r.completed_at_s is not None
-        ]
-        if spans:
-            window_s = max(e for _, e in spans) - min(s for s, _ in spans)
+    # Whole-run rates divide by the first send to the last completion of the kept requests, failed ones too; the
+    # run's wall time only when no request carries both times.
+    window_s, summary.measured_window = duration_s, "run wall time"
+    timed = [(sent_at(r), r.completed_at_s) for r in results]
+    spans = [(a, b) for a, b in timed if a is not None and b is not None]
+    if spans:
+        window_s = max(e for _, e in spans) - min(s for s, _ in spans)
+        summary.measured_window = "first send to last completion"
     summary.measured_window_s = window_s
 
     # The served rate counts sessions that ran every planned turn successfully, not sessions that sent something.
@@ -993,6 +1038,7 @@ def print_summary(s: BenchmarkSummary) -> None:
     print(f"{'=' * 52}")
     print(f" Model:                    {s.model}")
     print(f" Duration:                 {s.duration_s:.2f}s")
+    print(f" Rates over:               {s.measured_window_s:.2f}s, {s.measured_window}")
     print(f" Requests:                 {s.successful_requests} ok / {s.failed_requests} failed")
     if s.excluded_requests:
         print(f" Held out (--discard-first): {s.excluded_requests} request(s); window {s.measured_window_s:.2f}s")

@@ -47,17 +47,34 @@ def _headers(api_key, extra_headers, request_id):
     return headers
 
 
-def _payload(model, prompt, max_tokens, temperature, ignore_eos, request_id, seed, min_tokens, tools=None):
+def _payload(
+    model,
+    prompt,
+    max_tokens,
+    temperature,
+    ignore_eos,
+    request_id,
+    seed,
+    min_tokens,
+    tools=None,
+    cache_salt=None,
+    chunk_usage=False,
+):
+    """cache_salt: vLLM's request field that keeps a request's prefix cache apart from requests with another.
+    chunk_usage asks vLLM for cumulative usage on every chunk (continuous_usage_stats); off, the body is vllm bench
+    serve's and AIPerf's."""
     payload = {
         "model": model,
         **prompt,
         "max_tokens": max_tokens,
         "temperature": temperature,
         "stream": True,
-        "stream_options": {"include_usage": True},
+        "stream_options": {"include_usage": True, **({"continuous_usage_stats": True} if chunk_usage else {})},
     }
     if tools:
         payload["tools"] = tools
+    if cache_salt:
+        payload["cache_salt"] = cache_salt
     if ignore_eos:
         payload["ignore_eos"] = True
     if request_id:
@@ -77,6 +94,19 @@ def _read_usage(usage: dict) -> tuple[int, int, int | None, bool]:
     return usage.get("prompt_tokens") or 0, usage.get("completion_tokens") or 0, cached, reported
 
 
+def _chunk_fields(chars: list, tokens: list) -> dict:
+    """A result's per-chunk record: characters always, the server's cumulative counts only when it sent any."""
+    return {"chunk_chars": chars, "chunk_tokens": tokens if any(t is not None for t in tokens) else None}
+
+
+def _delta_chars(delta: dict) -> int:
+    """Characters a chat delta carries: content, reasoning and tool-call arguments."""
+    n = len(delta.get("content") or "") + len(delta.get("reasoning_content") or delta.get("reasoning") or "")
+    for call in delta.get("tool_calls") or ():
+        n += len(((call or {}).get("function") or {}).get("arguments") or "")
+    return n
+
+
 async def _stream_chat(
     session: aiohttp.ClientSession,
     url: str,
@@ -92,11 +122,24 @@ async def _stream_chat(
     min_tokens: int = 0,
     capture_text: bool = False,
     tools: list | None = None,
+    cache_salt: str | None = None,
+    chunk_usage: bool = False,
 ) -> RequestResult:
-    """Each chunk with content, reasoning or tool_calls counts as a token."""
+    """Every chunk with choices is a token event; each records its delta characters and, under chunk_usage, the
+    server's cumulative completion_tokens."""
     headers = _headers(api_key, extra_headers, request_id)
     payload = _payload(
-        model, {"messages": messages}, max_tokens, temperature, ignore_eos, request_id, seed, min_tokens, tools
+        model,
+        {"messages": messages},
+        max_tokens,
+        temperature,
+        ignore_eos,
+        request_id,
+        seed,
+        min_tokens,
+        tools,
+        cache_salt,
+        chunk_usage,
     )
 
     start_time = time.perf_counter()
@@ -109,12 +152,15 @@ async def _stream_chat(
     done = False
     server_cached_tokens = None
     text_parts: list[str] = []
+    chunk_chars: list[int] = []
+    chunk_tokens: list[int | None] = []
 
     try:
         async with session.post(url, headers=headers, json=payload) as resp:
             if resp.status != 200:
                 body = await resp.text()
                 return RequestResult(
+                    sent_perf_s=start_time,
                     success=False,
                     e2el=time.perf_counter() - start_time,
                     error=f"HTTP {resp.status}: {body[:200]}",
@@ -139,6 +185,7 @@ async def _stream_chat(
                     continue
                 if chunk.get("error"):
                     return RequestResult(
+                        sent_perf_s=start_time,
                         success=False,
                         ttft=ttft,
                         itl=itl,
@@ -161,10 +208,11 @@ async def _stream_chat(
 
                 # vllm bench serve's rule: every chunk with choices is a token event, the finish chunk included,
                 # so decode the server buffered (a tool call its parser emits whole) is in the request's time.
-                if capture_text:
-                    piece = choices[0].get("delta", {}).get("content")
-                    if piece:
-                        text_parts.append(piece)
+                delta = choices[0].get("delta") or {}
+                if capture_text and delta.get("content"):
+                    text_parts.append(delta["content"])
+                chunk_chars.append(_delta_chars(delta))
+                chunk_tokens.append((chunk.get("usage") or {}).get("completion_tokens"))
 
                 if ttft is None:
                     ttft = now - start_time
@@ -178,6 +226,7 @@ async def _stream_chat(
         e2el = last_token_time - start_time if ttft is not None else stream_closed
         if not done:
             return RequestResult(
+                sent_perf_s=start_time,
                 success=False,
                 ttft=ttft,
                 itl=itl,
@@ -188,8 +237,10 @@ async def _stream_chat(
                 usage_reported=usage_reported,
                 error="stream ended without [DONE]; the reply is incomplete",
                 error_kind="incomplete_stream",
+                **_chunk_fields(chunk_chars, chunk_tokens),
             )
         return RequestResult(
+            sent_perf_s=start_time,
             success=True,
             ttft=ttft,
             itl=itl,
@@ -200,6 +251,7 @@ async def _stream_chat(
             usage_reported=usage_reported,
             server_cached_tokens=server_cached_tokens,
             generated_text="".join(text_parts) if capture_text else None,
+            **_chunk_fields(chunk_chars, chunk_tokens),
         )
 
     except asyncio.CancelledError:
@@ -208,6 +260,7 @@ async def _stream_chat(
         # A timeout truncates the slowest requests; partial timings are the only evidence.
         is_timeout = isinstance(e, asyncio.TimeoutError)
         return RequestResult(
+            sent_perf_s=start_time,
             success=False,
             ttft=ttft,
             itl=itl,
@@ -246,6 +299,8 @@ async def _stream_completions(
     min_tokens: int = 0,
     prompt_token_ids: list[int] | None = None,
     tools: list | None = None,
+    cache_salt: str | None = None,
+    chunk_usage: bool = False,
 ) -> RequestResult:
     if tools:
         return RequestResult(
@@ -261,7 +316,19 @@ async def _stream_completions(
         )
 
     headers = _headers(api_key, extra_headers, request_id)
-    payload = _payload(model, {"prompt": prompt}, max_tokens, temperature, ignore_eos, request_id, seed, min_tokens)
+    payload = _payload(
+        model,
+        {"prompt": prompt},
+        max_tokens,
+        temperature,
+        ignore_eos,
+        request_id,
+        seed,
+        min_tokens,
+        None,
+        cache_salt,
+        chunk_usage,
+    )
 
     start_time = time.perf_counter()
     ttft = None
@@ -273,12 +340,15 @@ async def _stream_completions(
     done = False
     last_choices_time = start_time
     server_cached_tokens = None
+    chunk_chars: list[int] = []
+    chunk_tokens: list[int | None] = []
 
     try:
         async with session.post(url, headers=headers, json=payload) as resp:
             if resp.status != 200:
                 body = await resp.text()
                 return RequestResult(
+                    sent_perf_s=start_time,
                     success=False,
                     e2el=time.perf_counter() - start_time,
                     error=f"HTTP {resp.status}: {body[:200]}",
@@ -303,6 +373,7 @@ async def _stream_completions(
                     continue
                 if chunk.get("error"):
                     return RequestResult(
+                        sent_perf_s=start_time,
                         success=False,
                         ttft=ttft,
                         itl=itl,
@@ -326,6 +397,8 @@ async def _stream_completions(
                 last_choices_time = now
                 # A chunk with empty text is not a token event (QuettaServe sends one before its first token).
                 if choices[0].get("text"):
+                    chunk_chars.append(len(choices[0]["text"]))
+                    chunk_tokens.append((chunk.get("usage") or {}).get("completion_tokens"))
                     if ttft is None:
                         ttft = now - start_time
                         last_token_time = now
@@ -339,6 +412,7 @@ async def _stream_completions(
         e2el = last_choices_time - start_time if ttft is not None else stream_closed
         if not done:
             return RequestResult(
+                sent_perf_s=start_time,
                 success=False,
                 ttft=ttft,
                 itl=itl,
@@ -349,8 +423,10 @@ async def _stream_completions(
                 usage_reported=usage_reported,
                 error="stream ended without [DONE]; the reply is incomplete",
                 error_kind="incomplete_stream",
+                **_chunk_fields(chunk_chars, chunk_tokens),
             )
         return RequestResult(
+            sent_perf_s=start_time,
             success=True,
             ttft=ttft,
             itl=itl,
@@ -360,6 +436,7 @@ async def _stream_completions(
             output_tokens=output_tokens,
             usage_reported=usage_reported,
             server_cached_tokens=server_cached_tokens,
+            **_chunk_fields(chunk_chars, chunk_tokens),
         )
 
     except asyncio.CancelledError:
@@ -367,6 +444,7 @@ async def _stream_completions(
     except Exception as e:
         is_timeout = isinstance(e, asyncio.TimeoutError)
         return RequestResult(
+            sent_perf_s=start_time,
             success=False,
             ttft=ttft,
             itl=itl,
@@ -467,14 +545,19 @@ class HttpDriver(Driver):
         min_tokens=0,
         request_id=None,
         capture_text=False,
+        chunk_usage=False,
     ) -> RequestResult:
         extra = {}
+        if chunk_usage:
+            extra["chunk_usage"] = True
         if request.prompt_token_ids:
             extra["prompt_token_ids"] = request.prompt_token_ids
         if capture_text:
             extra["capture_text"] = True
         if request.tools:
             extra["tools"] = request.tools
+        if request.cache_salt:
+            extra["cache_salt"] = request.cache_salt
         return await self.send_request(
             session=self._http,
             url=self.url,

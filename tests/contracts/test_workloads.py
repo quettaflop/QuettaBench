@@ -926,6 +926,21 @@ class Plays(unittest.TestCase):
         self.assertEqual(turns[1].messages[1], {"role": "user", "content": "ask"})  # the trace is untouched
         self.assertEqual(second[0].metadata["play"], 1)
         self.assertNotEqual(workload_hash(first), workload_hash(second))
+        self.assertEqual({r.cache_salt for r in first + second}, {None})
+        # The tag sits on the first user message only; "more", the second, is as recorded.
+        self.assertEqual(second[1].messages[3], {"role": "user", "content": "more"})
+
+    def test_a_cache_salt_play_leaves_the_prompt_as_recorded_and_salts_the_request(self):
+        msgs = [{"role": "user", "content": "ask"}, {"role": "assistant", "content": "said"}]
+        turns = [Request([], 0, output_length=3, session_id=7, turn=i, messages=msgs[: i + 1]) for i in range(2)]
+        first, second = play(turns, 42, 0, "cache_salt"), play(turns, 42, 1, "cache_salt")
+        for p in (first, second):
+            self.assertEqual([json.dumps(r.messages) for r in p], [json.dumps(t.messages) for t in turns])
+        # One salt per play, on every turn of it, and the text tag's value: the same play rule either way.
+        self.assertEqual(len({r.cache_salt for r in first}), 1)
+        self.assertNotEqual(first[0].cache_salt, second[0].cache_salt)
+        tagged = play(turns, 42, 1)[0].messages[0]["content"]
+        self.assertEqual(tagged, f"[rid:{second[0].cache_salt}]\n\nask")
 
 
 class ToolSchemas(unittest.TestCase):

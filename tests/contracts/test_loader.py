@@ -139,6 +139,18 @@ class LoaderRules(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, r"grids\.yaml: unknown key 'cells'"):
             self.load()
 
+    def test_cache_salt_is_refused_on_an_engine_that_does_not_take_it(self):
+        with self.assertRaisesRegex(ConfigError, "engine.name=quettaserve does not take it"):
+            self.load(overrides=["workload.salt=cache_salt", "engine.name=quettaserve"])
+        self.assertEqual(self.one(overrides=["workload.salt=cache_salt"]).workload.salt, "cache_salt")
+        with self.assertRaisesRegex(ConfigError, "unknown salt 'prefix'; use"):
+            self.load(overrides=["workload.salt=prefix"])
+
+    def test_chunk_usage_is_refused_on_an_engine_that_does_not_take_it(self):
+        with self.assertRaisesRegex(ConfigError, "engine.name=quettaserve does not take it"):
+            self.load(overrides=["mode.chunk_usage=true", "engine.name=quettaserve"])
+        self.assertTrue(self.one(overrides=["mode.chunk_usage=true"]).mode.chunk_usage)
+
     def test_unknown_set_key(self):
         with self.assertRaisesRegex(ConfigError, r"--set: unknown key 'engine.tensor_parallel'"):
             self.load(overrides=["engine.tensor_parallel=2"])

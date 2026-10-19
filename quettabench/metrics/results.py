@@ -186,6 +186,7 @@ def _ms(seconds, digits=2):
 
 # Written only when not None; seconds become milliseconds, rates keep four digits.
 OPTIONAL_MS = (
+    "sent_at",
     "scheduled_at",
     "dispatch_started_at",
     "semaphore_acquired_at",
@@ -223,6 +224,8 @@ NEW_FIELDS = (
     "batch_wall_s",
     "logits",
     "stream_closed_s",
+    "chunk_chars",
+    "chunk_tokens",
 )
 
 
@@ -248,6 +251,9 @@ def jsonl_row(r, **extra):
     for name in OPTIONAL_MS:
         if getattr(r, name + "_s") is not None:
             row[name + "_ms"] = _ms(getattr(r, name + "_s"))
+    # The close on the run clock; stream_closed_s counts from the request's own clock start, sent_at.
+    if r.sent_at_s is not None and r.stream_closed_s is not None:
+        row["stream_closed_ms"] = _ms(r.sent_at_s + r.stream_closed_s)
     for name in OPTIONAL_CACHE:
         value = getattr(r, name)
         if value is not None:

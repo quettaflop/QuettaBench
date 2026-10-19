@@ -42,7 +42,7 @@ from ..metrics.summary import (
 from ..workloads.arrival import offered_rate, parse_arrival, rebase_arrivals
 from ..workloads.base import Request
 from ..workloads.plan import freeze, sent_digest, spliced_at
-from ..workloads.sessions import PLAY_RULE, SessionTrace, inter_turn_wait_s, play, sleep_until_elapsed
+from ..workloads.sessions import PLAY_RULES, SessionTrace, inter_turn_wait_s, play, sleep_until_elapsed
 
 TRACE_REQUEST_ID_PREFIX = "agenticbench"
 IDENTITY_EXIT = 3
@@ -101,13 +101,14 @@ def trace_name(trace) -> str:
 
 
 def sampling(mode, request) -> dict:
-    """exact_output_length pins min_tokens."""
-    return {
+    """exact_output_length pins min_tokens; chunk_usage is passed only when on, for the drivers that take it."""
+    out = {
         "ignore_eos": mode.ignore_eos or mode.exact_output_length,
         "temperature": mode.temperature,
         "seed": mode.sampling_seed,
         "min_tokens": (request.max_tokens or 0) if mode.exact_output_length else 0,
     }
+    return {**out, "chunk_usage": True} if mode.chunk_usage else out
 
 
 def stamp_arrivals(trace, workload):
@@ -125,6 +126,15 @@ def arrival_offsets(trace, workload) -> list:
     if injected is None:
         return rebase_arrivals([r.arrival_ts for r in trace.requests()], workload.speed)
     return [t / workload.speed for t in injected]
+
+
+def enforce_first_chunk(result):
+    """A reply with no chunk carrying choices has no TTFT and no token timing: a failed request, not one timed by
+    its e2el."""
+    if result.success and result.ttft is None:
+        result.success = False
+        result.error = "the reply carried no chunk with choices"
+        result.error_kind = "empty_reply"
 
 
 def enforce_output_length(mode, request, result):
@@ -198,7 +208,9 @@ async def replay(trace, driver, mode, emit, offsets, request_id, executed):
             dispatch_started_at_s=dispatched,
             semaphore_acquired_at_s=granted,
             completed_at_s=time.perf_counter() - start,
+            run_start=start,
         )
+        enforce_first_chunk(result)
         enforce_output_length(mode, request, result)
         if i < mode.discard_first:
             result.excluded_from_summary = True
@@ -411,7 +423,7 @@ def serve_records(pairs, open_loop):
         arrival = r.scheduled_at_s if open_loop and r.scheduled_at_s is not None else r.semaphore_acquired_at_s
         out.append(
             {
-                "ttft_ms": (r.ttft or r.e2el) * 1e3,
+                "ttft_ms": r.ttft * 1e3,
                 "index": r.request_index,
                 "out_tokens": n,
                 "arrival_s": arrival,
@@ -630,7 +642,7 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
         stamp_arrivals(trace, workload)
     # Frozen before anything is sent: the check below compares each request as sent with this, not with the
     # Request objects the run itself sends.
-    plan = freeze(trace, recycled=multi and mode.duration_s > 0, seed=workload.seed)
+    plan = freeze(trace, recycled=multi and mode.duration_s > 0, seed=workload.seed, salt=workload.salt)
     goodput = None
     try:
         if mode.goodput_sweep:
@@ -684,8 +696,8 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
             "sessions": len(trace.sessions()),
             "plays": len(plays),
             "duration_s": measured.deadline_s,
-            "salt": "first user turn of every play",
-            "play_rule": PLAY_RULE,
+            "salt": workload.salt,
+            "play_rule": PLAY_RULES[workload.salt],
             # Plays per stratum: a stratified order keeps these within one of each other per pass.
             "plays_by_stratum": dict(
                 collections.Counter(stratum_of[int(str(p[0].session_id).split("#")[0])] for p in plays)
@@ -1015,7 +1027,9 @@ class SessionDispatcher:
             dispatch_started_at_s=dispatched,
             semaphore_acquired_at_s=granted,
             completed_at_s=elapsed(),
+            run_start=self.start,
         )
+        enforce_first_chunk(result)
         enforce_output_length(self.mode, request, result)
         annotate_multi_turn_cache_estimate(
             result,
@@ -1163,7 +1177,7 @@ class SessionDispatcher:
         async def agent():
             while elapsed() < self.deadline_s:
                 k = next(draws)
-                turns = play(self.sessions[k % n], self.workload.seed, k // n)
+                turns = play(self.sessions[k % n], self.workload.seed, k // n, self.workload.salt)
                 self.plays.append(turns)
                 admitted = elapsed()
                 await self._turns(turns, lambda r: next(indexes))

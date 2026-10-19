@@ -19,7 +19,9 @@ from quettabench.metrics.summary import (
     aggregate_per_turn,
     annotate_multi_turn_cache_estimate,
     annotate_request_observability,
+    bin_widths,
     burst_recovery,
+    chunk_shares,
     first_error,
     parse_prometheus,
     pcts,
@@ -32,8 +34,10 @@ from quettabench.metrics.summary import (
     steady_window,
     success_rate_gate,
     summarize_serve,
+    tokens_by_arrival,
     transient_gate,
     usage_gate,
+    width_weighted,
 )
 from quettabench.workloads.base import Request
 from quettabench.workloads.live import get_profile
@@ -307,6 +311,7 @@ def _req(
     )
     r.semaphore_acquired_at_s = start
     r.completed_at_s = end
+    r.chunk_chars = [1] * max(1, output_tokens)  # a character a chunk, so a token a chunk
     return r
 
 
@@ -467,10 +472,16 @@ class TestDiscardFirst(unittest.TestCase):
         s = aggregate(self._run(), duration_s=10.0, concurrency=1)
         self.assertAlmostEqual(s.busy_time_s, 7.0)
 
-    def test_no_exclusions_keeps_reported_duration(self):
+    def test_the_whole_run_window_is_first_send_to_last_completion(self):
+        # Sent at 0 s and 1 s, done at 1 s and 2 s, in a 5 s run: the rates divide by 2 s, and say so.
         s = aggregate([_req(0, 1), _req(1, 2)], duration_s=5.0, concurrency=1)
         self.assertEqual(s.excluded_requests, 0)
-        self.assertAlmostEqual(s.measured_window_s, 5.0)
+        self.assertEqual((s.measured_window_s, s.measured_window), (2.0, "first send to last completion"))
+        self.assertAlmostEqual(s.request_throughput, 1.0)
+        # With no request timed, the run's wall time stands in, named as such.
+        bare = RequestResult(success=True, ttft=0.1, e2el=0.2, output_tokens=2, usage_reported=True)
+        s = aggregate([bare], duration_s=5.0)
+        self.assertEqual((s.measured_window_s, s.measured_window), (5.0, "run wall time"))
 
 
 class TestLoadModeDiagnostics(unittest.TestCase):
@@ -484,7 +495,7 @@ class TestLoadModeDiagnostics(unittest.TestCase):
     def test_open_loop_keeping_up_is_arrival_limited_not_draining(self):
         results = [_req(i * 0.5, i * 0.5 + 1) for i in range(20)]
         s = aggregate(results, duration_s=10.0, concurrency=40, load_mode="open-loop", target_rate=2.0)
-        self.assertAlmostEqual(s.request_throughput, 2.0)
+        self.assertAlmostEqual(s.request_throughput, 20 / 10.5)  # first send at 0 s, last completion at 10.5 s
         self.assertLess(s.mean_inflight_requests, 40 * 0.7)
 
     def test_closed_loop_still_flags_draining(self):
@@ -517,15 +528,16 @@ class TestOpenLoopUnits(unittest.TestCase):
     def test_session_throughput_counts_sessions_not_turns(self):
         s = aggregate(self._multi_turn(), duration_s=10.0, load_mode="open-loop", target_rate=0.4)
         self.assertEqual((s.sessions_completed, s.sessions_failed), (4, 0))
-        self.assertAlmostEqual(s.session_throughput, 0.4)
-        self.assertAlmostEqual(s.request_throughput, 2.0)
+        # First send at 0 s; the last turn, session 3's fifth, ends at 3 + 0.4 + 0.5 = 3.9 s.
+        self.assertAlmostEqual(s.session_throughput, 4 / 3.9)
+        self.assertAlmostEqual(s.request_throughput, 20 / 3.9)
 
     def test_a_session_with_a_failed_turn_is_not_completed(self):
         rows = self._multi_turn()
         rows[7].success = False  # session 1, turn 2
         s = aggregate(rows, duration_s=10.0, load_mode="open-loop", target_rate=0.4)
         self.assertEqual((s.sessions_completed, s.sessions_failed), (3, 1))
-        self.assertAlmostEqual(s.session_throughput, 0.3)
+        self.assertAlmostEqual(s.session_throughput, 3 / 3.9)
 
     def test_a_session_short_of_its_planned_turns_is_not_completed(self):
         rows = [r for r in self._multi_turn() if not (r.session_id == 2 and r.turn_index == 4)]
@@ -699,10 +711,58 @@ class TestOpenLoopUnits(unittest.TestCase):
         tl = s["timeline"]
         self.assertEqual((tl["bin_s"], tl["bins"]), (4.0, 3))
         self.assertAlmostEqual(tl["output_tok_s"]["max"], 10.0)
-        # The failed turn's 5 tokens are missing from the last bin, and its 1 s from the bin's 8 agent-seconds.
+        # The failed turn's 5 tokens are missing from the last bin, but its 1 s in flight counts: it held the server.
         self.assertAlmostEqual(tl["output_tok_s"]["min"], 35 / 4.0)
         self.assertAlmostEqual(tl["requests_in_flight"]["max"], 2.0)
-        self.assertAlmostEqual(tl["requests_in_flight"]["min"], 7 / 4.0)
+        self.assertAlmostEqual(tl["requests_in_flight"]["min"], 2.0)
+
+    def test_a_silent_tail_books_its_tokens_at_the_finish_chunk(self):
+        # 1,000 tokens in 51 chunks: 50 visible chunks of 2 characters from 0.1 s to 5.0 s, then 15 s of silence
+        # and a finish chunk carrying a 900-character tool call at 20.0 s. 1,000 characters, so a token each.
+        r = RequestResult(success=True, ttft=0.1, itl=[0.1] * 49 + [15.0], output_tokens=1000, input_tokens=7)
+        r.sent_at_s, r.chunk_chars = 0.0, [2] * 50 + [900]
+        self.assertEqual(tokens_by_arrival([r], 0.0, 10.0, [10.0]), (100, 7, [100]))
+        self.assertEqual(tokens_by_arrival([r], 0.0, 30.0, [10.0, 10.0, 10.0]), (1000, 7, [100, 0, 900]))
+        # Spread evenly over chunks, the first 10 s would have read 50 * 1000 / 51, about 980 tokens.
+
+    def test_chunk_shares_follow_the_server_counts_else_the_characters_and_are_never_negative(self):
+        def shares(output_tokens, chars=None, counts=None):
+            r = RequestResult(success=True, output_tokens=output_tokens, chunk_chars=chars, chunk_tokens=counts)
+            return chunk_shares(r, len(chars or counts))
+
+        # A role chunk, three content chunks of 2, 1 and 3 characters, a bare finish chunk.
+        self.assertEqual(shares(6, [0, 2, 1, 3, 0]), [0, 2, 1, 3, 0])
+        # Fewer tokens than chunks: 2 tokens over three 1-character chunks, nothing on the empty ones.
+        self.assertEqual(shares(2, [0, 1, 1, 1, 0]), [0, 2 / 3, 2 / 3, 2 / 3, 0])
+        # A tool call the parser emits whole on the finish chunk: 20 of 25 characters, so 8 of 10 tokens.
+        self.assertEqual(shares(10, [0, 5, 0, 20]), [0, 2, 0, 8])
+        # The server's cumulative counts under continuous usage: the third chunk carried 3 tokens (speculative).
+        self.assertEqual(shares(6, [0, 1, 1, 1, 0], [0, 1, 4, 6, 6]), [0, 1, 3, 2, 0])
+        # One chunk without a count: back to the characters.
+        self.assertEqual(shares(4, [0, 1, 3], [0, None, 4]), [0, 1, 3])
+        # No characters at all, or none recorded: the finish chunk carries everything.
+        self.assertEqual(shares(4, [0, 0, 0]), [0, 0, 4])
+        self.assertEqual(chunk_shares(RequestResult(success=True, output_tokens=4), 3), [0, 0, 4])
+
+    def test_a_last_bin_under_half_a_bin_folds_into_the_one_before(self):
+        self.assertEqual(bin_widths(10.001, 10.0), [10.001])  # was [10, 0.001], whose rate read 0 and cv 1.0
+        self.assertEqual(bin_widths(24.0, 10.0), [10.0, 14.0])
+        self.assertEqual(bin_widths(25.0, 10.0), [10.0, 10.0, 5.0])  # exactly half a bin stands
+        self.assertEqual(bin_widths(26.0, 10.0), [10.0, 10.0, 6.0])
+        self.assertEqual(bin_widths(4.0, 10.0), [4.0])
+        # The 12 s window from 3 s to 15 s in 5 s bins: [5, 7], each at 10 tok/s, not a third bin of 2 s.
+        rows, times = self._two_agents_ten_sessions()
+        tl = steady_section(rows, times, concurrency=2, bin_s=5.0)["timeline"]
+        self.assertEqual(tl["bins"], 2)
+        self.assertEqual(
+            (tl["output_tok_s"]["min"], tl["output_tok_s"]["max"], tl["output_tok_s"]["cv"]), (10.0, 10.0, 0.0)
+        )
+
+    def test_bin_rates_are_weighted_by_bin_width(self):
+        # 10 tok/s over 10 s and 20 tok/s over 15 s: mean 400 / 25 = 16; variance (10 * 36 + 15 * 16) / 25 = 24.
+        s = width_weighted([10.0, 20.0], [10.0, 15.0])
+        self.assertEqual((s["min"], s["mean"], s["max"]), (10.0, 16.0, 20.0))
+        self.assertAlmostEqual(s["cv"], 24**0.5 / 16)
 
     def test_the_cold_start_ttft_is_reported_beside_the_window_not_dropped(self):
         rows, times = self._two_agents_ten_sessions()
@@ -720,6 +780,15 @@ class TestOpenLoopUnits(unittest.TestCase):
         self.assertFalse(none["valid"])
         self.assertEqual(none["first_turn_ttft_ms"]["n"], 2)
         self.assertNotIn("ramp", none)
+
+    def test_the_window_takes_a_request_by_its_send_not_its_slot_grant(self):
+        # S2's first turn got its slot at 2.95 s, before the window opened at 3 s, but was sent at 3 s.
+        rows, times = self._two_agents_ten_sessions()
+        r = next(r for r in rows if (r.session_id, r.turn_index) == (2, 0))
+        r.semaphore_acquired_at_s, r.sent_at_s = 2.95, 3.0
+        s = steady_section(rows, times, concurrency=2, bin_s=4.0)
+        self.assertEqual(s["requests_inside"], 24)  # every turn sent from 3 s to 14 s
+        self.assertEqual(s["ramp"]["ttft_ms"]["n"], 6)  # S0's and S1's three turns, sent before 3 s
 
     def test_a_request_straddling_the_window_edge_counts_only_its_tokens_inside(self):
         rows, times = self._two_agents_ten_sessions()

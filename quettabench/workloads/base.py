@@ -34,13 +34,15 @@ class Request:
     # The tool schema an agent sent with its messages; not in the replay schema, hashed like messages.
     tools: list | None = None
     metadata: dict | None = None
+    # vLLM's cache_salt field, set on a recycled play under workload.salt=cache_salt; not in the replay schema.
+    cache_salt: str | None = None
 
     @property
     def max_tokens(self):
         return self.output_length
 
     def to_dict(self):
-        plain = replace(self, messages=None, tools=None, metadata=None)
+        plain = replace(self, messages=None, tools=None, metadata=None, cache_salt=None)
         return {k: v for k, v in asdict(plain).items() if v is not None}
 
 

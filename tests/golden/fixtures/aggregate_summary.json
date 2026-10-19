@@ -40,6 +40,7 @@
   "mean_itl_ms": 20.5,
   "mean_tpot_ms": 24.6,
   "mean_ttft_ms": 68.33333333333333,
+  "measured_window": "first send to last completion",
   "measured_window_s": 3.0,
   "median_e2el_ms": 158.0,
   "median_itl_ms": 20.5,

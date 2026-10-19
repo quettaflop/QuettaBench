@@ -49,6 +49,7 @@ class FakeDriver:
             return RequestResult(success=False, e2el=0.01, error="boom", error_kind="http_error")
         n = self.short.get((request.session_id, request.turn), request.max_tokens or 4)
         return RequestResult(
+            sent_perf_s=time.perf_counter(),
             success=True,
             ttft=0.001,
             itl=[0.001] * (n - 1),
@@ -123,6 +124,8 @@ class SingleTurn(unittest.TestCase):
             rows = [json.loads(x) for x in (Path(td) / "requests.jsonl").read_text().splitlines()]
             run_json = json.loads((Path(td) / "run.json").read_text())
         self.assertEqual(len(rows), 6)
+        # The driver's send instant, on the run clock: after the slot was granted, before the reply was done.
+        self.assertTrue(all(r["semaphore_acquired_at_ms"] <= r["sent_at_ms"] <= r["completed_at_ms"] for r in rows))
         self.assertEqual({r["ttft_basis"] for r in rows}, {"slot"})
         self.assertEqual(sorted(r["request_index"] for r in rows), list(range(6)))
         self.assertEqual(summary.core.excluded_requests, 1)
@@ -156,6 +159,25 @@ class SingleTurn(unittest.TestCase):
         workload = run_json["summary"]["workload"]
         self.assertEqual((workload["match"], workload["n"], workload["of"]), (True, 8, 8))
         self.assertNotIn("WORKLOAD_MISMATCH", out)
+
+    def test_a_reply_with_no_chunk_is_a_failed_request_not_one_timed_by_its_e2el(self):
+        class Empty(FakeDriver):
+            async def send(self, request, **kw):
+                result = await super().send(request, **kw)
+                if request.order == 3:
+                    result.ttft, result.itl = None, []
+                return result
+
+        with tempfile.TemporaryDirectory() as td:
+            summary, _ = run(single_trace(6), Empty(), ModeCfg(concurrency=2, warmup=0), results_dir=td)
+            rows = [json.loads(x) for x in (Path(td) / "requests.jsonl").read_text().splitlines()]
+        bad = [r for r in rows if not r["success"]]
+        self.assertEqual(
+            [(r["request_index"], r["error_kind"], r["error"]) for r in bad],
+            [(3, "empty_reply", "the reply carried no chunk with choices")],
+        )
+        self.assertEqual(summary.sections["serve"]["n"], 5)
+        self.assertEqual((summary.status, summary.core.failed_requests), ("partial", 1))
 
     def test_failures_under_min_success_rate_abort(self):
         with tempfile.TemporaryDirectory() as td:
@@ -210,6 +232,7 @@ class TimedDriver(FakeDriver):
         self.peak = {"sessions": 0, "requests": 0}
 
     async def send(self, request, **kw):
+        sent = time.perf_counter()
         self.open_sessions.add(request.session_id)
         self.inflight += 1
         self.peak["sessions"] = max(self.peak["sessions"], len(self.open_sessions))
@@ -218,7 +241,9 @@ class TimedDriver(FakeDriver):
         self.inflight -= 1
         if request.turn == self.last_turn:
             self.open_sessions.discard(request.session_id)
-        return await super().send(request, **kw)
+        result = await super().send(request, **kw)
+        result.sent_perf_s = sent
+        return result
 
 
 class Sessions(unittest.TestCase):
@@ -261,7 +286,13 @@ class Sessions(unittest.TestCase):
             r.metadata = {"tool_wait_after_ms": 3.0}
         trace.pacing = TurnPacing("per-session", use_recorded_waits=True)
         driver = TimedDriver(last_turn=4)
-        summary, _ = run(trace, driver, ModeCfg(concurrency=8, warmup=0))
+        # A full-generation gc pass in a process holding the whole suite can stall the loop past the 50 ms handover
+        # bound and void the window; this test is about the dispatch, so gc waits until it is done.
+        gc.disable()
+        try:
+            summary, _ = run(trace, driver, ModeCfg(concurrency=8, warmup=0))
+        finally:
+            gc.enable()
         # A session's waits count as open: still 8 sessions at most, 8 requests at most, no queue for a slot.
         self.assertEqual(driver.peak, {"sessions": 8, "requests": 8})
         # Waiting for a slot would cost a whole 5 ms request; below that is event-loop jitter under 8 coroutines.
@@ -373,6 +404,31 @@ class Sessions(unittest.TestCase):
         # Salted plays are not the plain sample: a recycled run does not compare with a run of the sample as is.
         self.assertNotEqual(short[0]["plan_hash"], short[2])
         self.assertTrue(short[0]["match"] and long_[0]["match"])
+
+    def test_a_cache_salt_replay_sends_the_recorded_prompt_with_one_salt_per_play(self):
+        class Salts(TimedDriver):
+            async def send(self, request, **kw):
+                self.seen.append((request.session_id, request.turn, request.cache_salt, json.dumps(request.messages)))
+                return await super().send(request, **kw)
+
+        trace, driver = recorded_trace(5, 2), Salts(last_turn=1)
+        driver.seen = []
+        source = {(r.session_id, r.turn): json.dumps(r.messages) for r in trace.requests()}
+        mode = ModeCfg(concurrency=4, warmup=0, duration_s=0.05)
+        summary, _ = run(trace, driver, mode, WorkloadCfg(salt="cache_salt"))
+        plays = summary.sections["plays"]
+        self.assertEqual(plays["salt"], "cache_salt")
+        self.assertIn("cache_salt field", plays["play_rule"])
+        # Every play its own salt, the same on each of its turns.
+        salts = {(sid, salt) for sid, _, salt, _ in driver.seen}
+        self.assertEqual(len(salts), plays["plays"])
+        self.assertEqual(len({salt for _, salt in salts}), plays["plays"])
+        # The text sent is the recorded text, byte for byte.
+        for sid, turn, _, messages in driver.seen:
+            self.assertEqual(messages, source[int(sid.split("#")[0]), turn])
+        self.assertTrue(summary.sections["workload"]["match"])
+        text_plan = freeze(recorded_trace(5, 2), recycled=True, seed=42).plan_hash
+        self.assertNotEqual(summary.sections["workload"]["plan_hash"], text_plan)
 
     def test_a_recycled_replay_counts_plays_per_stratum(self):
         trace = recorded_trace(5, 2)

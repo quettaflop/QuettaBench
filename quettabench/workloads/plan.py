@@ -8,7 +8,7 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 
-from .sessions import PLAY_RULE, SessionTrace, play
+from .sessions import PLAY_RULES, SessionTrace, play
 
 
 def spliced_at(request, replies) -> frozenset:
@@ -19,8 +19,8 @@ def spliced_at(request, replies) -> frozenset:
 
 
 def sent_digest(request, spliced=frozenset()) -> str:
-    """What the server receives: the prompt token ids or messages, the tools and max_tokens. The content of a
-    spliced placeholder is left out, because the run writes the engine's reply there."""
+    """What the server receives: the prompt token ids or messages, the tools, max_tokens and cache_salt. The content
+    of a spliced placeholder is left out, because the run writes the engine's reply there."""
     messages = [
         {k: v for k, v in m.items() if not (i in spliced and k == "content")}
         for i, m in enumerate(request.messages or ())
@@ -30,6 +30,7 @@ def sent_digest(request, spliced=frozenset()) -> str:
         "messages": messages or None,
         "tools": request.tools,
         "max_tokens": request.max_tokens,
+        "cache_salt": request.cache_salt,
     }
     return hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":"), default=str).encode()).hexdigest()
 
@@ -49,6 +50,7 @@ class Plan:
     digests: dict = field(default_factory=dict)
     frozen: dict | None = None
     seed: int = 0
+    salt: str = "text"
     _plays: dict = field(default_factory=dict)
 
     def digest(self, key) -> str | None:
@@ -58,7 +60,7 @@ class Plan:
         if session not in self.frozen:
             return None
         if (session, number) not in self._plays:
-            turns = play(self.frozen[session], self.seed, number)
+            turns = play(self.frozen[session], self.seed, number, self.salt)
             self._plays[session, number] = {r.turn: sent_digest(r) for r in turns}
         return self._plays[session, number].get(key[1])
 
@@ -77,10 +79,11 @@ def _hash(header: dict, digests) -> str:
     return h.hexdigest()[:16]
 
 
-def freeze(trace, recycled=False, seed=0) -> Plan:
+def freeze(trace, recycled=False, seed=0, salt="text") -> Plan:
     """Digests every planned request now. A single-turn trace keeps its workload_hash as plan_hash. A session
-    trace's plan_hash covers the file's sha256, the sample, the session order, the play rule when recycled, and
-    every request's digest; a recycled replay's does not depend on its duration or the server's speed."""
+    trace's plan_hash covers the file's sha256, the sample, the session order, the play rule (seed and salt policy)
+    when recycled, and every request's digest; a recycled replay's does not depend on its duration or the server's
+    speed."""
     if not isinstance(trace, SessionTrace):
         return Plan(trace.workload_hash(), {i: sent_digest(r) for i, r in enumerate(trace.requests())})
     sessions = trace.sessions()
@@ -90,9 +93,10 @@ def freeze(trace, recycled=False, seed=0) -> Plan:
         "file_sha256": getattr(trace, "file_sha256", None),
         "sample": list(getattr(trace, "sample", [])),
         "order": [str(s[0].session_id) for s in sessions],
-        "play_rule": {"seed": seed, "rule": PLAY_RULE} if recycled else None,
+        "play_rule": {"seed": seed, "salt": salt, "rule": PLAY_RULES[salt]} if recycled else None,
     }
     plan_hash = _hash(header, digests.items())
     if not recycled:
         return Plan(plan_hash, digests)
-    return Plan(plan_hash, frozen={str(s[0].session_id): copy.deepcopy(s) for s in sessions}, seed=seed)
+    frozen = {str(s[0].session_id): copy.deepcopy(s) for s in sessions}
+    return Plan(plan_hash, frozen=frozen, seed=seed, salt=salt)

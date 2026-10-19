@@ -110,23 +110,36 @@ def stratify(sessions: list, take: int | None) -> tuple[list, dict]:
     return order, {s.session_id: k for k, v in strata.items() for s in v}
 
 
-# Names how play() salts a play; part of a recycled run's plan hash, so change it when the salt changes.
-PLAY_RULE = "rid-v1: [rid:<sha256(seed:session:play)[:12]>] and a blank line before the first user message"
+# How play() salts a play under each workload.salt; part of a recycled run's plan hash, so change one when its
+# salt changes.
+PLAY_RULES = {
+    "text": "rid-v1: [rid:<sha256(seed:session:play)[:12]>] and a blank line before the first user message",
+    "cache_salt": "rid-v1: vLLM's cache_salt field set to sha256(seed:session:play)[:12]; the prompt as recorded",
+}
 
 
-def play(turns: list, seed: int, number: int) -> list:
-    """One salted play of a session for a recycled replay: a fresh [rid:...] tag on the first user turn, so the play
-    misses the prefix cache its earlier plays left; session_id becomes "<session>#<number>"."""
-    salt = hashlib.sha256(f"{seed}:{turns[0].session_id}:{number}".encode()).hexdigest()[:12]
+def play(turns: list, seed: int, number: int, salt: str = "text") -> list:
+    """One salted play of a session for a recycled replay, so the play misses the prefix cache its earlier plays
+    left. salt "text" puts a [rid:...] tag before the first user message, as AgentX does; "cache_salt" leaves the
+    prompt as recorded and sets vLLM's cache_salt field on every turn. session_id becomes "<session>#<number>"."""
+    tag = hashlib.sha256(f"{seed}:{turns[0].session_id}:{number}".encode()).hexdigest()[:12]
     sid = f"{turns[0].session_id}#{number}"
     out = []
     for r in turns:
         messages = [dict(m) for m in r.messages or []]
-        for m in messages:
+        for m in messages if salt == "text" else ():
             if m.get("role") == "user":
-                m["content"] = f"[rid:{salt}]\n\n{m.get('content') or ''}"
+                m["content"] = f"[rid:{tag}]\n\n{m.get('content') or ''}"
                 break
-        out.append(replace(r, session_id=sid, messages=messages, metadata=dict(r.metadata or {}, play=number)))
+        out.append(
+            replace(
+                r,
+                session_id=sid,
+                messages=messages,
+                metadata=dict(r.metadata or {}, play=number),
+                cache_salt=tag if salt == "cache_salt" else None,
+            )
+        )
     return out
 
 

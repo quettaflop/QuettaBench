@@ -318,6 +318,16 @@ def _validate(values, origins, allow_unverified, where):
         values["mode.load"] != "open" or not (values["mode.sla_ttft_ms"] or values["mode.sla_tpot_ms"])
     ):
         raise ConfigError(f"{where}: goodput sweep needs open load and mode.sla_ttft_ms and/or sla_tpot_ms")
+    if values["mode.chunk_usage"] and values["engine.name"] != "vllm":
+        raise ConfigError(
+            f"{where}: mode.chunk_usage asks vLLM for continuous_usage_stats; "
+            f"engine.name={values['engine.name']} does not take it"
+        )
+    if values["workload.salt"] == "cache_salt" and values["engine.name"] != "vllm":
+        raise ConfigError(
+            f"{where}: workload.salt=cache_salt sends vLLM's cache_salt request field; "
+            f"engine.name={values['engine.name']} does not take it, so use workload.salt=text"
+        )
     if values["mode.grid"] and values["workload.prompt_mode"] == "corpus" and values["mode.return_outputs"] == "none":
         raise ConfigError(
             f"{where}: prompt_mode=corpus tokenizes in-process, which only a "

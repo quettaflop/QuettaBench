@@ -24,6 +24,7 @@ CHOICES = {
     "workload.kind": ("live", "grid", "sessions"),
     "workload.prompt_mode": PROMPT_MODES,
     "workload.pacing": ("per-session", "interleaved"),
+    "workload.salt": ("text", "cache_salt"),
     "mode.mode": ("serve", "probe"),
     "mode.serve_profile": (None, "stress-test", "single-turn", "multi-turn"),
     "mode.load": ("closed", "open"),
@@ -118,6 +119,9 @@ class WorkloadCfg:
     # Order the sample round-robin across strata of turn count and prompt size (and, with num_sessions, take each
     # stratum's share), so the sessions open at any moment mix like the whole sample.
     stratified: bool = False
+    # How a recycled play misses earlier plays' cache: text puts a tag before the first user message (AgentX);
+    # cache_salt sends vLLM's cache_salt field and leaves the prompt as recorded.
+    salt: str = "text"
 
 
 @dataclass(frozen=True)
@@ -139,6 +143,9 @@ class ModeCfg:
     min_success_rate: float = 0.75
     reset_prefix_cache: bool = False  # POST the engine's prefix-cache reset after warmup
     allow_missing_usage: bool = False
+    # Ask vLLM for cumulative usage on every chunk (continuous_usage_stats), so window tokens use the server's
+    # per-chunk counts; off, request bodies match vllm bench serve's and AIPerf's.
+    chunk_usage: bool = False
     trace_request_ids: bool = False  # stable request ids for engine tracing
     prefix_cache_block_size: int | None = 16  # block-aligned cache estimates (multi-turn)
     sla_ttft_ms: float | None = None

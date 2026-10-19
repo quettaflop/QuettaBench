@@ -31,7 +31,7 @@ from quettabench.engines.drivers import (
 )
 from quettabench.metrics.results import RunWriter, jsonl_row
 from quettabench.metrics.step_fit import fit_run
-from quettabench.metrics.summary import RequestResult
+from quettabench.metrics.summary import RequestResult, annotate_request_observability
 from quettabench.modes import serve
 from quettabench.workloads.base import Request
 from tests.contracts import helpers
@@ -215,6 +215,20 @@ class BoundDriver(unittest.TestCase):
         asyncio.run(go())
         self.assertEqual(self.stub.posts[0][1]["tools"], tools)
         self.assertNotIn("tools", self.stub.posts[1][1])
+
+    def test_a_request_with_a_cache_salt_sends_it_and_one_without_sends_none(self):
+        drv, session = self.driver("chat", [{"choices": [{"delta": {"content": "x"}}]}])
+        msgs = [{"role": "user", "content": "hi"}]
+
+        async def go():
+            async with session(1):
+                await drv.send(Request([], 0, output_length=2, messages=msgs, cache_salt="0123abcd4567"))
+                await drv.send(Request([], 0, output_length=2, messages=msgs))
+
+        asyncio.run(go())
+        self.assertEqual(self.stub.posts[0][1]["cache_salt"], "0123abcd4567")
+        self.assertEqual(self.stub.posts[0][1]["messages"], msgs)
+        self.assertNotIn("cache_salt", self.stub.posts[1][1])
 
     def test_completions_refuses_a_tool_schema(self):
         drv, session = self.driver("completions", [{"choices": [{"text": "x"}]}])
@@ -433,6 +447,61 @@ class PinnedOutputTests(unittest.TestCase):
         self.assertLess(r.e2el, 0.03)
         self.assertGreaterEqual(r.stream_closed_s - r.e2el, 0.055)
         self.assertEqual(jsonl_row(r)["stream_closed_s"], r.stream_closed_s)
+
+    def test_each_chunk_records_its_delta_characters_and_the_servers_count(self):
+        role = {"choices": [{"delta": {"role": "assistant", "content": ""}}]}
+        finish = {"choices": [{"delta": {}, "finish_reason": "stop"}]}
+        usage = {"choices": [], "usage": {"prompt_tokens": 3, "completion_tokens": 6}}
+        r = _run(_ChatSession(_chat_sse([role, _delta("ab"), _delta("c"), _delta("def"), finish, usage])))
+        self.assertEqual((r.chunk_chars, r.chunk_tokens), ([0, 2, 1, 3, 0], None))
+        self.assertEqual(jsonl_row(r)["chunk_chars"], [0, 2, 1, 3, 0])
+        # Reasoning and tool-call arguments count; the tool call's name does not.
+        call = {"index": 0, "function": {"name": "bash", "arguments": '{"a": 1}'}}
+        r = _run(_ChatSession(_chat_sse([_delta(None, reasoning_content="xyz"), _delta(None, tool_calls=[call])])))
+        self.assertEqual(r.chunk_chars, [3, 8])
+        # Under continuous usage the server's cumulative count rides on every chunk; a speculative chunk adds 3.
+        counted = [
+            {**c, "usage": {"prompt_tokens": 3, "completion_tokens": k}}
+            for c, k in zip([role, _delta("ab"), _delta("cdefg"), finish], [0, 1, 4, 4])
+        ]
+        session = _ChatSession(_chat_sse(counted))
+        r = asyncio.run(
+            send_request(
+                session=session,
+                url="http://stub",
+                model="m",
+                messages=[{"role": "user", "content": "hi"}],
+                max_tokens=4,
+                chunk_usage=True,
+            )
+        )
+        self.assertEqual((r.chunk_tokens, r.output_tokens), ([0, 1, 4, 4], 4))
+        self.assertEqual(session.payload["stream_options"], {"include_usage": True, "continuous_usage_stats": True})
+        plain = _ChatSession(_chat_sse([_delta("a")]))
+        _run(plain)
+        self.assertEqual(plain.payload["stream_options"], {"include_usage": True})  # vllm bench serve's body
+
+    def test_the_row_carries_the_send_and_the_close_on_the_run_clock(self):
+        before = time.perf_counter()
+        r = _run(_ChatSession(_chat_sse([_delta("a")])))
+        self.assertTrue(
+            before <= r.sent_perf_s <= time.perf_counter()
+        )  # the driver's clock start, just before the POST
+        # By hand: a run clock with its zero at perf_counter 100.0, a request sent at 101.5 that closed 0.75 s later.
+        hand = RequestResult(success=True, ttft=0.2, e2el=0.5, stream_closed_s=0.75, sent_perf_s=101.5)
+        annotate_request_observability(
+            hand,
+            request_index=0,
+            request=None,
+            scheduled_at_s=None,
+            dispatch_started_at_s=1.4,
+            semaphore_acquired_at_s=1.45,
+            completed_at_s=2.3,
+            run_start=100.0,
+        )
+        row = jsonl_row(hand)
+        self.assertEqual((row["sent_at_ms"], row["stream_closed_ms"], row["completed_at_ms"]), (1500.0, 2250.0, 2300.0))
+        self.assertNotIn("sent_perf_s", row)
 
     def test_a_finish_chunk_with_an_empty_delta_ends_the_request_and_counts_as_a_chunk(self):
         # A tool-call parser can emit nothing for seconds and then a bare finish chunk: that decode counts.
