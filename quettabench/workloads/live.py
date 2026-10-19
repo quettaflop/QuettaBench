@@ -2,13 +2,14 @@
 
 import dataclasses
 import json
+import os
 import random
 from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
 
-from .base import DrawnTrace, Request, Trace, synth_ids
+from .base import DrawnTrace, Request, Trace, sha256_file, synth_ids
 
 BLOCK_SIZE = 512
 
@@ -139,6 +140,8 @@ class RealTrace(Trace):
         self.path = str(path)
         self.reader = reader
         self.supports_spec = any(r.output_token_ids for r in requests)
+        if self.file_sha256 is None and os.path.isfile(self.path):
+            self.file_sha256 = sha256_file(self.path)
 
     @classmethod
     def from_jsonl(cls, path, seed=42):
@@ -153,6 +156,7 @@ class RealTrace(Trace):
     def source_meta(self):
         return {
             "path": self.path,
+            "file_sha256": self.file_sha256,
             "reader": self.reader,
             "reqs": len(self._requests),
             "sources": sorted({"?" if r.source is None else str(r.source) for r in self._requests}),

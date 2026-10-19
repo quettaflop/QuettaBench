@@ -1,11 +1,13 @@
 # H200 verification of fix/session-replay: agent session replay on the September Qwen traces, one server for every point.
 # Engine block copied verbatim from the campaign's h200_qwen_nf_agents_low.yaml (vLLM recipe DEP8 flags, H200 fit).
-# Export VLLM_PLE_CPU_OFFLOAD=1 VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 first.
 # Warmup 0 so the prefix cache starts empty, as it does for the AIPerf parity run on a fresh server.
 # terminalbench at concurrency 32 has 34 sessions, N <= 2C: its steady section must say valid: false.
 model: qwen38_flash_next
 engine:
   model: Qwen/Qwen3.8-Flash-Next
+  env:
+    VLLM_PLE_CPU_OFFLOAD: 1
+    VLLM_ALLOW_LONG_MAX_MODEL_LEN: 1
   dtype: auto
   tp: 1
   ep: true

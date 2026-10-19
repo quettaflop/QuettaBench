@@ -2,10 +2,13 @@
 # Qwen3.8-Flash-Next DEP8 server, started by hand from this yaml's --dry-run argv and env (as
 # /workspace/qb-verify/g2.sh does) and measured with hardware.launcher=attach, so launch-to-launch variance drops out.
 # Engine block as configs/verify/h200_verify_fidelity.yaml. Waits off; the waits-on run passes
-# --set workload.use_recorded_waits=true. Export VLLM_PLE_CPU_OFFLOAD=1 VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 for the server.
+# --set workload.use_recorded_waits=true.
 model: qwen38_flash_next
 engine:
   model: Qwen/Qwen3.8-Flash-Next
+  env:
+    VLLM_PLE_CPU_OFFLOAD: 1
+    VLLM_ALLOW_LONG_MAX_MODEL_LEN: 1
   dtype: auto
   tp: 1
   ep: true

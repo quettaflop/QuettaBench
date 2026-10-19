@@ -40,6 +40,7 @@ OTHER_ACCELERATORS = ("rocm", "neuron", "tpu")
 # Keys each dict-valued field accepts; None means free-form.
 DICT_KEYS = {
     "engine.extra": None,
+    "engine.env": None,
     "hardware.collective": (
         "NCCL_ALGO",
         "NCCL_PROTO",
@@ -90,6 +91,8 @@ class EngineCfg:
     instrumentation: str = "none"  # armed at launch: none | nsys | torch
     image: str | None = None  # the server's docker image; required by hardware.launcher=docker
     extra: Mapping[str, Any] = field(default_factory=dict)  # quettaserve bench block lives here
+    # The server's environment on top of the shell's: what a verify yaml used to ask for by hand (export ...).
+    env: Mapping[str, Any] = field(default_factory=dict)
     # Facts the capacity gate needs (grid CAPACITY line).
     kv_bytes_per_token: int | None = None  # per token; None allowed only for dense
     weights_gib: float | None = None

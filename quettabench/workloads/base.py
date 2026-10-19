@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import os
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass, replace
 
@@ -44,6 +45,14 @@ class Request:
     def to_dict(self):
         plain = replace(self, messages=None, tools=None, metadata=None, cache_salt=None)
         return {k: v for k, v in asdict(plain).items() if v is not None}
+
+
+def sha256_file(path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def messages_digest(messages, live_replies=False):
@@ -100,6 +109,8 @@ class Trace(ABC):
     live_replies: bool = False
     # The replayed file against its manifest (runner.manifest_check); None for a trace from no profile file.
     manifest: dict | None = None
+    # The replayed file's sha256, the one data/MANIFEST.json lists; None when the source is not a file.
+    file_sha256: str | None = None
 
     @abstractmethod
     def requests(self) -> list[Request]:
@@ -135,6 +146,8 @@ class DrawnTrace(Trace):
 
     def draw(self, num_requests, warmup=0, profile=None):
         self.profile = profile
+        if profile is not None and profile.file_path and os.path.isfile(profile.file_path):
+            self.file_sha256 = sha256_file(profile.file_path)
         self._warmup = [replace(self.get_next_request(), order=i) for i in range(warmup)]
         if warmup and self.rewinds:
             self.reset()
@@ -150,4 +163,4 @@ class DrawnTrace(Trace):
     def source_meta(self):
         p = self.profile
         meta = {"profile": p.name, "dataset": p.dataset, "path": p.file_path} if p else {"reader": type(self).__name__}
-        return {**meta, "reqs": len(self._requests)}
+        return {**meta, "file_sha256": self.file_sha256, "reqs": len(self._requests)}

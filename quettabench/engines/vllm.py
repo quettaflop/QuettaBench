@@ -105,7 +105,7 @@ def extra_fragments(extra, taken):
 
 class VllmAdapter(EngineAdapter):
     name = "vllm"
-    supports = frozenset(FIELDS) | {"extra", "instrumentation", "image"}
+    supports = frozenset(FIELDS) | {"extra", "instrumentation", "image", "env"}
 
     def translate(self, cfg, run_dir=None):
         self.refuse_unsupported(cfg)
@@ -128,7 +128,7 @@ class VllmAdapter(EngineAdapter):
         extra = engine.extra.get("vllm", {})
         extra_argv, extra_kwargs = extra_fragments(extra, kwargs)
         kwargs.update(extra_kwargs)
-        env = dict(SERVER_ENV)
+        env = {**SERVER_ENV, **{str(k): str(v) for k, v in engine.env.items()}}
         if extra.get("api_key") is not None:
             env[API_KEY_ENV] = str(extra["api_key"])
         py = cfg.hardware.provision.get("py")

@@ -270,9 +270,24 @@ class SingleTurn(unittest.TestCase):
         self.assertEqual(chat.to_dict(), plain.to_dict())
         self.assertEqual(workload_hash([chat]), workload_hash([plain]))
 
+    def test_a_single_turn_file_records_its_sha256_and_meets_its_manifest(self):
+        path = write_rows(self.dir / "t.jsonl", [{"prompt_len": 4, "output_length": 2} for _ in range(3)])
+        actual = hashlib.sha256(Path(path).read_bytes()).hexdigest()
+        self.assertEqual(RealTrace.from_jsonl(path).source_meta()["file_sha256"], actual)
+        (self.dir / "MANIFEST.json").write_text(json.dumps({"files": {"t.jsonl": {"sha256": "f" * 64}}}))
+        with self.assertRaisesRegex(ConfigError, "is not .*'s ffffffffffff"):
+            runner.build_trace(config(path))
+        loose = runner.build_trace(config(path), allow_unverified=True)
+        self.assertEqual((loose.manifest["comparable"], loose.file_sha256), (False, actual))
+        with fixture_cwd():
+            drawn = runner.build_trace(config("mooncake-trace"))
+            mooncake = hashlib.sha256(Path(drawn.profile.file_path).read_bytes()).hexdigest()
+        self.assertEqual(drawn.source_meta()["file_sha256"], mooncake)
+
     def test_build_names_the_profile(self):
         trace = runner.build_trace(config("test"))
-        self.assertEqual(trace.source_meta(), {"profile": "test", "dataset": "test", "path": "", "reqs": 100})
+        meta = {"profile": "test", "dataset": "test", "path": "", "file_sha256": None, "reqs": 100}
+        self.assertEqual(trace.source_meta(), meta)  # no file, so no digest
         self.assertEqual(trace.requests()[0].max_tokens, 20)
 
     def test_multi_turn_profile_is_refused_single_turn(self):
@@ -723,13 +738,13 @@ WARMUP = 3
 PINS = {
     "chat-multiturn-short": ("c51f134d3946f53d", "40b315fc6465cb47"),
     "deepresearch-multiturn": ("3f95464ab226ff8f", "b42b5f4449e073e1"),
-    "mooncake-trace": ("a03be7b0ed268d81", "b5ed59cd7a0d7aff"),
+    "mooncake-trace": ("a03be7b0ed268d81", "1b333bc510a3d736"),
     "deepsearch-multiturn": ("e4224f2a4551c063", "839c68468820ad30"),
     "swebench-qwen-multiturn-long": ("36475a9de1586a56", "8597a8a0a958c864"),
     "swebench-qwen-multiturn-medium": ("152d31a287902055", "0dc0f204ba2642ce"),
     "terminalbench-qwen-multiturn-long": ("304c01f98afc8c32", "5a59fe5d925983ae"),
     "terminalbench-qwen-multiturn-medium": ("36d005dbd2cb0786", "2c01ecf05eb064e1"),
-    "test": ("7ae706bdf8eeae1d", "a5c809ace7fb7a08"),
+    "test": ("7ae706bdf8eeae1d", "846db887da5636ca"),
     "cut": ("a7ffbc60a718ff0d", "b33a0f970b6da9ce"),
 }
 

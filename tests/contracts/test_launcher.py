@@ -4,9 +4,11 @@ import dataclasses
 import json
 import os
 import socket
+import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -15,7 +17,7 @@ from unittest import mock
 from quettabench import provision, runner
 from quettabench.config import loader
 from quettabench.config.schema import ConfigError
-from quettabench.engines import drivers, launcher, vllm
+from quettabench.engines import drivers, launcher, observe, vllm
 from quettabench.engines.base import LaunchSpec
 from quettabench.profiling import engine_side
 from tests.contracts import helpers
@@ -615,6 +617,84 @@ class Backends(unittest.TestCase):
                 plan = provision.Plan(True)
                 with self.assertRaisesRegex(ConfigError, "nccl_lib is CUDA's NCCL"):
                     provision.machine(plan, {"cache_root": "/tmp/q", "nccl_lib": "/n"}, True, backend)
+
+
+VLLM_LOG = (
+    "INFO 10-19 02:00:00 [core.py:69] Initializing a V1 LLM engine (v0.31.0) with config: model='m', "
+    "speculative_config=SpeculativeConfig(method='dspark', num_spec_tokens=5), tokenizer='m', "
+    "tensor_parallel_size=8, pipeline_parallel_size=1, data_parallel_size=1, enable_prefix_caching=True, "
+    "chunked_prefill_enabled=True, compilation_config={'level': 3, 'cudagraph_capture_sizes': [64, 32, 16, 8], "
+    "'max_capture_size': 64}\n"
+    "INFO 10-19 02:05:00 [kv_cache_utils.py:1087] GPU KV cache size: 1,234,567 tokens\n"
+    "INFO 10-19 02:05:00 [kv_cache_utils.py:1091] Maximum concurrency for 1,048,576 tokens per request: 1.18x\n"
+)
+
+
+class Observed(BaseHTTPRequestHandler):
+    """A server that answers /version and /v1/models."""
+
+    def do_GET(self):
+        body = {"version": "0.31.0"} if self.path == "/version" else {"data": [{"id": "m"}]}
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(json.dumps(body).encode())
+
+    def log_message(self, *args):
+        pass
+
+
+class ServerObserved(unittest.TestCase):
+    def test_the_startup_log_gives_the_settings_the_server_runs_with(self):
+        with tempfile.TemporaryDirectory() as td:
+            log = Path(td) / "server.log"
+            log.write_text(VLLM_LOG)
+            got = observe.log_settings(log)
+            missing = observe.log_settings(Path(td) / "gone.log")
+        self.assertEqual(
+            got,
+            {
+                "tensor_parallel_size": 8,
+                "pipeline_parallel_size": 1,
+                "data_parallel_size": 1,
+                "expert_parallel": None,  # not in this line: unknown, not False
+                "chunked_prefill": True,
+                "prefix_caching": True,
+                "speculative_config": "SpeculativeConfig(method='dspark', num_spec_tokens=5)",
+                "cudagraph_capture_sizes": [64, 32, 16, 8],
+                "kv_cache_tokens": [1234567],
+                "max_concurrency": [{"tokens_per_request": 1048576, "x": 1.18}],
+            },
+        )
+        self.assertIn("no server log", missing["why"])
+
+    def test_the_process_on_the_port_gives_its_argv_and_environment_with_secrets_redacted(self):
+        port = free_port()
+        code = f"import socket, time; s = socket.socket(); s.bind(('127.0.0.1', {port})); s.listen(); time.sleep(30)"
+        env = {**os.environ, "QB_TEST_TOKEN": "secret", "QB_PLAIN": "x"}
+        proc = subprocess.Popen([sys.executable, "-c", code], env=env)
+        self.addCleanup(proc.wait)
+        self.addCleanup(proc.kill)
+        for _ in range(100):
+            if observe.listening_pid(port):
+                break
+            time.sleep(0.05)
+        self.assertEqual(observe.listening_pid(port), proc.pid)
+        got = observe.process(proc.pid)
+        self.assertEqual(got["argv"][:2], [sys.executable, "-c"])
+        self.assertEqual((got["env"]["QB_TEST_TOKEN"], got["env"]["QB_PLAIN"]), ("REDACTED", "x"))
+
+    def test_an_attached_server_records_what_it_answers_and_its_listening_process(self):
+        port = free_port()
+        server = HTTPServer(("127.0.0.1", port), Observed)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        got = observe.server(f"http://127.0.0.1:{port}")
+        self.assertEqual((got["version"], got["models"]), ("0.31.0", ["m"]))
+        self.assertEqual(got["process"]["pid"], os.getpid())  # the stub listens in this test process
+        self.assertIn("qbench did not start the server", got["log"]["why"])
+        boxed = observe.server(f"http://127.0.0.1:{port}", container="qbench-x")
+        self.assertIn("container qbench-x", boxed["process"]["why"])
 
 
 if __name__ == "__main__":

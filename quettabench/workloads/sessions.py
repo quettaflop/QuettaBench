@@ -12,6 +12,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 
+from .base import sha256_file
 from .live import RealTrace, Request, est_tokens, load_sharegpt
 
 
@@ -141,14 +142,6 @@ def play(turns: list, seed: int, number: int, salt: str = "text") -> list:
             )
         )
     return out
-
-
-def sha256_file(path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 def sample_digest(ids):

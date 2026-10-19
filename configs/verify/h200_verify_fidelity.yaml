@@ -1,9 +1,12 @@
 # H200 verification, G5: the corrected agent files (native SWE-bench requests with the bash tool schema, Terminal-bench
 # with terminus-2's JSON reply) at 8 agents, to check the server counts the prompt tokens the traces recorded.
-# Engine block as configs/verify/h200_verify_sessions.yaml. Export VLLM_PLE_CPU_OFFLOAD=1 VLLM_ALLOW_LONG_MAX_MODEL_LEN=1.
+# Engine block as configs/verify/h200_verify_sessions.yaml.
 model: qwen38_flash_next
 engine:
   model: Qwen/Qwen3.8-Flash-Next
+  env:
+    VLLM_PLE_CPU_OFFLOAD: 1
+    VLLM_ALLOW_LONG_MAX_MODEL_LEN: 1
   dtype: auto
   tp: 1
   ep: true

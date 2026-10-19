@@ -12,6 +12,7 @@ import sys
 import time
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from huggingface_hub import snapshot_download
 from huggingface_hub.errors import HFValidationError, LocalEntryNotFoundError
@@ -768,15 +769,31 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
     return summary
 
 
-def weights_revision(model):
-    """The Hugging Face snapshot a server loading `model` resolves to now, or None for a local dir or an uncached
-    id: the cache's refs/main can move when another tool downloads files from the same repo."""
+# The files that name a local checkpoint's weights: its architecture and its shard map.
+WEIGHT_FILES = ("config.json", "model.safetensors.index.json")
+
+
+def weights_revision(model, revision=None, cache_dir=None) -> tuple[str | None, str | None]:
+    """The weights a server loading model resolves to now, and why when that cannot be told. A local dir is a sha256
+    over WEIGHT_FILES; a Hugging Face id is the snapshot cached under cache_dir (hardware.hf_home) for revision
+    (extra.vllm.revision), refs/main without one, which another tool's download can move."""
     if os.path.isdir(model):
-        return None
+        files = [f for f in WEIGHT_FILES if os.path.isfile(os.path.join(model, f))]
+        if not files:
+            return None, f"{model} has neither {' nor '.join(WEIGHT_FILES)} to hash"
+        h = hashlib.sha256()
+        for f in files:
+            h.update(f.encode() + b"\0" + Path(model, f).read_bytes())
+        return f"sha256:{h.hexdigest()[:16]}", None
     try:
-        return os.path.basename(snapshot_download(model, local_files_only=True))
-    except (HFValidationError, LocalEntryNotFoundError):
-        return None
+        return os.path.basename(
+            snapshot_download(model, revision=revision, cache_dir=cache_dir, local_files_only=True)
+        ), None
+    except HFValidationError:
+        return None, f"{model} is neither a directory nor a Hugging Face id"
+    except LocalEntryNotFoundError:
+        at = f"@{revision}" if revision else ""
+        return None, f"{model}{at} is not in the Hugging Face cache {cache_dir or '(the default)'}"
 
 
 def model_dir(model):

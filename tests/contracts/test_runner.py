@@ -196,6 +196,10 @@ class AttachProvenance(unittest.TestCase):
         self.assertEqual(
             prov["attached_server"], {"endpoint": "http://127.0.0.1:1", "models": ["m"], "version": "0.31.0"}
         )
+        # What the server got is observed, not assumed: nothing answers on port 1 here, and it says so.
+        observed = prov["server_observed"]
+        self.assertEqual((observed["version"], observed["models"]), (None, []))
+        self.assertIn("qbench did not start the server", observed["log"]["why"])
 
 
 class MatrixEnv(unittest.TestCase):

@@ -2,10 +2,13 @@
 # against SemiAnalysis AgentX on the same server. The engine block is InferenceX's vLLM H200 TP8 DeepSeek V4.1 Flash
 # config as /workspace/qb-verify/g4.sh runs it, plus --enable-prompt-tokens-details; the capture size goes with the
 # lane as InferenceX's agentic.yaml sets it. A fresh server per point (no --reuse-server), as InferenceX requires.
-# Export VLLM_USE_RUST_FRONTEND=1 VLLM_ENGINE_READY_TIMEOUT_S=7200 PYTHONUNBUFFERED=1 first, as g4.sh does.
 model: deepseek_v41_flash
 engine:
   model: deepseek-ai/DeepSeek-V4.1-Flash
+  env:  # g4.sh's exports
+    VLLM_USE_RUST_FRONTEND: 1
+    VLLM_ENGINE_READY_TIMEOUT_S: 7200
+    PYTHONUNBUFFERED: 1
   tp: 8
   ep: false  # InferenceX's TP8 lanes run without expert parallel
   max_model_len: 1048576

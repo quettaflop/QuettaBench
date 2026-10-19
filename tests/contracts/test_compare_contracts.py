@@ -1009,6 +1009,76 @@ class WorkloadGate(unittest.TestCase):
             self.assertEqual(compare.render(report), compare.render(golden_pair()))
 
 
+class NotComparableGate(unittest.TestCase):
+    def test_a_partial_run_or_an_unlisted_file_withholds_every_ratio_and_says_why(self):
+        partial = {"run_status": {"status": "partial", "reason": "1 of 8 requests failed"}}
+        loose = {"summary": {"trace": {"manifest": {"file": "data/t.jsonl", "comparable": False}}}}
+        self.assertEqual(compare.not_comparable(partial), "run status partial: 1 of 8 requests failed")
+        self.assertEqual(compare.not_comparable(loose), "data/t.jsonl is not the file data/MANIFEST.json lists")
+        self.assertIsNone(compare.not_comparable({"run_status": {"status": "ok"}}))
+        ours = compare.read_bench_log(FIXTURES / "bench_loop.log")
+        theirs = compare.read_baseline(BASELINE)
+        ours.header["not_comparable"] = compare.not_comparable(partial)
+        report = compare.pair(ours, theirs, now=NOW)
+        self.assertFalse(report.comparable)
+        self.assertTrue(report.rows and all("run" in r["withheld"] and r["ratio"] is None for r in report.rows))
+        self.assertIn(
+            "NOT COMPARABLE engine: run status partial: 1 of 8 requests failed; ratios withheld", compare.render(report)
+        )
+
+
+def observed_run(port=8000, version="0.31.0", env=None, kv=1234567, spec="None", weights="dba1be0"):
+    log = dict.fromkeys(compare.SERVER_LOG_KEYS, 1)
+    log.update(kv_cache_tokens=[kv], speculative_config=spec)
+    process = {"argv": ["vllm", "serve", "m", "--port", str(port), "--tp", "8"], "env": env or {"VLLM_X": "1"}}
+    seen = {"version": version, "models": ["m"], "process": process, "log": log}
+    return {"provenance": {"server_observed": seen, "weights_revision": weights}, "summary": {}}
+
+
+class ServerParity(unittest.TestCase):
+    def test_two_runs_on_one_server_config_pass_whatever_their_port_and_shell(self):
+        a = observed_run(port=8000, env={"VLLM_X": "1", "PWD": "/a", "SSH_TTY": "/dev/pts/1"})
+        b = observed_run(port=8001, env={"VLLM_X": "1", "PWD": "/b"})
+        self.assertEqual(compare.server_parity(a, b), [])
+
+    def test_every_difference_is_named(self):
+        a = observed_run()
+        b = observed_run(version="0.31.1", env={"VLLM_X": "2"}, kv=1000, spec="SpeculativeConfig(method='dspark')")
+        b["provenance"]["server_observed"]["log"]["tensor_parallel_size"] = None
+        self.assertEqual(
+            compare.server_parity(a, b),
+            [
+                "env VLLM_X: '1' vs '2'",
+                "kv_cache_tokens: [1234567] vs [1000]",
+                "speculative_config: 'None' vs \"SpeculativeConfig(method='dspark')\"",
+                "tensor_parallel_size: not observed in one run",
+                "version: '0.31.0' vs '0.31.1'",
+            ],
+        )
+        self.assertEqual(
+            compare.server_parity(a, {"provenance": {}}),
+            ["server not observed in theirs (a run made before server_observed)"],
+        )
+
+    def test_the_servers_flag_exits_1_on_a_difference(self):
+        with tempfile.TemporaryDirectory() as td:
+            dirs = []
+            for name, doc in (("a", observed_run()), ("b", observed_run(port=9)), ("c", observed_run(weights="x"))):
+                (Path(td) / name).mkdir()
+                (Path(td) / name / "run.json").write_text(json.dumps(doc))
+                dirs.append(str(Path(td) / name))
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as same:
+                compare.main([dirs[0], dirs[1], "--servers"])
+            self.assertEqual((same.exception.code, out.getvalue()), (0, "SERVER PARITY same server\n"))
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as differ:
+                compare.main([dirs[0], dirs[2], "--servers"])
+            self.assertEqual(
+                (differ.exception.code, out.getvalue()), (1, "SERVER DIFF weights_revision: 'dba1be0' vs 'x'\n")
+            )
+
+
 BASELINE = FIXTURES / "baseline_llama.json"
 
 

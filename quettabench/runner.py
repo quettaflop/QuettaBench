@@ -14,10 +14,11 @@ from pathlib import Path
 
 from quettabench.config import env_map, loader
 from quettabench.config.schema import OTHER_ACCELERATORS, ConfigError, device_count
-from quettabench.engines import base, launcher
+from quettabench.engines import base, launcher, observe
 from quettabench.metrics.results import RUN_MARKERS, RunWriter, redact
 from quettabench.modes import serve
 from quettabench.probes import base as probes_base
+from quettabench.workloads.base import sha256_file
 from quettabench.workloads.grid import GridTrace
 from quettabench.workloads.live import (
     PROFILES,
@@ -34,7 +35,6 @@ from quettabench.workloads.sessions import (
     TrajectorySessionTrace,
     TurnPacing,
     resolve_multi_turn_num_sessions,
-    sha256_file,
 )
 
 # Refuse probes that need torchrun or whose output flag names a file.
@@ -122,7 +122,10 @@ def build_trace(cfg, tokenizer=None, allow_unverified=False):
     if cfg.mode.grid is not None:
         return GridTrace.from_config(cfg, tokenizer=tokenizer)
     if w.source not in PROFILES:
-        return RealTrace.from_jsonl(w.source, seed=w.seed)
+        checked = manifest_check(w.source, allow_unverified)
+        real = RealTrace.from_jsonl(w.source, seed=w.seed)
+        real.manifest = checked
+        return real
     profile = get_profile(w.source)
     if profile.refused:
         raise ConfigError(f"workload profile {w.source} cannot run: {profile.refused}")
@@ -351,12 +354,18 @@ def serve_one(cfg, out, exported, writer, server=None, keep=False, allow_unverif
     if attached:
         # qbench did not start the server: its environment and weights are not the client's to report.
         writer.provenance.update(
-            launch_env=None, inherited_env=None, weights_revision=None, server_env="unknown (attached)"
+            launch_env=None,
+            inherited_env=None,
+            weights_revision=None,
+            weights_revision_why="qbench did not start the server",
+            server_env="unknown (attached)",
         )
     else:
         writer.provenance["launch_env"] = redact(spec.env)
         writer.provenance["inherited_env"] = redact(env_map.server_env())
-        writer.provenance["weights_revision"] = serve.weights_revision(cfg.engine.model)
+        revision = cfg.engine.extra.get("vllm", {}).get("revision")
+        weights, why = serve.weights_revision(cfg.engine.model, revision, cfg.hardware.hf_home)
+        writer.provenance.update(weights_revision=weights, weights_revision_why=why)
     # Build the trace first so a bad workload fails before a long load.
     trace = build_trace(cfg, allow_unverified=allow_unverified) if adapter.needs_server(cfg) else None
     shared = isinstance(server, launcher.Handle)
@@ -378,6 +387,16 @@ def serve_one(cfg, out, exported, writer, server=None, keep=False, allow_unverif
     else:
         handle = launcher.NoServer(out)
     try:
+        # What the server got, as against what the yaml asked for.
+        if isinstance(handle, launcher.Handle):
+            writer.provenance["server_observed"] = observe.server(
+                handle.endpoint,
+                pid=None if handle.container else handle.pid,
+                log=handle.results_dir / "server.log",
+                container=handle.container,
+            )
+        elif isinstance(handle, launcher.Attached):
+            writer.provenance["server_observed"] = observe.server(handle.endpoint)
         driver = adapter.driver(spec, handle, trace)
         writer.bind(handle, driver)
         if trace is None:

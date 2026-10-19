@@ -271,6 +271,13 @@ class GridDriver(unittest.TestCase):
         self.assertNotIn("--max-model-len", spec.server_argv)
         self.assertNotIn("max_model_len", spec.engine_kwargs)
 
+    def test_engine_env_reaches_the_server_launch_on_top_of_the_adapters_own(self):
+        spec = vllm_adapter.ADAPTER.translate(self.cfg("engine.env={VLLM_USE_RUST_FRONTEND: 1, PYTHONUNBUFFERED: 1}"))
+        self.assertEqual((spec.env["VLLM_USE_RUST_FRONTEND"], spec.env["PYTHONUNBUFFERED"]), ("1", "1"))
+        self.assertEqual(spec.env["VLLM_SERVER_DEV_MODE"], "1")
+        argv = spec.child_argv(list(spec.server_argv))
+        self.assertIn("VLLM_USE_RUST_FRONTEND=1", argv[: argv.index(spec.server_argv[0])])
+
     def test_the_driver_sends_the_servers_api_key(self):
         cfg = self.cfg()
         handle = launcher.NoServer(Path("r"), endpoint="http://127.0.0.1:8000")

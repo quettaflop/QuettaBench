@@ -5,6 +5,7 @@ import collections
 import contextlib
 import copy
 import gc
+import hashlib
 import http.client
 import io
 import json
@@ -467,13 +468,22 @@ class Sessions(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "needs recorded replies"):
             run(trace, FakeDriver(), ModeCfg(concurrency=2, warmup=0, duration_s=0.05))
 
-    def test_weights_revision_is_the_cached_snapshot_or_none(self):
+    def test_weights_revision_is_the_cached_snapshot_or_the_local_files_hash_and_a_none_says_why(self):
         with tempfile.TemporaryDirectory() as td:
-            self.assertIsNone(serve.weights_revision(td))
-        with mock.patch.object(serve, "snapshot_download", return_value="/hf/hub/models--a--b/snapshots/dba1be0"):
-            self.assertEqual(serve.weights_revision("a/b"), "dba1be0")
+            self.assertEqual(serve.weights_revision(td)[0], None)
+            self.assertIn("has neither config.json nor model.safetensors.index.json", serve.weights_revision(td)[1])
+            (Path(td) / "config.json").write_text("{}")
+            (Path(td) / "model.safetensors.index.json").write_text('{"weight_map": {}}')
+            want = hashlib.sha256(b'config.json\0{}model.safetensors.index.json\0{"weight_map": {}}').hexdigest()
+            self.assertEqual(serve.weights_revision(td), (f"sha256:{want[:16]}", None))
+        snapshot = "/hf/hub/models--a--b/snapshots/dba1be0"
+        with mock.patch.object(serve, "snapshot_download", return_value=snapshot) as download:
+            self.assertEqual(serve.weights_revision("a/b", "v2", "/hf"), ("dba1be0", None))
+        download.assert_called_once_with("a/b", revision="v2", cache_dir="/hf", local_files_only=True)
         with mock.patch.object(serve, "snapshot_download", side_effect=serve.LocalEntryNotFoundError("no")):
-            self.assertIsNone(serve.weights_revision("a/b"))
+            self.assertEqual(
+                serve.weights_revision("a/b", "v2", "/hf"), (None, "a/b@v2 is not in the Hugging Face cache /hf")
+            )
 
     def test_run_json_carries_the_trace_and_its_sample(self):
         with tempfile.TemporaryDirectory() as td:
