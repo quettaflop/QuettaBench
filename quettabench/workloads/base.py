@@ -98,6 +98,8 @@ class Trace(ABC):
     # True when the run splices the engine's replies into later turns, so assistant content is not part of
     # what the trace sends.
     live_replies: bool = False
+    # The replayed file against its manifest (runner.manifest_check); None for a trace from no profile file.
+    manifest: dict | None = None
 
     @abstractmethod
     def requests(self) -> list[Request]:

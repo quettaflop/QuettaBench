@@ -214,6 +214,15 @@ class SampledChatTrace(DrawnTrace):
         self.samples = samples
         self._stream = reshuffled(samples, random.Random(seed))
 
+    def draw(self, num_requests, warmup=0, profile=None):
+        """Refuses more draws than rows: a repeated prompt hits the prefix cache its first send left."""
+        if warmup + num_requests > len(self.samples):
+            raise ValueError(
+                f"{num_requests} requests and {warmup} warmup from {len(self.samples)} rows would repeat prompts; "
+                f"ask for at most {len(self.samples) - warmup} requests"
+            )
+        return super().draw(num_requests, warmup, profile)
+
     def get_next_request(self):
         messages, max_tokens = next(self._stream)
         return Request([], 0, output_length=max_tokens, messages=messages, metadata={})
@@ -319,6 +328,14 @@ class SmokeTrace(DrawnTrace):
 WORKLOADS = Path(__file__).resolve().parents[2] / "configs" / "workloads.yaml"
 
 
+# Agent traces whose turns carry the output length the engine recorded.
+TRAJECTORY_DATASETS = (
+    "swebench-multi-turn",
+    "terminalbench-multi-turn",
+    "deepresearch-multi-turn",
+)
+
+
 @dataclass
 class WorkloadProfile:
     name: str
@@ -333,6 +350,13 @@ class WorkloadProfile:
     max_turns: int = 1
     num_sessions: int | None = None  # None: every eligible session; a number is the same sample at every point
     active: bool = True  # False: runnable but hidden from default listings
+    # Why the profile cannot run, until its file carries what is missing; empty when it can.
+    refused: str = ""
+
+    @property
+    def recorded_lengths(self) -> bool:
+        """Its turns carry recorded output lengths, which a replay reproduces exactly or fails the turn."""
+        return self.dataset in TRAJECTORY_DATASETS
 
 
 def load_profiles(path=WORKLOADS):

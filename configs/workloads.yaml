@@ -8,6 +8,8 @@ chat-singleturn:
   osl_tokens: 1024
   dataset: sharegpt
   prefix_caching_required: true
+  active: false
+  refused: output lengths are word-count estimates (1.35 tokens per word), not recorded completion counts
 
 coding-singleturn:
   # The JSONL sets token lengths and the system prompt; isl/osl are caps.
@@ -17,6 +19,8 @@ coding-singleturn:
   file_path: data/coding_agent_prompts.jsonl
   system_prompt: ''
   prefix_caching_required: true
+  active: false
+  refused: osl_tokens are estimated from a code block's characters (/ 3.8), not recorded completion counts
 
 mooncake-trace:
   # Tokens expand from hash_ids so prefix sharing survives replay; needs completions.

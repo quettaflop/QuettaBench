@@ -10,7 +10,7 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -89,6 +89,9 @@ class Attached:
     endpoint: str
     gpu: str = ""
     backend: str = "cuda"
+    # What the server answered on /v1/models and /version when qbench attached.
+    served_models: list = field(default_factory=list)
+    server_version: str | None = None
 
     def stop(self, grace_s=30):
         pass
@@ -111,6 +114,7 @@ def attach(spec, results_dir, timeout_s=60, poll_s=1.0):
             raise RuntimeError(f"hardware.launcher=attach: nothing healthy on {endpoint} after {timeout_s}s")
         time.sleep(poll_s)
     served = served_models(endpoint + "/v1/models", poll_s)
+    version = server_version(endpoint + "/version", poll_s)
     if spec.served_name and spec.served_name not in served:
         raise RuntimeError(f"hardware.launcher=attach: {endpoint} serves {served}, not {spec.served_name}")
     results_dir = Path(results_dir)
@@ -120,12 +124,12 @@ def attach(spec, results_dir, timeout_s=60, poll_s=1.0):
         "endpoint": endpoint,
         "attached": True,
         "served_models": served,
-        "server_version": server_version(endpoint + "/version", poll_s),
+        "server_version": version,
         "expected_launch_spec": redact(asdict(spec)),
         "started_at": datetime.now(timezone.utc).isoformat(),
     }
     (results_dir / "engine.json").write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
-    return Attached(results_dir, endpoint)
+    return Attached(results_dir, endpoint, served_models=served, server_version=version)
 
 
 def served_models(models_url, timeout):

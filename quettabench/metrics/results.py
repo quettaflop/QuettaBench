@@ -431,22 +431,31 @@ def summary_tag_lines(summary):
         tp = s["tpot_ms"]
         lines.append(
             f"SERVE_SUMMARY n={s['n']} "
-            + " ".join(f"ttft_ms_p{q}={s['ttft_ms'][f'p{q}']:.1f}" for q in PCTS)
+            + (
+                " ".join(f"ttft_ms_p{q}={s['ttft_ms'][f'p{q}']:.1f}" for q in PCTS)
+                if s["ttft_ms"]
+                else "ttft_ms=withheld"
+            )
             + " "
             + (
                 " ".join(f"steady_ttft_ms_p{q}={st[f'p{q}']:.1f}" for q in PCTS) + " "
                 if (st := s.get("steady_ttft_ms"))
                 else ""
             )
-            + (" ".join(f"tpot_ms_p{q}={tp[f'p{q}']:.3f}" for q in PCTS) + " " if tp else "tpot_ms_p50=- ")
+            + (
+                " ".join(f"tpot_ms_p{q}={tp[f'p{q}']:.3f}" for q in PCTS) + " "
+                if tp
+                else ("tpot_ms=withheld " if not s["ttft_ms"] else "tpot_ms_p50=- ")
+            )
             + f"req_s={s['req_s']:.3f} tok_s={s['tok_s']:.1f}"
         )
     sla = summary.get("sla")
     if sla is not None:
         tpot = "-" if sla["tpot_p99"] is None else f"{sla['tpot_p99']:.3f}"
+        ttft = "-" if sla["ttft_p99"] is None else f"{sla['ttft_p99']:.1f}"
         lines.append(
             f"SLA_SUMMARY verdict={sla['verdict']} bound={','.join(sla['bound']) or 'none'} "
-            f"ttft_p99={sla['ttft_p99']:.1f}/{sla['sla_ttft_ms'] or '-'} "
+            f"ttft_p99={ttft}/{sla['sla_ttft_ms'] or '-'} "
             f"tpot_p99={tpot}/{sla['sla_tpot_ms'] or '-'} "
             f"rate_req_s={sla['rate_req_s']:.3f}"
         )

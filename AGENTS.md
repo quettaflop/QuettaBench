@@ -106,7 +106,7 @@ Every writer and every process starter, exactly:
 - Measured before kept: an optimization lands with the measurement that justifies it, and a feature lands with its measurement.
 - Report every number, including the ones that weaken a claim.
 - A session-run number names its window: whole-run (ramp and drain included) or `sections.steady`. A run with 2C sessions or fewer has no steady window and says so; no whole-run number stands in for it (law 4).
-- A trajectory file carries the token counts the engine reported, never an estimate, and `data/MANIFEST.json` describes every file a profile reads; a replay on a file the manifest does not describe is not comparable.
+- A trajectory file carries the token counts the engine reported, never an estimate, and `data/MANIFEST.json` describes every file a profile reads; a replay on a file the manifest does not describe is not comparable. `build_trace` refuses a file whose sha256 is not its manifest entry's unless `--allow-unverified`, which records `trace.manifest.comparable: false` in run.json.
 
 ## Where to look
 

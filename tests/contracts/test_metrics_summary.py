@@ -170,6 +170,11 @@ class SlaVerdictTest(unittest.TestCase):
     def test_missing_tpot_is_not_checked(self):
         self.assertEqual(sla_verdict({"ttft_ms": {"p99": 1.0}, "tpot_ms": None}, 10.0, 1.0), [])
 
+    def test_a_failed_request_fails_the_verdict_before_any_p99_is_read(self):
+        # The survivors here would PASS every bound; one failed request is a FAIL regardless.
+        self.assertEqual(sla_verdict(self.S, 900.0, 40.0, failed=1), ["failed_requests"])
+        self.assertEqual(sla_verdict({"ttft_ms": None, "tpot_ms": None}, 1.0, 1.0, failed=2), ["failed_requests"])
+
 
 class BurstRecoveryTest(unittest.TestCase):
     def test_recovers_two_windows_after_peak(self):

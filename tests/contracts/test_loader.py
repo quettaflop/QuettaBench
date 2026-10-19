@@ -146,6 +146,23 @@ class LoaderRules(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "unknown salt 'prefix'; use"):
             self.load(overrides=["workload.salt=prefix"])
 
+    def test_a_session_run_needs_a_timeout_that_covers_its_longest_turn(self):
+        # swebench-qwen-multiturn-medium caps output at 8192 tokens: 1638.4 s at 200 ms a token.
+        swe = ["workload.kind=sessions", "workload.source=swebench-qwen-multiturn-medium"]
+        with self.assertRaisesRegex(ConfigError, r"mode.timeout=1638 s cannot cover .*8192-token turns .*\(1638 s\)"):
+            self.load(overrides=[*swe, "mode.timeout=1638"])
+        self.assertEqual(self.one(overrides=[*swe, "mode.timeout=1639"]).mode.timeout, 1639)
+        # Single-turn runs keep the default.
+        self.assertEqual(self.one(overrides=["workload.source=mooncake-trace"]).mode.timeout, 120)
+
+    def test_a_trajectory_profile_forces_exact_output_length(self):
+        swe = ["workload.kind=sessions", "workload.source=swebench-qwen-multiturn-medium", "mode.timeout=3600"]
+        self.assertTrue(self.one(overrides=swe).mode.exact_output_length)
+        with self.assertRaisesRegex(ConfigError, "exact_output_length=False contradicts workload profile swebench"):
+            self.load(overrides=[*swe, "mode.exact_output_length=false"])
+        # A profile without recorded lengths keeps the default.
+        self.assertFalse(self.one(overrides=["workload.source=mooncake-trace"]).mode.exact_output_length)
+
     def test_chunk_usage_is_refused_on_an_engine_that_does_not_take_it(self):
         with self.assertRaisesRegex(ConfigError, "engine.name=quettaserve does not take it"):
             self.load(overrides=["mode.chunk_usage=true", "engine.name=quettaserve"])

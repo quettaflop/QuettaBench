@@ -184,7 +184,7 @@ class SingleTurn(unittest.TestCase):
 
     def test_warmup_draws_come_first_without_a_rewind(self):
         path = write_rows(
-            self.dir / "c.jsonl", [{"system": "s", "user": f"u{i}", "osl_tokens": 2 + i} for i in range(4)]
+            self.dir / "c.jsonl", [{"system": "s", "user": f"u{i}", "osl_tokens": 2 + i} for i in range(9)]
         )
         source = PromptJsonlTrace(path, seed=5)
         drawn = [source.get_next_request() for _ in range(9)]
@@ -193,6 +193,36 @@ class SingleTurn(unittest.TestCase):
         self.assertEqual([r.messages for r in trace.requests()], [d.messages for d in drawn[2:]])
         self.assertEqual([r.max_tokens for r in trace.requests()], [d.max_tokens for d in drawn[2:]])
         self.assertEqual([r.order for r in trace.requests()], list(range(7)))
+
+    def test_more_draws_than_rows_are_refused_rather_than_repeated(self):
+        path = write_rows(self.dir / "r.jsonl", [{"system": "s", "user": f"u{i}", "osl_tokens": 3} for i in range(4)])
+        self.assertEqual(len(PromptJsonlTrace(path).draw(3, warmup=1).requests()), 3)
+        with self.assertRaisesRegex(ValueError, "3 requests and 2 warmup from 4 rows would repeat prompts"):
+            PromptJsonlTrace(path).draw(3, warmup=2)
+
+    def test_a_replayed_file_that_is_not_the_manifests_is_refused_unless_unverified(self):
+        cfg = profile_config("swebench-qwen-multiturn-medium", "sessions")
+        with fixture_cwd():
+            data = Path("data")
+            actual = hashlib.sha256((data / "swebench_native_trajectories.jsonl").read_bytes()).hexdigest()
+            files = {"swebench_native_trajectories.jsonl": {"sha256": "0" * 64}}
+            (data / "MANIFEST.json").write_text(json.dumps({"files": files}))
+            with self.assertRaisesRegex(ConfigError, f"sha256 {actual[:12]} is not .*'s 000000000000"):
+                runner.build_trace(cfg)
+            loose = runner.build_trace(cfg, allow_unverified=True).manifest
+            files["swebench_native_trajectories.jsonl"]["sha256"] = actual
+            (data / "MANIFEST.json").write_text(json.dumps({"files": files}))
+            listed = runner.build_trace(cfg).manifest
+            unlisted = runner.build_trace(profile_config("deepsearch-multiturn", "sessions")).manifest
+        self.assertEqual((loose["comparable"], loose["sha256"], loose["expected"]), (False, actual, "0" * 64))
+        self.assertEqual((listed["listed"], listed["comparable"]), (True, True))
+        self.assertEqual(unlisted, {"file": "data/deepsearch_trajectories.jsonl", "listed": False})
+
+    def test_a_profile_with_estimated_output_lengths_is_refused(self):
+        for name in ("chat-singleturn", "coding-singleturn"):
+            cfg = profile_config(name, "live")
+            with self.subTest(name), self.assertRaisesRegex(ConfigError, f"profile {name} cannot run: .*not recorded"):
+                runner.build_trace(cfg)
 
     def test_a_rewindable_trace_restarts_after_warmup(self):
         path = write_rows(
@@ -627,7 +657,7 @@ class ProfileRegistryTests(unittest.TestCase):
         self.assertIn("pip install -e .", proc.stderr)
 
     def test_listings_hide_inactive_profiles(self):
-        self.assertEqual(active_profiles(), ["chat-singleturn", "coding-singleturn", "mooncake-trace"])
+        self.assertEqual(active_profiles(), ["mooncake-trace"])
         with self.assertRaises(ValueError) as e:
             get_profile("nope")
         self.assertIn(str(active_profiles()), str(e.exception))
@@ -692,8 +722,6 @@ WARMUP = 3
 # sample_digest.
 PINS = {
     "chat-multiturn-short": ("c51f134d3946f53d", "40b315fc6465cb47"),
-    "chat-singleturn": ("1b84966cb9c4facc", "84b2b4875f8a177f"),
-    "coding-singleturn": ("15384d696a4d7a1b", "0359e7a0be1623a2"),
     "deepresearch-multiturn": ("3f95464ab226ff8f", "b42b5f4449e073e1"),
     "mooncake-trace": ("a03be7b0ed268d81", "b5ed59cd7a0d7aff"),
     "deepsearch-multiturn": ("e4224f2a4551c063", "839c68468820ad30"),
@@ -867,7 +895,7 @@ def pinned_build(name, max_turn_index=None):
 
 
 def runnable():
-    return sorted(PROFILES)
+    return sorted(name for name, p in PROFILES.items() if not p.refused)
 
 
 class StratifiedOrder(unittest.TestCase):

@@ -169,6 +169,35 @@ class ReuseServer(unittest.TestCase):
             self.run_matrix({"mode.concurrency": [1, 4]}, reset=False)
 
 
+class AttachProvenance(unittest.TestCase):
+    def test_an_attached_server_records_what_it_answered_and_not_the_clients_env(self):
+        run = {"model": "llama31_8b", "workload": {"source": "mooncake-trace"}, "hardware": {"launcher": "attach"}}
+
+        def attach(spec, out, **kw):
+            Path(out).mkdir(parents=True, exist_ok=True)
+            return launcher.Attached(Path(out), "http://127.0.0.1:1", served_models=["m"], server_version="0.31.0")
+
+        with (
+            scratch_configs("att", run) as (path, td),
+            mock.patch.object(runner.launcher, "attach", side_effect=attach),
+            mock.patch.object(runner.launcher, "idle_gpus") as idle,
+            mock.patch.object(runner, "build_trace"),
+            mock.patch.object(runner, "RunWriter") as writer,
+            mock.patch.object(runner.serve, "run"),
+        ):
+            writer.return_value.provenance = {}
+            runner.main(path, ["engine.model=/w"], results_dir=td, allow_unverified=True)
+        prov = writer.return_value.provenance
+        idle.assert_not_called()  # the attached server already holds its GPUs
+        self.assertEqual(
+            [prov[k] for k in ("launch_env", "inherited_env", "weights_revision", "server_env")],
+            [None, None, None, "unknown (attached)"],
+        )
+        self.assertEqual(
+            prov["attached_server"], {"endpoint": "http://127.0.0.1:1", "models": ["m"], "version": "0.31.0"}
+        )
+
+
 class MatrixEnv(unittest.TestCase):
     def test_each_point_gets_its_own_gpus_and_pins(self):
         run = {

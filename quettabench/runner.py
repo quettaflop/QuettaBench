@@ -21,6 +21,7 @@ from quettabench.probes import base as probes_base
 from quettabench.workloads.grid import GridTrace
 from quettabench.workloads.live import (
     PROFILES,
+    TRAJECTORY_DATASETS,
     MooncakeTrace,
     PromptJsonlTrace,
     RealTrace,
@@ -33,17 +34,12 @@ from quettabench.workloads.sessions import (
     TrajectorySessionTrace,
     TurnPacing,
     resolve_multi_turn_num_sessions,
+    sha256_file,
 )
 
 # Refuse probes that need torchrun or whose output flag names a file.
 TORCHRUN_PROBES = ("collective", "reparallel", "vllm_allreduce")
 FILE_OUT_PROBES = ("serving_decode_grid", "serving_stage_split")
-
-TRAJECTORY_DATASETS = (
-    "swebench-multi-turn",
-    "terminalbench-multi-turn",
-    "deepresearch-multi-turn",
-)
 
 # Room left in the profile's isl_tokens window after a turn's prompt and output.
 CONTEXT_SAFETY_MARGIN = 256
@@ -100,13 +96,44 @@ def session_trace(profile, num_sessions, seed, **trace_kw):
     raise ValueError(f"Profile '{profile.name}' does not use a multi-turn dataset")
 
 
-def build_trace(cfg, tokenizer=None):
+def manifest_check(path, allow_unverified=False) -> dict:
+    """The replayed file's sha256 against the MANIFEST.json beside it (data/MANIFEST.json). A mismatch is refused
+    unless allow_unverified, which marks the run not comparable; a file no manifest lists is recorded as such."""
+    file = Path(path)
+    manifest = file.parent / "MANIFEST.json"
+    entry = json.loads(manifest.read_text()).get("files", {}).get(file.name) if manifest.is_file() else None
+    if not entry or "sha256" not in entry or not file.is_file():
+        # Unlisted, or missing: the trace's own loader says what is wrong with a missing file.
+        return {"file": str(file), "listed": bool(entry and "sha256" in entry)}
+    actual = sha256_file(file)
+    out = {"file": str(file), "listed": True, "sha256": actual, "expected": entry["sha256"]}
+    out["comparable"] = actual == entry["sha256"]
+    if not out["comparable"] and not allow_unverified:
+        raise ConfigError(
+            f"{file}: sha256 {actual[:12]} is not {manifest}'s {entry['sha256'][:12]}; rebuild it (just fetch), "
+            "or pass --allow-unverified to run it as not comparable"
+        )
+    return out
+
+
+def build_trace(cfg, tokenizer=None, allow_unverified=False):
+    """A profile's file is checked against its manifest first (manifest_check); the result rides on the trace."""
     w = cfg.workload
     if cfg.mode.grid is not None:
         return GridTrace.from_config(cfg, tokenizer=tokenizer)
     if w.source not in PROFILES:
         return RealTrace.from_jsonl(w.source, seed=w.seed)
     profile = get_profile(w.source)
+    if profile.refused:
+        raise ConfigError(f"workload profile {w.source} cannot run: {profile.refused}")
+    manifest = manifest_check(profile.file_path, allow_unverified) if profile.file_path else None
+    trace = profile_trace(cfg, profile)
+    trace.manifest = manifest
+    return trace
+
+
+def profile_trace(cfg, profile):
+    w = cfg.workload
     if w.kind == "sessions":
         pacing = TurnPacing(w.pacing, w.tool_wait_ms, w.human_wait_ms, w.use_recorded_waits, w.use_recorded_arrivals)
         sessions, _ = resolve_multi_turn_num_sessions(profile, w.num_sessions)
@@ -267,7 +294,7 @@ def refuse_mixed_in_process(cfgs):
         )
 
 
-def run_one(cfg, out, exported=None, server=None, keep=False):
+def run_one(cfg, out, exported=None, server=None, keep=False, allow_unverified=False):
     """exported collects env names in-process points put into this process; server is a shared Handle."""
     exported = set() if exported is None else exported
     if cfg.mode.mode == "probe":
@@ -275,7 +302,7 @@ def run_one(cfg, out, exported=None, server=None, keep=False):
     # Opened first so a run that raises still leaves run.json.
     writer = RunWriter(out, cfg)
     try:
-        return serve_one(cfg, out, exported, writer, server, keep)
+        return serve_one(cfg, out, exported, writer, server, keep, allow_unverified)
     except BaseException as e:
         writer.fail(e)
         raise
@@ -303,11 +330,15 @@ def reuse_groups(cfgs):
     return groups
 
 
-def serve_one(cfg, out, exported, writer, server=None, keep=False):
+def serve_one(cfg, out, exported, writer, server=None, keep=False, allow_unverified=False):
     """keep leaves the server up and returns its Handle; the caller stops it."""
     adapter = base.get(cfg.engine.name)
     spec = adapter.translate(cfg, out)
-    gpus = cfg.hardware.visible_devices or launcher.idle_gpus(device_count(cfg.engine), cfg.hardware.backend)
+    attached = adapter.needs_server(cfg) and cfg.hardware.launcher == "attach"
+    # An attached server already holds its GPUs, so none are picked for it.
+    gpus = cfg.hardware.visible_devices or (
+        "" if attached else launcher.idle_gpus(device_count(cfg.engine), cfg.hardware.backend)
+    )
     backend = "docker" if in_docker(cfg, adapter) else "local"
     pins = {k: v for k, v in cfg.hardware.collective.items() if v}
     visible, unset = launcher.visible_env(cfg.hardware.backend, gpus)
@@ -317,20 +348,31 @@ def serve_one(cfg, out, exported, writer, server=None, keep=False):
     if in_process(cfg, adapter, spec):
         exported.update(env_map.export(pins))
     spec = with_child_env(spec, pins, {*exported, *unset})
-    writer.provenance["launch_env"] = redact(spec.env)
-    writer.provenance["inherited_env"] = redact(env_map.server_env())
-    writer.provenance["weights_revision"] = serve.weights_revision(cfg.engine.model)
+    if attached:
+        # qbench did not start the server: its environment and weights are not the client's to report.
+        writer.provenance.update(
+            launch_env=None, inherited_env=None, weights_revision=None, server_env="unknown (attached)"
+        )
+    else:
+        writer.provenance["launch_env"] = redact(spec.env)
+        writer.provenance["inherited_env"] = redact(env_map.server_env())
+        writer.provenance["weights_revision"] = serve.weights_revision(cfg.engine.model)
     # Build the trace first so a bad workload fails before a long load.
-    trace = build_trace(cfg) if adapter.needs_server(cfg) else None
+    trace = build_trace(cfg, allow_unverified=allow_unverified) if adapter.needs_server(cfg) else None
     shared = isinstance(server, launcher.Handle)
     if shared:
         handle = server
         out.mkdir(parents=True, exist_ok=True)
         shutil.copy(handle.results_dir / "engine.json", out / "engine.json")
         writer.provenance["server_started_by"] = handle.results_dir.name
-    elif adapter.needs_server(cfg) and cfg.hardware.launcher == "attach":
+    elif attached:
         handle = launcher.attach(spec, out)
         writer.provenance["server_started_by"] = "attached"
+        writer.provenance["attached_server"] = {
+            "endpoint": handle.endpoint,
+            "models": handle.served_models,
+            "version": handle.server_version,
+        }
     elif adapter.needs_server(cfg):
         handle = launcher.start(spec, out, backend=backend, cfg=cfg, gpus=gpus, timeout_s=cfg.hardware.ready_timeout_s)
     else:
@@ -339,7 +381,7 @@ def serve_one(cfg, out, exported, writer, server=None, keep=False):
         driver = adapter.driver(spec, handle, trace)
         writer.bind(handle, driver)
         if trace is None:
-            trace = build_trace(cfg, tokenizer=getattr(driver, "tokenizer", None))
+            trace = build_trace(cfg, getattr(driver, "tokenizer", None), allow_unverified)
         serve.run(trace, driver, cfg.mode, writer, cfg.workload)
     except BaseException:
         if not shared:
@@ -409,12 +451,16 @@ def main(
         return 0
     for group in reuse_groups(cfgs) if reuse_server else [[cfg] for cfg in cfgs]:
         if len(group) == 1:
-            run_one(group[0], Path(results_dir) / group[0].run_name, exported)
+            run_one(group[0], Path(results_dir) / group[0].run_name, exported, allow_unverified=allow_unverified)
             continue
-        handle = run_one(group[0], Path(results_dir) / group[0].run_name, exported, keep=True)
+        handle = run_one(
+            group[0], Path(results_dir) / group[0].run_name, exported, keep=True, allow_unverified=allow_unverified
+        )
         try:
             for cfg in group[1:]:
-                run_one(cfg, Path(results_dir) / cfg.run_name, exported, server=handle)
+                run_one(
+                    cfg, Path(results_dir) / cfg.run_name, exported, server=handle, allow_unverified=allow_unverified
+                )
         finally:
             handle.stop()
     return 0

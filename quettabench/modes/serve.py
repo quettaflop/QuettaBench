@@ -38,6 +38,7 @@ from ..metrics.summary import (
     summarize_serve,
     transient_gate,
     usage_gate,
+    withhold_latency,
 )
 from ..workloads.arrival import offered_rate, parse_arrival, rebase_arrivals
 from ..workloads.base import Request
@@ -462,9 +463,15 @@ def server_spec_decode_section(before, after):
     }
 
 
-def summary_sections(pairs, duration, mode, server_spec_decode=None, sessions=False):
+def failed_count(pairs) -> int:
+    """Failed requests among those the summary keeps."""
+    return sum(1 for _, r in pairs if not r.success and not r.excluded_from_summary)
+
+
+def summary_sections(pairs, duration, mode, server_spec_decode=None, sessions=False, withheld=False):
     """spec prefers the server's counters over the rows'. sessions: a session run, whose steady TTFT is
-    sections.steady's, not the requests past the first C indexes."""
+    sections.steady's, not the requests past the first C indexes. withheld: a run with failed requests, whose
+    latency percentiles and burst recovery are left out."""
     out = {"spec_decode": server_spec_decode or spec_decode_section(pairs)}
     records = serve_records(pairs, mode.load == "open")
     if not records:
@@ -472,19 +479,23 @@ def summary_sections(pairs, duration, mode, server_spec_decode=None, sessions=Fa
     # In a session run C caps agents, not requests in flight, and request indexes are not dispatch order.
     closed = mode.concurrency if mode.load == "closed" and not sessions else 0
     s = out["serve"] = summarize_serve(records, duration, "nearest", closed)
+    if withheld:
+        s.update(ttft_ms=None, tpot_ms=None, **({"steady_ttft_ms": None} if "steady_ttft_ms" in s else {}))
     if mode.sla_ttft_ms or mode.sla_tpot_ms:
-        bound = sla_verdict(s, mode.sla_ttft_ms, mode.sla_tpot_ms)
+        failed = failed_count(pairs)
+        bound = sla_verdict(s, mode.sla_ttft_ms, mode.sla_tpot_ms, failed)
         out["sla"] = {
             "verdict": "FAIL" if bound else "PASS",
             "bound": bound,
-            "ttft_p99": s["ttft_ms"]["p99"],
-            "tpot_p99": s["tpot_ms"]["p99"] if s["tpot_ms"] else None,
+            "failed_requests": failed,
+            "ttft_p99": None if failed else s["ttft_ms"]["p99"],
+            "tpot_p99": s["tpot_ms"]["p99"] if s["tpot_ms"] and not failed else None,
             "rate_req_s": s["req_s"],
             "percentile_method": s["percentile_method"],
             "sla_ttft_ms": mode.sla_ttft_ms,
             "sla_tpot_ms": mode.sla_tpot_ms,
         }
-    if mode.sla_ttft_ms:
+    if mode.sla_ttft_ms and not withheld:
         recovery, peak = burst_recovery(records, mode.sla_ttft_ms)
         out["burst"] = {
             "peak_ttft_p99": peak,
@@ -517,7 +528,7 @@ def goodput_search(start=1.0, max_iters=6, tol=0.1):
 
 def sweep(trace, driver, mode, writer, workload, request_id, plan):
     """Stops at the first probe that breaks workload identity."""
-    gen, best = goodput_search(start=workload.speed), None
+    gen, best, best_out = goodput_search(start=workload.speed), None, None
     probes: list = []
     fail_bound: list = []
     speed = next(gen)
@@ -537,19 +548,20 @@ def sweep(trace, driver, mode, writer, workload, request_id, plan):
         if not identity(plan, out.executed, plan.planned_keys(out.executed))["match"]:
             return out, {**section, "iterations": len(probes) + 1}
         s = summarize_serve(serve_records(out.pairs, True), out.duration, "nearest")
-        bound = sla_verdict(s, mode.sla_ttft_ms, mode.sla_tpot_ms)
+        bound = sla_verdict(s, mode.sla_ttft_ms, mode.sla_tpot_ms, failed_count(out.pairs))
         probe = {"speed": speed, "verdict": "FAIL" if bound else "PASS", "bound": bound, "req_s": s["req_s"]}
         print(goodput_probe_line(probe), flush=True)
         probes.append(probe)
         if not bound and (best is None or s["req_s"] > best["req_s"]):
-            best = probe
+            best, best_out = probe, out
         if bound:
             fail_bound = bound
         try:
             speed = gen.send(not bound)
         except StopIteration:
             break
-    return out, {
+    # The best passing probe's own requests stand for the run; with none, the last probe's.
+    return best_out or out, {
         "max_req_s": best and best["req_s"],
         "speed": best and best["speed"],
         "fail_bound": fail_bound,
@@ -680,8 +692,14 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
         planned_turns=planned_turns,
     )
     summary = Summary(core, results)
+    failed = core.failed_requests + len(not_sent)
+    withheld = f"{failed} requests failed or went unsent; the rest leave out the slowest" if failed else None
     if by_turn is not None:
         summary.turns = aggregate_per_turn(by_turn)
+    if withheld:
+        withhold_latency(core, *summary.turns)
+        summary.sections["withheld"] = {"latency_percentiles": withheld}
+    if by_turn is not None:
         print_multi_turn_summary(summary.turns, core)
     else:
         print_summary(core)
@@ -706,9 +724,18 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
             else None,
         }
     # What was replayed, for a reader of run.json alone: the file and its digest, and the sessions in order.
-    summary.sections["trace"] = {**trace.source_meta(), "sample": list(getattr(trace, "sample", []))}
+    manifest = getattr(trace, "manifest", None)
+    summary.sections["trace"] = {
+        **trace.source_meta(),
+        "sample": list(getattr(trace, "sample", [])),
+        "manifest": manifest,
+    }
+    if manifest and manifest.get("comparable") is False:
+        print(f"WARNING: {manifest['file']} is not the file data/MANIFEST.json lists; this run is not comparable")
     summary.sections.update(
-        {"goodput": goodput} if goodput else summary_sections(pairs, duration, mode, server_spec_decode, multi)
+        {"goodput": goodput}
+        if goodput
+        else summary_sections(pairs, duration, mode, server_spec_decode, multi, withheld is not None)
     )
     print_summary_tag_lines(summary.sections)
     if client is not None:
@@ -720,6 +747,11 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
         )
         if steady["valid"] and measured.loop_lag is not None:
             withhold_on_client_lag(steady, measured.loop_lag)
+        if withheld:
+            for key in ("ttft_ms", "tpot_ms", "chunk_gap_ms", "interactivity_p90_tok_s", "first_turn_ttft_ms", "ramp"):
+                if key in steady:
+                    steady[key] = None
+            steady.setdefault("withheld", {})["latency"] = withheld
         print(steady_line(steady), flush=True)
         if cold := cold_start_line(steady):
             print(cold, flush=True)

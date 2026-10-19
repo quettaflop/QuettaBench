@@ -3,8 +3,10 @@
 import math
 import re
 import statistics
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 
+# Every latency mean and percentile of a BenchmarkSummary or TurnSummary.
+LATENCY_FIELD = re.compile(r"^(steady_)?(mean|median|p\d+)_(ttft|tpot|itl|e2el)_ms$")
 # Under this a gap is two tokens stamped by one event-loop wakeup, not a decode step.
 ITL_COALESCED_MS = 0.05
 # Above this share of gaps the client, not the server, shaped the ITL tail.
@@ -614,8 +616,20 @@ def summarize_serve(records, wall_s: float, method: str, closed_concurrency: int
     return out
 
 
-def sla_verdict(summary: dict, sla_ttft_ms, sla_tpot_ms) -> list[str]:
-    """A bound of None or 0 is not checked; empty means PASS."""
+def withhold_latency(*summaries) -> None:
+    """Sets every latency mean and percentile of the given summaries to None: over the survivors of a run with
+    failed requests they leave out the slowest, so they are withheld, not footnoted."""
+    for summary in summaries:
+        for f in fields(summary):
+            if LATENCY_FIELD.match(f.name):
+                setattr(summary, f.name, None)
+
+
+def sla_verdict(summary: dict, sla_ttft_ms, sla_tpot_ms, failed: int = 0) -> list[str]:
+    """A bound of None or 0 is not checked; empty means PASS. Any failed request FAILs before a p99 is read: the
+    survivors' p99 leaves out the slowest requests, the ones that timed out."""
+    if failed:
+        return ["failed_requests"]
     bound = []
     if sla_ttft_ms and summary["ttft_ms"]["p99"] > sla_ttft_ms:
         bound.append("ttft_p99")
@@ -1007,6 +1021,10 @@ def first_error(results) -> str:
     return "no error text recorded"
 
 
+def _ms_cell(value) -> str:
+    return f"{'withheld':>10}" if value is None else f"{value:>8.1f}ms"
+
+
 def print_multi_turn_summary(turn_summaries: list, overall: BenchmarkSummary) -> None:
     print_summary(overall)
     print(f"{'=' * 98}")
@@ -1026,8 +1044,8 @@ def print_multi_turn_summary(turn_summaries: list, overall: BenchmarkSummary) ->
         print(
             f" {ts.turn_index + 1:>4}  {ts.successful:>5}  {ts.avg_input_tokens:>8.0f}  "
             f"{ts.median_new_prefill_tokens:>8.0f}  {ts.median_cache_hit_rate * 100:>6.0f}%  {server}  "
-            f"{ts.median_ttft_ms:>8.1f}ms  {ts.p90_ttft_ms:>8.1f}ms  "
-            f"{ts.median_tpot_ms:>8.1f}ms  {ts.median_e2el_ms:>8.1f}ms"
+            f"{_ms_cell(ts.median_ttft_ms)}  {_ms_cell(ts.p90_ttft_ms)}  "
+            f"{_ms_cell(ts.median_tpot_ms)}  {_ms_cell(ts.median_e2el_ms)}"
         )
     print(f"{'=' * 98}\n")
 
@@ -1100,7 +1118,7 @@ def print_summary(s: BenchmarkSummary) -> None:
         print("          offered load, or run long enough to reach equilibrium.")
 
     # Steady decode has TPOT mean near median; a higher mean means stalls.
-    if s.median_tpot_ms > 0 and s.mean_tpot_ms > 2.0 * s.median_tpot_ms:
+    if s.median_tpot_ms and s.mean_tpot_ms and s.mean_tpot_ms > 2.0 * s.median_tpot_ms:
         print(
             f" WARNING: TPOT mean ({s.mean_tpot_ms:.1f} ms) is "
             f"{s.mean_tpot_ms / s.median_tpot_ms:.1f}x its median "
@@ -1118,20 +1136,14 @@ def print_summary(s: BenchmarkSummary) -> None:
         print("          Batch shapes past the warmup width may have compiled during")
         print(f"          measurement. Re-run with --warmup-concurrency >= {s.max_inflight_requests}.")
     print(f"{'─' * 52}")
-    print(
-        f" TTFT  mean/p50/p90/p99:   {s.mean_ttft_ms:.1f} / {s.median_ttft_ms:.1f} / {s.p90_ttft_ms:.1f} / {s.p99_ttft_ms:.1f} ms"
-    )
-    if s.steady_median_ttft_ms is not None:
-        print(f" TTFT  steady p50/p99:     {s.steady_median_ttft_ms:.1f} / {s.steady_p99_ttft_ms:.1f} ms")
-    print(
-        f" TPOT  mean/p50/p90/p99:   {s.mean_tpot_ms:.1f} / {s.median_tpot_ms:.1f} / {s.p90_tpot_ms:.1f} / {s.p99_tpot_ms:.1f} ms"
-    )
-    print(
-        f" ITL   mean/p50/p90/p99:   {s.mean_itl_ms:.1f} / {s.median_itl_ms:.1f} / {s.p90_itl_ms:.1f} / {s.p99_itl_ms:.1f} ms"
-    )
-    print(
-        f" E2EL  mean/p50/p90/p99:   {s.mean_e2el_ms:.1f} / {s.median_e2el_ms:.1f} / {s.p90_e2el_ms:.1f} / {s.p99_e2el_ms:.1f} ms"
-    )
+    if s.mean_ttft_ms is None:
+        print(" Latency:                  withheld (failed requests; the survivors leave out the slowest)")
+    else:
+        for label, name in (("TTFT ", "ttft"), ("TPOT ", "tpot"), ("ITL  ", "itl"), ("E2EL ", "e2el")):
+            values = [getattr(s, f"{k}_{name}_ms") for k in ("mean", "median", "p90", "p99")]
+            print(f" {label} mean/p50/p90/p99:   {' / '.join(f'{v:.1f}' for v in values)} ms")
+            if name == "ttft" and s.steady_median_ttft_ms is not None:
+                print(f" TTFT  steady p50/p99:     {s.steady_median_ttft_ms:.1f} / {s.steady_p99_ttft_ms:.1f} ms")
     print(f"{'=' * 52}\n")
     if s.itl_coalesced_frac > ITL_COALESCED_WARN_FRAC:
         print(f" WARNING: {s.itl_coalesced_frac:.1%} of inter-token gaps are under {ITL_COALESCED_MS} ms.")

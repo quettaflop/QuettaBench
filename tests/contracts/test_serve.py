@@ -179,6 +179,27 @@ class SingleTurn(unittest.TestCase):
         self.assertEqual(summary.sections["serve"]["n"], 5)
         self.assertEqual((summary.status, summary.core.failed_requests), ("partial", 1))
 
+    def test_a_run_with_a_failed_request_withholds_its_latency_percentiles(self):
+        with tempfile.TemporaryDirectory() as td:
+            summary, out = run(
+                single_trace(8),
+                FakeDriver(fail=lambda r: r.order == 0),
+                ModeCfg(concurrency=2, warmup=0, min_success_rate=0.5),
+                results_dir=td,
+            )
+            doc = json.loads((Path(td) / "run.json").read_text())
+        s = doc["summary"]
+        self.assertEqual(doc["run_status"]["status"], "partial")
+        self.assertEqual([s[k] for k in ("mean_ttft_ms", "p99_ttft_ms", "p99_tpot_ms", "p99_e2el_ms")], [None] * 4)
+        self.assertEqual((s["serve"]["ttft_ms"], s["serve"]["tpot_ms"]), (None, None))
+        self.assertIn("1 requests failed", s["withheld"]["latency_percentiles"])
+        self.assertGreater(s["output_token_throughput"], 0)  # throughput and counts stay
+        self.assertIn("Latency:                  withheld", out)
+        self.assertIn("SERVE_SUMMARY n=7 ttft_ms=withheld tpot_ms=withheld req_s=", out)
+        # With no failure the percentiles are there.
+        clean, _ = run(single_trace(8), FakeDriver(), ModeCfg(concurrency=2, warmup=0))
+        self.assertIsNotNone(clean.core.p99_ttft_ms)
+
     def test_failures_under_min_success_rate_abort(self):
         with tempfile.TemporaryDirectory() as td:
             code, _ = run(
@@ -555,6 +576,10 @@ class Sessions(unittest.TestCase):
         self.assertEqual(len(rows), 5)
         self.assertIn("match=1 n=5/6 not_sent=1", out)
         self.assertNotIn("WORKLOAD_MISMATCH", out)
+        # A failed turn withholds every latency figure, the per-turn table's too.
+        self.assertIsNone(run_json["summary"]["per_turn"][0]["median_ttft_ms"])
+        self.assertIn("2 requests failed or went unsent", run_json["summary"]["withheld"]["latency_percentiles"])
+        self.assertIn("  withheld    withheld    withheld    withheld", out)
 
     def test_turns_a_failed_turn_left_unsent_count_against_the_success_rate(self):
         # 4 of 5 sent turns succeed (80%), but 4 of the 6 planned (67%): under a 75% floor the run aborts.
@@ -849,6 +874,37 @@ class GoodputSweep(unittest.TestCase):
             ],
         )
         self.assertFalse(tail(out, "SERVE_SUMMARY"))
+
+    def test_an_sla_run_with_a_failed_request_fails_and_reads_no_p99(self):
+        mode = ModeCfg(concurrency=2, warmup=0, min_success_rate=0.5, sla_ttft_ms=1e6)
+        summary, out = run(single_trace(8), FakeDriver(fail=lambda r: r.order == 0), mode)
+        sla = summary.sections["sla"]
+        self.assertEqual((sla["verdict"], sla["bound"], sla["failed_requests"]), ("FAIL", ["failed_requests"], 1))
+        self.assertIsNone(sla["ttft_p99"])
+        self.assertIn("SLA_SUMMARY verdict=FAIL bound=failed_requests ttft_p99=-/1000000.0", out)
+
+    def test_the_sweep_returns_the_best_probes_requests_not_the_last_ones(self):
+        speeds = []
+        mode = ModeCfg(load="open", warmup=0, sla_ttft_ms=450.0, goodput_sweep=True)
+        with mock.patch.object(serve, "measure", self.fake_measure(speeds)):
+            summary, _ = run_sections(single_trace(4), FakeDriver(), mode, WorkloadCfg(arrival="poisson:10"))
+        best = summary.sections["goodput"]["speed"]
+        self.assertNotEqual(speeds[-1], best)  # the bisection ended on another probe
+        self.assertAlmostEqual(summary.core.duration_s, 1.0 / best)  # the fake run lasts 1 / speed
+
+    def test_a_probe_with_a_failed_request_fails_whatever_its_survivors_p99(self):
+        failing = self.fake_measure([])
+
+        async def one_failure(trace, driver, mode, emit, workload, request_id):
+            out = await failing(trace, driver, mode, emit, workload, request_id)
+            out.pairs[0][1].success = False
+            return out
+
+        mode = ModeCfg(load="open", warmup=0, sla_ttft_ms=1e6, goodput_sweep=True, min_success_rate=0.5)
+        with mock.patch.object(serve, "measure", one_failure):
+            code, out = run_sections(single_trace(4), FakeDriver(), mode, WorkloadCfg(arrival="poisson:10"))
+        self.assertEqual(code, 1)
+        self.assertIn("GOODPUT_PROBE speed=1 verdict=FAIL bound=failed_requests", out)
 
     def test_no_passing_speed_exits_1(self):
         mode = ModeCfg(load="open", warmup=0, sla_ttft_ms=1.0, goodput_sweep=True)

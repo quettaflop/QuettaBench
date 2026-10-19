@@ -47,6 +47,8 @@ RUN_KEYS = ("model", "engine", "workload", "mode", "hardware", "matrix")
 HARDWARE_FILE_KEYS = ("world", "timing_steps", "max_seq_headroom", "collective", "provision")
 GRIDS_KEYS = ("grids", "step_points")
 RATE_ARRIVALS = ("poisson", "ramp", "burst")
+# The slowest decode a session run's timeout must allow for: a turn of the profile's longest output at this pace.
+SLOWEST_TOKEN_S = 0.2
 # At most 200 chars (clear_run_dir's sibling name must fit in 255), no trailing '.'.
 RUN_NAME = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._-]{0,198}[A-Za-z0-9_-])?")
 RESERVED_RUN_NAMES = ("probes", "compare", "baselines")
@@ -217,6 +219,22 @@ def _profile_prefix_caching(values, origins, where):
     origins["engine.prefix_caching"] = "profile"
 
 
+def _profile_exact_output_length(values, origins, where):
+    """A trace with recorded output lengths replays them exactly: a turn that stops short fails, it is not faster."""
+    source = values["workload.source"]
+    if values["mode.grid"] is not None or source not in live.PROFILES or not live.get_profile(source).recorded_lengths:
+        return
+    if values["mode.exact_output_length"]:
+        return
+    if origins.get("mode.exact_output_length", "default") not in NOT_ASKED:
+        raise ConfigError(
+            f"{where}: mode.exact_output_length=False contradicts workload profile {source}, "
+            "whose turns carry recorded output lengths"
+        )
+    values["mode.exact_output_length"] = True
+    origins["mode.exact_output_length"] = "profile"
+
+
 def _one_of(allowed):
     words = [str(a) for a in allowed]
     return ", ".join(words[:-1]) + " or " + words[-1]
@@ -266,6 +284,7 @@ def _validate(values, origins, allow_unverified, where):
     elif profile in ("single-turn", "multi-turn"):
         _force(values, origins, "engine.prefix_caching", True, by, where)
     _profile_prefix_caching(values, origins, where)
+    _profile_exact_output_length(values, origins, where)
     # A single-turn profile draws num_requests; other sources set their own.
     source = values["workload.source"]
     if (
@@ -318,6 +337,14 @@ def _validate(values, origins, allow_unverified, where):
         values["mode.load"] != "open" or not (values["mode.sla_ttft_ms"] or values["mode.sla_tpot_ms"])
     ):
         raise ConfigError(f"{where}: goodput sweep needs open load and mode.sla_ttft_ms and/or sla_tpot_ms")
+    source = values["workload.source"]
+    if values["workload.kind"] == "sessions" and source in live.PROFILES:
+        osl = live.get_profile(source).osl_tokens
+        if values["mode.timeout"] < osl * SLOWEST_TOKEN_S:
+            raise ConfigError(
+                f"{where}: mode.timeout={values['mode.timeout']} s cannot cover {source}'s {osl}-token turns at "
+                f"{SLOWEST_TOKEN_S * 1000:g} ms a token ({osl * SLOWEST_TOKEN_S:.0f} s); a cut turn ends its session"
+            )
     if values["mode.chunk_usage"] and values["engine.name"] != "vllm":
         raise ConfigError(
             f"{where}: mode.chunk_usage asks vLLM for continuous_usage_stats; "

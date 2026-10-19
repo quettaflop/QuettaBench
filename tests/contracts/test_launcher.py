@@ -219,6 +219,7 @@ class Attach(unittest.TestCase):
         record = json.loads((self.dir / "run" / "engine.json").read_text())
         self.assertTrue(record["attached"])
         self.assertEqual(record["served_models"], ["other"])
+        self.assertEqual((handle.served_models, handle.server_version), (["other"], record["server_version"]))
         self.assertEqual(record["expected_launch_spec"]["env"], {"HF_TOKEN": "REDACTED"})
 
     def test_attach_refuses_a_server_that_does_not_serve_the_model(self):

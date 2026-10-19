@@ -36,7 +36,7 @@ mode:
   reset_prefix_cache: true
   exact_output_length: true
   temperature: 0.0
-  timeout: 3600
+  timeout: 10000  # Terminal-bench turns run to 49152 tokens: 9830 s at 200 ms a token
 hardware:
   link_profile: nvlink
   visible_devices: 0,1,2,3,4,5,6,7
