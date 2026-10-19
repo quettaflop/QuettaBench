@@ -448,6 +448,14 @@ class PinnedOutputTests(unittest.TestCase):
         self.assertGreaterEqual(r.stream_closed_s - r.e2el, 0.055)
         self.assertEqual(jsonl_row(r)["stream_closed_s"], r.stream_closed_s)
 
+    def test_a_data_line_that_does_not_parse_fails_the_request(self):
+        lines = _chat_sse([_delta("a"), {"choices": [], "usage": {"prompt_tokens": 3, "completion_tokens": 2}}])
+        lines.insert(1, b'data: {"choices": [{"delta": {"content": "b"\n')  # cut short: a token lost
+        r = _run(_ChatSession(lines))
+        self.assertEqual((r.success, r.error_kind), (False, "malformed_stream"))
+        self.assertIn("did not parse", r.error)
+        self.assertIsNotNone(r.ttft)  # the timings it did see are kept
+
     def test_each_chunk_records_its_delta_characters_and_the_servers_count(self):
         role = {"choices": [{"delta": {"role": "assistant", "content": ""}}]}
         finish = {"choices": [{"delta": {}, "finish_reason": "stop"}]}

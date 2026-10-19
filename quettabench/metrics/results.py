@@ -226,6 +226,8 @@ NEW_FIELDS = (
     "stream_closed_s",
     "chunk_chars",
     "chunk_tokens",
+    "planned_digest",
+    "sent_digest",
 )
 
 

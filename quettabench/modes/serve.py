@@ -139,6 +139,15 @@ def enforce_first_chunk(result):
         result.error_kind = "empty_reply"
 
 
+def enforce_usage(mode, result):
+    """A reply without a usage block carrying both prompt_tokens and completion_tokens has no counted tokens: a
+    failed request, unless mode.allow_missing_usage records it with zero-filled counts."""
+    if result.success and not result.usage_reported and not mode.allow_missing_usage:
+        result.success = False
+        result.error = "the reply carried no usage block with both prompt_tokens and completion_tokens"
+        result.error_kind = "missing_usage"
+
+
 def enforce_output_length(mode, request, result):
     """exact_output_length: a reply shorter than planned is a failed request, not a faster one."""
     if mode.exact_output_length and result.success and result.output_tokens != request.max_tokens:
@@ -184,7 +193,7 @@ def emitter(mode, writer, probe=None):
     return emit
 
 
-async def replay(trace, driver, mode, emit, offsets, request_id, executed):
+async def replay(trace, driver, mode, emit, offsets, request_id, executed, plan=None):
     """The first mode.discard_first requests stay out of the summary. executed gets each request's sent_digest just
     before it goes out."""
     open_loop = mode.load == "open"
@@ -202,6 +211,7 @@ async def replay(trace, driver, mode, emit, offsets, request_id, executed):
             granted = time.perf_counter() - start
             executed[i] = sent_digest(request)
             result = await driver.send(request, request_id=request_id(i, 0, i), **sampling(mode, request))
+        result.sent_digest, result.planned_digest = executed[i], plan.digest(i) if plan else None
         annotate_request_observability(
             result,
             request_index=i,
@@ -213,6 +223,7 @@ async def replay(trace, driver, mode, emit, offsets, request_id, executed):
             run_start=start,
         )
         enforce_first_chunk(result)
+        enforce_usage(mode, result)
         enforce_output_length(mode, request, result)
         if i < mode.discard_first:
             result.excluded_from_summary = True
@@ -333,14 +344,15 @@ class Measurement:
     executed: dict = field(default_factory=dict)
 
 
-async def measure(trace, driver, mode, emit, workload, request_id) -> Measurement:
+async def measure(trace, driver, mode, emit, workload, request_id, plan=None) -> Measurement:
+    """plan: the frozen plan, whose digest each row carries beside the one taken at its send."""
     multi = isinstance(trace, SessionTrace)
     executed: dict = {}
     offsets = None if multi else arrival_offsets(trace, workload)
     sessions: SessionDispatcher | None = None
     if multi:
         sessions = SessionDispatcher(
-            trace, mode, workload, lambda r, **kw: driver.send(r, **kw, **sampling(mode, r)), request_id, emit
+            trace, mode, workload, lambda r, **kw: driver.send(r, **kw, **sampling(mode, r)), request_id, emit, plan
         )
         sessions.announce()
     async with driver.session(mode.concurrency, mode.load == "open"):
@@ -356,7 +368,7 @@ async def measure(trace, driver, mode, emit, workload, request_id) -> Measuremen
             if sessions is not None:
                 results, by_turn, pairs, start = await sessions.run(executed)
             else:
-                pairs, start = await replay(trace, driver, mode, emit, offsets, request_id, executed)
+                pairs, start = await replay(trace, driver, mode, emit, offsets, request_id, executed, plan)
                 results, by_turn = [r for _, r in pairs], None
             duration = time.perf_counter() - start
         finally:
@@ -543,6 +555,7 @@ def sweep(trace, driver, mode, writer, workload, request_id, plan):
                 emitter(mode, writer, len(probes)),
                 dataclasses.replace(workload, speed=speed),
                 request_id,
+                plan=plan,
             )
         )
         section = {"max_req_s": None, "speed": None, "fail_bound": fail_bound, "probes": probes}
@@ -661,7 +674,7 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
         if mode.goodput_sweep:
             measured, goodput = sweep(trace, driver, mode, writer, workload, request_id, plan)
         else:
-            measured = asyncio.run(measure(trace, driver, mode, emitter(mode, writer), workload, request_id))
+            measured = asyncio.run(measure(trace, driver, mode, emitter(mode, writer), workload, request_id, plan=plan))
     except PrefixCacheResetError as e:
         # Going on would measure the warm cache the reset exists to prevent.
         print(f"ABORT: prefix cache reset failed: {e}")
@@ -692,8 +705,12 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
         warmup_concurrency=(mode.warmup_concurrency or mode.concurrency) if mode.warmup else 0,
         planned_turns=planned_turns,
     )
+    if not_sent:
+        # A turn a failed turn left unsent is a failed request too, of its own kind.
+        core.failed_requests += len(not_sent)
+        core.error_kinds["not_sent"] = len(not_sent)
     summary = Summary(core, results)
-    failed = core.failed_requests + len(not_sent)
+    failed = core.failed_requests
     withheld = f"{failed} requests failed or went unsent; the rest leave out the slowest" if failed else None
     if by_turn is not None:
         summary.turns = aggregate_per_turn(by_turn)
@@ -762,9 +779,8 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
         stop(writer, summary.to_dict(), "aborted", "no passing speed within budget", 1)
     if core.failed_requests:
         summary.status = "partial"
-        summary.reason = f"{core.failed_requests} of {core.num_requests} requests failed"
-        if not_sent:
-            summary.reason += f"; {len(not_sent)} later turns of their sessions not sent"
+        kinds = ", ".join(f"{k}={v}" for k, v in sorted(core.error_kinds.items()))
+        summary.reason = f"{core.failed_requests} failed ({kinds})"
     writer.finish(summary.to_dict(), status=summary.status, reason=summary.reason)
     return summary
 
@@ -1005,8 +1021,8 @@ def run_grid(trace, driver, cfg, writer):
 class SessionDispatcher:
     """request_id names a request or returns None; emit takes each result."""
 
-    def __init__(self, trace, mode, workload, send, request_id, emit):
-        self.trace, self.mode, self.workload = trace, mode, workload
+    def __init__(self, trace, mode, workload, send, request_id, emit, plan=None):
+        self.trace, self.mode, self.workload, self.plan = trace, mode, workload, plan
         self.send, self.request_id, self.emit = send, request_id, emit
         self.sessions = trace.sessions()
         self.max_turns = getattr(trace, "max_turns", max(len(s) for s in self.sessions))
@@ -1036,6 +1052,8 @@ class SessionDispatcher:
         self.warned = False
         # session_id -> (arrived, admitted, finished), seconds since start; the steady window reads these
         self.session_times: dict = {}
+        # session_id -> its last turn's completed_at_s, the rows' clock: a session finishes there
+        self.last_done: dict = {}
         self.plays: list = []
         self.deadline_s: float | None = None
         self.start = time.perf_counter()
@@ -1068,6 +1086,8 @@ class SessionDispatcher:
             granted = elapsed()
             self.executed[sid, turn] = sent_digest(request, spliced_at(request, self.trace.replies))
             result = await self.send(request, capture_text=True, request_id=self.request_id(sid, turn, index))
+        result.sent_digest = self.executed[sid, turn]
+        result.planned_digest = self.plan.digest((sid, turn)) if self.plan else None
         annotate_request_observability(
             result,
             request_index=index,
@@ -1079,6 +1099,7 @@ class SessionDispatcher:
             run_start=self.start,
         )
         enforce_first_chunk(result)
+        enforce_usage(self.mode, result)
         enforce_output_length(self.mode, request, result)
         annotate_multi_turn_cache_estimate(
             result,
@@ -1091,6 +1112,7 @@ class SessionDispatcher:
             reply_in_cache=bool(self.trace.replies.get(sid)),
         )
         self.served.append((request, result))
+        self.last_done[sid] = result.completed_at_s
         self.emit(request, result)
         return result
 
@@ -1198,7 +1220,8 @@ class SessionDispatcher:
             async with agents:
                 admitted = elapsed()
                 await self._turns(turns, lambda r: index[(r.session_id, r.turn)])
-                self.session_times[turns[0].session_id] = (arrived if recorded else admitted, admitted, elapsed())
+                sid = turns[0].session_id
+                self.session_times[sid] = (arrived if recorded else admitted, admitted, self.last_done[sid])
 
         await asyncio.gather(*[session(s) for s in self.sessions])
         results = [r for v in self.by_turn.values() for r in v]
@@ -1230,7 +1253,7 @@ class SessionDispatcher:
                 self.plays.append(turns)
                 admitted = elapsed()
                 await self._turns(turns, lambda r: next(indexes))
-                self.session_times[turns[0].session_id] = (admitted, admitted, elapsed())
+                self.session_times[turns[0].session_id] = (admitted, admitted, self.last_done[turns[0].session_id])
 
         await asyncio.gather(*[agent() for _ in range(agents)])
 

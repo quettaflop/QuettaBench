@@ -155,8 +155,8 @@ class SingleTurn(unittest.TestCase):
                 results_dir=td,
             )
             run_json = json.loads((Path(td) / "run.json").read_text())
-        self.assertEqual((summary.status, summary.reason), ("partial", "1 of 8 requests failed"))
-        self.assertEqual(run_json["run_status"], {"status": "partial", "reason": "1 of 8 requests failed"})
+        self.assertEqual((summary.status, summary.reason), ("partial", "1 failed (http_error=1)"))
+        self.assertEqual(run_json["run_status"], {"status": "partial", "reason": "1 failed (http_error=1)"})
         workload = run_json["summary"]["workload"]
         self.assertEqual((workload["match"], workload["n"], workload["of"]), (True, 8, 8))
         self.assertNotIn("WORKLOAD_MISMATCH", out)
@@ -200,6 +200,24 @@ class SingleTurn(unittest.TestCase):
         # With no failure the percentiles are there.
         clean, _ = run(single_trace(8), FakeDriver(), ModeCfg(concurrency=2, warmup=0))
         self.assertIsNotNone(clean.core.p99_ttft_ms)
+
+    def test_a_reply_without_a_full_usage_block_is_a_failed_row(self):
+        class NoCount(FakeDriver):
+            async def send(self, request, **kw):
+                result = await super().send(request, **kw)
+                result.usage_reported = request.order != 2  # e.g. a usage block without prompt_tokens
+                return result
+
+        with tempfile.TemporaryDirectory() as td:
+            summary, _ = run(single_trace(6), NoCount(), ModeCfg(concurrency=2, warmup=0), results_dir=td)
+            rows = [json.loads(x) for x in (Path(td) / "requests.jsonl").read_text().splitlines()]
+        self.assertEqual(
+            [(r["request_index"], r["error_kind"]) for r in rows if not r["success"]], [(2, "missing_usage")]
+        )
+        self.assertEqual(summary.status, "partial")
+        # --allow-missing-usage keeps the row, zero-filled, as before.
+        kept, _ = run(single_trace(6), NoCount(), ModeCfg(concurrency=2, warmup=0, allow_missing_usage=True))
+        self.assertEqual(kept.core.failed_requests, 0)
 
     def test_failures_under_min_success_rate_abort(self):
         with tempfile.TemporaryDirectory() as td:
@@ -301,6 +319,14 @@ class Sessions(unittest.TestCase):
         single, out = run(single_trace(6), FakeDriver(), ModeCfg(concurrency=2, warmup=0))
         self.assertIsNotNone(single.sections["serve"]["steady_ttft_ms"])
         self.assertIn("steady_ttft_ms_p50=", out)
+
+    def test_a_sessions_finish_is_its_last_rows_completion_so_the_window_rebuilds_from_rows(self):
+        summary, _ = run(session_trace(12, 3), TimedDriver(), ModeCfg(concurrency=3, warmup=0))
+        done: dict = {}
+        for r in summary.rows:
+            done[r.session_id] = max(done.get(r.session_id, 0.0), r.completed_at_s)
+        # Sessions 0 to 2 take the three agents first; the window opens when the last of them finishes.
+        self.assertEqual(summary.sections["steady"]["start_s"], max(done[s] for s in (0, 1, 2)))
 
     def test_agents_keep_their_slots_through_recorded_waits_and_the_run_has_a_steady_window(self):
         trace = session_trace(60, 5)
@@ -544,6 +570,18 @@ class Sessions(unittest.TestCase):
         self.assertEqual(code, 3)
         self.assertIn("first_mismatch=0:1 (differs from the plan)", out)
 
+    def test_every_row_carries_its_planned_and_sent_digest_so_identity_checks_row_by_row(self):
+        trace = session_trace()
+        driver = self.tamper_on_first_send(trace, lambda r: r.messages[-1].update(content="tampered"))
+        with tempfile.TemporaryDirectory() as td:
+            code, _ = run(trace, driver, ModeCfg(concurrency=1, warmup=0), results_dir=td)
+            rows = [json.loads(x) for x in (Path(td) / "requests.jsonl").read_text().splitlines()]
+        self.assertEqual(code, 3)
+        differ = sorted((r["session_id"], r["turn_index"]) for r in rows if r["planned_digest"] != r["sent_digest"])
+        # The tampered message sits in session 0's second and third turns; the spliced replies differ nowhere.
+        self.assertEqual(differ, [(0, 1), (0, 2)])
+        self.assertTrue(all(len(r["sent_digest"]) == 64 for r in rows))
+
     def test_a_recorded_assistant_turn_changed_under_live_replies_fails_the_identity_gate(self):
         # Only the placeholders the run splices are left out of the digest; a recorded assistant turn is hashed.
         trace = recorded_trace(2, 3)
@@ -574,10 +612,13 @@ class Sessions(unittest.TestCase):
             )
             run_json = json.loads((Path(td) / "run.json").read_text())
             rows = (Path(td) / "requests.jsonl").read_text().splitlines()
+        # The failed turn and the turn it left unsent: two failed requests, each kind counted.
         self.assertEqual(
             run_json["run_status"],
-            {"status": "partial", "reason": "1 of 5 requests failed; 1 later turns of their sessions not sent"},
+            {"status": "partial", "reason": "2 failed (http_error=1, not_sent=1)"},
         )
+        s = run_json["summary"]
+        self.assertEqual((s["failed_requests"], s["error_kinds"]), (2, {"http_error": 1, "not_sent": 1}))
         w = run_json["summary"]["workload"]
         self.assertEqual((w["match"], w["n"], w["of"]), (True, 5, 6))
         self.assertEqual(w["turns_not_sent"], [{"session": 1, "turn": 2}])
@@ -843,7 +884,7 @@ class GoodputSweep(unittest.TestCase):
     """100 ms per unit of speed against a 450 ms bound."""
 
     def fake_measure(self, speeds):
-        async def measure(trace, driver, mode, emit, workload, request_id):
+        async def measure(trace, driver, mode, emit, workload, request_id, plan=None):
             speeds.append(workload.speed)
             pairs = []
             for i, q in enumerate(trace.requests()):
@@ -905,7 +946,7 @@ class GoodputSweep(unittest.TestCase):
     def test_a_probe_with_a_failed_request_fails_whatever_its_survivors_p99(self):
         failing = self.fake_measure([])
 
-        async def one_failure(trace, driver, mode, emit, workload, request_id):
+        async def one_failure(trace, driver, mode, emit, workload, request_id, plan=None):
             out = await failing(trace, driver, mode, emit, workload, request_id)
             out.pairs[0][1].success = False
             return out

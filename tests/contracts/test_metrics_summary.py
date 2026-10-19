@@ -327,11 +327,20 @@ class TestBusyTime(unittest.TestCase):
         self.assertAlmostEqual(mean, 1.0)
         self.assertEqual(peak, 1)
 
-    def test_idle_gap_excluded_from_busy_time(self):
+    def test_idle_gap_is_out_of_busy_time_but_in_the_mean_in_flight(self):
+        # 2 s of requests over the 6 s from the first send to the last completion.
         busy, mean, peak = _busy_time_and_load([_req(0, 1), _req(5, 6)])
         self.assertAlmostEqual(busy, 2.0)
-        self.assertAlmostEqual(mean, 1.0)
+        self.assertAlmostEqual(mean, 2 / 6)
         self.assertEqual(peak, 1)
+
+    def test_the_whole_run_is_timed_from_the_rows(self):
+        # Sent at 0.5 s and 1 s by the driver's clock, done at 2 s and 4 s, in a 5 s measure(): 3.5 s.
+        rows = [_req(0.4, 2.0), _req(0.9, 4.0)]
+        rows[0].sent_at_s, rows[1].sent_at_s = 0.5, 1.0
+        s = aggregate(rows, duration_s=5.0)
+        self.assertAlmostEqual(s.duration_s, 3.5)
+        self.assertAlmostEqual(s.mean_inflight_requests, (1.5 + 3.0) / 3.5)
 
     def test_overlapping_requests_counted_once(self):
         busy, mean, peak = _busy_time_and_load([_req(0, 3), _req(0, 3), _req(0, 3)])
@@ -735,8 +744,12 @@ class TestOpenLoopUnits(unittest.TestCase):
             r = RequestResult(success=True, output_tokens=output_tokens, chunk_chars=chars, chunk_tokens=counts)
             return chunk_shares(r, len(chars or counts))
 
-        # A role chunk, three content chunks of 2, 1 and 3 characters, a bare finish chunk.
+        # A role chunk, three content chunks of 2, 1 and 3 characters, a bare finish chunk, 6 tokens: the chunks
+        # with characters are not one a token, so the characters split them.
         self.assertEqual(shares(6, [0, 2, 1, 3, 0]), [0, 2, 1, 3, 0])
+        # The same chunks with 3 tokens: one per chunk with characters, whatever their length (vLLM's usual
+        # stream; the character split would have read 1, 0.5 and 1.5).
+        self.assertEqual(shares(3, [0, 2, 1, 3, 0]), [0, 1, 1, 1, 0])
         # Fewer tokens than chunks: 2 tokens over three 1-character chunks, nothing on the empty ones.
         self.assertEqual(shares(2, [0, 1, 1, 1, 0]), [0, 2 / 3, 2 / 3, 2 / 3, 0])
         # A tool call the parser emits whole on the finish chunk: 20 of 25 characters, so 8 of 10 tokens.

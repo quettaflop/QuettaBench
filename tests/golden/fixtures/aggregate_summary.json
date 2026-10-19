@@ -17,7 +17,7 @@
   "busy_time_s": 2.326,
   "busy_total_token_throughput": 277.7300085984523,
   "concurrency": 4,
-  "duration_s": 4.0,
+  "duration_s": 3.0,
   "error_kinds": {
    "http_error": 1,
    "timeout": 1
@@ -35,7 +35,7 @@
   "max_inflight_requests": 2,
   "mean_e2el_ms": 180.33333333333334,
   "mean_inflight_first_half": 0.988,
-  "mean_inflight_requests": 1.0670679277730006,
+  "mean_inflight_requests": 0.8273333333333333,
   "mean_inflight_second_half": 0.6666666666666666,
   "mean_itl_ms": 20.5,
   "mean_tpot_ms": 24.6,

@@ -94,6 +94,16 @@ def _read_usage(usage: dict) -> tuple[int, int, int | None, bool]:
     return usage.get("prompt_tokens") or 0, usage.get("completion_tokens") or 0, cached, reported
 
 
+def _stream_failure(done, bad_line) -> tuple[str, str] | None:
+    """Why a stream that closed is not a whole reply, as (error, kind), or None: a data line that did not parse
+    (its token is lost), or no [DONE]."""
+    if bad_line is not None:
+        return f"an SSE data line did not parse: {bad_line[:80]!r}", "malformed_stream"
+    if not done:
+        return "stream ended without [DONE]; the reply is incomplete", "incomplete_stream"
+    return None
+
+
 def _chunk_fields(chars: list, tokens: list) -> dict:
     """A result's per-chunk record: characters always, the server's cumulative counts only when it sent any."""
     return {"chunk_chars": chars, "chunk_tokens": tokens if any(t is not None for t in tokens) else None}
@@ -150,6 +160,7 @@ async def _stream_chat(
     output_tokens = 0
     usage_reported = False
     done = False
+    bad_line: str | None = None  # the first data line that did not parse
     server_cached_tokens = None
     text_parts: list[str] = []
     chunk_chars: list[int] = []
@@ -182,6 +193,7 @@ async def _stream_chat(
                 try:
                     chunk = json.loads(data_str)
                 except json.JSONDecodeError:
+                    bad_line = data_str if bad_line is None else bad_line
                     continue
                 if chunk.get("error"):
                     return RequestResult(
@@ -224,7 +236,8 @@ async def _stream_chat(
         # The request ends at its last chunk with choices; the usage chunk, [DONE] and the close come after.
         stream_closed = time.perf_counter() - start_time
         e2el = last_token_time - start_time if ttft is not None else stream_closed
-        if not done:
+        failure = _stream_failure(done, bad_line)
+        if failure:
             return RequestResult(
                 sent_perf_s=start_time,
                 success=False,
@@ -235,8 +248,8 @@ async def _stream_chat(
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 usage_reported=usage_reported,
-                error="stream ended without [DONE]; the reply is incomplete",
-                error_kind="incomplete_stream",
+                error=failure[0],
+                error_kind=failure[1],
                 **_chunk_fields(chunk_chars, chunk_tokens),
             )
         return RequestResult(
@@ -338,6 +351,7 @@ async def _stream_completions(
     output_tokens = 0
     usage_reported = False
     done = False
+    bad_line: str | None = None  # the first data line that did not parse
     last_choices_time = start_time
     server_cached_tokens = None
     chunk_chars: list[int] = []
@@ -370,6 +384,7 @@ async def _stream_completions(
                 try:
                     chunk = json.loads(data_str)
                 except json.JSONDecodeError:
+                    bad_line = data_str if bad_line is None else bad_line
                     continue
                 if chunk.get("error"):
                     return RequestResult(
@@ -410,7 +425,8 @@ async def _stream_completions(
         # and the close come after.
         stream_closed = time.perf_counter() - start_time
         e2el = last_choices_time - start_time if ttft is not None else stream_closed
-        if not done:
+        failure = _stream_failure(done, bad_line)
+        if failure:
             return RequestResult(
                 sent_perf_s=start_time,
                 success=False,
@@ -421,8 +437,8 @@ async def _stream_completions(
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 usage_reported=usage_reported,
-                error="stream ended without [DONE]; the reply is incomplete",
-                error_kind="incomplete_stream",
+                error=failure[0],
+                error_kind=failure[1],
                 **_chunk_fields(chunk_chars, chunk_tokens),
             )
         return RequestResult(

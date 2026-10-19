@@ -39,6 +39,10 @@ class RequestResult:
     # cumulative completion_tokens on it under mode.chunk_usage (None when the server sent none).
     chunk_chars: list | None = None
     chunk_tokens: list | None = None
+    # The request's digest in the plan frozen before the run, and the one taken just before its send; they differ
+    # only where the identity check fails, so a reader checks identity row by row.
+    planned_digest: str | None = None
+    sent_digest: str | None = None
     # Held out of the summary by --discard-first; still kept in per_request.
     excluded_from_summary: bool = False
 
@@ -274,15 +278,16 @@ class BenchmarkSummary:
         return d
 
 
+def _sent_intervals(results) -> list[tuple[float, float]]:
+    """Each request's [send, completion] on the run clock; failed requests count, they occupied the server."""
+    timed = [(sent_at(r), r.completed_at_s) for r in results]
+    return [(a, b) for a, b in timed if a is not None and b is not None and b > a]
+
+
 def _busy_time_and_load(results) -> tuple[float, float, int]:
-    """Failed requests count: they occupied the server."""
-    intervals = [
-        (r.semaphore_acquired_at_s, r.completed_at_s)
-        for r in results
-        if r.semaphore_acquired_at_s is not None
-        and r.completed_at_s is not None
-        and r.completed_at_s > r.semaphore_acquired_at_s
-    ]
+    """Busy time (the union of the requests' [send, completion]), mean in flight weighted by time over the first
+    send to the last completion, idle stretches included, and the peak in flight."""
+    intervals = _sent_intervals(results)
     if not intervals:
         return 0.0, 0.0, 0
 
@@ -298,7 +303,8 @@ def _busy_time_and_load(results) -> tuple[float, float, int]:
     busy += cur_end - cur_start
 
     total_request_time = sum(end - start for start, end in intervals)
-    mean_inflight = total_request_time / busy if busy > 0 else 0.0
+    span = max(e for _, e in intervals) - min(s for s, _ in intervals)
+    mean_inflight = total_request_time / span if span > 0 else 0.0
 
     events = [(s, 1) for s, _ in intervals] + [(e, -1) for _, e in intervals]
     events.sort(key=lambda ev: (ev[0], ev[1]))
@@ -313,13 +319,7 @@ def _busy_time_and_load(results) -> tuple[float, float, int]:
 
 def _inflight_halves(results) -> tuple[float, float]:
     """Falling means drain dominates."""
-    intervals = [
-        (r.semaphore_acquired_at_s, r.completed_at_s)
-        for r in results
-        if r.semaphore_acquired_at_s is not None
-        and r.completed_at_s is not None
-        and r.completed_at_s > r.semaphore_acquired_at_s
-    ]
+    intervals = _sent_intervals(results)
     if len(intervals) < 2:
         return 0.0, 0.0
 
@@ -442,13 +442,17 @@ def chunk_times(r) -> list[float]:
 
 
 def chunk_shares(r, n: int) -> list[float]:
-    """The output tokens each of a request's n chunks carried: the server's own counts when every chunk has one
-    (each the rise in cumulative completion_tokens), else output_tokens in proportion to each chunk's delta
-    characters; with no characters at all the finish chunk carries everything. Never negative."""
+    """The output tokens each of a request's n chunks carried, by the first rule that applies: the server's own
+    counts when every chunk has one (each the rise in cumulative completion_tokens); one token for each chunk with
+    characters when they number exactly output_tokens, the common one-token-per-chunk stream; else output_tokens in
+    proportion to each chunk's delta characters. With no characters at all the finish chunk carries everything.
+    Never negative."""
     counts = r.chunk_tokens
     if counts and len(counts) == n and all(c is not None for c in counts):
         return [max(0, c - prev) for prev, c in zip([0, *counts[:-1]], counts)]
     chars = r.chunk_chars if r.chunk_chars and len(r.chunk_chars) == n else []
+    if chars and sum(1 for c in chars if c > 0) == r.output_tokens:
+        return [1.0 if c > 0 else 0.0 for c in chars]
     total = sum(chars)
     if total > 0:
         return [r.output_tokens * c / total for c in chars]
@@ -680,6 +684,10 @@ def aggregate(
     planned_turns maps a session id to the turns it was to run; without it a session with no failed turn counts."""
     excluded = sum(1 for r in results if r.excluded_from_summary)
     results = [r for r in results if not r.excluded_from_summary]
+    # The whole run, from the rows: the first send to the last completion; the run's wall time only without one.
+    every = _sent_intervals(results)
+    if every:
+        duration_s = max(e for _, e in every) - min(a for a, _ in every)
 
     summary = BenchmarkSummary(
         model=model,
@@ -959,17 +967,17 @@ def aggregate_per_turn(results_by_turn: dict[int, list]) -> list[TurnSummary]:
 
 
 def success_rate_gate(summary, min_rate: float, not_sent: int = 0) -> tuple[str, str | None]:
-    """not_sent: planned turns a failed turn ended before they were sent, counted as failed."""
+    """not_sent: planned turns a failed turn ended before they were sent; they are in summary's failed_requests and
+    error_kinds already, and here they join the planned count the rate divides by."""
     if summary.num_requests == 0:
         return "abort", f"ABORT: No requests completed. Minimum success rate: {min_rate:.0%}"
     planned = summary.num_requests + not_sent
     rate = summary.successful_requests / planned
     if rate < min_rate:
         kinds = ", ".join(f"{k}={v}" for k, v in sorted(summary.error_kinds.items()))
-        unsent = f", not_sent={not_sent}" if not_sent else ""
         return "abort", (
             f"ABORT: Success rate {rate:.1%} below minimum {min_rate:.0%} "
-            f"({summary.successful_requests}/{planned}); failures: {kinds}{unsent}"
+            f"({summary.successful_requests}/{planned}); failures: {kinds}"
         )
     return "pass", None
 
