@@ -1035,6 +1035,33 @@ def observed_run(port=8000, version="0.31.0", env=None, kv=1234567, spec="None",
     return {"provenance": {"server_observed": seen, "weights_revision": weights}, "summary": {}}
 
 
+MIX = {
+    "input_tokens": {"p10": 50, "p50": 150, "p90": 300, "mean": 160.0},
+    "output_tokens": {"p10": 10, "p50": 10, "p90": 10, "mean": 10.0},
+    "uncached_prefill_tokens": None,
+    "tool_wait_s": {"p10": 0.0, "p50": 0.2, "p90": 0.5, "mean": 0.25},
+    "session_turns": {"p10": 2, "p50": 2, "p90": 3, "mean": 2.5},
+}
+
+
+class WorkloadMixGate(unittest.TestCase):
+    def test_mixes_within_five_percent_agree_and_beyond_it_are_named(self):
+        near = {**MIX, "input_tokens": {**MIX["input_tokens"], "p50": 157.5}}  # 5% of 157.5 is 7.9: within
+        self.assertEqual(compare.mix_diff(MIX, near), [])
+        far = {**MIX, "input_tokens": {**MIX["input_tokens"], "p50": 165}, "tool_wait_s": None}
+        self.assertEqual(compare.mix_diff(MIX, far), ["input_tokens p50: 150 vs 165", "tool_wait_s: in one run only"])
+        self.assertEqual(compare.mix_diff(None, None), [])
+
+    def test_a_mix_difference_withholds_every_ratio_and_names_the_field(self):
+        ours = compare.read_bench_log(FIXTURES / "bench_loop.log")
+        theirs = compare.read_baseline(BASELINE)
+        ours.header["workload_mix"] = MIX
+        theirs.header["workload_mix"] = {**MIX, "output_tokens": {**MIX["output_tokens"], "mean": 12.0}}
+        report = compare.pair(ours, theirs, now=NOW)
+        self.assertTrue(report.rows and all("mix" in r["withheld"] and r["ratio"] is None for r in report.rows))
+        self.assertIn("MIX DIFF output_tokens mean: 10 vs 12; ratios withheld", compare.render(report))
+
+
 class ServerParity(unittest.TestCase):
     def test_two_runs_on_one_server_config_pass_whatever_their_port_and_shell(self):
         a = observed_run(port=8000, env={"VLLM_X": "1", "PWD": "/a", "SSH_TTY": "/dev/pts/1"})

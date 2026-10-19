@@ -108,6 +108,33 @@ SERVER_ENV_PREFIXES = (
 )
 
 
+# What a controlled launch (hardware.server_env=controlled) takes from the shell; everything else is left out.
+CONTROLLED_ENV_NAMES = ("PATH", "HOME", "USER", "LANG", "LD_LIBRARY_PATH", "VIRTUAL_ENV", "PYTHONPATH")
+CONTROLLED_ENV_PREFIXES = (
+    "CUDA_",
+    "NCCL_",
+    "NVSHMEM_",
+    "UCX_",
+    "VLLM_",
+    "HF_",
+    "TRANSFORMERS_",
+    "TORCH",
+    "PYTORCH_",
+    "TRITON_",
+    "FLASHINFER_",
+    "OMP_",
+)
+
+
+def controlled_server_env():
+    """The shell variables a controlled launch passes on: CONTROLLED_ENV_NAMES and CONTROLLED_ENV_PREFIXES."""
+    return {
+        k: v
+        for k, v in sorted(os.environ.items())
+        if k in CONTROLLED_ENV_NAMES or k.startswith(CONTROLLED_ENV_PREFIXES)
+    }
+
+
 def server_env():
     """The inherited variables a launched server runs with, for run.json provenance."""
     return {k: v for k, v in sorted(os.environ.items()) if k.startswith(SERVER_ENV_PREFIXES)}

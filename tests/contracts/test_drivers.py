@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import gc
 import io
 import json
 import os
@@ -461,12 +462,12 @@ class PinnedOutputTests(unittest.TestCase):
         finish = {"choices": [{"delta": {}, "finish_reason": "stop"}]}
         usage = {"choices": [], "usage": {"prompt_tokens": 3, "completion_tokens": 6}}
         r = _run(_ChatSession(_chat_sse([role, _delta("ab"), _delta("c"), _delta("def"), finish, usage])))
-        self.assertEqual((r.chunk_chars, r.chunk_tokens), ([0, 2, 1, 3, 0], None))
+        self.assertEqual((list(r.chunk_chars), r.chunk_tokens), ([0, 2, 1, 3, 0], None))
         self.assertEqual(jsonl_row(r)["chunk_chars"], [0, 2, 1, 3, 0])
         # Reasoning and tool-call arguments count; the tool call's name does not.
         call = {"index": 0, "function": {"name": "bash", "arguments": '{"a": 1}'}}
         r = _run(_ChatSession(_chat_sse([_delta(None, reasoning_content="xyz"), _delta(None, tool_calls=[call])])))
-        self.assertEqual(r.chunk_chars, [3, 8])
+        self.assertEqual(list(r.chunk_chars), [3, 8])
         # Under continuous usage the server's cumulative count rides on every chunk; a speculative chunk adds 3.
         counted = [
             {**c, "usage": {"prompt_tokens": 3, "completion_tokens": k}}
@@ -483,11 +484,27 @@ class PinnedOutputTests(unittest.TestCase):
                 chunk_usage=True,
             )
         )
-        self.assertEqual((r.chunk_tokens, r.output_tokens), ([0, 1, 4, 4], 4))
+        self.assertEqual((list(r.chunk_tokens), r.output_tokens), ([0, 1, 4, 4], 4))
         self.assertEqual(session.payload["stream_options"], {"include_usage": True, "continuous_usage_stats": True})
         plain = _ChatSession(_chat_sse([_delta("a")]))
         _run(plain)
         self.assertEqual(plain.payload["stream_options"], {"include_usage": True})  # vllm bench serve's body
+
+    def test_a_streamed_result_keeps_its_chunk_series_in_arrays_gc_does_not_walk(self):
+        # An array is a tracked object, but gc visits only its type, not an item; a list is walked item by item.
+        self.assertEqual(len(gc.get_referents([0.1, 0.2])), 2)
+        chat = [
+            {"choices": [{"delta": {"content": c}}], "usage": {"completion_tokens": n}}
+            for c, n in (("ab", 1), ("c", 3), ("d", 4))
+        ]
+        text = [{"choices": [{"text": c}], "usage": {"completion_tokens": n}} for c, n in (("ab", 1), ("c", 2))]
+        for endpoint, chunks in (("chat", chat), ("completions", text)):
+            r, _ = send(endpoint, chunks, chunk_usage=True)
+            self.assertEqual(len(r.itl), len(chunks) - 1)
+            for series in (r.itl, r.chunk_chars, r.chunk_tokens):
+                self.assertLessEqual(len(gc.get_referents(series)), 1, (endpoint, series))
+        self.assertEqual((list(r.chunk_chars), list(r.chunk_tokens)), ([2, 1], [1, 2]))
+        self.assertLessEqual(len(gc.get_referents(RequestResult(success=False).itl)), 1)
 
     def test_the_row_carries_the_send_and_the_close_on_the_run_clock(self):
         before = time.perf_counter()

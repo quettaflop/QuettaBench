@@ -3,6 +3,7 @@
 import math
 import re
 import statistics
+from array import array
 from dataclasses import dataclass, field, fields
 
 # Every latency mean and percentile of a BenchmarkSummary or TurnSummary.
@@ -11,13 +12,18 @@ LATENCY_FIELD = re.compile(r"^(steady_)?(mean|median|p\d+)_(ttft|tpot|itl|e2el)_
 ITL_COALESCED_MS = 0.05
 # Above this share of gaps the client, not the server, shaped the ITL tail.
 ITL_COALESCED_WARN_FRAC = 0.01
+# A chunk_tokens entry for a chunk the server sent no count on; the series is an array, which holds no None.
+NO_COUNT = -1
 
 
 @dataclass
 class RequestResult:
+    """The per-chunk series (itl, chunk_chars, chunk_tokens) are arrays, not lists: gc walks every item of a
+    list, and a run keeps a result per request. They become lists only in the row written to requests.jsonl."""
+
     success: bool
     ttft: float | None = None
-    itl: list = field(default_factory=list)
+    itl: array = field(default_factory=lambda: array("d"))
     e2el: float | None = None
     input_tokens: int = 0
     output_tokens: int = 0
@@ -36,13 +42,16 @@ class RequestResult:
     sent_perf_s: float | None = None
     sent_at_s: float | None = None
     # One entry per token event (ttft, then each itl gap): the delta characters it carried, and the server's
-    # cumulative completion_tokens on it under mode.chunk_usage (None when the server sent none).
-    chunk_chars: list | None = None
-    chunk_tokens: list | None = None
+    # cumulative completion_tokens on it under mode.chunk_usage (NO_COUNT on a chunk without one).
+    chunk_chars: array | None = None
+    chunk_tokens: array | None = None
     # The request's digest in the plan frozen before the run, and the one taken just before its send; they differ
     # only where the identity check fails, so a reader checks identity row by row.
     planned_digest: str | None = None
     sent_digest: str | None = None
+    # Seconds of the request's send to last chunk the client spent in a loop stall or gc pause over 5 ms.
+    client_stall_s: float | None = None
+    client_stall_ttft_s: float | None = None
     # Held out of the summary by --discard-first; still kept in per_request.
     excluded_from_summary: bool = False
 
@@ -448,7 +457,7 @@ def chunk_shares(r, n: int) -> list[float]:
     proportion to each chunk's delta characters. With no characters at all the finish chunk carries everything.
     Never negative."""
     counts = r.chunk_tokens
-    if counts and len(counts) == n and all(c is not None for c in counts):
+    if counts and len(counts) == n and all(c != NO_COUNT for c in counts):
         return [max(0, c - prev) for prev, c in zip([0, *counts[:-1]], counts)]
     chars = r.chunk_chars if r.chunk_chars and len(r.chunk_chars) == n else []
     if chars and sum(1 for c in chars if c > 0) == r.output_tokens:
@@ -516,6 +525,46 @@ def ttft_ms_summary(results) -> dict | None:
     return {"n": len(ttfts), **{p: percentile(ttfts, p, "nearest") for p in (50, 90, 99)}}
 
 
+def mix_stats(values) -> dict | None:
+    """p10, p50 and p90 (nearest rank) and the mean of values; None without one."""
+    if not values:
+        return None
+    return {**{f"p{p}": percentile(values, p, "nearest") for p in (10, 50, 90)}, "mean": sum(values) / len(values)}
+
+
+def workload_mix(results, inside, done_ids, stratum_of=None) -> dict:
+    """What the window asked of the server, so two runs' mixes can be held side by side: input, output and uncached
+    prefill tokens of the requests inside it and the realized wait after each, the turns of every session (or
+    play) that finished inside it, and those sessions per stratum."""
+    inside_ids = {id(r) for r in inside}
+    by_session: dict = {}
+    for r in results:
+        if r is not None and r.session_id is not None:
+            by_session.setdefault(r.session_id, []).append(r)
+    waits = []
+    for rows in by_session.values():
+        rows.sort(key=lambda r: r.turn_index or 0)
+        for this, after in zip(rows, rows[1:]):
+            sent = sent_at(after)
+            if id(this) in inside_ids and sent is not None and this.completed_at_s is not None:
+                waits.append(sent - this.completed_at_s)
+    strata: dict = {}
+    for sid in done_ids if stratum_of else ():
+        key = stratum_of[int(str(sid).split("#")[0])]
+        strata[key] = strata.get(key, 0) + 1
+    return {
+        "requests": len(inside),
+        "input_tokens": mix_stats([r.input_tokens for r in inside]),
+        "output_tokens": mix_stats([r.output_tokens for r in inside]),
+        "uncached_prefill_tokens": mix_stats(
+            [r.input_tokens - r.server_cached_tokens for r in inside if r.server_cached_tokens is not None]
+        ),
+        "tool_wait_s": mix_stats(waits),
+        "session_turns": mix_stats([len(by_session.get(sid, ())) for sid in done_ids]),
+        "plays_by_stratum": strata or None,
+    }
+
+
 def steady_section(
     results,
     session_times: dict,
@@ -523,6 +572,7 @@ def steady_section(
     bin_s: float = 10.0,
     end_s: float | None = None,
     min_window_s: float = MIN_RECYCLED_WINDOW_S,
+    stratum_of: dict | None = None,
 ) -> dict:
     """The steady window's throughput, rates and latency percentiles, with a per-bin timeline that shows the window
     held. Takes the dispatcher's session_times and the run's agent count. The cold start is reported beside it, not
@@ -589,6 +639,7 @@ def steady_section(
     # AgentX's interactivity: 1 / its p90 inter-token latency, which is per request.
     tpot = w["tpot_ms"]
     w["interactivity_p90_tok_s"] = 1000 / tpot[90] if tpot and tpot[90] > 0 else None
+    w["workload_mix"] = workload_mix(results, inside, done_ids, stratum_of)
     return w
 
 

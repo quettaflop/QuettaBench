@@ -2,6 +2,7 @@
 
 import contextlib
 import dataclasses
+import gc
 import hashlib
 import importlib.util
 import io
@@ -27,7 +28,7 @@ from quettabench.workloads.arrival import (
     ramp_arrivals,
     rebase_arrivals,
 )
-from quettabench.workloads.base import Request, workload_hash
+from quettabench.workloads.base import Request, request_digest, workload_hash
 from quettabench.workloads.grid import GridTrace, clone_ids
 from quettabench.workloads.live import (
     PROFILES,
@@ -40,6 +41,7 @@ from quettabench.workloads.live import (
     get_profile,
     load_profiles,
 )
+from quettabench.workloads.plan import sent_digest
 from quettabench.workloads.sessions import (
     SessionTrace,
     TrajectorySessionTrace,
@@ -984,6 +986,94 @@ class Plays(unittest.TestCase):
         self.assertNotEqual(first[0].cache_salt, second[0].cache_salt)
         tagged = play(turns, 42, 1)[0].messages[0]["content"]
         self.assertEqual(tagged, f"[rid:{second[0].cache_salt}]\n\nask")
+
+    @staticmethod
+    def recorded_session():
+        """Two turns that are prefixes of one history: system, user, assistant, user."""
+        history = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "ask"},
+            {"role": "assistant", "content": "said"},
+            {"role": "user", "content": "more"},
+        ]
+        return [
+            Request([], 0, order=i, output_length=3, session_id=7, turn=i, messages=history[: 2 * i + 2])
+            for i in range(2)
+        ]
+
+    def test_a_play_shares_the_recorded_message_dicts_except_the_salted_one(self):
+        turns = self.recorded_session()
+        for source, played in zip(turns, play(turns, 42, 1)):
+            self.assertIsNot(played.messages, source.messages)
+            self.assertIsNot(played.messages[1], source.messages[1])
+            self.assertEqual(played.messages[1], {"role": "user", "content": "[rid:415eee030432]\n\nask"})
+            for i, (recorded, sent) in enumerate(zip(source.messages, played.messages)):
+                if i != 1:
+                    self.assertIs(sent, recorded)
+        for source, played in zip(turns, play(turns, 42, 1, "cache_salt")):
+            self.assertIsNot(played.messages, source.messages)
+            self.assertTrue(all(sent is recorded for recorded, sent in zip(source.messages, played.messages)))
+
+    def test_making_plays_leaves_the_source_turns_byte_identical(self):
+        turns = self.recorded_session()
+        lists = [r.messages for r in turns]
+        before = json.dumps([dataclasses.asdict(r) for r in turns], sort_keys=True)
+        for salt in ("text", "cache_salt"):
+            for number in range(3):
+                for r in play(turns, 42, number, salt):
+                    r.messages.append({"role": "user", "content": "scribble"})
+        self.assertEqual(json.dumps([dataclasses.asdict(r) for r in turns], sort_keys=True), before)
+        self.assertTrue(all(r.messages is recorded for r, recorded in zip(turns, lists)))
+
+    def test_a_play_digests_as_the_copied_messages_did(self):
+        """The expected digests are hashed by hand from the JSON a server receives, not taken from the old code."""
+        tag = "415eee030432"  # sha256("42:7:1")[:12]
+        system = '{"content":"sys","role":"system"}'
+        ask = '{"content":"ask","role":"user"}'
+        tagged = '{"content":"[rid:' + tag + ']\\n\\nask","role":"user"}'
+        rest = ['{"content":"said","role":"assistant"}', '{"content":"more","role":"user"}']
+
+        def sha(text):
+            return hashlib.sha256(text.encode()).hexdigest()
+
+        turns = self.recorded_session()
+        for salt, first, cache_salt in (("text", tagged, "null"), ("cache_salt", ask, f'"{tag}"')):
+            for i, r in enumerate(play(turns, 42, 1, salt)):
+                messages = "[" + ",".join([system, first] + rest[: 2 * i]) + "]"
+                body = '{"cache_salt":' + cache_salt + ',"max_tokens":3,"messages":' + messages
+                body += ',"prompt_token_ids":null,"tools":null}'
+                self.assertEqual(sent_digest(r), sha(body), (salt, i))
+                self.assertEqual(request_digest(r), sha(f"|{i}|0.000000|0||3|7#1|{i}|{sha(messages)}"), (salt, i))
+
+    def test_plays_add_a_few_tracked_objects_per_turn_not_one_per_message(self):
+        turns_n, messages_n, plays_n = 40, 80, 50
+
+        def message(i):
+            if i < 2:
+                return {"role": ("system", "user")[i], "content": f"m{i}"}
+            return {"role": ("assistant", "user")[i % 2], "content": [{"type": "text", "text": f"m{i}"}]}
+
+        turns = [
+            Request([], 0, output_length=3, session_id=7, turn=t, messages=[message(i) for i in range(messages_n)])
+            for t in range(turns_n)
+        ]
+        kept = []
+        gc.collect()
+        gc.disable()
+        try:
+            before = len(gc.get_objects())
+            for number in range(plays_n):
+                kept.append(play(turns, 42, number))
+            added = len(gc.get_objects()) - before
+        finally:
+            gc.enable()
+        self.assertEqual(len(kept), plays_n)
+        self.assertLessEqual(
+            added,
+            5 * plays_n * turns_n,
+            f"{added} tracked objects for {plays_n} plays of {turns_n} turns; "
+            f"one per message would be {plays_n * turns_n * messages_n}",
+        )
 
 
 class ToolSchemas(unittest.TestCase):

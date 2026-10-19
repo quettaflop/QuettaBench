@@ -238,6 +238,21 @@ class DockerArgv(unittest.TestCase):
     def setUp(self):
         fixed_name(self)
 
+    def test_a_containers_env_is_its_e_set_and_run_json_records_that(self):
+        cfg, spec = keyed_docker_spec("sk-1")
+        argv = launcher.docker_argv(spec, cfg, "2", "/r/run")
+        given = {argv[i + 1].split("=", 1)[0] for i, a in enumerate(argv) if a == "-e"}
+        self.assertEqual(given, set(launcher.docker_env(spec, cfg)))
+        self.assertEqual(
+            runner.server_env_record(cfg, spec, "docker"),
+            {
+                "server_env": "docker -e",
+                "launch_env": runner.redact(launcher.docker_env(spec, cfg)),
+                "inherited_env": None,
+            },
+        )
+        self.assertEqual(runner.server_env_record(cfg, spec, "docker")["launch_env"]["VLLM_API_KEY"], "REDACTED")
+
     def test_example_yaml_argv(self):
         cfg, spec = docker_spec()
         repo = str(launcher.REPO)
@@ -526,10 +541,17 @@ class Backends(unittest.TestCase):
     def test_the_server_gets_its_backends_devices(self):
         for backend, launch in (("rocm", "local"), ("tpu", "docker"), ("neuron", "local")):
             with self.subTest(backend=backend):
-                spec = self.child_spec(backend, f"hardware.launcher={launch}")
+                spec = self.child_spec(backend, f"hardware.launcher={launch}", "hardware.server_env=inherit")
                 want, unset = launcher.visible_env(backend, "0,1")
                 self.assertEqual({k: spec.env[k] for k in want}, want)
                 self.assertEqual(set(unset) <= set(spec.env_drop), True)
+        # Controlled, a name to unset is simply not in the empty environment, even when the shell has it.
+        with mock.patch.dict(os.environ, {"CUDA_VISIBLE_DEVICES": "7"}):
+            spec = self.child_spec("neuron", "hardware.launcher=local")
+        want, unset = launcher.visible_env("neuron", "0,1")
+        self.assertTrue(spec.env_clear)
+        self.assertEqual({k: spec.env[k] for k in want}, want)
+        self.assertFalse(set(unset) & set(spec.env) - set(want))
         self.assertNotIn("CUDA_VISIBLE_DEVICES", self.child_spec("cuda", "hardware.launcher=docker").env)
 
     def test_docker_device_flags_per_backend(self):

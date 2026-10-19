@@ -17,7 +17,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from unittest import mock
 
-from quettabench import runner
+from quettabench import compare, runner
 from quettabench.config import loader
 from quettabench.config.schema import Config, ConfigError, EngineCfg, HardwareCfg, ModeCfg, WorkloadCfg
 from quettabench.engines import launcher
@@ -85,7 +85,7 @@ def session_trace(sessions=2, turns=3):
             reqs.append(Request([], 0, order=len(reqs), output_length=2, session_id=s, turn=t, messages=list(history)))
             history = history + [placeholders[t]]
     trace = SessionTrace(reqs, "s.jsonl", "jsonl")
-    trace.replies, trace.pacing = replies, TurnPacing("per-session")
+    trace.replies, trace.pacing, trace.live_replies = replies, TurnPacing("per-session"), True
     return trace
 
 
@@ -372,7 +372,149 @@ class Sessions(unittest.TestCase):
         self.assertGreaterEqual(c["loop_lag_ms"]["99"], 50.0)
         self.assertLess(c["loop_lag_ms"]["50"], 50.0)
         self.assertGreaterEqual((c["gc_passes"], c["gc_gen2_passes"]), (1, 1))
+        self.assertEqual(c["gc_freezes"], 0)  # a quarter second is under the freeze interval
         self.assertIn("event loop late by", serve.client_line(c))
+
+    def test_stall_s_is_the_union_of_the_stalls_over_a_span(self):
+        health = serve.ClientHealth()
+        health.stalls = [(1.0, 1.1), (1.05, 1.2), (3.0, 3.01)]  # a loop stall with a gc pause inside it, then one
+        self.assertAlmostEqual(health.stall_s(1.08, 1.5), 0.12)  # 1.08 to 1.2, counted once
+        self.assertAlmostEqual(health.stall_s(2.0, 3.005), 0.005)
+        self.assertEqual(health.stall_s(0.0, 0.5), 0.0)
+        # A stall the sampler has not woken from yet: asleep 0.1 s on a 10 ms timer.
+        now = time.perf_counter()
+        health._asleep_since = now - 0.1
+        self.assertGreater(health.stall_s(now - 0.2, now + 1), 0.08)
+
+    def test_each_row_records_the_client_stall_over_its_span(self):
+        class BlockingDriver(TimedDriver):
+            async def send(self, request, **kw):
+                if request.turn == 1:
+                    time.sleep(0.02)  # holds the loop while the other agents' requests are out
+                return await super().send(request, **kw)
+
+        with tempfile.TemporaryDirectory() as td:
+            run(session_trace(6, 3), BlockingDriver(), ModeCfg(concurrency=3, warmup=0), results_dir=td)
+            rows = [json.loads(x) for x in (Path(td) / "requests.jsonl").read_text().splitlines()]
+        self.assertTrue(all("client_stall_ms" in r and "client_stall_ttft_ms" in r for r in rows))
+        self.assertTrue(any(r["client_stall_ms"] > 0 for r in rows))
+        self.assertTrue(all(r["client_stall_ttft_ms"] <= r["client_stall_ms"] for r in rows))
+
+    def test_latency_bounds_take_each_request_stall_off_its_own_span(self):
+        # ttft 100 ms, e2el 1000 ms, 11 tokens; stalled 50 ms over the request, 20 ms of it before the first chunk.
+        r = RequestResult(
+            success=True, ttft=0.1, e2el=1.0, output_tokens=11, client_stall_s=0.05, client_stall_ttft_s=0.02
+        )
+        b = serve.latency_bounds([r])
+        self.assertEqual(b["ttft"], ([100.0], [80.0]))
+        self.assertEqual(b["e2el"], ([1000.0], [950.0]))
+        # Decode took 900 ms as measured; 30 ms of the stall fell in it: (900 - 30) / 10 without the client.
+        self.assertAlmostEqual(b["tpot"][0][0], 90.0)
+        self.assertAlmostEqual(b["tpot"][1][0], 87.0)
+
+    def test_latency_is_valid_unless_a_stall_could_move_a_published_percentile_by_over_one_percent(self):
+        def rows(stalled, stall_ttft, stall=None, n=200):
+            out = []
+            for i in range(n):
+                hit = i < stalled
+                out.append(
+                    RequestResult(
+                        success=True,
+                        ttft=0.1 + (stall_ttft if hit else 0.0),
+                        e2el=2.0 + ((stall if stall is not None else stall_ttft) if hit else 0.0),
+                        output_tokens=50,
+                        client_stall_s=(stall if stall is not None else stall_ttft) if hit else 0.0,
+                        client_stall_ttft_s=stall_ttft if hit else 0.0,
+                    )
+                )
+            return [(None, r) for r in out]
+
+        # Twenty 10 ms stalls inside 1.9 s decodes move no percentile by 1%: valid.
+        self.assertEqual(serve.client_stall_reasons(rows(20, 0.0, stall=0.01), None), [])
+        # A 100 ms stall on 3% of first chunks doubles ttft p99 (and p90 stays): withheld, naming the worst.
+        self.assertEqual(
+            serve.client_stall_reasons(rows(6, 0.1), None),
+            [
+                "client stalls could have moved ttft p99 by 50.0%, over 1%: 200.0 ms measured, at least 100.0 ms without them"
+            ],
+        )
+        # A late loop alone is a note, not a verdict.
+        late = {"loop_lag_ms": {"50": 0.1, "99": 5.1, "max": 30.0}}
+        self.assertEqual(serve.client_stall_reasons(rows(0, 0.0), late), [])
+        self.assertEqual(serve.client_lag_notes(late), ["client event loop late by 5.1 ms at p99, over 5 ms"])
+        self.assertEqual(serve.client_lag_notes({"loop_lag_ms": {"50": 0.1, "99": 4.9, "max": 30.0}}), [])
+
+    def test_a_run_whose_client_stalls_withholds_every_latency_figure_and_is_not_ok(self):
+        class BlockingDriver(TimedDriver):
+            async def send(self, request, **kw):
+                time.sleep(0.01)  # holds the loop under every request
+                return await super().send(request, **kw)
+
+        with tempfile.TemporaryDirectory() as td:
+            summary, out = run(session_trace(12, 3), BlockingDriver(), ModeCfg(concurrency=3, warmup=0), results_dir=td)
+            doc = json.loads((Path(td) / "run.json").read_text())
+        validity = doc["summary"]["validity"]
+        self.assertEqual((validity["latency_valid"], validity["throughput_valid"]), (False, True))
+        self.assertTrue(any("client" in why for why in validity["reasons"]))
+        self.assertEqual(doc["run_status"]["status"], "partial")
+        self.assertTrue(doc["run_status"]["reason"].startswith("latency withheld: "))
+        self.assertIsNone(doc["summary"]["p99_ttft_ms"])
+        self.assertIsNone(doc["summary"]["per_turn"][0]["median_ttft_ms"])
+        self.assertIsNone(doc["summary"]["steady"]["ttft_ms"])
+        self.assertIsNone(doc["summary"]["serve"]["ttft_ms"])
+        self.assertIn("latency not valid", compare.not_comparable(doc))
+
+    def test_the_corpus_is_frozen_out_of_gc_before_the_first_send_and_thawed_after(self):
+        class Watch(FakeDriver):
+            async def send(self, request, **kw):
+                self.frozen_at_send.append(gc.get_freeze_count())
+                return await super().send(request, **kw)
+
+        driver = Watch()
+        driver.frozen_at_send = []
+        summary, out = run(session_trace(4, 2), driver, ModeCfg(concurrency=2, warmup=0))
+        self.assertGreater(driver.frozen_at_send[0], 0)  # frozen before the first request went out
+        self.assertEqual(gc.get_freeze_count(), 0)  # and thawed once the run was done
+        self.assertTrue(gc.isenabled())  # collections still run
+        client = summary.sections["client"]
+        self.assertEqual(client["gc_frozen_objects"], driver.frozen_at_send[0])
+        self.assertGreater(client["rss_mib"]["before"], 0)
+        self.assertGreater(client["rss_mib"]["after"], 0)
+
+    def test_a_run_freezes_its_survivors_every_interval_and_thaws_them_after(self):
+        class Watch(TimedDriver):
+            async def send(self, request, **kw):
+                self.frozen_at_send.append(gc.get_freeze_count())
+                return await super().send(request, **kw)
+
+        driver = Watch()
+        driver.frozen_at_send = []
+        with mock.patch.object(serve, "GC_FREEZE_INTERVAL_S", 0.01):
+            summary, _ = run(session_trace(12, 3), driver, ModeCfg(concurrency=3, warmup=0))
+        client = summary.sections["client"]
+        # The corpus was frozen at the first send; the results kept since were frozen on the way.
+        self.assertGreater(max(driver.frozen_at_send), driver.frozen_at_send[0])
+        self.assertGreater(client["gc_freezes"], 0)
+        self.assertGreater(client["gc_frozen_objects_final"], 0)
+        self.assertEqual(gc.get_freeze_count(), 0)  # thawed once the run was done, as before
+        self.assertTrue(gc.isenabled())
+
+    def test_a_freeze_empties_the_young_generations_a_second_of_allocation_filled(self):
+        self.addCleanup(gc.unfreeze)
+        health = serve.ClientHealth()
+        gc.collect()
+        gc.disable()
+        try:
+            second = [[i] for i in range(20_000)]  # results and rows a second of requests keeps to the run's end
+            before = len(gc.get_objects(0))
+            health.freeze_survivors()
+            after = sum(len(gc.get_objects(g)) for g in (0, 1, 2))
+        finally:
+            gc.enable()
+        self.assertGreaterEqual(before, len(second))
+        self.assertLess(after, 100)  # only what this test allocated since the freeze
+        self.assertGreaterEqual(gc.get_freeze_count(), len(second))
+        self.assertEqual(health.freezes, 1)
 
     def test_loop_lag_percentiles_weigh_each_sample_by_the_wall_time_it_spans(self):
         # 199 on-time samples span 1.99 s and one 1 s stall spans 1.01 s: the stall is a third of the time, so
@@ -436,6 +578,36 @@ class Sessions(unittest.TestCase):
         self.assertEqual(steady["end_s"], 0.08)
         self.assertIn("Recycled replay: 5 sessions in a cycle, 4 agents for 0.08 s", out)
         self.assertIsNone(plays["plays_by_stratum"])
+
+    def test_agents_start_their_first_sessions_staggered_not_at_one_instant(self):
+        # 8 agents start 10 ms apart; 256 would start 2.0 / 256 s apart, so all fit in 2 s.
+        self.assertEqual(serve.first_start_stagger_s(8), 0.01)
+        self.assertAlmostEqual(serve.first_start_stagger_s(256), 2.0 / 256)
+
+        class Stamping(TimedDriver):
+            """Keeps the send time of each session's first turn, on the run clock."""
+
+            def __init__(self, last_turn):
+                super().__init__(last_turn)
+                self.first_sends: dict = {}
+
+            async def send(self, request, **kw):
+                if request.turn == 0:
+                    self.first_sends[request.session_id] = time.perf_counter()
+                return await super().send(request, **kw)
+
+        # Eight turns of 5 ms each: a first session outlasts the four staggered starts, so the first four turn-0
+        # sends are the four agents' first starts and not an agent's second session.
+        for mode in (ModeCfg(concurrency=4, warmup=0, duration_s=0.3), ModeCfg(concurrency=4, warmup=0)):
+            driver = Stamping(last_turn=7)
+            with mock.patch.object(serve, "MIN_RECYCLED_WINDOW_S", 0.0):
+                summary, _ = run(recorded_trace(8, 8), driver, mode)
+            starts = sorted(driver.first_sends.values())[:4]
+            gaps = [b - a for a, b in zip(starts, starts[1:])]
+            # The first four sends are spaced by about the stagger, and the fourth is in by 3 staggers plus slack.
+            self.assertTrue(all(g >= 0.005 for g in gaps), gaps)
+            self.assertLess(starts[3] - starts[0], 3 * 0.01 + 0.05)
+            self.assertEqual(summary.sections["client"]["first_start_stagger_s"], 0.01)
 
     def test_a_recycled_plan_hash_is_the_sample_seed_and_play_rule_not_the_plays_started(self):
         def recycled(duration_s, seed=0):
@@ -550,6 +722,23 @@ class Sessions(unittest.TestCase):
         self.assertEqual(
             {(r.session_id, r.turn_index) for r in summary.rows}, {(s, t) for s in range(2) for t in range(3)}
         )
+
+    def test_a_live_reply_run_asks_for_the_reply_text_and_splices_it(self):
+        trace = session_trace(2, 3)
+        summary, _ = run(trace, FakeDriver(), ModeCfg(concurrency=2, warmup=0))
+        self.assertEqual({r.generated_text for r in summary.rows}, {"reply0", "reply1", "reply2"})
+        self.assertEqual(
+            [[m["content"] for m in trace.replies[s]] for s in range(2)], [["reply0", "reply1", "reply2"]] * 2
+        )
+
+    def test_a_recorded_run_asks_for_no_reply_text_recycled_or_not(self):
+        with mock.patch.object(serve, "MIN_RECYCLED_WINDOW_S", 0.0):
+            for duration_s in (0.0, 0.05):
+                with self.subTest(duration_s=duration_s):
+                    mode = ModeCfg(concurrency=4, warmup=0, duration_s=duration_s)
+                    summary, _ = run(recorded_trace(5, 2), TimedDriver(last_turn=1), mode)
+                    self.assertGreaterEqual(len(summary.rows), 10)
+                    self.assertEqual({r.generated_text for r in summary.rows}, {None})
 
     @staticmethod
     def tamper_on_first_send(trace, change):

@@ -194,6 +194,8 @@ OPTIONAL_MS = (
     "client_schedule_delay",
     "client_queue_wait",
     "client_request_wall",
+    "client_stall",
+    "client_stall_ttft",
 )
 OPTIONAL_PLAIN = ("request_index", "max_tokens_requested", "message_count", "prompt_chars")
 OPTIONAL_CACHE = (
@@ -265,6 +267,12 @@ def jsonl_row(r, **extra):
     for name in NEW_FIELDS:
         if getattr(r, name, None) is not None:
             row[name] = getattr(r, name)
+    # The per-chunk series are arrays in memory; JSON gets lists, with null for a chunk without a count (a
+    # negative entry, summary.NO_COUNT; results.py is shipped to probe hosts without summary.py).
+    if "chunk_chars" in row:
+        row["chunk_chars"] = list(row["chunk_chars"])
+    if "chunk_tokens" in row:
+        row["chunk_tokens"] = [None if t < 0 else t for t in row["chunk_tokens"]]
     row.update(extra)
     return row
 

@@ -304,6 +304,16 @@ def container_name(run_name):
     return f"qbench-{safe}-{os.getpid()}-{os.urandom(3).hex()}"
 
 
+def docker_env(spec, cfg):
+    """The -e set a container gets: the launch spec's env, the collective pins and HF_HOME."""
+    hw = cfg.hardware
+    return {
+        **spec.env,
+        **{k: v for k, v in hw.collective.items() if v},
+        **({"HF_HOME": hw.hf_home} if hw.hf_home else {}),
+    }
+
+
 def docker_argv(spec, cfg, gpus, results_dir):
     hw, run_dir = cfg.hardware, Path(results_dir).resolve()
     if not spec.image:
@@ -312,11 +322,7 @@ def docker_argv(spec, cfg, gpus, results_dir):
     model = spec.engine_kwargs.get("model") or cfg.engine.model
     if model and Path(model).is_absolute() and not any(Path(model).is_relative_to(m) for m in [*mounts, REPO]):
         mounts.append(model)
-    env = {
-        **spec.env,
-        **{k: v for k, v in hw.collective.items() if v},
-        **({"HF_HOME": hw.hf_home} if hw.hf_home else {}),
-    }
+    env = docker_env(spec, cfg)
     hidden = docker_secrets(spec)
     devices = device_flags(hw.backend, gpus)
     ports = [] if "--net=host" in devices else ["-p", f"{spec.port}:{spec.port}"]

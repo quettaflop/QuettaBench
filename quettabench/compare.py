@@ -64,6 +64,7 @@ def header(**known):
         "workload_hash",
         "comm_bound_bs",
         "not_comparable",
+        "workload_mix",
     )
     unknown = set(known) - set(keys)
     if unknown:
@@ -273,6 +274,9 @@ def read_rows(results_dir):
 def not_comparable(run) -> str | None:
     """Why a run's numbers cannot stand beside another's, or None: a status other than ok (failed requests leave
     survivors), or a replayed file that is not the one data/MANIFEST.json lists."""
+    validity = (run.get("summary") or {}).get("validity") or {}
+    if validity.get("latency_valid") is False:
+        return f"latency not valid: {'; '.join(validity.get('reasons') or [])}"
     status = run.get("run_status") or {}
     if status.get("status", "ok") != "ok":
         return f"run status {status['status']}: {status.get('reason')}"
@@ -338,6 +342,29 @@ def server_parity(a, b) -> list[str]:
     return out
 
 
+# Two windows asked the same of their servers when every p50 and mean here is within MIX_TOLERANCE.
+MIX_FIELDS = ("input_tokens", "output_tokens", "uncached_prefill_tokens", "tool_wait_s", "session_turns")
+MIX_TOLERANCE = 0.05
+
+
+def mix_diff(a, b) -> list[str]:
+    """Every p50 or mean of two runs' window workload mixes more than MIX_TOLERANCE apart, named; a field one run
+    has and the other does not is named too. Empty when the mixes agree or neither run has one."""
+    if not a and not b:
+        return []
+    out = []
+    for name in MIX_FIELDS:
+        x, y = (a or {}).get(name), (b or {}).get(name)
+        if x is None or y is None:
+            if x is not None or y is not None:
+                out.append(f"{name}: in one run only")
+            continue
+        for stat in ("p50", "mean"):
+            if abs(x[stat] - y[stat]) > MIX_TOLERANCE * max(abs(x[stat]), abs(y[stat])):
+                out.append(f"{name} {stat}: {x[stat]:g} vs {y[stat]:g}")
+    return out
+
+
 def read_run(results_dir):
     """Cells take group, kv and method from the BenchDriver rows."""
     d = Path(results_dir)
@@ -397,6 +424,7 @@ def read_run(results_dir):
             workload_hash=workload,
             comm_bound_bs=(cfg.get("compare") or {}).get("comm_bound_bs"),
             not_comparable=not_comparable(run),
+            workload_mix=(summary.get("steady") or {}).get("workload_mix"),
         ),
         notes,
     )
@@ -599,6 +627,8 @@ class Report:
     tps_without_theirs: list
     # (side, reason) for each side whose run cannot be compared at all: every ratio is withheld.
     not_comparable: list
+    # How the two windows' workload mixes differ (mix_diff): every ratio is withheld when they do.
+    mix_diff: list
     rows: list  # ratio None when withheld
     ours_only: list
     theirs_only: list
@@ -608,7 +638,9 @@ class Report:
 
     @property
     def comparable(self):
-        return self.method_matched and not (self.serving_mismatch or self.quant_mismatch or self.not_comparable)
+        return self.method_matched and not (
+            self.serving_mismatch or self.quant_mismatch or self.not_comparable or self.mix_diff
+        )
 
 
 def _short(kv):
@@ -654,6 +686,8 @@ def pair_row(a, b, report):
         withheld.append("workload")
     if report.not_comparable:
         withheld.append("run")
+    if report.mix_diff:
+        withheld.append("mix")
     tps_a, tps_b = bs * 1000.0 / ms_a, bs * 1000.0 / ms_b
     return {
         "group": a["group"],
@@ -692,6 +726,7 @@ def pair(ours, theirs, allow_method_mismatch=False, now=0.0):
         workload_mismatch=all(hashes) and hashes[0] != hashes[1],
         comm_bound_bs=None if comm is None else int(comm),
         tps_without_theirs=sorted({k[2] for k in a} - {k[2] for k in b}),
+        mix_diff=mix_diff(o.get("workload_mix"), t.get("workload_mix")),
         not_comparable=[
             (side, h["not_comparable"]) for side, h in (("engine", o), ("vllm", t)) if h.get("not_comparable")
         ],
@@ -733,6 +768,7 @@ def render_preamble(report):
         lines.append(f"WORKLOAD MISMATCH engine={o['workload_hash']} vllm={t['workload_hash']}; ratios withheld")
     for side, why in report.not_comparable:
         lines.append(f"NOT COMPARABLE {side}: {why}; ratios withheld")
+    lines += [f"MIX DIFF {d}; ratios withheld" for d in report.mix_diff]
     lines += [f"SERVER DIFF {d}" for d in report.server_diff]
     if not report.method_matched or report.serving_mismatch or report.quant_mismatch:
         lines.append(

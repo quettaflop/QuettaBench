@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from array import array
 from pathlib import Path
 from unittest import mock
 
@@ -13,7 +14,7 @@ from quettabench.config import loader
 from quettabench.config.schema import Config, EngineCfg, HardwareCfg, ModeCfg, WorkloadCfg
 from quettabench.engines import vllm
 from quettabench.metrics import results
-from quettabench.metrics.summary import RequestResult
+from quettabench.metrics.summary import NO_COUNT, RequestResult
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -86,6 +87,31 @@ class RoundTrip(unittest.TestCase):
         self.assertNotIn("cell", results.jsonl_row(r))
         self.assertEqual(results.jsonl_row(r, probe=2)["accepted_tokens"], 3)
         self.assertEqual(results.jsonl_row(r, probe=2)["probe"], 2)
+
+    def test_per_chunk_arrays_are_written_as_the_lists_they_replaced(self):
+        """The lines are what the code that held lists wrote for the same chunks, byte for byte."""
+        chunks = dict(
+            ttft=0.25,
+            itl=array("d", [0.01, 0.0125, 0.02]),
+            e2el=0.2925,
+            input_tokens=3,
+            output_tokens=4,
+            usage_reported=True,
+            chunk_chars=array("q", [0, 2, 1, 3]),
+        )
+        counted = RequestResult(success=True, chunk_tokens=array("q", [0, NO_COUNT, 3, 4]), **chunks)
+        silent = RequestResult(success=True, **chunks)
+        with tempfile.TemporaryDirectory() as td:
+            writer = results.RunWriter(Path(td) / "run1", config())
+            writer.append(counted)
+            writer.append(silent)
+            writer.finish({})
+            lines = (Path(td) / "run1" / "requests.jsonl").read_text().splitlines()
+        head = (
+            '{"success": true, "ttft_ms": 250.0, "tpot_ms": 14.17, "itl_ms": [10.0, 12.5, 20.0], "e2el_ms": 292.5, '
+            '"input_tokens": 3, "output_tokens": 4, "error": null, "usage_reported": true, "chunk_chars": [0, 2, 1, 3]'
+        )
+        self.assertEqual(lines, [head + ', "chunk_tokens": [0, null, 3, 4]}', head + "}"])
 
     def test_no_dir_writes_nothing(self):
         with tempfile.TemporaryDirectory() as td:

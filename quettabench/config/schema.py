@@ -32,6 +32,7 @@ CHOICES = {
     "hardware.backend": ("auto", "cuda", "rocm", "neuron", "tpu", "cpu"),
     "hardware.link_profile": ("auto", "pcie", "nvlink"),
     "hardware.launcher": ("local", "docker", "attach"),
+    "hardware.server_env": ("controlled", "inherit"),
 }
 
 # Accelerators qbench launches vLLM on besides cuda; cpu is the stub backend the tests run.
@@ -186,6 +187,9 @@ class HardwareCfg:
     # local: a host process | docker: engine.image in a container | attach: measure the server already on
     # engine.port; qbench starts and stops nothing, so the same server can serve another harness too
     launcher: str = "local"
+    # controlled: a local server starts from an empty environment (env -i) plus an allowlist from the shell
+    # (config/env_map.py) and the launch spec's env; inherit: it inherits the whole shell
+    server_env: str = "controlled"
     shm_size: str = "16g"  # docker --shm-size
     hf_home: str | None = None  # HF cache; docker mounts it at the same path
 

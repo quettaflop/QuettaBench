@@ -15,7 +15,7 @@ from pathlib import Path
 from quettabench.config import env_map, loader
 from quettabench.config.schema import OTHER_ACCELERATORS, ConfigError, device_count
 from quettabench.engines import base, launcher, observe
-from quettabench.metrics.results import RUN_MARKERS, RunWriter, redact
+from quettabench.metrics.results import RUN_MARKERS, RunWriter, redact, redact_argv
 from quettabench.modes import serve
 from quettabench.probes import base as probes_base
 from quettabench.workloads.base import sha256_file
@@ -199,8 +199,10 @@ def dry_run(cfg, out):
     print(cfg.dump(origins=True, scrub=redact))
     if cfg.mode.mode != "probe":
         adapter = base.get(cfg.engine.name)
-        spec = adapter.translate(cfg, out)
+        spec = controlled(cfg, adapter.translate(cfg, out), "docker" if in_docker(cfg, adapter) else "local")
         print("\n".join(launch_spec_lines(spec)))
+        if spec.env_clear:
+            print(f"server = {shlex.join(map(str, redact_argv(spec.child_argv(spec.server_argv))))}")
         print(f"launch = {'server' if adapter.needs_server(cfg) else 'none, the driver runs it'}")
         if in_docker(cfg, adapter) and spec.server_argv:
             # Dry run shows 0..n-1 unless visible_devices is set; a real run takes idle GPUs.
@@ -264,6 +266,26 @@ def with_child_env(spec, pins, drop=()):
     cells = tuple((ctx, bs, with_child_env(cell, pins, drop)) for ctx, bs, cell in spec.cells)
     env_drop = (*spec.env_drop, *sorted(set(drop) - set(pins) - set(spec.env_drop)))
     return dataclasses.replace(spec, env={**spec.env, **pins}, env_drop=env_drop, cells=cells)
+
+
+def controlled(cfg, spec, backend, attached=False):
+    """A local server under hardware.server_env=controlled starts from an empty environment with the shell's
+    allowlisted variables and the spec's own env on top; otherwise the spec is unchanged."""
+    if backend != "local" or attached or cfg.hardware.server_env != "controlled" or not spec.server_argv:
+        return spec
+    # A name the spec drops (another device family's, or an in-process point's export) stays out.
+    shell = {k: v for k, v in env_map.controlled_server_env().items() if k not in spec.env_drop}
+    return dataclasses.replace(spec, env={**shell, **spec.env}, env_clear=True, env_drop=())
+
+
+def server_env_record(cfg, spec, backend) -> dict:
+    """What run.json says the server's environment was: the exact env under a controlled launch, the -e set in a
+    container, else the launch env and the inherited shell's server variables."""
+    if spec.env_clear:
+        return {"server_env": "controlled", "launch_env": redact(spec.env), "inherited_env": None}
+    if backend == "docker":
+        return {"server_env": "docker -e", "launch_env": redact(launcher.docker_env(spec, cfg)), "inherited_env": None}
+    return {"server_env": "inherit", "launch_env": redact(spec.env), "inherited_env": redact(env_map.server_env())}
 
 
 def in_process(cfg, adapter, spec):
@@ -351,6 +373,7 @@ def serve_one(cfg, out, exported, writer, server=None, keep=False, allow_unverif
     if in_process(cfg, adapter, spec):
         exported.update(env_map.export(pins))
     spec = with_child_env(spec, pins, {*exported, *unset})
+    spec = controlled(cfg, spec, backend, attached)
     if attached:
         # qbench did not start the server: its environment and weights are not the client's to report.
         writer.provenance.update(
@@ -361,8 +384,7 @@ def serve_one(cfg, out, exported, writer, server=None, keep=False, allow_unverif
             server_env="unknown (attached)",
         )
     else:
-        writer.provenance["launch_env"] = redact(spec.env)
-        writer.provenance["inherited_env"] = redact(env_map.server_env())
+        writer.provenance.update(server_env_record(cfg, spec, backend))
         revision = cfg.engine.extra.get("vllm", {}).get("revision")
         weights, why = serve.weights_revision(cfg.engine.model, revision, cfg.hardware.hf_home)
         writer.provenance.update(weights_revision=weights, weights_revision_why=why)

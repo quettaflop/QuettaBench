@@ -31,6 +31,7 @@ from ..metrics.summary import (
     annotate_request_observability,
     burst_recovery,
     first_error,
+    percentile,
     print_multi_turn_summary,
     print_summary,
     sla_verdict,
@@ -130,6 +131,15 @@ def arrival_offsets(trace, workload) -> list:
     return [t / workload.speed for t in injected]
 
 
+def note_client_stall(result, stall):
+    """The client's stalled time over the request's send to its last chunk, and over its send to its first chunk,
+    from ClientHealth.stall_s: the most each of e2el and ttft could owe to the client."""
+    if stall is not None and result.sent_perf_s is not None and result.e2el is not None:
+        result.client_stall_s = stall(result.sent_perf_s, result.sent_perf_s + result.e2el)
+        if result.ttft is not None:
+            result.client_stall_ttft_s = stall(result.sent_perf_s, result.sent_perf_s + result.ttft)
+
+
 def enforce_first_chunk(result):
     """A reply with no chunk carrying choices has no TTFT and no token timing: a failed request, not one timed by
     its e2el."""
@@ -193,7 +203,7 @@ def emitter(mode, writer, probe=None):
     return emit
 
 
-async def replay(trace, driver, mode, emit, offsets, request_id, executed, plan=None):
+async def replay(trace, driver, mode, emit, offsets, request_id, executed, plan=None, stall=None):
     """The first mode.discard_first requests stay out of the summary. executed gets each request's sent_digest just
     before it goes out."""
     open_loop = mode.load == "open"
@@ -222,6 +232,7 @@ async def replay(trace, driver, mode, emit, offsets, request_id, executed, plan=
             completed_at_s=time.perf_counter() - start,
             run_start=start,
         )
+        note_client_stall(result, stall)
         enforce_first_chunk(result)
         enforce_usage(mode, result)
         enforce_output_length(mode, request, result)
@@ -249,6 +260,8 @@ def server_counters(driver):
 LOOP_LAG_INTERVAL_S = 0.01
 # Steady TTFT is withheld above this window p99 loop lag: every timestamp in the window is read off that loop.
 LOOP_LAG_LIMIT_MS = 5.0
+# A run freezes what has survived every this many seconds, so a full gc pass scans only what was allocated since.
+GC_FREEZE_INTERVAL_S = 1.0
 
 
 def loop_lag_ms(samples) -> dict | None:
@@ -272,38 +285,85 @@ def loop_lag_ms(samples) -> dict | None:
 
 class ClientHealth:
     """Samples how late the event loop runs and times gc passes while a run measures: start() before the pass,
-    stop() after, section() for run.json. samples holds (perf_counter, lag in s) for slicing to a window."""
+    stop() after, section() for run.json. samples holds (perf_counter, lag in s) for slicing to a window; stalls
+    holds the (start, end) perf_counter of every loop stall and gc pause over LOOP_LAG_LIMIT_MS, in end order, and
+    stall_s() says how much of a request's span they cover. Every GC_FREEZE_INTERVAL_S it freezes the survivors,
+    the results and rows a run keeps to its end, which a full pass would otherwise scan again and again."""
 
     def __init__(self):
         self.samples: list[tuple[float, float]] = []
         self.gc_s: list[tuple[int, float]] = []
+        self.stalls: list[tuple[float, float]] = []
+        self.freezes = 0
+        self.frozen_final: int | None = None
         self._gc_start: float | None = None
         self._task: asyncio.Task | None = None
+        self._freezer: asyncio.Task | None = None
+        self._asleep_since: float | None = None
 
     def _gc(self, phase, info):
         if phase == "start":
             self._gc_start = time.perf_counter()
         elif self._gc_start is not None:
-            self.gc_s.append((info["generation"], time.perf_counter() - self._gc_start))
+            end = time.perf_counter()
+            self.gc_s.append((info["generation"], end - self._gc_start))
+            if (end - self._gc_start) * 1000 > LOOP_LAG_LIMIT_MS:
+                self.stalls.append((self._gc_start, end))
             self._gc_start = None
 
     async def _sample(self):
-        loop = asyncio.get_running_loop()
         while True:
-            t = loop.time()
+            t = self._asleep_since = time.perf_counter()
             await asyncio.sleep(LOOP_LAG_INTERVAL_S)
-            self.samples.append((time.perf_counter(), loop.time() - t - LOOP_LAG_INTERVAL_S))
+            now = time.perf_counter()
+            lag = now - t - LOOP_LAG_INTERVAL_S
+            self.samples.append((now, lag))
+            if lag * 1000 > LOOP_LAG_LIMIT_MS:
+                self.stalls.append((now - lag, now))
+
+    def freeze_survivors(self):
+        """Moves every object gc tracks to the permanent generation; run() thaws them after the run."""
+        gc.freeze()
+        self.freezes += 1
+
+    async def _freeze_every_interval(self):
+        while True:
+            await asyncio.sleep(GC_FREEZE_INTERVAL_S)
+            self.freeze_survivors()
+
+    def stall_s(self, a, b) -> float:
+        """Seconds of [a, b] (perf_counter) the client spent stalled, a stall the sampler has not yet woken from
+        included; overlapping stalls count once."""
+        spans = []
+        if self._asleep_since is not None:
+            due, now = self._asleep_since + LOOP_LAG_INTERVAL_S, time.perf_counter()
+            if (now - due) * 1000 > LOOP_LAG_LIMIT_MS:
+                spans.append((due, now))
+        for start, end in reversed(self.stalls):
+            if end <= a:
+                break
+            spans.append((start, end))
+        cut = sorted((max(a, s), min(b, e)) for s, e in spans if min(b, e) > max(a, s))
+        total, reach = 0.0, a
+        for s, e in cut:
+            total += max(0.0, e - max(s, reach))
+            reach = max(reach, e)
+        return total
 
     def start(self):
         gc.callbacks.append(self._gc)
-        self._task = asyncio.get_running_loop().create_task(self._sample())
+        loop = asyncio.get_running_loop()
+        self._task = loop.create_task(self._sample())
+        self._freezer = loop.create_task(self._freeze_every_interval())
 
     async def stop(self):
         gc.callbacks.remove(self._gc)
-        if self._task is not None:
-            self._task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self._task
+        for task in (self._task, self._freezer):
+            if task is not None:
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
+        self.frozen_final = gc.get_freeze_count()
 
     def section(self) -> dict:
         out: dict = {"loop_lag_samples": len(self.samples), "loop_lag_ms": loop_lag_ms(self.samples)}
@@ -312,8 +372,82 @@ class ClientHealth:
             gc_passes=len(pauses),
             gc_gen2_passes=sum(1 for g, _ in self.gc_s if g == 2),
             gc_pause_ms={"max": max(pauses, default=0.0), "total": sum(pauses)},
+            gc_freezes=self.freezes,
+            gc_frozen_objects_final=self.frozen_final,
         )
         return out
+
+
+# A client stall may move a published latency percentile by this share at most; past it, latency is withheld.
+LATENCY_BIAS_LIMIT = 0.01
+# The percentiles the bound is read at, the ones the summary publishes.
+BOUND_PERCENTILES = (50, 90, 99)
+# Agents start their first sessions this far apart, at most; 256 agents spread over about 2 s. Each start costs the
+# loop a few milliseconds (the play, its digest, the body, a connection), and 256 at one instant block it for seconds.
+FIRST_START_STAGGER_S = 0.01
+FIRST_START_SPREAD_S = 2.0
+
+
+def first_start_stagger_s(agents: int) -> float:
+    """Seconds between two agents' first starts: FIRST_START_STAGGER_S, or less so all fit FIRST_START_SPREAD_S."""
+    return min(FIRST_START_STAGGER_S, FIRST_START_SPREAD_S / max(1, agents))
+
+
+def latency_bounds(results) -> dict:
+    """Each latency as measured and with the client's stall over its span taken off, in ms per request, so the
+    two percentiles bracket the server's value: ttft, tpot and e2el over the successful requests with a first chunk."""
+    out: dict = {"ttft": ([], []), "tpot": ([], []), "e2el": ([], [])}
+    for r in results:
+        if r.ttft is None or r.e2el is None:
+            continue
+        stall, stall_ttft = r.client_stall_s or 0.0, r.client_stall_ttft_s or 0.0
+        out["ttft"][0].append(r.ttft * 1000)
+        out["ttft"][1].append((r.ttft - stall_ttft) * 1000)
+        out["e2el"][0].append(r.e2el * 1000)
+        out["e2el"][1].append((r.e2el - stall) * 1000)
+        if r.output_tokens > 1:
+            decode = r.e2el - r.ttft
+            out["tpot"][0].append(decode / (r.output_tokens - 1) * 1000)
+            out["tpot"][1].append(max(0.0, decode - (stall - stall_ttft)) / (r.output_tokens - 1) * 1000)
+    return out
+
+
+def client_stall_reasons(pairs, client) -> list[str]:
+    """Why the client's own stalls make a pass's latency untrustworthy, or nothing: at some published percentile
+    the stalls could have moved ttft, tpot or e2el by more than LATENCY_BIAS_LIMIT. The worst case is named with
+    the value as measured and the least it could be without the client."""
+    ok = [r for _, r in pairs if r.success and not r.excluded_from_summary]
+    worst = None
+    for name, (measured, corrected) in latency_bounds(ok).items():
+        for p in BOUND_PERCENTILES:
+            m, c = percentile(measured, p, "linear"), percentile(corrected, p, "linear")
+            share = (m - c) / m if m > 0 else 0.0
+            if share > LATENCY_BIAS_LIMIT and (worst is None or share > worst[0]):
+                worst = (share, name, p, m, c)
+    if worst is None:
+        return []
+    share, name, p, m, c = worst
+    return [
+        f"client stalls could have moved {name} p{p} by {share:.1%}, over {LATENCY_BIAS_LIMIT:.0%}: "
+        f"{m:.1f} ms measured, at least {c:.1f} ms without them"
+    ]
+
+
+def client_lag_notes(client) -> list[str]:
+    """A late event loop over the pass, reported beside the verdict; the bound above decides, this does not."""
+    lag = (client or {}).get("loop_lag_ms") or {}
+    if lag and lag["99"] > LOOP_LAG_LIMIT_MS:
+        return [f"client event loop late by {lag['99']:.1f} ms at p99, over {LOOP_LAG_LIMIT_MS:g} ms"]
+    return []
+
+
+def rss_mib() -> float | None:
+    """This process's resident memory in MiB, from /proc; None where there is none."""
+    try:
+        pages = int(Path("/proc/self/statm").read_text().split()[1])
+    except (OSError, ValueError, IndexError):
+        return None
+    return pages * os.sysconf("SC_PAGE_SIZE") / 2**20
 
 
 def client_line(c: dict) -> str:
@@ -342,6 +476,8 @@ class Measurement:
     loop_lag: list | None = None
     # Each request's sent_digest at dispatch, keyed as the plan keys it, in the order they went out.
     executed: dict = field(default_factory=dict)
+    # Seconds between two agents' first starts in a closed-loop session run.
+    stagger_s: float | None = None
 
 
 async def measure(trace, driver, mode, emit, workload, request_id, plan=None) -> Measurement:
@@ -366,9 +502,12 @@ async def measure(trace, driver, mode, emit, workload, request_id, plan=None) ->
         health.start()
         try:
             if sessions is not None:
+                sessions.stall = health.stall_s
                 results, by_turn, pairs, start = await sessions.run(executed)
             else:
-                pairs, start = await replay(trace, driver, mode, emit, offsets, request_id, executed, plan)
+                pairs, start = await replay(
+                    trace, driver, mode, emit, offsets, request_id, executed, plan, health.stall_s
+                )
                 results, by_turn = [r for _, r in pairs], None
             duration = time.perf_counter() - start
         finally:
@@ -388,6 +527,7 @@ async def measure(trace, driver, mode, emit, workload, request_id, plan=None) ->
         sessions.deadline_s,
         [(t - start, lag) for t, lag in health.samples],
         executed,
+        stagger_s=sessions.stagger_s if not sessions.open_loop else None,
     )
 
 
@@ -496,13 +636,16 @@ def summary_sections(pairs, duration, mode, server_spec_decode=None, sessions=Fa
         s.update(ttft_ms=None, tpot_ms=None, **({"steady_ttft_ms": None} if "steady_ttft_ms" in s else {}))
     if mode.sla_ttft_ms or mode.sla_tpot_ms:
         failed = failed_count(pairs)
-        bound = sla_verdict(s, mode.sla_ttft_ms, mode.sla_tpot_ms, failed)
+        # Latency withheld for a client stall alone: no p99 to read, and no PASS without one.
+        bound = (
+            ["client_stall"] if withheld and not failed else sla_verdict(s, mode.sla_ttft_ms, mode.sla_tpot_ms, failed)
+        )
         out["sla"] = {
             "verdict": "FAIL" if bound else "PASS",
             "bound": bound,
             "failed_requests": failed,
-            "ttft_p99": None if failed else s["ttft_ms"]["p99"],
-            "tpot_p99": s["tpot_ms"]["p99"] if s["tpot_ms"] and not failed else None,
+            "ttft_p99": None if withheld else s["ttft_ms"]["p99"],
+            "tpot_p99": s["tpot_ms"]["p99"] if s["tpot_ms"] and not withheld else None,
             "rate_req_s": s["req_s"],
             "percentile_method": s["percentile_method"],
             "sla_ttft_ms": mode.sla_ttft_ms,
@@ -562,7 +705,9 @@ def sweep(trace, driver, mode, writer, workload, request_id, plan):
         if not identity(plan, out.executed, plan.planned_keys(out.executed))["match"]:
             return out, {**section, "iterations": len(probes) + 1}
         s = summarize_serve(serve_records(out.pairs, True), out.duration, "nearest")
-        bound = sla_verdict(s, mode.sla_ttft_ms, mode.sla_tpot_ms, failed_count(out.pairs))
+        failed = failed_count(out.pairs)
+        stalled = not failed and client_stall_reasons(out.pairs, out.client)
+        bound = ["client_stall"] if stalled else sla_verdict(s, mode.sla_ttft_ms, mode.sla_tpot_ms, failed)
         probe = {"speed": speed, "verdict": "FAIL" if bound else "PASS", "bound": bound, "req_s": s["req_s"]}
         print(goodput_probe_line(probe), flush=True)
         probes.append(probe)
@@ -670,6 +815,12 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
     # Request objects the run itself sends.
     plan = freeze(trace, recycled=multi and mode.duration_s > 0, seed=workload.seed, salt=workload.salt)
     goodput = None
+    rss_before = rss_mib()
+    # The loaded corpus and the plan live for the whole run: frozen, a collection does not walk them, so a full
+    # pass is shorter, and ClientHealth freezes what the run keeps as it goes. Collections still run; everything
+    # is unfrozen after the run.
+    gc.freeze()
+    frozen = gc.get_freeze_count()
     try:
         if mode.goodput_sweep:
             measured, goodput = sweep(trace, driver, mode, writer, workload, request_id, plan)
@@ -682,6 +833,10 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
     except RunAborted as e:
         print(e)
         stop(writer, None, "aborted", str(e), 1)
+    finally:
+        gc.unfreeze()
+    if measured.client is not None:
+        measured.client.update(gc_frozen_objects=frozen, rss_mib={"before": rss_before, "after": rss_mib()})
     results, by_turn, pairs, duration = measured.results, measured.by_turn, measured.pairs, measured.duration
     server_spec_decode, session_times, client = measured.spec_decode, measured.session_times, measured.client
     plays = measured.plays
@@ -711,7 +866,15 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
         core.error_kinds["not_sent"] = len(not_sent)
     summary = Summary(core, results)
     failed = core.failed_requests
-    withheld = f"{failed} requests failed or went unsent; the rest leave out the slowest" if failed else None
+    failures = [f"{failed} requests failed or went unsent; the rest leave out the slowest"] if failed else []
+    stalls = client_stall_reasons(pairs, client)
+    summary.sections["validity"] = {
+        "latency_valid": not (failures or stalls),
+        "throughput_valid": not failures,
+        "reasons": failures + stalls,
+        "notes": client_lag_notes(client),
+    }
+    withheld = "; ".join(failures + stalls) or None
     if by_turn is not None:
         summary.turns = aggregate_per_turn(by_turn)
     if withheld:
@@ -758,10 +921,17 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
     print_summary_tag_lines(summary.sections)
     if client is not None:
         summary.sections["client"] = client
+        if measured.stagger_s is not None:
+            client["first_start_stagger_s"] = measured.stagger_s
         print(client_line(client), flush=True)
     if session_times is not None and mode.load == "closed":
         steady = summary.sections["steady"] = steady_section(
-            results, session_times, mode.concurrency, end_s=measured.deadline_s, min_window_s=MIN_RECYCLED_WINDOW_S
+            results,
+            session_times,
+            mode.concurrency,
+            end_s=measured.deadline_s,
+            min_window_s=MIN_RECYCLED_WINDOW_S,
+            stratum_of=getattr(trace, "stratum_of", None),
         )
         if steady["valid"] and measured.loop_lag is not None:
             withhold_on_client_lag(steady, measured.loop_lag)
@@ -781,6 +951,8 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
         summary.status = "partial"
         kinds = ", ".join(f"{k}={v}" for k, v in sorted(core.error_kinds.items()))
         summary.reason = f"{core.failed_requests} failed ({kinds})"
+    elif stalls:
+        summary.status, summary.reason = "partial", f"latency withheld: {'; '.join(stalls)}"
     writer.finish(summary.to_dict(), status=summary.status, reason=summary.reason)
     return summary
 
@@ -1023,6 +1195,7 @@ class SessionDispatcher:
 
     def __init__(self, trace, mode, workload, send, request_id, emit, plan=None):
         self.trace, self.mode, self.workload, self.plan = trace, mode, workload, plan
+        self.stall = None  # ClientHealth.stall_s, set by measure()
         self.send, self.request_id, self.emit = send, request_id, emit
         self.sessions = trace.sessions()
         self.max_turns = getattr(trace, "max_turns", max(len(s) for s in self.sessions))
@@ -1056,6 +1229,7 @@ class SessionDispatcher:
         self.last_done: dict = {}
         self.plays: list = []
         self.deadline_s: float | None = None
+        self.stagger_s = first_start_stagger_s(self.mode.concurrency)
         self.start = time.perf_counter()
         if self.mode.duration_s > 0:
             await self._recycled()
@@ -1085,7 +1259,10 @@ class SessionDispatcher:
         async with self.slots if gated else no_limit():
             granted = elapsed()
             self.executed[sid, turn] = sent_digest(request, spliced_at(request, self.trace.replies))
-            result = await self.send(request, capture_text=True, request_id=self.request_id(sid, turn, index))
+            # The reply text is read only to splice it into a later prompt, so only live replies ask for it.
+            result = await self.send(
+                request, capture_text=self.trace.live_replies, request_id=self.request_id(sid, turn, index)
+            )
         result.sent_digest = self.executed[sid, turn]
         result.planned_digest = self.plan.digest((sid, turn)) if self.plan else None
         annotate_request_observability(
@@ -1098,6 +1275,7 @@ class SessionDispatcher:
             completed_at_s=elapsed(),
             run_start=self.start,
         )
+        note_client_stall(result, self.stall)
         enforce_first_chunk(result)
         enforce_usage(self.mode, result)
         enforce_output_length(self.mode, request, result)
@@ -1213,17 +1391,20 @@ class SessionDispatcher:
         def elapsed():
             return time.perf_counter() - self.start
 
-        async def session(turns):
+        async def session(turns, k):
             arrived = turns[0].arrival_ts or 0.0
             if recorded:
                 await sleep_until_elapsed(self.start, arrived)
+            else:
+                # The first C sessions would all start at once; later ones wait for an agent anyway.
+                await asyncio.sleep(min(k, self.mode.concurrency - 1) * self.stagger_s)
             async with agents:
                 admitted = elapsed()
                 await self._turns(turns, lambda r: index[(r.session_id, r.turn)])
                 sid = turns[0].session_id
                 self.session_times[sid] = (arrived if recorded else admitted, admitted, self.last_done[sid])
 
-        await asyncio.gather(*[session(s) for s in self.sessions])
+        await asyncio.gather(*[session(s, k) for k, s in enumerate(self.sessions)])
         results = [r for v in self.by_turn.values() for r in v]
         if results and not any(r is not None and r.success for r in results):
             raise RunAborted(f"ABORT: All {len(results)} requests failed. First error: {first_error(results)}")
@@ -1246,7 +1427,8 @@ class SessionDispatcher:
         def elapsed():
             return time.perf_counter() - self.start
 
-        async def agent():
+        async def agent(a):
+            await asyncio.sleep(a * self.stagger_s)
             while elapsed() < self.deadline_s:
                 k = next(draws)
                 turns = play(self.sessions[k % n], self.workload.seed, k // n, self.workload.salt)
@@ -1255,7 +1437,7 @@ class SessionDispatcher:
                 await self._turns(turns, lambda r: next(indexes))
                 self.session_times[turns[0].session_id] = (admitted, admitted, self.last_done[turns[0].session_id])
 
-        await asyncio.gather(*[agent() for _ in range(agents)])
+        await asyncio.gather(*[agent(a) for a in range(agents)])
 
     async def _interleaved(self):
         for turn in range(self.max_turns):

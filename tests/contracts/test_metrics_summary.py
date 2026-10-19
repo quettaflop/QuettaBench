@@ -6,6 +6,7 @@ import json
 import tempfile
 import types
 import unittest
+from array import array
 from pathlib import Path
 
 from quettabench.config.schema import Config, EngineCfg, HardwareCfg, ModeCfg, WorkloadCfg
@@ -13,6 +14,7 @@ from quettabench.metrics.results import RunWriter
 from quettabench.metrics.step_fit import fit, fit_run, ms_at_eval
 from quettabench.metrics.summary import (
     ITL_COALESCED_MS,
+    NO_COUNT,
     RequestResult,
     _busy_time_and_load,
     aggregate,
@@ -38,6 +40,7 @@ from quettabench.metrics.summary import (
     transient_gate,
     usage_gate,
     width_weighted,
+    workload_mix,
 )
 from quettabench.workloads.base import Request
 from quettabench.workloads.live import get_profile
@@ -739,6 +742,24 @@ class TestOpenLoopUnits(unittest.TestCase):
         self.assertEqual(tokens_by_arrival([r], 0.0, 30.0, [10.0, 10.0, 10.0]), (1000, 7, [100, 0, 900]))
         # Spread evenly over chunks, the first 10 s would have read 50 * 1000 / 51, about 980 tokens.
 
+    def test_chunks_held_in_arrays_give_the_figures_lists_gave(self):
+        def silent_tail(make):
+            r = RequestResult(
+                success=True, ttft=0.1, itl=make("d", [0.1] * 49 + [15.0]), output_tokens=1000, input_tokens=7
+            )
+            r.sent_at_s, r.completed_at_s, r.chunk_chars = 0.0, 20.0, make("q", [2] * 50 + [900])
+            return r
+
+        figures = []
+        for make in (lambda code, values: values, array):
+            r = silent_tail(make)
+            self.assertEqual(tokens_by_arrival([r], 0.0, 10.0, [10.0]), (100, 7, [100]))
+            self.assertEqual(tokens_by_arrival([r], 0.0, 30.0, [10.0, 10.0, 10.0]), (1000, 7, [100, 0, 900]))
+            s = aggregate([r], duration_s=20.0)
+            self.assertAlmostEqual(s.mean_itl_ms, 398.0)  # (49 * 100 ms + 15000 ms) / 50
+            figures.append(s.to_dict())
+        self.assertEqual(figures[0], figures[1])
+
     def test_chunk_shares_follow_the_server_counts_else_the_characters_and_are_never_negative(self):
         def shares(output_tokens, chars=None, counts=None):
             r = RequestResult(success=True, output_tokens=output_tokens, chunk_chars=chars, chunk_tokens=counts)
@@ -757,10 +778,31 @@ class TestOpenLoopUnits(unittest.TestCase):
         # The server's cumulative counts under continuous usage: the third chunk carried 3 tokens (speculative).
         self.assertEqual(shares(6, [0, 1, 1, 1, 0], [0, 1, 4, 6, 6]), [0, 1, 3, 2, 0])
         # One chunk without a count: back to the characters.
-        self.assertEqual(shares(4, [0, 1, 3], [0, None, 4]), [0, 1, 3])
+        self.assertEqual(shares(4, [0, 1, 3], [0, NO_COUNT, 4]), [0, 1, 3])
         # No characters at all, or none recorded: the finish chunk carries everything.
         self.assertEqual(shares(4, [0, 0, 0]), [0, 0, 4])
         self.assertEqual(chunk_shares(RequestResult(success=True, output_tokens=4), 3), [0, 0, 4])
+
+    def test_the_window_workload_mix_is_what_its_requests_asked_of_the_server(self):
+        def row(sid, turn, sent, done, isl, cached):
+            r = _req(sent, done, input_tokens=isl, output_tokens=10)
+            r.session_id, r.turn_index, r.sent_at_s, r.server_cached_tokens = sid, turn, sent, cached
+            return r
+
+        # Session 1 waits 0.5 s then 0.2 s between turns; session 2 sends its second turn at once.
+        a = [row(1, 0, 0.0, 1.0, 100, 0), row(1, 1, 1.5, 3.0, 200, 150), row(1, 2, 3.2, 4.0, 300, 250)]
+        b = [row(2, 0, 0.0, 2.0, 50, None), row(2, 1, 2.0, 5.0, 150, 100)]
+        mix = workload_mix(a + b, a + b, [1, 2], {1: "short", 2: "long"})
+        self.assertEqual(mix["requests"], 5)
+        self.assertEqual(mix["input_tokens"], {"p10": 50, "p50": 150, "p90": 300, "mean": 160.0})
+        self.assertEqual(mix["output_tokens"], {"p10": 10, "p50": 10, "p90": 10, "mean": 10.0})
+        # Uncached 100, 50, 50 and 50; the row without a server count is left out.
+        self.assertEqual(mix["uncached_prefill_tokens"], {"p10": 50, "p50": 50, "p90": 100, "mean": 62.5})
+        waits = mix["tool_wait_s"]
+        for stat, want in (("p10", 0.0), ("p50", 0.2), ("p90", 0.5), ("mean", 0.7 / 3)):
+            self.assertAlmostEqual(waits[stat], want)
+        self.assertEqual(mix["session_turns"], {"p10": 2, "p50": 2, "p90": 3, "mean": 2.5})
+        self.assertEqual(mix["plays_by_stratum"], {"short": 1, "long": 1})
 
     def test_a_last_bin_under_half_a_bin_folds_into_the_one_before(self):
         self.assertEqual(bin_widths(10.001, 10.0), [10.001])  # was [10, 0.001], whose rate read 0 and cv 1.0

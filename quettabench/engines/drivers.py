@@ -12,6 +12,7 @@ import subprocess
 import sys
 import time
 from abc import ABC, abstractmethod
+from array import array
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -24,7 +25,7 @@ from quettabench.config import env_map
 from quettabench.config.schema import OTHER_ACCELERATORS, ConfigError
 from quettabench.engines import launcher
 from quettabench.engines.base import EngineAdapter, LaunchSpec, register
-from quettabench.metrics.summary import RequestResult, parse_prometheus, spec_decode_counts
+from quettabench.metrics.summary import NO_COUNT, RequestResult, parse_prometheus, spec_decode_counts
 from quettabench.workloads.base import Request
 from quettabench.workloads.grid import distinct_ids
 
@@ -104,9 +105,15 @@ def _stream_failure(done, bad_line) -> tuple[str, str] | None:
     return None
 
 
-def _chunk_fields(chars: list, tokens: list) -> dict:
+def _chunk_fields(chars: array, tokens: array) -> dict:
     """A result's per-chunk record: characters always, the server's cumulative counts only when it sent any."""
-    return {"chunk_chars": chars, "chunk_tokens": tokens if any(t is not None for t in tokens) else None}
+    return {"chunk_chars": chars, "chunk_tokens": tokens if any(t != NO_COUNT for t in tokens) else None}
+
+
+def _chunk_count(chunk: dict) -> int:
+    """The server's cumulative completion_tokens on a chunk, NO_COUNT when it sent none."""
+    count = (chunk.get("usage") or {}).get("completion_tokens")
+    return count if isinstance(count, int) else NO_COUNT
 
 
 def _delta_chars(delta: dict) -> int:
@@ -154,7 +161,7 @@ async def _stream_chat(
 
     start_time = time.perf_counter()
     ttft = None
-    itl: list[float] = []
+    itl = array("d")
     last_token_time = start_time
     input_tokens = 0
     output_tokens = 0
@@ -163,8 +170,8 @@ async def _stream_chat(
     bad_line: str | None = None  # the first data line that did not parse
     server_cached_tokens = None
     text_parts: list[str] = []
-    chunk_chars: list[int] = []
-    chunk_tokens: list[int | None] = []
+    chunk_chars = array("q")
+    chunk_tokens = array("q")
 
     try:
         async with session.post(url, headers=headers, json=payload) as resp:
@@ -224,7 +231,7 @@ async def _stream_chat(
                 if capture_text and delta.get("content"):
                     text_parts.append(delta["content"])
                 chunk_chars.append(_delta_chars(delta))
-                chunk_tokens.append((chunk.get("usage") or {}).get("completion_tokens"))
+                chunk_tokens.append(_chunk_count(chunk))
 
                 if ttft is None:
                     ttft = now - start_time
@@ -345,7 +352,7 @@ async def _stream_completions(
 
     start_time = time.perf_counter()
     ttft = None
-    itl: list[float] = []
+    itl = array("d")
     last_token_time = start_time
     input_tokens = 0
     output_tokens = 0
@@ -354,8 +361,8 @@ async def _stream_completions(
     bad_line: str | None = None  # the first data line that did not parse
     last_choices_time = start_time
     server_cached_tokens = None
-    chunk_chars: list[int] = []
-    chunk_tokens: list[int | None] = []
+    chunk_chars = array("q")
+    chunk_tokens = array("q")
 
     try:
         async with session.post(url, headers=headers, json=payload) as resp:
@@ -413,7 +420,7 @@ async def _stream_completions(
                 # A chunk with empty text is not a token event (QuettaServe sends one before its first token).
                 if choices[0].get("text"):
                     chunk_chars.append(len(choices[0]["text"]))
-                    chunk_tokens.append((chunk.get("usage") or {}).get("completion_tokens"))
+                    chunk_tokens.append(_chunk_count(chunk))
                     if ttft is None:
                         ttft = now - start_time
                         last_token_time = now
