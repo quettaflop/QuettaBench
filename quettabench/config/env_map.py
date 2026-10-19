@@ -93,6 +93,26 @@ def read_env(env=None, only=None):
     return out
 
 
+# Inherited variables that change how a server runs: which libraries it loads, how it schedules, communicates
+# and caches. A launched server sees these besides its LaunchSpec.env.
+SERVER_ENV_PREFIXES = (
+    "VLLM_",
+    "NCCL_",
+    "CUDA_",
+    "PYTORCH_",
+    "TORCH",
+    "HF_",
+    "TRANSFORMERS_",
+    "OMP_",
+    "LD_LIBRARY_PATH",
+)
+
+
+def server_env():
+    """The inherited variables a launched server runs with, for run.json provenance."""
+    return {k: v for k, v in sorted(os.environ.items()) if k.startswith(SERVER_ENV_PREFIXES)}
+
+
 def torchrun_rank():
     rank = os.environ.get("RANK")
     return int(rank) if rank not in (None, "") else None

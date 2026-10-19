@@ -1,0 +1,28 @@
+# H200 single-turn same-server A/B: qbench and vllm bench serve, alternating, on one Qwen3.8-27B TP1 server started
+# by hand with G1b's argv, the same 200 coding prompts at 16 concurrent, both on /v1/completions so the endpoint is
+# no difference: qbench sends the token ids of each [system, user] prompt as the model's chat template renders it
+# (pass workload.source=<JSONL of prompt_token_ids and output_length> with --set), vllm bench serve the rendered text
+# with --skip-chat-template. The server's usage.prompt_tokens shows per request that both sent the same tokens.
+model: qwen38_27b
+engine:
+  model: Qwen/Qwen3.8-27B
+  tp: 1
+  prefix_caching: true
+  port: 18801
+  extra:
+    vllm:
+      enable_prompt_tokens_details: true
+workload:
+  kind: live
+mode:
+  mode: serve
+  load: closed
+  concurrency: 16
+  warmup: 0
+  reset_prefix_cache: true
+  exact_output_length: true
+  temperature: 0.0
+  timeout: 3600
+hardware:
+  visible_devices: '0'
+  launcher: attach

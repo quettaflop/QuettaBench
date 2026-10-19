@@ -1,0 +1,46 @@
+# H200 same-server check: qbench and AIPerf replay the 81 SWE-bench medium sessions at 8 agents against one
+# Qwen3.8-Flash-Next DEP8 server, started by hand from this yaml's --dry-run argv and env (as
+# /workspace/qb-verify/g2.sh does) and measured with hardware.launcher=attach, so launch-to-launch variance drops out.
+# Engine block as configs/verify/h200_verify_fidelity.yaml. Waits off; the waits-on run passes
+# --set workload.use_recorded_waits=true. Export VLLM_PLE_CPU_OFFLOAD=1 VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 for the server.
+model: qwen38_flash_next
+engine:
+  model: Qwen/Qwen3.8-Flash-Next
+  dtype: auto
+  tp: 1
+  ep: true
+  gpu_util: 0.85
+  max_model_len: 1000000
+  prefix_caching: true
+  port: 18830
+  extra:
+    vllm:
+      max_num_seqs: 256
+      moe_backend: triton
+      no_enable_flashinfer_autotune: true
+      data_parallel_size: 8
+      enable_auto_tool_choice: true
+      tool_call_parser: qwen3_coder
+      reasoning_parser: qwen3
+      speculative_config: '{"method":"mtp","num_speculative_tokens":3}'
+      language_model_only: true
+      hf_overrides: '{"text_config": {"rope_parameters": {"mrope_interleaved": true, "mrope_section": [11, 11, 10], "rope_type": "yarn", "rope_theta": 10000000, "partial_rotary_factor": 0.25, "factor":
+        4.0, "original_max_position_embeddings": 262144}}}'
+      enable_prompt_tokens_details: true
+workload:
+  kind: sessions
+  source: swebench-qwen-multiturn-medium
+  use_recorded_waits: false
+mode:
+  mode: serve
+  load: closed
+  concurrency: 8
+  warmup: 0
+  reset_prefix_cache: true
+  exact_output_length: true
+  temperature: 0.0
+  timeout: 3600
+hardware:
+  link_profile: nvlink
+  visible_devices: 0,1,2,3,4,5,6,7
+  launcher: attach

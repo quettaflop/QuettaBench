@@ -318,6 +318,8 @@ def serve_one(cfg, out, exported, writer, server=None, keep=False):
         exported.update(env_map.export(pins))
     spec = with_child_env(spec, pins, {*exported, *unset})
     writer.provenance["launch_env"] = redact(spec.env)
+    writer.provenance["inherited_env"] = redact(env_map.server_env())
+    writer.provenance["weights_revision"] = serve.weights_revision(cfg.engine.model)
     # Build the trace first so a bad workload fails before a long load.
     trace = build_trace(cfg) if adapter.needs_server(cfg) else None
     shared = isinstance(server, launcher.Handle)
@@ -326,6 +328,9 @@ def serve_one(cfg, out, exported, writer, server=None, keep=False):
         out.mkdir(parents=True, exist_ok=True)
         shutil.copy(handle.results_dir / "engine.json", out / "engine.json")
         writer.provenance["server_started_by"] = handle.results_dir.name
+    elif adapter.needs_server(cfg) and cfg.hardware.launcher == "attach":
+        handle = launcher.attach(spec, out)
+        writer.provenance["server_started_by"] = "attached"
     elif adapter.needs_server(cfg):
         handle = launcher.start(spec, out, backend=backend, cfg=cfg, gpus=gpus, timeout_s=cfg.hardware.ready_timeout_s)
     else:

@@ -27,6 +27,8 @@ class RequestResult:
     # usage.prompt_tokens_details.cached_tokens: billed cached prompt tokens; None unless the server reports
     # them (vLLM: --enable-prompt-tokens-details). Not the cache estimate below.
     server_cached_tokens: int | None = None
+    # Seconds to the stream's close: e2el ends at the last token chunk, this after the usage chunk and [DONE].
+    stream_closed_s: float | None = None
     # Held out of the summary by --discard-first; still kept in per_request.
     excluded_from_summary: bool = False
 

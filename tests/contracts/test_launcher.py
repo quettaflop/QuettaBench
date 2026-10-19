@@ -193,6 +193,44 @@ def fixed_name(case):
         case.addCleanup(patch.stop)
 
 
+class Attach(unittest.TestCase):
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp())
+        self.port = free_port()
+
+    def spec(self, served_name="other"):
+        return LaunchSpec(
+            adapter="fake", port=self.port, health_path="/health", served_name=served_name, env={"HF_TOKEN": "secret"}
+        )
+
+    def serve(self):
+        server = HTTPServer(("127.0.0.1", self.port), Foreign)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        return server
+
+    def test_attach_measures_the_running_server_and_leaves_it_running(self):
+        self.serve()
+        handle = launcher.attach(self.spec(), self.dir / "run", timeout_s=5, poll_s=0.1)
+        self.assertEqual(handle.endpoint, f"http://127.0.0.1:{self.port}")
+        handle.stop()
+        self.assertTrue(launcher.port_taken(self.port))
+        record = json.loads((self.dir / "run" / "engine.json").read_text())
+        self.assertTrue(record["attached"])
+        self.assertEqual(record["served_models"], ["other"])
+        self.assertEqual(record["expected_launch_spec"]["env"], {"HF_TOKEN": "REDACTED"})
+
+    def test_attach_refuses_a_server_that_does_not_serve_the_model(self):
+        self.serve()
+        with self.assertRaisesRegex(RuntimeError, r"serves \['other'\], not mine"):
+            launcher.attach(self.spec("mine"), self.dir / "run", timeout_s=5, poll_s=0.1)
+
+    def test_attach_refuses_an_empty_port(self):
+        with self.assertRaisesRegex(RuntimeError, "nothing healthy on"):
+            launcher.attach(self.spec(), self.dir / "run", timeout_s=0.3, poll_s=0.1)
+
+
 class DockerArgv(unittest.TestCase):
     def setUp(self):
         fixed_name(self)

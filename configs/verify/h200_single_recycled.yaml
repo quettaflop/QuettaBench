@@ -1,0 +1,32 @@
+# Validation suite E4, cloned-trajectory bias: a 5-minute recycled SWE-bench replay at 8 agents on the single-turn
+# A/B's Qwen3.8-27B TP1 server (attach), once with the salt (arm c1) and once, under /workspace/qb-verify/qb_gc.py with
+# QB_UNSALTED=1, with every play an unsalted clone (arm b). Turns capped at index 14 so every prompt fits the server's
+# 40960 tokens.
+model: qwen38_27b
+engine:
+  model: Qwen/Qwen3.8-27B
+  tp: 1
+  prefix_caching: true
+  port: 18801
+  extra:
+    vllm:
+      enable_prompt_tokens_details: true
+workload:
+  kind: sessions
+  source: swebench-qwen-multiturn-medium
+  use_recorded_waits: true
+  stratified: true
+  max_turn_index: 14
+mode:
+  mode: serve
+  load: closed
+  concurrency: 8
+  duration_s: 300
+  warmup: 0
+  reset_prefix_cache: true
+  exact_output_length: true
+  temperature: 0.0
+  timeout: 3600
+hardware:
+  visible_devices: '0'
+  launcher: attach

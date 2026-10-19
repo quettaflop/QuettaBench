@@ -295,6 +295,14 @@ class Sessions(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "needs recorded replies"):
             run(trace, FakeDriver(), ModeCfg(concurrency=2, warmup=0, duration_s=0.05))
 
+    def test_weights_revision_is_the_cached_snapshot_or_none(self):
+        with tempfile.TemporaryDirectory() as td:
+            self.assertIsNone(serve.weights_revision(td))
+        with mock.patch.object(serve, "snapshot_download", return_value="/hf/hub/models--a--b/snapshots/dba1be0"):
+            self.assertEqual(serve.weights_revision("a/b"), "dba1be0")
+        with mock.patch.object(serve, "snapshot_download", side_effect=serve.LocalEntryNotFoundError("no")):
+            self.assertIsNone(serve.weights_revision("a/b"))
+
     def test_run_json_carries_the_trace_and_its_sample(self):
         with tempfile.TemporaryDirectory() as td:
             run(session_trace(3, 2), FakeDriver(), ModeCfg(concurrency=2, warmup=0), results_dir=td)

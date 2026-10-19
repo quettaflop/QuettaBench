@@ -155,19 +155,10 @@ async def _stream_chat(
                 if not choices:
                     continue
 
-                delta = choices[0].get("delta", {})
-                # Reasoning and tool-call deltas carry content=None; skipping them folds a phase into one ITL gap.
-                has_payload = (
-                    delta.get("content") is not None
-                    or delta.get("reasoning_content") is not None
-                    or delta.get("reasoning") is not None
-                    or bool(delta.get("tool_calls"))
-                )
-                if not has_payload:
-                    continue
-
+                # vllm bench serve's rule: every chunk with choices is a token event, the finish chunk included,
+                # so decode the server buffered (a tool call its parser emits whole) is in the request's time.
                 if capture_text:
-                    piece = delta.get("content")
+                    piece = choices[0].get("delta", {}).get("content")
                     if piece:
                         text_parts.append(piece)
 
@@ -178,13 +169,16 @@ async def _stream_chat(
                     itl.append(now - last_token_time)
                     last_token_time = now
 
-        e2el = time.perf_counter() - start_time
+        # The request ends at its last chunk with choices; the usage chunk, [DONE] and the close come after.
+        stream_closed = time.perf_counter() - start_time
+        e2el = last_token_time - start_time if ttft is not None else stream_closed
         if not done:
             return RequestResult(
                 success=False,
                 ttft=ttft,
                 itl=itl,
                 e2el=e2el,
+                stream_closed_s=stream_closed,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 usage_reported=usage_reported,
@@ -196,6 +190,7 @@ async def _stream_chat(
             ttft=ttft,
             itl=itl,
             e2el=e2el,
+            stream_closed_s=stream_closed,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             usage_reported=usage_reported,
@@ -272,6 +267,7 @@ async def _stream_completions(
     output_tokens = 0
     usage_reported = False
     done = False
+    last_choices_time = start_time
     server_cached_tokens = None
 
     try:
@@ -327,7 +323,8 @@ async def _stream_completions(
                 if not choices:
                     continue
 
-                # A chunk with empty text is not a token event.
+                last_choices_time = now
+                # A chunk with empty text is not a token event (QuettaServe sends one before its first token).
                 if choices[0].get("text"):
                     if ttft is None:
                         ttft = now - start_time
@@ -336,13 +333,17 @@ async def _stream_completions(
                         itl.append(now - last_token_time)
                         last_token_time = now
 
-        e2el = time.perf_counter() - start_time
+        # The request ends at its last chunk with choices, as vllm bench serve counts it; the usage chunk, [DONE]
+        # and the close come after.
+        stream_closed = time.perf_counter() - start_time
+        e2el = last_choices_time - start_time if ttft is not None else stream_closed
         if not done:
             return RequestResult(
                 success=False,
                 ttft=ttft,
                 itl=itl,
                 e2el=e2el,
+                stream_closed_s=stream_closed,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 usage_reported=usage_reported,
@@ -354,6 +355,7 @@ async def _stream_completions(
             ttft=ttft,
             itl=itl,
             e2el=e2el,
+            stream_closed_s=stream_closed,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             usage_reported=usage_reported,
@@ -380,7 +382,7 @@ async def _stream_completions(
 
 # endpoint -> (stream body, first-token rule)
 ENDPOINTS: dict[str, tuple[Callable[..., Awaitable[RequestResult]], str]] = {
-    "chat": (_stream_chat, "first_payload_chunk"),
+    "chat": (_stream_chat, "first_choices_chunk"),
     "completions": (_stream_completions, "first_nonempty_text"),
 }
 

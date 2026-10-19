@@ -408,9 +408,15 @@ def load(run_yaml, overrides=(), env=None):
     run = {}
     for section in SECTIONS:
         run.update(_flatten(raw.get(section) or {}, f"{section}.", run_path))
+    matrix = dict(raw.get("matrix") or {})
+    cli = dict(parse_set(item) for item in overrides)
+    # A --set naming a matrix axis replaces its choices, so one run can take part of the sweep.
+    for key in [k for k in cli if k in matrix]:
+        choice = cli.pop(key)
+        matrix[key] = choice if isinstance(choice, list) else [choice]
     # An axis is one path, or several joined by "+" that move together: each choice lists one value per path.
     axes = []
-    for key, choices in (raw.get("matrix") or {}).items():
+    for key, choices in matrix.items():
         paths = [p.strip() for p in key.split("+")]
         for path in paths:
             _check_path(path, f"{run_path} matrix")
@@ -422,7 +428,6 @@ def load(run_yaml, overrides=(), env=None):
 
     from_env = env_map.read_env(env)
     detect = {k: from_env.pop(k) for k in list(from_env) if k.startswith("detect.")}
-    cli = dict(parse_set(item) for item in overrides)
     allow_unverified = bool(cli.pop("allow_unverified", False))
     for path in cli:
         _check_path(path, "--set")

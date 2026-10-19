@@ -367,6 +367,21 @@ class LoaderRules(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "matrix: unknown key 'engine.tpp'"):
             self.load({"matrix": {"mode.concurrency+engine.tpp": [[8, 1]]}})
 
+    def test_a_set_naming_a_matrix_axis_replaces_its_choices(self):
+        matrix = {"mode.concurrency+engine.extra.vllm.max_num_seqs": [[8, 64], [32, 256]], "engine.tp": [1, 2]}
+        got = [
+            (c.run_name, c.mode.concurrency, c.engine.extra["vllm"]["max_num_seqs"], c.engine.tp)
+            for c in self.load(
+                {"matrix": matrix}, ["mode.concurrency+engine.extra.vllm.max_num_seqs=[[32, 256]]", "engine.tp=2"]
+            )
+        ]
+        self.assertEqual(got, [("r-tp2-concurrency32-max_num_seqs256", 32, 256, 2)])
+        with self.assertRaisesRegex(ConfigError, "lists 2 values, one per path"):
+            self.load({"matrix": matrix}, ["mode.concurrency+engine.extra.vllm.max_num_seqs=32"])
+        # A path that is no axis keeps its meaning: it overrides every point.
+        got = [(c.run_name, c.mode.warmup) for c in self.load({"matrix": {"engine.tp": [1, 2]}}, ["mode.warmup=5"])]
+        self.assertEqual(got, [("r-tp1", 5), ("r-tp2", 5)])
+
     def test_matrix_key_is_checked(self):
         with self.assertRaisesRegex(ConfigError, "matrix: unknown key 'engine.tpp'"):
             self.load({"matrix": {"engine.tpp": [1]}})

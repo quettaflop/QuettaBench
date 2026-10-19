@@ -615,6 +615,17 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
     return summary
 
 
+def weights_revision(model):
+    """The Hugging Face snapshot a server loading `model` resolves to now, or None for a local dir or an uncached
+    id: the cache's refs/main can move when another tool downloads files from the same repo."""
+    if os.path.isdir(model):
+        return None
+    try:
+        return os.path.basename(snapshot_download(model, local_files_only=True))
+    except (HFValidationError, LocalEntryNotFoundError):
+        return None
+
+
 def model_dir(model):
     """Never downloads."""
     if os.path.isdir(model):

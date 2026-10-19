@@ -81,6 +81,69 @@ class NoServer:
         pass
 
 
+@dataclass
+class Attached:
+    """Handle for a server qbench did not start: hardware.launcher=attach. stop() leaves it running."""
+
+    results_dir: Path
+    endpoint: str
+    gpu: str = ""
+    backend: str = "cuda"
+
+    def stop(self, grace_s=30):
+        pass
+
+
+def attach(spec, results_dir, timeout_s=60, poll_s=1.0):
+    """Measure the server already answering on spec.port: it must be healthy and serve spec.served_name. engine.json
+    records what it serves and its /version, with the launch spec qbench would have used, since its real argv and
+    environment are not qbench's to know."""
+    endpoint = f"http://127.0.0.1:{spec.port}"
+    deadline = time.monotonic() + timeout_s
+    while True:
+        try:
+            with urlopen(endpoint + spec.health_path, timeout=poll_s) as resp:
+                if resp.status == 200:
+                    break
+        except (urllib.error.URLError, ConnectionError, TimeoutError):
+            pass
+        if time.monotonic() > deadline:
+            raise RuntimeError(f"hardware.launcher=attach: nothing healthy on {endpoint} after {timeout_s}s")
+        time.sleep(poll_s)
+    served = served_models(endpoint + "/v1/models", poll_s)
+    if spec.served_name and spec.served_name not in served:
+        raise RuntimeError(f"hardware.launcher=attach: {endpoint} serves {served}, not {spec.served_name}")
+    results_dir = Path(results_dir)
+    results_dir.mkdir(parents=True, exist_ok=True)
+    record = {
+        "adapter": spec.adapter,
+        "endpoint": endpoint,
+        "attached": True,
+        "served_models": served,
+        "server_version": server_version(endpoint + "/version", poll_s),
+        "expected_launch_spec": redact(asdict(spec)),
+        "started_at": datetime.now(timezone.utc).isoformat(),
+    }
+    (results_dir / "engine.json").write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
+    return Attached(results_dir, endpoint)
+
+
+def served_models(models_url, timeout):
+    try:
+        with urlopen(models_url, timeout=timeout) as resp:
+            return [m.get("id") for m in json.load(resp).get("data", [])]
+    except (urllib.error.URLError, ConnectionError, TimeoutError, ValueError, AttributeError):
+        return []
+
+
+def server_version(url, timeout):
+    try:
+        with urlopen(url, timeout=timeout) as resp:
+            return json.load(resp).get("version")
+    except (urllib.error.URLError, ConnectionError, TimeoutError, ValueError, AttributeError):
+        return None
+
+
 def visible_env(backend, devices):
     """The env that limits a server to devices, and the inherited names to unset."""
     if backend == "rocm":

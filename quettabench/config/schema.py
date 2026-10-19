@@ -30,7 +30,7 @@ CHOICES = {
     "mode.return_outputs": ("none", "text", "logits"),
     "hardware.backend": ("auto", "cuda", "rocm", "neuron", "tpu", "cpu"),
     "hardware.link_profile": ("auto", "pcie", "nvlink"),
-    "hardware.launcher": ("local", "docker"),
+    "hardware.launcher": ("local", "docker", "attach"),
 }
 
 # Accelerators qbench launches vLLM on besides cuda; cpu is the stub backend the tests run.
@@ -173,7 +173,9 @@ class HardwareCfg:
     provision: Mapping[str, str] = field(default_factory=dict)
     visible_devices: str | None = None  # CUDA_VISIBLE_DEVICES; rocm/tpu/neuron runs must set it
     ready_timeout_s: int = 1800  # seconds the launcher waits for the server health check
-    launcher: str = "local"  # local: a host process | docker: engine.image in a container
+    # local: a host process | docker: engine.image in a container | attach: measure the server already on
+    # engine.port; qbench starts and stops nothing, so the same server can serve another harness too
+    launcher: str = "local"
     shm_size: str = "16g"  # docker --shm-size
     hf_home: str | None = None  # HF cache; docker mounts it at the same path
 

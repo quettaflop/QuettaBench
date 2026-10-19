@@ -93,7 +93,7 @@ class TtftRules(unittest.TestCase):
         r, payload = send(
             "chat", [{"choices": [{"delta": {"reasoning": "r"}}]}, {"choices": [{"delta": {"content": "a"}}]}]
         )
-        self.assertEqual((r.ttft_rule, len(r.itl)), ("first_payload_chunk", 1))
+        self.assertEqual((r.ttft_rule, len(r.itl)), ("first_choices_chunk", 1))
         self.assertEqual(payload["messages"][0]["content"], "hi")
 
     def test_completions_skips_empty_text(self):
@@ -345,17 +345,21 @@ def _delta(content=None, **extra) -> dict:
 
 
 class _ChatResp:
-    def __init__(self, lines, status=200):
+    def __init__(self, lines, status=200, pause_before=None, pause_s=0.0):
         self.status = status
-        self.content = self._Lines(lines)
+        self.content = self._Lines(lines, pause_before, pause_s)
 
     class _Lines:
-        def __init__(self, lines):
-            self._lines = lines
+        """pause_before: a line prefix before which the stream pauses pause_s, as a slow tail would."""
+
+        def __init__(self, lines, pause_before=None, pause_s=0.0):
+            self._lines, self._pause_before, self._pause_s = lines, pause_before, pause_s
 
         def __aiter__(self):
             async def gen():
                 for line in self._lines:
+                    if self._pause_before and line.startswith(self._pause_before):
+                        await asyncio.sleep(self._pause_s)
                     yield line
 
             return gen()
@@ -371,13 +375,14 @@ class _ChatResp:
 
 
 class _ChatSession:
-    def __init__(self, lines, status=200):
+    def __init__(self, lines, status=200, pause_before=None, pause_s=0.0):
         self._lines, self._status = lines, status
+        self._pause = (pause_before, pause_s)
         self.payload = None
 
     def post(self, url, headers=None, json=None):
         self.payload = json
-        return _ChatResp(self._lines, self._status)
+        return _ChatResp(self._lines, self._status, *self._pause)
 
 
 def _run(session):
@@ -408,6 +413,47 @@ class PinnedOutputTests(unittest.TestCase):
         )
         self.assertEqual(session.payload["min_tokens"], 120)
         self.assertEqual(session.payload["max_tokens"], 120)
+
+    def test_the_request_ends_at_its_last_token_chunk_not_at_the_stream_close(self):
+        # The usage chunk and [DONE] come 60 ms after the last token: e2el stops at the token, stream_closed_s does not.
+        lines = _chat_sse(
+            [_delta("a"), _delta("b"), {"choices": [], "usage": {"prompt_tokens": 3, "completion_tokens": 2}}]
+        )
+        session = _ChatSession(lines, pause_before=b'data: {"choices": [], "usage"', pause_s=0.06)
+        r = asyncio.run(
+            send_request(
+                session=session,
+                url="http://stub/v1/chat/completions",
+                model="m",
+                messages=[{"role": "user", "content": "hi"}],
+                max_tokens=2,
+            )
+        )
+        self.assertTrue(r.success)
+        self.assertLess(r.e2el, 0.03)
+        self.assertGreaterEqual(r.stream_closed_s - r.e2el, 0.055)
+        self.assertEqual(jsonl_row(r)["stream_closed_s"], r.stream_closed_s)
+
+    def test_a_finish_chunk_with_an_empty_delta_ends_the_request_and_counts_as_a_chunk(self):
+        # A tool-call parser can emit nothing for seconds and then a bare finish chunk: that decode counts.
+        finish = {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]}
+        lines = _chat_sse(
+            [_delta("a"), _delta("b"), finish, {"choices": [], "usage": {"prompt_tokens": 3, "completion_tokens": 40}}]
+        )
+        session = _ChatSession(lines, pause_before=b'data: {"choices": [{"delta": {}', pause_s=0.06)
+        r = asyncio.run(
+            send_request(
+                session=session,
+                url="http://stub/v1/chat/completions",
+                model="m",
+                messages=[{"role": "user", "content": "hi"}],
+                max_tokens=40,
+            )
+        )
+        self.assertTrue(r.success)
+        self.assertGreaterEqual(r.e2el - r.ttft, 0.055)
+        self.assertEqual(len(r.itl), 2)
+        self.assertGreaterEqual(r.itl[-1], 0.055)
 
     def test_a_stream_that_ends_without_done_is_an_incomplete_failure_with_its_timings(self):
         session = _ChatSession(_chat_sse([_delta("a"), _delta("b")])[:-1])
@@ -627,9 +673,9 @@ class TestReasoningChunksCounted(unittest.TestCase):
         )
         r = asyncio.run(_serve_and_request(chunks))
         self.assertTrue(r.success)
-        # 8 token events (1 role + 3 reasoning + 4 content): ttft + 7 ITLs.
+        # 9 chunks with choices (role, 3 reasoning, 4 content, finish): ttft + 8 gaps.
         self.assertIsNotNone(r.ttft)
-        self.assertEqual(len(r.itl), 7)
+        self.assertEqual(len(r.itl), 8)
         self.assertEqual(r.output_tokens, 8)
 
     def test_newer_reasoning_field_and_tool_calls_count(self):
@@ -641,7 +687,7 @@ class TestReasoningChunksCounted(unittest.TestCase):
         )
         r = asyncio.run(_serve_and_request(chunks))
         self.assertTrue(r.success)
-        self.assertEqual(len(r.itl), 5)
+        self.assertEqual(len(r.itl), 5)  # role, 2 reasoning, 2 tool-call, 1 content: no finish chunk here
 
     def test_plain_content_stream_unchanged(self):
         chunks = (
@@ -651,7 +697,8 @@ class TestReasoningChunksCounted(unittest.TestCase):
         )
         r = asyncio.run(_serve_and_request(chunks))
         self.assertTrue(r.success)
-        self.assertEqual(len(r.itl), 5)
+        # 7 chunks with choices (role, 5 content, finish): ttft + 6 gaps, vllm bench serve's count.
+        self.assertEqual(len(r.itl), 6)
 
 
 FAKE = Path(__file__).with_name("fake_bench.py")
