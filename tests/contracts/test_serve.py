@@ -26,6 +26,7 @@ from quettabench.metrics.summary import RequestResult
 from quettabench.modes import serve
 from quettabench.workloads.base import Request
 from quettabench.workloads.live import RealTrace
+from quettabench.workloads.plan import freeze, sent_digest
 from quettabench.workloads.sessions import SessionTrace, TurnPacing
 from tests.contracts import helpers
 from tests.golden._harness import DENSE_CONFIG, RUNS, grid_argv, run_grid_cli
@@ -167,11 +168,20 @@ class SingleTurn(unittest.TestCase):
             status = json.loads((Path(td) / "run.json").read_text())["run_status"]
         self.assertEqual((code, status["status"]), (1, "aborted"))
 
-    def test_a_request_changed_after_hashing_fails_the_identity_gate(self):
+    def test_a_request_changed_after_the_plan_was_frozen_fails_the_identity_gate(self):
+        # Sending request 0 changes request 2's prompt in place; the old gate hashed the same objects on both
+        # sides after the run and passed.
         trace = single_trace(4)
-        trace.workload_hash = lambda: "0" * 16
-        code, out = run(trace, FakeDriver(), ModeCfg(warmup=0))
+
+        class Tamper(FakeDriver):
+            async def send(self, request, **kw):
+                if request.order == 0:
+                    trace.requests()[2].prompt_token_ids[0] = 999
+                return await super().send(request, **kw)
+
+        code, out = run(trace, Tamper(), ModeCfg(concurrency=1, warmup=0))
         self.assertEqual(code, 3)
+        self.assertIn("first_mismatch=2 (differs from the plan)", out)
         self.assertIn("WORKLOAD_MISMATCH replayed workload differs from the trace; comparison is void", out)
 
     def test_mostly_failed_run_aborts(self):
@@ -221,6 +231,30 @@ class Sessions(unittest.TestCase):
         self.assertEqual(len(summary.rows), 36)
         self.assertIn("3 agents at once", out)
 
+    def test_a_session_run_has_a_steady_ttft_only_in_its_steady_window(self):
+        def steady_ttft_keys(node, path=""):
+            for k, v in node.items() if isinstance(node, dict) else ():
+                p = f"{path}.{k}".lstrip(".")
+                if "steady" in k and "ttft" in k and v is not None:
+                    yield p
+                yield from steady_ttft_keys(v, p)
+
+        with tempfile.TemporaryDirectory() as td:
+            summary, out = run(session_trace(12, 3), TimedDriver(), ModeCfg(concurrency=3, warmup=0), results_dir=td)
+            run_json = json.loads((Path(td) / "run.json").read_text())
+        self.assertEqual(list(steady_ttft_keys(run_json)), [])
+        self.assertNotIn("steady_ttft_ms", out)
+        self.assertTrue(run_json["summary"]["steady"]["valid"])
+        self.assertIsNotNone(run_json["summary"]["steady"]["ttft_ms"])
+        # The cold start is in run.json and on the console: three agents' first turns, then the ramp.
+        self.assertEqual(run_json["summary"]["steady"]["first_turn_ttft_ms"]["n"], 3)
+        self.assertGreaterEqual(run_json["summary"]["steady"]["ramp"]["ttft_ms"]["n"], 9)
+        self.assertIn("Cold start TTFT: first turns p50 1.0 ms, p99 1.0 ms (n=3); before the window", out)
+        # A single-turn closed loop keeps the requests past the first C as its steady TTFT.
+        single, out = run(single_trace(6), FakeDriver(), ModeCfg(concurrency=2, warmup=0))
+        self.assertIsNotNone(single.sections["serve"]["steady_ttft_ms"])
+        self.assertIn("steady_ttft_ms_p50=", out)
+
     def test_agents_keep_their_slots_through_recorded_waits_and_the_run_has_a_steady_window(self):
         trace = session_trace(60, 5)
         for r in trace.requests():
@@ -246,22 +280,65 @@ class Sessions(unittest.TestCase):
         async def go():
             health = serve.ClientHealth()
             health.start()
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(0.2)
             time.sleep(0.06)  # the loop cannot run while this blocks
             gc.collect()
-            await asyncio.sleep(0.03)
+            await asyncio.sleep(0.05)
             await health.stop()
             return health.section()
 
         c = asyncio.run(go())
+        # The stall is about a fifth of the wall time: past p99, short of p50.
         self.assertGreaterEqual(c["loop_lag_ms"]["max"], 50.0)
+        self.assertGreaterEqual(c["loop_lag_ms"]["99"], 50.0)
         self.assertLess(c["loop_lag_ms"]["50"], 50.0)
         self.assertGreaterEqual((c["gc_passes"], c["gc_gen2_passes"]), (1, 1))
         self.assertIn("event loop late by", serve.client_line(c))
 
+    def test_loop_lag_percentiles_weigh_each_sample_by_the_wall_time_it_spans(self):
+        # 199 on-time samples span 1.99 s and one 1 s stall spans 1.01 s: the stall is a third of the time, so
+        # p99 is the stall although it is one sample in 200.
+        samples = [(0.0, 0.0)] * 199 + [(0.0, 1.0)]
+        self.assertEqual(serve.loop_lag_ms(samples), {"50": 0.0, "99": 1000.0, "max": 1000.0})
+        self.assertIsNone(serve.loop_lag_ms([]))
+
+    def test_steady_ttft_is_withheld_when_the_loop_lags_inside_the_window(self):
+        def steady():
+            return {"valid": True, "start_s": 1.0, "end_s": 2.0, "ttft_ms": {50: 10.0, 90: 10.0, 99: 10.0}}
+
+        on_time = [(1.0 + i / 100, 0.0) for i in range(100)]
+        # A 0.5 s stall before the window does not count against it.
+        calm = steady()
+        serve.withhold_on_client_lag(calm, [(0.5, 0.5)] + on_time)
+        self.assertEqual((calm["client_loop_lag_ms"]["99"], calm["client_loop_lag_samples"]), (0.0, 100))
+        self.assertIsNotNone(calm["ttft_ms"])
+        self.assertNotIn("withheld", calm)
+        # 20 ms late for 3% of the window's time: over the 5 ms bar at p99.
+        late = steady()
+        serve.withhold_on_client_lag(late, on_time + [(1.5, 0.02)])
+        self.assertIsNone(late["ttft_ms"])
+        self.assertEqual(
+            late["withheld"], {"ttft_ms": "client event loop late by 20.0 ms at p99 in the window, over 5 ms"}
+        )
+
+    def test_a_session_run_whose_client_blocks_withholds_its_steady_ttft(self):
+        class BlockingDriver(TimedDriver):
+            async def send(self, request, **kw):
+                time.sleep(0.01)  # holds the event loop, as a slow client would
+                return await super().send(request, **kw)
+
+        summary, out = run(session_trace(12, 3), BlockingDriver(), ModeCfg(concurrency=3, warmup=0))
+        steady = summary.sections["steady"]
+        self.assertTrue(steady["valid"], steady)
+        self.assertGreater(steady["client_loop_lag_ms"]["99"], 5.0)
+        self.assertIsNone(steady["ttft_ms"])
+        self.assertIn("ttft_ms withheld: client event loop late by", out)
+
     def test_a_recycled_replay_keeps_every_agent_busy_to_the_deadline_with_a_salt_per_play(self):
         driver = TimedDriver(last_turn=1)
-        summary, out = run(recorded_trace(5, 2), driver, ModeCfg(concurrency=4, warmup=0, duration_s=0.08))
+        # An 80 ms run: the 300 s floor on a recycled window would void it.
+        with mock.patch.object(serve, "MIN_RECYCLED_WINDOW_S", 0.0):
+            summary, out = run(recorded_trace(5, 2), driver, ModeCfg(concurrency=4, warmup=0, duration_s=0.08))
         plays = summary.sections["plays"]
         self.assertGreater(plays["plays"], 5)  # 5 sessions, more plays: the sample was recycled
         self.assertEqual((plays["sessions"], plays["duration_s"]), (5, 0.08))
@@ -281,6 +358,22 @@ class Sessions(unittest.TestCase):
         self.assertIn("Recycled replay: 5 sessions in a cycle, 4 agents for 0.08 s", out)
         self.assertIsNone(plays["plays_by_stratum"])
 
+    def test_a_recycled_plan_hash_is_the_sample_seed_and_play_rule_not_the_plays_started(self):
+        def recycled(duration_s, seed=0):
+            trace = recorded_trace(5, 2)
+            mode = ModeCfg(concurrency=4, warmup=0, duration_s=duration_s)
+            summary, _ = run(trace, TimedDriver(last_turn=1), mode, WorkloadCfg(seed=seed))
+            return summary.sections["workload"], summary.sections["plays"]["plays"], freeze(trace).plan_hash
+
+        short, long_, other_seed = recycled(0.03), recycled(0.06), recycled(0.03, seed=1)
+        self.assertNotEqual(short[1], long_[1])  # the deadline let a different number of plays start
+        self.assertNotEqual(short[0]["expected"], long_[0]["expected"])
+        self.assertEqual(short[0]["plan_hash"], long_[0]["plan_hash"])
+        self.assertNotEqual(short[0]["plan_hash"], other_seed[0]["plan_hash"])
+        # Salted plays are not the plain sample: a recycled run does not compare with a run of the sample as is.
+        self.assertNotEqual(short[0]["plan_hash"], short[2])
+        self.assertTrue(short[0]["match"] and long_[0]["match"])
+
     def test_a_recycled_replay_counts_plays_per_stratum(self):
         trace = recorded_trace(5, 2)
         trace.stratum_of = {s: "long" if s % 2 else "short" for s in range(5)}
@@ -288,6 +381,8 @@ class Sessions(unittest.TestCase):
         by_stratum = summary.sections["plays"]["plays_by_stratum"]
         self.assertEqual(sum(by_stratum.values()), summary.sections["plays"]["plays"])
         self.assertEqual(set(by_stratum), {"long", "short"})
+        # 50 ms is far short of a recycled window's 300 s floor: no steady numbers, and the reason says why.
+        self.assertIn("a recycled window needs at least 300 s", summary.sections["steady"]["reason"])
 
     def test_a_recycled_replay_refuses_a_trace_that_fills_replies_live(self):
         trace = session_trace()
@@ -315,10 +410,10 @@ class Sessions(unittest.TestCase):
         self.assertIn("Client: event loop late by", out)
 
     def test_a_short_reply_is_a_failed_turn_under_exact_output_length(self):
-        # Session 1's second turn comes back one token long: the turn fails, the session stops there, and the run
-        # fails the identity gate because the session's last turn was never sent.
+        # Session 1's second turn comes back one token long: the turn fails and the session stops there, so its
+        # last turn is never sent.
         with tempfile.TemporaryDirectory() as td:
-            code, out = run(
+            summary, out = run(
                 session_trace(),
                 FakeDriver(short={(1, 1): 1}),
                 ModeCfg(concurrency=2, warmup=0, exact_output_length=True, min_success_rate=0.0),
@@ -329,8 +424,9 @@ class Sessions(unittest.TestCase):
         self.assertEqual(
             [(r["session_id"], r["turn_index"], r["error"]) for r in bad], [(1, 1, "1 output tokens, 2 planned")]
         )
-        self.assertEqual(code, 3)
-        self.assertIn("WORKLOAD_MISMATCH", out)
+        self.assertEqual(summary.status, "partial")
+        self.assertEqual(summary.sections["workload"]["turns_not_sent"], [{"session": 1, "turn": 2}])
+        self.assertNotIn("WORKLOAD_MISMATCH", out)
 
     def test_replies_feed_later_turns(self):
         driver = FakeDriver()
@@ -342,30 +438,103 @@ class Sessions(unittest.TestCase):
             {(r.session_id, r.turn_index) for r in summary.rows}, {(s, t) for s in range(2) for t in range(3)}
         )
 
-    def test_a_dropped_turn_fails_the_identity_gate(self):
+    @staticmethod
+    def tamper_on_first_send(trace, change):
+        """A driver that, while session 0's first turn is out, changes session 0's second turn in place."""
+
+        class Tamper(FakeDriver):
+            async def send(self, request, **kw):
+                if (request.session_id, request.turn) == (0, 0):
+                    change(next(r for r in trace.requests() if (r.session_id, r.turn) == (0, 1)))
+                return await super().send(request, **kw)
+
+        return Tamper()
+
+    def test_a_user_message_changed_after_the_freeze_fails_the_identity_gate(self):
+        trace = session_trace()
+        driver = self.tamper_on_first_send(trace, lambda r: r.messages[-1].update(content="tampered"))
+        code, out = run(trace, driver, ModeCfg(concurrency=1, warmup=0))
+        self.assertEqual(code, 3)
+        self.assertIn("first_mismatch=0:1 (differs from the plan)", out)
+
+    def test_a_recorded_assistant_turn_changed_under_live_replies_fails_the_identity_gate(self):
+        # Only the placeholders the run splices are left out of the digest; a recorded assistant turn is hashed.
+        trace = recorded_trace(2, 3)
+        trace.live_replies = True
+        driver = self.tamper_on_first_send(trace, lambda r: r.messages[1].update(content="rewritten"))
+        code, out = run(trace, driver, ModeCfg(concurrency=1, warmup=0))
+        self.assertEqual(code, 3)
+        self.assertIn("first_mismatch=0:1 (differs from the plan)", out)
+
+    def test_an_engine_reply_spliced_into_a_placeholder_passes_the_identity_gate(self):
+        driver = FakeDriver()
+        summary, _ = run(session_trace(), driver, ModeCfg(concurrency=1, warmup=0))
+        second = next(m for m, _, _ in driver.sent if m[-1]["content"] == "s0t1")
+        self.assertEqual(second[1], {"role": "assistant", "content": "reply0"})  # the plan froze it empty
+        w = summary.sections["workload"]
+        self.assertEqual((w["match"], w["n"], w["of"]), (True, 6, 6))
+        self.assertNotIn("first_mismatch", w)
+
+    def test_a_failed_turn_ends_its_session_and_the_run_is_partial(self):
+        # Two sessions of three turns; session 1's second turn fails, so its third is never sent.
+        trace = session_trace()
         with tempfile.TemporaryDirectory() as td:
-            code, out = run(
-                session_trace(),
+            summary, out = run(
+                trace,
                 FakeDriver(fail=lambda r: (r.session_id, r.turn) == (1, 1)),
                 ModeCfg(warmup=0, min_success_rate=0.5),
                 results_dir=td,
             )
             run_json = json.loads((Path(td) / "run.json").read_text())
             rows = (Path(td) / "requests.jsonl").read_text().splitlines()
-        self.assertEqual(code, 3)
-        self.assertIn("WORKLOAD_MISMATCH", out)
-        self.assertEqual(run_json["run_status"], {"status": "failed", "reason": "workload identity"})
-        self.assertEqual(run_json["summary"]["workload"]["n"], 5)
+        self.assertEqual(
+            run_json["run_status"],
+            {"status": "partial", "reason": "1 of 5 requests failed; 1 later turns of their sessions not sent"},
+        )
+        w = run_json["summary"]["workload"]
+        self.assertEqual((w["match"], w["n"], w["of"]), (True, 5, 6))
+        self.assertEqual(w["turns_not_sent"], [{"session": 1, "turn": 2}])
+        # What runs compare on is the whole plan, failure or not: the same as a fresh trace's.
+        self.assertEqual(w["plan_hash"], freeze(session_trace()).plan_hash)
         self.assertEqual(len(rows), 5)
+        self.assertIn("match=1 n=5/6 not_sent=1", out)
+        self.assertNotIn("WORKLOAD_MISMATCH", out)
+
+    def test_turns_a_failed_turn_left_unsent_count_against_the_success_rate(self):
+        # 4 of 5 sent turns succeed (80%), but 4 of the 6 planned (67%): under a 75% floor the run aborts.
+        with tempfile.TemporaryDirectory() as td:
+            code, out = run(
+                session_trace(),
+                FakeDriver(fail=lambda r: (r.session_id, r.turn) == (1, 1)),
+                ModeCfg(warmup=0, min_success_rate=0.75),
+                results_dir=td,
+            )
+        self.assertEqual(code, 1)
+        self.assertIn("ABORT: Success rate 66.7% below minimum 75% (4/6); failures: http_error=1, not_sent=1", out)
+
+    def test_a_failed_turn_ends_its_play_in_a_recycled_replay(self):
+        driver = TimedDriver(last_turn=1)
+        driver.fail = lambda r: (r.session_id, r.turn) == ("2#0", 0)
+        summary, out = run(
+            recorded_trace(5, 2), driver, ModeCfg(concurrency=4, warmup=0, duration_s=0.08, min_success_rate=0.5)
+        )
+        w = summary.sections["workload"]
+        self.assertTrue(w["match"])
+        self.assertEqual(w["turns_not_sent"], [{"session": "2#0", "turn": 1}])
+        self.assertEqual((w["n"], w["of"]), (len(summary.rows), len(summary.rows) + 1))
+        self.assertEqual(summary.status, "partial")
+        self.assertNotIn("WORKLOAD_MISMATCH", out)
 
     def test_interleaved_barrier_skips_dead_sessions(self):
         trace = session_trace()
         trace.pacing = TurnPacing("interleaved")
-        code, out = run(
+        summary, out = run(
             trace, FakeDriver(fail=lambda r: (r.session_id, r.turn) == (0, 0)), ModeCfg(warmup=0, min_success_rate=0.0)
         )
-        self.assertEqual(code, 3)
         self.assertIn("Turn 2/3: dispatching 1 requests...", out)
+        not_sent = summary.sections["workload"]["turns_not_sent"]
+        self.assertEqual(not_sent, [{"session": 0, "turn": 1}, {"session": 0, "turn": 2}])
+        self.assertEqual(summary.status, "partial")
 
 
 class TokenDriver(FakeDriver):
@@ -396,7 +565,7 @@ def tail(out, tag):
 class LineFormats(unittest.TestCase):
     def test_every_line(self):
         summary = {
-            "workload": {"expected": "aa", "replayed": "aa", "match": True, "n": 4, "of": 4},
+            "workload": {"plan_hash": "pp", "expected": "aa", "executed_hash": "aa", "match": True, "n": 4, "of": 4},
             "serve": {"n": 4, "ttft_ms": PCT, "tpot_ms": PCT, "req_s": 2.5, "tok_s": 99.95},
             "sla": {
                 "verdict": "FAIL",
@@ -413,7 +582,7 @@ class LineFormats(unittest.TestCase):
         self.assertEqual(
             summary_tag_lines(summary),
             [
-                "WORKLOAD_CHECK expected=aa replayed=aa match=1 n=4/4",
+                "WORKLOAD_CHECK plan=pp expected=aa executed=aa match=1 n=4/4",
                 (
                     "SERVE_SUMMARY n=4 ttft_ms_p50=10.0 ttft_ms_p90=20.0 ttft_ms_p95=30.0 ttft_ms_p99=40.1 "
                     "tpot_ms_p50=10.040 tpot_ms_p90=20.000 tpot_ms_p95=30.000 tpot_ms_p99=40.060 "
@@ -460,7 +629,15 @@ class LineFormats(unittest.TestCase):
                 "SPEC_DECODE_SUMMARY spec=off note=needs-real-text-trace",
             ],
         )
-        bad = {"expected": "aa", "replayed": "bb", "match": False, "n": 3, "of": 4}
+        bad = {
+            "plan_hash": "pp",
+            "expected": "aa",
+            "executed_hash": "bb",
+            "match": False,
+            "n": 3,
+            "of": 4,
+            "first_mismatch": {"session": 1, "turn": 2, "reason": "differs from the plan"},
+        }
         self.assertEqual(
             summary_tag_lines({"workload": bad})[1],
             "WORKLOAD_MISMATCH replayed workload differs from the trace; comparison is void",
@@ -469,7 +646,7 @@ class LineFormats(unittest.TestCase):
         self.assertEqual(
             summary_tag_lines({"workload": bad, "goodput": g}),
             [
-                "WORKLOAD_CHECK expected=aa replayed=bb match=0 n=3/4",
+                "WORKLOAD_CHECK plan=pp expected=aa executed=bb match=0 n=3/4 first_mismatch=1:2 (differs from the plan)",
                 "WORKLOAD_MISMATCH replayed workload differs from the trace; sweep is void",
             ],
         )
@@ -591,7 +768,8 @@ class GoodputSweep(unittest.TestCase):
                 )
                 emit(q, r)
                 pairs.append((q, r))
-            return serve.Measurement([r for _, r in pairs], None, pairs, 1.0 / workload.speed, None)
+            executed = {i: sent_digest(q) for i, q in enumerate(trace.requests())}
+            return serve.Measurement([r for _, r in pairs], None, pairs, 1.0 / workload.speed, None, executed=executed)
 
         return measure
 

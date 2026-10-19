@@ -300,7 +300,9 @@ def read_run(results_dir):
             rows.append(_fitted_row(step, kv, row_mode))
     notes = bench_log_points(d / "bench.log")[2] if (d / "bench.log").exists() else []
 
-    workload = (grid.get("trace") or {}).get("workload_hash") or (summary.get("workload") or {}).get("expected")
+    # A serve run's plan_hash is the one runs share; runs written before it carry only expected.
+    served = summary.get("workload") or {}
+    workload = (grid.get("trace") or {}).get("workload_hash") or served.get("plan_hash") or served.get("expected")
     return Side(
         rows,
         header(

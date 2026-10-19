@@ -4,6 +4,7 @@ import asyncio
 import collections
 import dataclasses
 import gc
+import hashlib
 import itertools
 import json
 import os
@@ -20,6 +21,7 @@ from ..engines.drivers import PrefixCacheResetError
 from ..metrics.results import goodput_probe_line, grid_event_line, print_grid_tag_lines, print_summary_tag_lines
 from ..metrics.step_fit import GIB, fit, fit_run
 from ..metrics.summary import (
+    MIN_RECYCLED_WINDOW_S,
     BenchmarkSummary,
     acceptance,
     aggregate,
@@ -28,7 +30,6 @@ from ..metrics.summary import (
     annotate_request_observability,
     burst_recovery,
     first_error,
-    percentile,
     print_multi_turn_summary,
     print_summary,
     sla_verdict,
@@ -39,8 +40,9 @@ from ..metrics.summary import (
     usage_gate,
 )
 from ..workloads.arrival import offered_rate, parse_arrival, rebase_arrivals
-from ..workloads.base import Request, workload_hash
-from ..workloads.sessions import SessionTrace, inter_turn_wait_s, play, sleep_until_elapsed
+from ..workloads.base import Request
+from ..workloads.plan import freeze, sent_digest, spliced_at
+from ..workloads.sessions import PLAY_RULE, SessionTrace, inter_turn_wait_s, play, sleep_until_elapsed
 
 TRACE_REQUEST_ID_PREFIX = "agenticbench"
 IDENTITY_EXIT = 3
@@ -108,14 +110,20 @@ def sampling(mode, request) -> dict:
     }
 
 
-def arrival_offsets(trace, workload) -> list:
-    """An injected schedule is stamped on arrival_ts so it joins the workload hash."""
+def stamp_arrivals(trace, workload):
+    """Stamps an injected schedule on arrival_ts, before the plan is frozen, so it joins the workload hash; returns
+    the injected times, or None when the trace keeps its own."""
     reqs = trace.requests()
     injected = parse_arrival(workload.arrival, len(reqs), workload.seed)
-    if injected is None:
-        return rebase_arrivals([r.arrival_ts for r in reqs], workload.speed)
-    for r, t in zip(reqs, injected):
+    for r, t in zip(reqs, injected or ()):
         r.arrival_ts = round(t, 6)
+    return injected
+
+
+def arrival_offsets(trace, workload) -> list:
+    injected = stamp_arrivals(trace, workload)
+    if injected is None:
+        return rebase_arrivals([r.arrival_ts for r in trace.requests()], workload.speed)
     return [t / workload.speed for t in injected]
 
 
@@ -164,8 +172,9 @@ def emitter(mode, writer, probe=None):
     return emit
 
 
-async def replay(trace, driver, mode, emit, offsets, request_id):
-    """The first mode.discard_first requests stay out of the summary."""
+async def replay(trace, driver, mode, emit, offsets, request_id, executed):
+    """The first mode.discard_first requests stay out of the summary. executed gets each request's sent_digest just
+    before it goes out."""
     open_loop = mode.load == "open"
     slots = asyncio.Semaphore(mode.concurrency)
     reqs = trace.requests()
@@ -179,6 +188,7 @@ async def replay(trace, driver, mode, emit, offsets, request_id):
         dispatched = time.perf_counter() - start
         async with no_limit() if open_loop else slots:
             granted = time.perf_counter() - start
+            executed[i] = sent_digest(request)
             result = await driver.send(request, request_id=request_id(i, 0, i), **sampling(mode, request))
         annotate_request_observability(
             result,
@@ -211,14 +221,36 @@ def server_counters(driver):
     return counters() if counters else None
 
 
+LOOP_LAG_INTERVAL_S = 0.01
+# Steady TTFT is withheld above this window p99 loop lag: every timestamp in the window is read off that loop.
+LOOP_LAG_LIMIT_MS = 5.0
+
+
+def loop_lag_ms(samples) -> dict | None:
+    """p50, p99 and max of (time, lag) samples in ms, each weighted by the wall time it spans (the interval plus its
+    lag), so a 1 s stall weighs 1 s rather than one sample."""
+    if not samples:
+        return None
+    spans = sorted((lag, LOOP_LAG_INTERVAL_S + lag) for _, lag in samples)
+    total = sum(w for _, w in spans)
+
+    def at(q):
+        acc = 0.0
+        for lag, w in spans:
+            acc += w
+            if acc >= q * total:
+                return lag * 1000
+        return spans[-1][0] * 1000
+
+    return {"50": at(0.5), "99": at(0.99), "max": spans[-1][0] * 1000}
+
+
 class ClientHealth:
     """Samples how late the event loop runs and times gc passes while a run measures: start() before the pass,
-    stop() after, section() for run.json."""
-
-    INTERVAL_S = 0.01
+    stop() after, section() for run.json. samples holds (perf_counter, lag in s) for slicing to a window."""
 
     def __init__(self):
-        self.lag_s: list[float] = []
+        self.samples: list[tuple[float, float]] = []
         self.gc_s: list[tuple[int, float]] = []
         self._gc_start: float | None = None
         self._task: asyncio.Task | None = None
@@ -234,8 +266,8 @@ class ClientHealth:
         loop = asyncio.get_running_loop()
         while True:
             t = loop.time()
-            await asyncio.sleep(self.INTERVAL_S)
-            self.lag_s.append(loop.time() - t - self.INTERVAL_S)
+            await asyncio.sleep(LOOP_LAG_INTERVAL_S)
+            self.samples.append((time.perf_counter(), loop.time() - t - LOOP_LAG_INTERVAL_S))
 
     def start(self):
         gc.callbacks.append(self._gc)
@@ -249,14 +281,7 @@ class ClientHealth:
                 await self._task
 
     def section(self) -> dict:
-        lag = sorted(x * 1000 for x in self.lag_s)
-        out: dict = {"loop_lag_samples": len(lag), "loop_lag_ms": None}
-        if lag:
-            out["loop_lag_ms"] = {
-                "50": percentile(lag, 50, "nearest"),
-                "99": percentile(lag, 99, "nearest"),
-                "max": lag[-1],
-            }
+        out: dict = {"loop_lag_samples": len(self.samples), "loop_lag_ms": loop_lag_ms(self.samples)}
         pauses = [s * 1000 for _, s in self.gc_s]
         out.update(
             gc_passes=len(pauses),
@@ -288,10 +313,15 @@ class Measurement:
     # Recycled replay: the plays started, each a salted copy of a session's turns, and the deadline.
     plays: list | None = None
     deadline_s: float | None = None
+    # (seconds since the run's start, loop lag in s), for the steady window's slice.
+    loop_lag: list | None = None
+    # Each request's sent_digest at dispatch, keyed as the plan keys it, in the order they went out.
+    executed: dict = field(default_factory=dict)
 
 
 async def measure(trace, driver, mode, emit, workload, request_id) -> Measurement:
     multi = isinstance(trace, SessionTrace)
+    executed: dict = {}
     offsets = None if multi else arrival_offsets(trace, workload)
     sessions: SessionDispatcher | None = None
     if multi:
@@ -310,16 +340,16 @@ async def measure(trace, driver, mode, emit, workload, request_id) -> Measuremen
         health.start()
         try:
             if sessions is not None:
-                results, by_turn, pairs, start = await sessions.run()
+                results, by_turn, pairs, start = await sessions.run(executed)
             else:
-                pairs, start = await replay(trace, driver, mode, emit, offsets, request_id)
+                pairs, start = await replay(trace, driver, mode, emit, offsets, request_id, executed)
                 results, by_turn = [r for _, r in pairs], None
             duration = time.perf_counter() - start
         finally:
             await health.stop()
         spec = server_spec_decode_section(before, server_counters(driver) if before else None)
     if sessions is None:
-        return Measurement(results, by_turn, pairs, duration, spec, client=health.section())
+        return Measurement(results, by_turn, pairs, duration, spec, client=health.section(), executed=executed)
     return Measurement(
         results,
         by_turn,
@@ -330,18 +360,46 @@ async def measure(trace, driver, mode, emit, workload, request_id) -> Measuremen
         health.section(),
         sessions.plays or None,
         sessions.deadline_s,
+        [(t - start, lag) for t, lag in health.samples],
+        executed,
     )
+
+
+def withhold_on_client_lag(steady: dict, loop_lag: list) -> None:
+    """Adds the loop lag inside a valid steady window and withholds its TTFT when p99 is over LOOP_LAG_LIMIT_MS: a
+    late loop reads every first chunk late."""
+    inside = [(t, lag) for t, lag in loop_lag if steady["start_s"] <= t <= steady["end_s"]]
+    lag = steady["client_loop_lag_ms"] = loop_lag_ms(inside)
+    steady["client_loop_lag_samples"] = len(inside)
+    if lag and lag["99"] > LOOP_LAG_LIMIT_MS:
+        steady["ttft_ms"] = None
+        steady["withheld"] = {
+            "ttft_ms": f"client event loop late by {lag['99']:.1f} ms at p99 in the window, over {LOOP_LAG_LIMIT_MS:g} ms"
+        }
 
 
 def steady_line(s: dict) -> str:
     if not s["valid"]:
         return f"Steady window: none ({s['reason']}); whole-run numbers include ramp and drain"
     tl = s["timeline"]["output_tok_s"]
+    withheld = "".join(f"; {k} withheld: {why}" for k, why in s.get("withheld", {}).items())
     return (
         f"Steady window: {s['start_s']:.1f} s to {s['end_s']:.1f} s of the run, all {s['agents']} agents busy: "
         f"{s['output_token_throughput']:.1f} out tok/s (per-bin min {tl['min']:.1f}, max {tl['max']:.1f}), "
-        f"{s['sessions_per_hour']:.1f} sessions/h, {s['requests_inside']} requests fully inside"
+        f"{s['sessions_per_hour']:.1f} sessions/h, {s['requests_inside']} requests fully inside{withheld}"
     )
+
+
+def cold_start_line(s: dict) -> str | None:
+    """The cold-start TTFT beside the steady window: each agent's first turn, then everything before the window."""
+    parts = []
+    for label, t in (
+        ("first turns", s.get("first_turn_ttft_ms")),
+        ("before the window", (s.get("ramp") or {}).get("ttft_ms")),
+    ):
+        if t:
+            parts.append(f"{label} p50 {t[50]:.1f} ms, p99 {t[99]:.1f} ms (n={t['n']})")
+    return f"Cold start TTFT: {'; '.join(parts)}" if parts else None
 
 
 def serve_records(pairs, open_loop):
@@ -392,13 +450,15 @@ def server_spec_decode_section(before, after):
     }
 
 
-def summary_sections(pairs, duration, mode, server_spec_decode=None):
-    """spec prefers the server's counters over the rows'."""
+def summary_sections(pairs, duration, mode, server_spec_decode=None, sessions=False):
+    """spec prefers the server's counters over the rows'. sessions: a session run, whose steady TTFT is
+    sections.steady's, not the requests past the first C indexes."""
     out = {"spec_decode": server_spec_decode or spec_decode_section(pairs)}
     records = serve_records(pairs, mode.load == "open")
     if not records:
         return out
-    closed = mode.concurrency if mode.load == "closed" else 0
+    # In a session run C caps agents, not requests in flight, and request indexes are not dispatch order.
+    closed = mode.concurrency if mode.load == "closed" and not sessions else 0
     s = out["serve"] = summarize_serve(records, duration, "nearest", closed)
     if mode.sla_ttft_ms or mode.sla_tpot_ms:
         bound = sla_verdict(s, mode.sla_ttft_ms, mode.sla_tpot_ms)
@@ -443,7 +503,7 @@ def goodput_search(start=1.0, max_iters=6, tol=0.1):
             speed = speed / 2
 
 
-def sweep(trace, driver, mode, writer, workload, request_id):
+def sweep(trace, driver, mode, writer, workload, request_id, plan):
     """Stops at the first probe that breaks workload identity."""
     gen, best = goodput_search(start=workload.speed), None
     probes: list = []
@@ -462,7 +522,7 @@ def sweep(trace, driver, mode, writer, workload, request_id):
             )
         )
         section = {"max_req_s": None, "speed": None, "fail_bound": fail_bound, "probes": probes}
-        if not identity(trace, served(out.pairs))["match"]:
+        if not identity(plan, out.executed, plan.planned_keys(out.executed))["match"]:
             return out, {**section, "iterations": len(probes) + 1}
         s = summarize_serve(serve_records(out.pairs, True), out.duration, "nearest")
         bound = sla_verdict(s, mode.sla_ttft_ms, mode.sla_tpot_ms)
@@ -499,22 +559,55 @@ def enforce(gate, writer, summary):
         stop(writer, summary.to_dict(), "aborted", message, 1)
 
 
-def served(pairs):
-    """Failed or not: the hash moves only when what was sent differs."""
-    return [q for q, _ in pairs]
+def turns_not_sent(planned, executed, pairs) -> list:
+    """The planned (session, turn) keys after each session's first failed turn: a failed turn ends its session, so
+    these were never sent."""
+    failed_at: dict = {}
+    for q, r in pairs:
+        if not r.success:
+            failed_at[q.session_id] = min(q.turn, failed_at.get(q.session_id, q.turn))
+    return [k for k in planned if k not in executed and k[0] in failed_at and k[1] > failed_at[k[0]]]
 
 
-def identity(trace, served, planned=None) -> dict:
-    """planned: the requests a recycled replay started, whose hash replaces the trace's."""
-    expected = workload_hash(planned, trace.live_replies) if planned is not None else trace.workload_hash()
-    replayed = workload_hash(served, trace.live_replies)
-    return {
-        "expected": expected,
-        "replayed": replayed,
-        "match": expected == replayed,
-        "n": len(served),
-        "of": len(planned) if planned is not None else len(trace.requests()),
+def key_row(key) -> dict:
+    return {"session": key[0], "turn": key[1]} if isinstance(key, tuple) else {"request": key}
+
+
+def digests_hash(digests) -> str:
+    """One hash over request digests, whatever their order."""
+    h = hashlib.sha256()
+    for d in sorted(digests):
+        h.update(d.encode())
+    return h.hexdigest()[:16]
+
+
+def identity(plan, executed, planned, not_sent=()) -> dict:
+    """Checks every request as it was sent (executed: its digest at dispatch) against the plan frozen before the
+    run. Turns a failed turn left unsent (not_sent) are listed, not mismatches; a request that differs, was not
+    planned or was never sent fails the check, and the first one is named. plan_hash is the hash runs compare on."""
+    skipped = set(not_sent)
+    mismatch = None
+    for key, digest in executed.items():
+        want = plan.digest(key)
+        if want != digest:
+            mismatch = {**key_row(key), "reason": "not in the plan" if want is None else "differs from the plan"}
+            break
+    missing = next((k for k in planned if k not in executed and k not in skipped), None)
+    if mismatch is None and missing is not None:
+        mismatch = {**key_row(missing), "reason": "planned but never sent"}
+    out = {
+        "plan_hash": plan.plan_hash,
+        "expected": digests_hash(plan.digest(k) for k in planned if k not in skipped),
+        "executed_hash": digests_hash(executed.values()),
+        "match": mismatch is None,
+        "n": len(executed),
+        "of": len(planned),
     }
+    if mismatch:
+        out["first_mismatch"] = mismatch
+    if not_sent:
+        out["turns_not_sent"] = [key_row(k) for k in not_sent]
+    return out
 
 
 def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
@@ -532,10 +625,16 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
             profile_name=name, concurrency=mode.concurrency, session_id=session, turn_index=turn, request_index=index
         )
 
+    multi = isinstance(trace, SessionTrace)
+    if not multi:
+        stamp_arrivals(trace, workload)
+    # Frozen before anything is sent: the check below compares each request as sent with this, not with the
+    # Request objects the run itself sends.
+    plan = freeze(trace, recycled=multi and mode.duration_s > 0, seed=workload.seed)
     goodput = None
     try:
         if mode.goodput_sweep:
-            measured, goodput = sweep(trace, driver, mode, writer, workload, request_id)
+            measured, goodput = sweep(trace, driver, mode, writer, workload, request_id, plan)
         else:
             measured = asyncio.run(measure(trace, driver, mode, emitter(mode, writer), workload, request_id))
     except PrefixCacheResetError as e:
@@ -548,13 +647,14 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
     results, by_turn, pairs, duration = measured.results, measured.by_turn, measured.pairs, measured.duration
     server_spec_decode, session_times, client = measured.spec_decode, measured.session_times, measured.client
     plays = measured.plays
-    planned = [r for p in plays for r in p] if plays else None
     if plays:
         planned_turns = {p[0].session_id: len(p) for p in plays}
-    elif isinstance(trace, SessionTrace):
+    elif multi:
         planned_turns = {s[0].session_id: len(s) for s in trace.sessions()}
     else:
         planned_turns = None
+    planned = plan.planned_keys(measured.executed)
+    not_sent = turns_not_sent(planned, measured.executed, pairs) if multi else []
 
     core = aggregate(
         results=[r for r in results if r is not None],
@@ -574,10 +674,10 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
     else:
         print_summary(core)
         enforce(transient_gate(len(trace.requests()), mode.concurrency), writer, summary)
-    enforce(success_rate_gate(core, mode.min_success_rate), writer, summary)
+    enforce(success_rate_gate(core, mode.min_success_rate, len(not_sent)), writer, summary)
     enforce(usage_gate(core, mode.allow_missing_usage), writer, summary)
 
-    ident = summary.sections["workload"] = identity(trace, served(pairs), planned)
+    ident = summary.sections["workload"] = identity(plan, measured.executed, planned, not_sent)
     if plays:
         stratum_of = getattr(trace, "stratum_of", None)
         summary.sections["plays"] = {
@@ -585,6 +685,7 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
             "plays": len(plays),
             "duration_s": measured.deadline_s,
             "salt": "first user turn of every play",
+            "play_rule": PLAY_RULE,
             # Plays per stratum: a stratified order keeps these within one of each other per pass.
             "plays_by_stratum": dict(
                 collections.Counter(stratum_of[int(str(p[0].session_id).split("#")[0])] for p in plays)
@@ -595,15 +696,21 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
     # What was replayed, for a reader of run.json alone: the file and its digest, and the sessions in order.
     summary.sections["trace"] = {**trace.source_meta(), "sample": list(getattr(trace, "sample", []))}
     summary.sections.update(
-        {"goodput": goodput} if goodput else summary_sections(pairs, duration, mode, server_spec_decode)
+        {"goodput": goodput} if goodput else summary_sections(pairs, duration, mode, server_spec_decode, multi)
     )
     print_summary_tag_lines(summary.sections)
     if client is not None:
         summary.sections["client"] = client
         print(client_line(client), flush=True)
     if session_times is not None and mode.load == "closed":
-        summary.sections["steady"] = steady_section(results, session_times, mode.concurrency, end_s=measured.deadline_s)
-        print(steady_line(summary.sections["steady"]), flush=True)
+        steady = summary.sections["steady"] = steady_section(
+            results, session_times, mode.concurrency, end_s=measured.deadline_s, min_window_s=MIN_RECYCLED_WINDOW_S
+        )
+        if steady["valid"] and measured.loop_lag is not None:
+            withhold_on_client_lag(steady, measured.loop_lag)
+        print(steady_line(steady), flush=True)
+        if cold := cold_start_line(steady):
+            print(cold, flush=True)
     if not ident["match"]:
         stop(writer, summary.to_dict(), "failed", "workload identity", IDENTITY_EXIT)
     if goodput and goodput["max_req_s"] is None:
@@ -611,6 +718,8 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
     if core.failed_requests:
         summary.status = "partial"
         summary.reason = f"{core.failed_requests} of {core.num_requests} requests failed"
+        if not_sent:
+            summary.reason += f"; {len(not_sent)} later turns of their sessions not sent"
     writer.finish(summary.to_dict(), status=summary.status, reason=summary.reason)
     return summary
 
@@ -854,12 +963,16 @@ class SessionDispatcher:
                     "--turn-pacing interleaved (everyone starts turn 0 together)."
                 )
 
-    async def run(self):
+    async def run(self, executed: dict):
+        """executed gets each request's sent_digest just before it goes out, keyed (session, turn)."""
+        self.executed = executed
         self.slots = asyncio.Semaphore(self.mode.concurrency)
         self.by_turn: dict[int, list] = {i: [] for i in range(self.max_turns)}
         self.served: list = []
-        self.prev_context, self.prev_output = {}, {}
-        self.dead, self.warned = set(), False
+        self.prev_context: dict = {}
+        self.prev_output: dict = {}
+        self.dead: set = set()
+        self.warned = False
         # session_id -> (arrived, admitted, finished), seconds since start; the steady window reads these
         self.session_times: dict = {}
         self.plays: list = []
@@ -892,6 +1005,7 @@ class SessionDispatcher:
         gated = not self.open_loop and self.pacing.pacing == "interleaved"
         async with self.slots if gated else no_limit():
             granted = elapsed()
+            self.executed[sid, turn] = sent_digest(request, spliced_at(request, self.trace.replies))
             result = await self.send(request, capture_text=True, request_id=self.request_id(sid, turn, index))
         annotate_request_observability(
             result,

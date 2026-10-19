@@ -110,6 +110,10 @@ def stratify(sessions: list, take: int | None) -> tuple[list, dict]:
     return order, {s.session_id: k for k, v in strata.items() for s in v}
 
 
+# Names how play() salts a play; part of a recycled run's plan hash, so change it when the salt changes.
+PLAY_RULE = "rid-v1: [rid:<sha256(seed:session:play)[:12]>] and a blank line before the first user message"
+
+
 def play(turns: list, seed: int, number: int) -> list:
     """One salted play of a session for a recycled replay: a fresh [rid:...] tag on the first user turn, so the play
     misses the prefix cache its earlier plays left; session_id becomes "<session>#<number>"."""
@@ -298,10 +302,17 @@ class TrajectorySessionTrace(LoadedSessionTrace):
         **trace_kw,
     ):
         sessions: list[MultiTurnSession] = []
-        cut_sessions = dropped = 0
+        cut_sessions = dropped = no_waits = 0
+        pacing = trace_kw.get("pacing")
+        waits_on = pacing is not None and pacing.use_recorded_waits
         with open(path) as f:
             lines = [json.loads(line) for line in (raw.strip() for raw in f) if line]
         for entry in lines:
+            # The builder marks a session whose waits it could not recover; under recorded waits it would run
+            # back to back while the run says waits were on.
+            if waits_on and entry.get("recorded_waits") is False:
+                no_waits += 1
+                continue
             raw_turns = entry.get("turns", [])
             if len(raw_turns) < min_turns:
                 dropped += 1
@@ -337,11 +348,16 @@ class TrajectorySessionTrace(LoadedSessionTrace):
                 continue
             cut_sessions += cut
             sessions.append(MultiTurnSession(len(sessions), turns, arrival_time_ms=session_arrival_ms(entry)))
-        self.sessions_cut, self.sessions_dropped = cut_sessions, dropped
+        self.sessions_cut, self.sessions_dropped, self.sessions_dropped_no_waits = cut_sessions, dropped, no_waits
         super().__init__(sessions, path, "trajectory", seed=seed, num_sessions=num_sessions, **trace_kw)
 
     def source_meta(self):
-        return {**super().source_meta(), "sessions_cut": self.sessions_cut, "sessions_dropped": self.sessions_dropped}
+        return {
+            **super().source_meta(),
+            "sessions_cut": self.sessions_cut,
+            "sessions_dropped": self.sessions_dropped,
+            "sessions_dropped_no_waits": self.sessions_dropped_no_waits,
+        }
 
 
 def inter_turn_wait_s(

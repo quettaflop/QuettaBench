@@ -694,15 +694,15 @@ PINS = {
     "chat-multiturn-short": ("c51f134d3946f53d", "40b315fc6465cb47"),
     "chat-singleturn": ("1b84966cb9c4facc", "84b2b4875f8a177f"),
     "coding-singleturn": ("15384d696a4d7a1b", "0359e7a0be1623a2"),
-    "deepresearch-multiturn": ("3f95464ab226ff8f", "8bf116898d7c5194"),
+    "deepresearch-multiturn": ("3f95464ab226ff8f", "b42b5f4449e073e1"),
     "mooncake-trace": ("a03be7b0ed268d81", "b5ed59cd7a0d7aff"),
-    "deepsearch-multiturn": ("e4224f2a4551c063", "1fa603749728bb24"),
-    "swebench-qwen-multiturn-long": ("36475a9de1586a56", "bca67f88cb7b7a38"),
-    "swebench-qwen-multiturn-medium": ("152d31a287902055", "d8e06228cacd6f44"),
-    "terminalbench-qwen-multiturn-long": ("304c01f98afc8c32", "210e58a633b92bcf"),
-    "terminalbench-qwen-multiturn-medium": ("36d005dbd2cb0786", "4b344bf51bfcc23a"),
+    "deepsearch-multiturn": ("e4224f2a4551c063", "839c68468820ad30"),
+    "swebench-qwen-multiturn-long": ("36475a9de1586a56", "8597a8a0a958c864"),
+    "swebench-qwen-multiturn-medium": ("152d31a287902055", "0dc0f204ba2642ce"),
+    "terminalbench-qwen-multiturn-long": ("304c01f98afc8c32", "5a59fe5d925983ae"),
+    "terminalbench-qwen-multiturn-medium": ("36d005dbd2cb0786", "2c01ecf05eb064e1"),
     "test": ("7ae706bdf8eeae1d", "a5c809ace7fb7a08"),
-    "cut": ("a7ffbc60a718ff0d", "e4826a83481ff78e"),
+    "cut": ("a7ffbc60a718ff0d", "b33a0f970b6da9ce"),
 }
 
 
@@ -969,6 +969,26 @@ class ToolSchemas(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()):
                 trace = TrajectorySessionTrace(str(path), min_turns=1, num_sessions=1)
         self.assertEqual([r.tools for r in trace.sessions()[0]], [self.TOOLS, self.TOOLS])
+
+    def test_recorded_waits_drop_the_sessions_whose_waits_were_not_recorded(self):
+        def session(sid, recorded):
+            turn = {"messages": [{"role": "user", "content": sid}], "prompt_tokens": 5, "osl_tokens": 3, "tool_ms": 9}
+            return {"session_id": sid, "turns": [turn], **({} if recorded is None else {"recorded_waits": recorded})}
+
+        rows = [session("a", True), session("b", False), session("c", None)]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "trace.jsonl"
+            path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+            with contextlib.redirect_stdout(io.StringIO()):
+                waits = TrajectorySessionTrace(
+                    str(path), min_turns=1, num_sessions=None, pacing=TurnPacing(use_recorded_waits=True)
+                )
+                plain = TrajectorySessionTrace(str(path), min_turns=1, num_sessions=None)
+        # "c" carries no flag: a builder that recovers every wait need not write one.
+        self.assertEqual(sorted(waits.sample), ["a", "c"])
+        self.assertEqual(waits.source_meta()["sessions_dropped_no_waits"], 1)
+        self.assertEqual(sorted(plain.sample), ["a", "b", "c"])
+        self.assertEqual(plain.source_meta()["sessions_dropped_no_waits"], 0)
 
 
 class DeepResearchTrajectories(unittest.TestCase):

@@ -69,6 +69,14 @@ def _payload(model, prompt, max_tokens, temperature, ignore_eos, request_id, see
     return payload
 
 
+def _read_usage(usage: dict) -> tuple[int, int, int | None, bool]:
+    """Prompt, completion and cached token counts from a usage block. It counts as reported only with both counts,
+    so a block missing one is not read as zero tokens."""
+    reported = all(isinstance(usage.get(k), int) for k in ("prompt_tokens", "completion_tokens"))
+    cached = (usage.get("prompt_tokens_details") or {}).get("cached_tokens")
+    return usage.get("prompt_tokens") or 0, usage.get("completion_tokens") or 0, cached, reported
+
+
 async def _stream_chat(
     session: aiohttp.ClientSession,
     url: str,
@@ -145,11 +153,7 @@ async def _stream_chat(
                 now = time.perf_counter()
 
                 if chunk.get("usage"):
-                    usage = chunk["usage"]
-                    input_tokens = usage.get("prompt_tokens", 0)
-                    output_tokens = usage.get("completion_tokens", 0)
-                    server_cached_tokens = (usage.get("prompt_tokens_details") or {}).get("cached_tokens")
-                    usage_reported = True
+                    input_tokens, output_tokens, server_cached_tokens, usage_reported = _read_usage(chunk["usage"])
 
                 choices = chunk.get("choices", [])
                 if not choices:
@@ -313,11 +317,7 @@ async def _stream_completions(
                 now = time.perf_counter()
 
                 if chunk.get("usage"):
-                    usage = chunk["usage"]
-                    input_tokens = usage.get("prompt_tokens", 0)
-                    output_tokens = usage.get("completion_tokens", 0)
-                    server_cached_tokens = (usage.get("prompt_tokens_details") or {}).get("cached_tokens")
-                    usage_reported = True
+                    input_tokens, output_tokens, server_cached_tokens, usage_reported = _read_usage(chunk["usage"])
 
                 choices = chunk.get("choices", [])
                 if not choices:

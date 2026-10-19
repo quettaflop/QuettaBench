@@ -393,9 +393,16 @@ PCTS = (50, 90, 95, 99)
 
 
 def workload_line(w):
-    return (
-        f"WORKLOAD_CHECK expected={w['expected']} replayed={w['replayed']} match={int(w['match'])} n={w['n']}/{w['of']}"
+    line = (
+        f"WORKLOAD_CHECK plan={w['plan_hash']} expected={w['expected']} executed={w['executed_hash']} "
+        f"match={int(w['match'])} n={w['n']}/{w['of']}"
     )
+    if w.get("turns_not_sent"):
+        line += f" not_sent={len(w['turns_not_sent'])}"
+    if m := w.get("first_mismatch"):
+        where = ":".join(str(v) for k, v in m.items() if k != "reason")
+        line += f" first_mismatch={where} ({m['reason']})"
+    return line
 
 
 def goodput_probe_line(p):

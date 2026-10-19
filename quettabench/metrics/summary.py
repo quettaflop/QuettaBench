@@ -353,38 +353,56 @@ def pcts(values, method: str) -> dict:
 
 
 HANDOVER_S = 0.05
+MIN_RECYCLED_WINDOW_S = 300.0
 
 
-def steady_window(session_times: dict, concurrency: int, end_s: float | None = None) -> dict:
-    """The span in which every agent is busy: from the last free agent filled to the first finish after the last
-    admission, or to end_s for a recycled replay. Invalid, with the reason, with 2C sessions or fewer or when an
-    agent sits idle."""
+def steady_window(
+    session_times: dict, concurrency: int, end_s: float | None = None, min_window_s: float = MIN_RECYCLED_WINDOW_S
+) -> dict:
+    """The span in which every agent is busy: from the moment every agent has finished its first session to the
+    first finish after the last admission, or to end_s, the deadline, for a recycled replay. Invalid, with the
+    reason, when an agent sits idle inside it; per-session, with 2C sessions or fewer; recycled, when it opens
+    after the deadline or lasts under min_window_s."""
     n, c = len(session_times), max(1, concurrency)
+    recycled = end_s is not None
     out: dict = {"valid": False, "sessions": n, "agents": c}
     # Every agent starts its first session at once; with no more than 2C sessions the agents have barely turned
-    # over by the last admission, and the window is mostly that synchronized start.
-    if n <= 2 * c:
+    # over by the last admission, and the window is mostly that synchronized start. A recycled replay keeps
+    # drawing plays to the deadline, so it is judged by the window's length instead.
+    if (not recycled and n <= 2 * c) or n == 0:
         out["reason"] = f"{n} sessions for {c} agents; a steady window needs more than {2 * c}"
         return out
     times = sorted(session_times.values(), key=lambda t: t[1])
-    start, last_admitted = times[c - 1][1], times[-1][1]
-    end = end_s if end_s is not None else min(fin for _, adm, fin in times if fin > last_admitted)
-    # A freed agent takes the next session microseconds after the last one finishes; an agent idle for longer
-    # than HANDOVER_S inside the window was waiting for a session's recorded arrival.
-    open_now, idle_since = 0, None
-    for t, d in sorted([(adm, 1) for _, adm, _ in times] + [(fin, -1) for _, _, fin in times]):
-        open_now += d
-        if open_now < c and idle_since is None:
-            idle_since = t
-        elif open_now >= c and idle_since is not None:
-            if idle_since >= start and t - idle_since > HANDOVER_S and idle_since < end:
-                out["reason"] = f"an agent was idle {t - idle_since:.3f} s from {idle_since:.3f} s inside the window"
-                return out
-            idle_since = None
+    # The first C sessions start together, in phase, their first prefills on an empty cache; the window opens
+    # when the last of them finishes.
+    start, last_admitted = max(fin for _, _, fin in times[:c]), times[-1][1]
+    if recycled and start >= end_s:
+        out["reason"] = f"the first plays end at {start:.1f} s, after the {end_s:g} s deadline"
+        return out
+    end = end_s if recycled else min(fin for _, adm, fin in times if fin > last_admitted)
     if end <= start:
         out["reason"] = "the window closed before it opened"
         return out
-    out.update(valid=True, start_s=start, end_s=end, window_s=end - start)
+    # A freed agent takes the next session microseconds after the last one finishes; an agent idle for longer
+    # than HANDOVER_S inside the window was waiting for a session's recorded arrival. An idle spell that began
+    # before the window counts for the part inside it; the drain's spell never closes, so infinity closes it.
+    open_now, idle_since = 0, None
+    events = sorted([(adm, 1) for _, adm, _ in times] + [(fin, -1) for _, _, fin in times])
+    for t, d in events + [(math.inf, 0)]:
+        open_now += d
+        if open_now < c and idle_since is None:
+            idle_since = t
+        elif (open_now >= c or t == math.inf) and idle_since is not None:
+            lo, hi = max(idle_since, start), min(t, end)
+            if hi - lo > HANDOVER_S:
+                out["reason"] = f"an agent was idle {hi - lo:.3f} s from {lo:.3f} s inside the window"
+                return out
+            idle_since = None
+    out.update(start_s=start, end_s=end, window_s=end - start)
+    if recycled and end - start < min_window_s:
+        out["reason"] = f"the window lasts {end - start:.1f} s; a recycled window needs at least {min_window_s:g} s"
+        return out
+    out["valid"] = True
     return out
 
 
@@ -430,20 +448,52 @@ def in_flight_by_bin(ok, start: float, widths: list[float]) -> list[float]:
     return inflight
 
 
+def ttft_ms_summary(results) -> dict | None:
+    """n and nearest-rank p50, p90 and p99 TTFT in ms over the successful results; None without one."""
+    ttfts = [r.ttft * 1000 for r in results if r.success and r.ttft is not None]
+    if not ttfts:
+        return None
+    return {"n": len(ttfts), **{p: percentile(ttfts, p, "nearest") for p in (50, 90, 99)}}
+
+
 def steady_section(
-    results, session_times: dict, concurrency: int, bin_s: float = 10.0, end_s: float | None = None
+    results,
+    session_times: dict,
+    concurrency: int,
+    bin_s: float = 10.0,
+    end_s: float | None = None,
+    min_window_s: float = MIN_RECYCLED_WINDOW_S,
 ) -> dict:
     """The steady window's throughput, rates and latency percentiles, with a per-bin timeline that shows the window
-    held. Takes the dispatcher's session_times and the run's agent count."""
-    w = steady_window(session_times, concurrency, end_s)
+    held. Takes the dispatcher's session_times and the run's agent count. The cold start is reported beside it, not
+    dropped: first_turn_ttft_ms over the first turn of each agent's first session, ramp over requests sent before
+    the window opened."""
+    w = steady_window(session_times, concurrency, end_s, min_window_s)
+    first_sessions = {sid for sid, _ in sorted(session_times.items(), key=lambda kv: kv[1][1])[: max(1, concurrency)]}
+    w["first_turn_ttft_ms"] = ttft_ms_summary(
+        r for r in results if r is not None and r.session_id in first_sessions and r.turn_index == 0
+    )
+    failed = {r.session_id for r in results if r is not None and not r.success}
+    if "start_s" in w:
+        # Every play that finished inside the window with each turn successful; reported when too short as well.
+        start, end = w["start_s"], w["end_s"]
+        done_ids = [sid for sid, (_, _, fin) in session_times.items() if start <= fin <= end and sid not in failed]
+        if end_s is not None:
+            w["plays_completed"] = len(done_ids)
     if not w["valid"]:
         return w
     start, end, span = w["start_s"], w["end_s"], w["window_s"]
+    w["ramp"] = {
+        "ttft_ms": ttft_ms_summary(
+            r
+            for r in results
+            if r is not None and r.semaphore_acquired_at_s is not None and r.semaphore_acquired_at_s < start
+        )
+    }
     ok = [r for r in results if r is not None and r.success and r.completed_at_s is not None]
     done = [r for r in ok if start <= r.completed_at_s <= end]
     inside = [r for r in done if r.semaphore_acquired_at_s is not None and r.semaphore_acquired_at_s >= start]
-    failed = {r.session_id for r in results if r is not None and not r.success}
-    sessions_done = sum(1 for sid, (_, _, fin) in session_times.items() if start <= fin <= end and sid not in failed)
+    sessions_done = len(done_ids)
     widths = [min(bin_s, span - i * bin_s) for i in range(max(1, math.ceil(span / bin_s)))]
     out_tok, in_tok, bins = tokens_by_arrival(ok, start, end, widths)
     inflight = in_flight_by_bin(ok, start, widths)
@@ -849,26 +899,32 @@ def aggregate_per_turn(results_by_turn: dict[int, list]) -> list[TurnSummary]:
 # Gates return (verdict, message): "pass", "warn" or "abort"; message None on pass.
 
 
-def success_rate_gate(summary, min_rate: float) -> tuple[str, str | None]:
+def success_rate_gate(summary, min_rate: float, not_sent: int = 0) -> tuple[str, str | None]:
+    """not_sent: planned turns a failed turn ended before they were sent, counted as failed."""
     if summary.num_requests == 0:
         return "abort", f"ABORT: No requests completed. Minimum success rate: {min_rate:.0%}"
-    rate = summary.successful_requests / summary.num_requests
+    planned = summary.num_requests + not_sent
+    rate = summary.successful_requests / planned
     if rate < min_rate:
         kinds = ", ".join(f"{k}={v}" for k, v in sorted(summary.error_kinds.items()))
+        unsent = f", not_sent={not_sent}" if not_sent else ""
         return "abort", (
             f"ABORT: Success rate {rate:.1%} below minimum {min_rate:.0%} "
-            f"({summary.successful_requests}/{summary.num_requests}); failures: {kinds}"
+            f"({summary.successful_requests}/{planned}); failures: {kinds}{unsent}"
         )
     return "pass", None
 
 
 def usage_gate(summary, allow_missing: bool) -> tuple[str, str | None]:
-    """Every successful response must carry a usage block: a token count not from the server is a guess, and
-    throughputs built on a zero are understated."""
+    """Every successful response must carry a usage block with prompt_tokens and completion_tokens: a token count
+    not from the server is a guess, and throughputs built on a zero are understated."""
     missing = summary.successful_requests - summary.usage_reported_requests
     if summary.successful_requests == 0 or missing == 0:
         return "pass", None
-    what = f"{missing} of {summary.successful_requests} successful responses carried no usage block"
+    what = (
+        f"{missing} of {summary.successful_requests} successful responses carried no usage block "
+        "with both prompt_tokens and completion_tokens"
+    )
     if allow_missing:
         return "warn", (
             f"WARNING: {what}; their token counts are zero-filled and every throughput "

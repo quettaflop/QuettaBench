@@ -540,6 +540,17 @@ class CaptureTextTests(unittest.TestCase):
         self.assertIsNone(plain.server_cached_tokens)
         self.assertNotIn("server_cached_tokens", jsonl_row(plain))
 
+    def test_a_usage_block_counts_as_reported_only_with_both_token_counts(self):
+        def usage_of(usage):
+            r = _run(_ChatSession(_chat_sse([_delta("a"), {"choices": [{"delta": {}}], "usage": usage}])))
+            return r.usage_reported, r.input_tokens, r.output_tokens
+
+        self.assertEqual(usage_of({"prompt_tokens": 4, "completion_tokens": 1}), (True, 4, 1))
+        # A block missing a count would otherwise pass the usage gate as zero tokens.
+        self.assertEqual(usage_of({"prompt_tokens": 4}), (False, 4, 0))
+        self.assertEqual(usage_of({"completion_tokens": 1}), (False, 0, 1))
+        self.assertEqual(usage_of({"prompt_tokens": 4, "completion_tokens": None}), (False, 4, 0))
+
     def test_reasoning_and_tool_calls_are_not_transcript_content(self):
         r = _run(
             _ChatSession(
