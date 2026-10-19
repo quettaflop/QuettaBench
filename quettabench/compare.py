@@ -345,6 +345,9 @@ def server_parity(a, b) -> list[str]:
 # Two windows asked the same of their servers when every p50 and mean here is within MIX_TOLERANCE.
 MIX_FIELDS = ("input_tokens", "output_tokens", "uncached_prefill_tokens", "tool_wait_s", "session_turns")
 MIX_TOLERANCE = 0.05
+# A difference below a field's floor is noise however large in proportion: with recorded waits off, the realized wait
+# is the client's sub-millisecond turnaround, and 1.6 against 2.0 ms is 21% of nothing.
+MIX_FLOORS = {"tool_wait_s": 0.05}
 
 
 def mix_diff(a, b) -> list[str]:
@@ -360,7 +363,8 @@ def mix_diff(a, b) -> list[str]:
                 out.append(f"{name}: in one run only")
             continue
         for stat in ("p50", "mean"):
-            if abs(x[stat] - y[stat]) > MIX_TOLERANCE * max(abs(x[stat]), abs(y[stat])):
+            bar = max(MIX_TOLERANCE * max(abs(x[stat]), abs(y[stat])), MIX_FLOORS.get(name, 0.0))
+            if abs(x[stat] - y[stat]) > bar:
                 out.append(f"{name} {stat}: {x[stat]:g} vs {y[stat]:g}")
     return out
 

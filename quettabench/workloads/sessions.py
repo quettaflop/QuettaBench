@@ -114,18 +114,20 @@ def stratify(sessions: list, take: int | None) -> tuple[list, dict]:
 # How play() salts a play under each workload.salt; part of a recycled run's plan hash, so change one when its
 # salt changes.
 PLAY_RULES = {
-    "text": "rid-v1: [rid:<sha256(seed:session:play)[:12]>] and a blank line before the first user message",
-    "cache_salt": "rid-v1: vLLM's cache_salt field set to sha256(seed:session:play)[:12]; the prompt as recorded",
+    "text": "rid-v2: [rid:<sha256(seed:run:session:play)[:12]>] and a blank line before the first user message",
+    "cache_salt": "rid-v2: vLLM's cache_salt field set to sha256(seed:run:session:play)[:12]; the prompt as recorded",
 }
 
 
-def play(turns: list, seed: int, number: int, salt: str = "text") -> list:
+def play(turns: list, seed: int, number: int, salt: str = "text", run: str = "") -> list:
     """One salted play of a session for a recycled replay, so the play misses the prefix cache its earlier plays
     left. salt "text" puts a [rid:...] tag before the first user message, as AgentX does; "cache_salt" leaves the
     prompt as recorded and sets vLLM's cache_salt field on every turn. session_id becomes "<session>#<number>".
     Each turn gets a new list of the source's own message dicts, except the tagged one, so a play never edits
-    its messages."""
-    tag = hashlib.sha256(f"{seed}:{turns[0].session_id}:{number}".encode()).hexdigest()[:12]
+    its messages. run is the run's own id: two runs on one server never share a tag, so a second run cannot reuse
+    the first run's cache when the server cannot reset it."""
+    key = f"{seed}:{run}:{turns[0].session_id}:{number}" if run else f"{seed}:{turns[0].session_id}:{number}"
+    tag = hashlib.sha256(key.encode()).hexdigest()[:12]
     sid = f"{turns[0].session_id}#{number}"
     out = []
     for r in turns:

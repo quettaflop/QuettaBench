@@ -28,7 +28,7 @@ from quettabench.modes import serve
 from quettabench.workloads.base import Request
 from quettabench.workloads.live import RealTrace
 from quettabench.workloads.plan import freeze, sent_digest
-from quettabench.workloads.sessions import SessionTrace, TurnPacing
+from quettabench.workloads.sessions import SessionTrace, TurnPacing, play
 from tests.contracts import helpers
 from tests.golden._harness import DENSE_CONFIG, RUNS, grid_argv, run_grid_cli
 
@@ -609,6 +609,22 @@ class Sessions(unittest.TestCase):
             self.assertLess(starts[3] - starts[0], 3 * 0.01 + 0.05)
             self.assertEqual(summary.sections["client"]["first_start_stagger_s"], 0.01)
 
+    def test_two_recycled_runs_of_one_plan_never_share_a_salt_but_share_the_plan_hash(self):
+        # A server that cannot reset its cache must not hand run 2 the prefixes run 1 left (H200, S8: 0.9985 hit).
+        def salts_and_hash():
+            trace, driver = recorded_trace(5, 2), TimedDriver(last_turn=1)
+            with mock.patch.object(serve, "MIN_RECYCLED_WINDOW_S", 0.0):
+                summary, _ = run(trace, driver, ModeCfg(concurrency=4, warmup=0, duration_s=0.05))
+            tags = {m[0]["content"][:18] for m, _, _ in driver.sent if len(m) == 1}
+            return tags, summary.sections["workload"]["plan_hash"], summary.sections["plays"]["salt_run"]
+
+        first, second = salts_and_hash(), salts_and_hash()
+        self.assertTrue(first[0] and second[0])
+        self.assertEqual(first[0] & second[0], set())
+        self.assertEqual(first[1], second[1])
+        self.assertNotEqual(first[2], second[2])
+        self.assertEqual(len(first[2]), 12)
+
     def test_a_recycled_plan_hash_is_the_sample_seed_and_play_rule_not_the_plays_started(self):
         def recycled(duration_s, seed=0):
             trace = recorded_trace(5, 2)
@@ -624,6 +640,47 @@ class Sessions(unittest.TestCase):
         # Salted plays are not the plain sample: a recycled run does not compare with a run of the sample as is.
         self.assertNotEqual(short[0]["plan_hash"], short[2])
         self.assertTrue(short[0]["match"] and long_[0]["match"])
+
+    def test_a_recycled_plan_digests_only_the_turn_asked_for(self):
+        # The run asks as each request completes, on the event loop; digesting the whole play at its first turn
+        # held the loop 30 to 65 ms per play at 256 agents.
+        trace = recorded_trace(2, 6)
+        plan = freeze(trace, recycled=True, seed=3, run="r1")
+        whole = play(next(s for s in trace.sessions() if s[0].session_id == 1), 3, 4, "text", "r1")
+        digests = mock.Mock(wraps=sent_digest)
+        # Through digest's own globals: a test that swaps sys.modules can leave a second copy of the module loaded.
+        with mock.patch.dict(type(plan).digest.__globals__, sent_digest=digests):
+            self.assertEqual(plan.digest(("1#4", 2)), sent_digest(whole[2]))
+            plan.digest(("1#4", 2))
+        self.assertEqual(digests.call_count, 1)
+        self.assertEqual([plan.digest(("1#4", r.turn)) for r in whole], [sent_digest(r) for r in whole])
+        self.assertIsNone(plan.digest(("9#0", 0)))
+        self.assertIsNone(plan.digest(("1#4", 6)))
+
+    def test_the_planned_digest_is_taken_after_the_run_and_still_lands_on_every_row(self):
+        # On the event loop a second digest of each request's context was 18% of the loop's time at 256 agents.
+        plan_class = freeze.__globals__["Plan"]
+        real, on_loop = plan_class.digest, []
+
+        def digest(plan, key):
+            try:
+                asyncio.get_running_loop()
+                on_loop.append(key)
+            except RuntimeError:
+                pass
+            return real(plan, key)
+
+        mode = ModeCfg(concurrency=4, warmup=0, duration_s=0.05)
+        with (
+            tempfile.TemporaryDirectory() as td,
+            mock.patch.object(plan_class, "digest", digest),
+            mock.patch.object(serve, "MIN_RECYCLED_WINDOW_S", 0.0),
+        ):
+            summary, _ = run(recorded_trace(5, 2), TimedDriver(last_turn=1), mode, results_dir=td)
+            rows = [json.loads(x) for x in (Path(td) / "requests.jsonl").read_text().splitlines()]
+        self.assertEqual(on_loop, [])
+        self.assertTrue(summary.sections["workload"]["match"])
+        self.assertTrue(rows and all(r["planned_digest"] == r["sent_digest"] for r in rows))
 
     def test_a_cache_salt_replay_sends_the_recorded_prompt_with_one_salt_per_play(self):
         class Salts(TimedDriver):
@@ -820,6 +877,32 @@ class Sessions(unittest.TestCase):
         self.assertIsNone(run_json["summary"]["per_turn"][0]["median_ttft_ms"])
         self.assertIn("2 requests failed or went unsent", run_json["summary"]["withheld"]["latency_percentiles"])
         self.assertIn("  withheld    withheld    withheld    withheld", out)
+
+    def test_the_serve_section_divides_by_the_same_span_as_the_whole_run_rates(self):
+        summary, _ = run(session_trace(4, 2), TimedDriver(last_turn=1), ModeCfg(concurrency=2, warmup=0))
+        core, serve_section = summary.core, summary.sections["serve"]
+        self.assertEqual(core.measured_window, "first send to last completion")
+        self.assertAlmostEqual(serve_section["tok_s"], core.total_output_tokens / core.measured_window_s)
+
+    def test_a_run_with_a_failed_request_has_no_steady_window(self):
+        # 12 sessions through 3 agents give a valid window; one failed turn ends its session early and voids it.
+        mode = ModeCfg(concurrency=3, warmup=0, min_success_rate=0.5)
+        clean, _ = run(session_trace(12, 3), TimedDriver(), mode)
+        self.assertTrue(clean.sections["steady"]["valid"], clean.sections["steady"])
+
+        class Failing(TimedDriver):
+            async def send(self, request, **kw):
+                result = await super().send(request, **kw)
+                if (request.session_id, request.turn) == (6, 1):
+                    result.success, result.error, result.error_kind = False, "boom", "http_error"
+                return result
+
+        failed, out = run(session_trace(12, 3), Failing(), mode)
+        steady = failed.sections["steady"]
+        self.assertEqual((steady["valid"], steady["agents"]), (False, 3))
+        self.assertEqual(steady["reason"], "2 requests failed or went unsent; the rest leave out the slowest")
+        self.assertNotIn("output_token_throughput", steady)
+        self.assertIn("Steady window: none (2 requests failed or went unsent", out)
 
     def test_turns_a_failed_turn_left_unsent_count_against_the_success_rate(self):
         # 4 of 5 sent turns succeed (80%), but 4 of the 6 planned (67%): under a 75% floor the run aborts.

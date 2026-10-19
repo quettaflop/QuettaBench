@@ -29,7 +29,7 @@ class RequestResult:
     output_tokens: int = 0
     error: str | None = None
     # A timeout means the client cut the stream: the slowest requests are missing from the tail.
-    error_kind: str | None = None  # "timeout" | "http_error" | "client_error"
+    error_kind: str | None = None  # "timeout" | "http_error" | "connection_error" | "client_error" | ...
     # Without a usage block token counts are 0 and throughputs are meaningless.
     usage_reported: bool = False
     # usage.prompt_tokens_details.cached_tokens: billed cached prompt tokens; None unless the server reports

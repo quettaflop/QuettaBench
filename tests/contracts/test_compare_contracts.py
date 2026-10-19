@@ -1052,6 +1052,16 @@ class WorkloadMixGate(unittest.TestCase):
         self.assertEqual(compare.mix_diff(MIX, far), ["input_tokens p50: 150 vs 165", "tool_wait_s: in one run only"])
         self.assertEqual(compare.mix_diff(None, None), [])
 
+    def test_a_wait_difference_under_its_floor_is_not_a_mix_difference(self):
+        # Recorded waits off: realized waits are the client's turnaround, 1.6 against 2.0 ms, 21% apart but noise.
+        a = {**MIX, "tool_wait_s": {"p10": 0.001, "p50": 0.0016, "p90": 0.003, "mean": 0.0018}}
+        b = {**MIX, "tool_wait_s": {"p10": 0.001, "p50": 0.0020, "p90": 0.003, "mean": 0.0022}}
+        self.assertEqual(compare.mix_diff(a, b), [])
+        # Recorded waits on: 1.0 against 1.2 s is past both the 5% and the 50 ms floor.
+        c = {**MIX, "tool_wait_s": {"p10": 0.5, "p50": 1.0, "p90": 2.0, "mean": 1.1}}
+        d = {**MIX, "tool_wait_s": {"p10": 0.5, "p50": 1.2, "p90": 2.0, "mean": 1.1}}
+        self.assertEqual(compare.mix_diff(c, d), ["tool_wait_s p50: 1 vs 1.2"])
+
     def test_a_mix_difference_withholds_every_ratio_and_names_the_field(self):
         ours = compare.read_bench_log(FIXTURES / "bench_loop.log")
         theirs = compare.read_baseline(BASELINE)

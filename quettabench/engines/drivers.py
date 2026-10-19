@@ -124,6 +124,19 @@ def _delta_chars(delta: dict) -> int:
     return n
 
 
+# vLLM closes a connection idle for VLLM_HTTP_TIMEOUT_KEEP_ALIVE, 5 s by default; aiohttp keeps one 15 s. Reusing a
+# connection the server closed fails the request about 1 ms after it is sent ("Server disconnected").
+IDLE_CONNECTION_S = 4.0
+
+
+def failure_kind(e: BaseException) -> str:
+    """A dropped or broken connection is "connection_error", the server's or the network's doing; anything else the
+    client raised is "client_error"."""
+    if isinstance(e, (aiohttp.ClientConnectionError, aiohttp.ClientPayloadError, ConnectionError)):
+        return "connection_error"
+    return "client_error"
+
+
 async def _stream_chat(
     session: aiohttp.ClientSession,
     url: str,
@@ -290,7 +303,7 @@ async def _stream_chat(
             usage_reported=usage_reported,
             server_cached_tokens=server_cached_tokens,
             error=f"timeout after {time.perf_counter() - start_time:.1f}s" if is_timeout else str(e),
-            error_kind="timeout" if is_timeout else "client_error",
+            error_kind="timeout" if is_timeout else failure_kind(e),
         )
 
 
@@ -477,7 +490,7 @@ async def _stream_completions(
             usage_reported=usage_reported,
             server_cached_tokens=server_cached_tokens,
             error=f"timeout after {time.perf_counter() - start_time:.1f}s" if is_timeout else str(e),
-            error_kind="timeout" if is_timeout else "client_error",
+            error_kind="timeout" if is_timeout else failure_kind(e),
         )
 
 
@@ -548,8 +561,12 @@ class HttpDriver(Driver):
 
     @asynccontextmanager
     async def session(self, concurrency, open_loop=False):
-        """Open loop gets no connection limit, which would silently cap its concurrency."""
-        connector = aiohttp.TCPConnector(limit=0 if open_loop else concurrency + 10)
+        """Open loop gets no connection limit, which would silently cap its concurrency. An idle connection is
+        dropped after IDLE_CONNECTION_S, before the server's own keep-alive closes it, so a request after an
+        agent's tool wait never goes out on a connection the server has just closed."""
+        connector = aiohttp.TCPConnector(
+            limit=0 if open_loop else concurrency + 10, keepalive_timeout=IDLE_CONNECTION_S
+        )
         timeout = aiohttp.ClientTimeout(total=self.timeout)
         async with aiohttp.ClientSession(connector=connector, timeout=timeout) as http:
             self._http = http

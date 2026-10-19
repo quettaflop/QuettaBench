@@ -51,18 +51,23 @@ class Plan:
     frozen: dict | None = None
     seed: int = 0
     salt: str = "text"
-    _plays: dict = field(default_factory=dict)
+    # The run's own id in every salt; not in plan_hash, so two runs of one plan still compare.
+    run: str = ""
+    _digests: dict = field(default_factory=dict)
 
     def digest(self, key) -> str | None:
+        """A recycled key digests its own turn only, once; digesting a whole play at its first turn took 30 to 65
+        ms."""
         if self.frozen is None:
             return self.digests.get(key)
-        session, number = play_of(key)
-        if session not in self.frozen:
-            return None
-        if (session, number) not in self._plays:
-            turns = play(self.frozen[session], self.seed, number, self.salt)
-            self._plays[session, number] = {r.turn: sent_digest(r) for r in turns}
-        return self._plays[session, number].get(key[1])
+        if key not in self._digests:
+            session, number = play_of(key)
+            turn = next((r for r in self.frozen.get(session, ()) if r.turn == key[1]), None)
+            if turn is None:
+                self._digests[key] = None
+            else:
+                self._digests[key] = sent_digest(play([turn], self.seed, number, self.salt, self.run)[0])
+        return self._digests[key]
 
     def planned_keys(self, executed) -> list:
         """Every key the run was to send: the whole plan, or for a recycled replay every turn of the plays started."""
@@ -79,7 +84,7 @@ def _hash(header: dict, digests) -> str:
     return h.hexdigest()[:16]
 
 
-def freeze(trace, recycled=False, seed=0, salt="text") -> Plan:
+def freeze(trace, recycled=False, seed=0, salt="text", run="") -> Plan:
     """Digests every planned request now. A single-turn trace keeps its workload_hash as plan_hash. A session
     trace's plan_hash covers the file's sha256, the sample, the session order, the play rule (seed and salt policy)
     when recycled, and every request's digest; a recycled replay's does not depend on its duration or the server's
@@ -99,4 +104,4 @@ def freeze(trace, recycled=False, seed=0, salt="text") -> Plan:
     if not recycled:
         return Plan(plan_hash, digests)
     frozen = {str(s[0].session_id): copy.deepcopy(s) for s in sessions}
-    return Plan(plan_hash, frozen=frozen, seed=seed, salt=salt)
+    return Plan(plan_hash, frozen=frozen, seed=seed, salt=salt, run=run)

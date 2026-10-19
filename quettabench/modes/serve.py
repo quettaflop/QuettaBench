@@ -8,6 +8,7 @@ import hashlib
 import itertools
 import json
 import os
+import secrets
 import sys
 import time
 from contextlib import asynccontextmanager, suppress
@@ -221,7 +222,7 @@ async def replay(trace, driver, mode, emit, offsets, request_id, executed, plan=
             granted = time.perf_counter() - start
             executed[i] = sent_digest(request)
             result = await driver.send(request, request_id=request_id(i, 0, i), **sampling(mode, request))
-        result.sent_digest, result.planned_digest = executed[i], plan.digest(i) if plan else None
+        result.sent_digest = executed[i]
         annotate_request_observability(
             result,
             request_index=i,
@@ -729,6 +730,17 @@ def sweep(trace, driver, mode, writer, workload, request_id, plan):
     }
 
 
+def planned_digests(plan, pairs, multi) -> dict:
+    """request_index -> the plan's digest for that request, taken after the run: on the event loop, this second
+    digest of each request's whole context took 18% of the loop's time at 256 agents."""
+    out = {}
+    for request, result in pairs:
+        if result is not None and result.request_index is not None:
+            key = (request.session_id, request.turn) if multi else result.request_index
+            out[result.request_index] = plan.digest(key)
+    return out
+
+
 def stop(writer, summary, status, reason, code):
     writer.finish(summary, status=status, reason=reason)
     sys.exit(code)
@@ -813,7 +825,8 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
         stamp_arrivals(trace, workload)
     # Frozen before anything is sent: the check below compares each request as sent with this, not with the
     # Request objects the run itself sends.
-    plan = freeze(trace, recycled=multi and mode.duration_s > 0, seed=workload.seed, salt=workload.salt)
+    recycled = multi and mode.duration_s > 0
+    plan = freeze(trace, recycled, seed=workload.seed, salt=workload.salt, run=secrets.token_hex(6) if recycled else "")
     goodput = None
     rss_before = rss_mib()
     # The loaded corpus and the plan live for the whole run: frozen, a collection does not walk them, so a full
@@ -848,6 +861,7 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
         planned_turns = None
     planned = plan.planned_keys(measured.executed)
     not_sent = turns_not_sent(planned, measured.executed, pairs) if multi else []
+    writer.fill_rows("planned_digest", planned_digests(plan, pairs, multi))
 
     core = aggregate(
         results=[r for r in results if r is not None],
@@ -897,6 +911,7 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
             "duration_s": measured.deadline_s,
             "salt": workload.salt,
             "play_rule": PLAY_RULES[workload.salt],
+            "salt_run": plan.run,
             # Plays per stratum: a stratified order keeps these within one of each other per pass.
             "plays_by_stratum": dict(
                 collections.Counter(stratum_of[int(str(p[0].session_id).split("#")[0])] for p in plays)
@@ -916,7 +931,9 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
     summary.sections.update(
         {"goodput": goodput}
         if goodput
-        else summary_sections(pairs, duration, mode, server_spec_decode, multi, withheld is not None)
+        else summary_sections(
+            pairs, core.measured_window_s or duration, mode, server_spec_decode, multi, withheld is not None
+        )
     )
     print_summary_tag_lines(summary.sections)
     if client is not None:
@@ -933,6 +950,15 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
             min_window_s=MIN_RECYCLED_WINDOW_S,
             stratum_of=getattr(trace, "stratum_of", None),
         )
+        if failures and steady["valid"]:
+            # A failed turn ends its session early, so the window holds a different mix than the plan's and its
+            # rates read high: a run with failed requests has no steady window.
+            steady = summary.sections["steady"] = {
+                "valid": False,
+                "sessions": steady["sessions"],
+                "agents": steady["agents"],
+                "reason": failures[0],
+            }
         if steady["valid"] and measured.loop_lag is not None:
             withhold_on_client_lag(steady, measured.loop_lag)
         if withheld:
@@ -1195,6 +1221,7 @@ class SessionDispatcher:
 
     def __init__(self, trace, mode, workload, send, request_id, emit, plan=None):
         self.trace, self.mode, self.workload, self.plan = trace, mode, workload, plan
+        self.salt_run = plan.run if plan is not None else ""
         self.stall = None  # ClientHealth.stall_s, set by measure()
         self.send, self.request_id, self.emit = send, request_id, emit
         self.sessions = trace.sessions()
@@ -1264,7 +1291,6 @@ class SessionDispatcher:
                 request, capture_text=self.trace.live_replies, request_id=self.request_id(sid, turn, index)
             )
         result.sent_digest = self.executed[sid, turn]
-        result.planned_digest = self.plan.digest((sid, turn)) if self.plan else None
         annotate_request_observability(
             result,
             request_index=index,
@@ -1431,7 +1457,7 @@ class SessionDispatcher:
             await asyncio.sleep(a * self.stagger_s)
             while elapsed() < self.deadline_s:
                 k = next(draws)
-                turns = play(self.sessions[k % n], self.workload.seed, k // n, self.workload.salt)
+                turns = play(self.sessions[k % n], self.workload.seed, k // n, self.workload.salt, self.salt_run)
                 self.plays.append(turns)
                 admitted = elapsed()
                 await self._turns(turns, lambda r: next(indexes))

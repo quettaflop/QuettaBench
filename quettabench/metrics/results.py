@@ -313,6 +313,7 @@ class RunWriter:
         self._fh = None
         self._probe_fh = None
         self._row_errors = []
+        self._fill: tuple | None = None
         if self.dir is not None:
             self.dir.parent.mkdir(parents=True, exist_ok=True)
             self.dir.mkdir(exist_ok=not exclusive)
@@ -333,6 +334,19 @@ class RunWriter:
         self._row_pool.shutdown(wait=True)
         self._fh.close()
         self._fh = None
+        if self._fill is not None and self.dir is not None:
+            field, by_index = self._fill
+            path = self.dir / "requests.jsonl"
+            rows = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+            for row in rows:
+                if row.get("request_index") in by_index:
+                    row[field] = by_index[row["request_index"]]
+            write_atomic(path, "".join(json.dumps(row) + "\n" for row in rows))
+
+    def fill_rows(self, field, by_index):
+        """Sets field on every row by its request_index when the rows close, for a value known only after the
+        run; the rows are streamed as requests complete."""
+        self._fill = (field, by_index)
 
     def discard(self):
         """For a run this process does not record."""

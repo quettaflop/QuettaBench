@@ -413,6 +413,31 @@ def _run(session):
     )
 
 
+class IdleConnectionTests(unittest.TestCase):
+    def test_idle_connections_close_before_the_server_closes_them(self):
+        # vLLM's keep-alive is 5 s; a client keeping connections longer reuses ones the server already closed.
+        drv = HttpDriver("chat", url="http://h:8000/v1/chat/completions", model="m", timeout=9)
+
+        async def go():
+            async with drv.session(8) as http:
+                return http.connector._keepalive_timeout
+
+        self.assertEqual(asyncio.run(go()), drivers.IDLE_CONNECTION_S)
+        self.assertLess(drivers.IDLE_CONNECTION_S, 5.0)
+
+
+class FailureKindTests(unittest.TestCase):
+    def test_a_dropped_connection_is_a_connection_error_not_a_client_error(self):
+        class Dropping(_ChatSession):
+            def post(self, url, headers=None, json=None):
+                raise aiohttp.ServerDisconnectedError()
+
+        r = _run(Dropping([]))
+        self.assertEqual((r.success, r.error_kind), (False, "connection_error"))
+        self.assertEqual(drivers.failure_kind(ConnectionResetError()), "connection_error")
+        self.assertEqual(drivers.failure_kind(ValueError("bad payload")), "client_error")
+
+
 class PinnedOutputTests(unittest.TestCase):
     def test_min_tokens_is_sent_when_given(self):
         session = _ChatSession(_chat_sse([_delta("a")]))
