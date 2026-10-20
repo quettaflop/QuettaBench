@@ -1,0 +1,64 @@
+# Session replay: the full contract
+
+The README has the short version. This file is the reference: what each field means and when a number is withheld.
+
+## Measuring a running server
+
+`hardware.launcher: attach` measures the server already answering on `engine.port`. qbench checks it is healthy and serves the model, then starts and stops nothing, so qbench and another harness (vllm bench serve, AIPerf, AgentX) can measure the same server back to back. `engine.json` records what the server serves, its `/version`, and the launch spec qbench would have used; the server's real argv and environment are the operator's to record.
+
+## Trace files
+
+- Each turn's prompt is the session's whole context so far, with the `prompt_tokens` and `osl_tokens` the serving engine reported when the session was recorded. A turn without the counts refuses the file; nothing is estimated.
+- `just fetch` pulls the files in `data/MANIFEST.json` (sha256, source run, agent, model, date, token quantiles) and refuses one whose digest differs. `data/build_trajectories.py` rebuilds them from the recorded runs.
+
+## Agents and sessions
+
+- `mode.concurrency` is the number of agents. An agent holds its slot from its session's first turn to its last, waits included, so the server never has more than `concurrency` sessions open and no request waits in a client queue. This is TensorRT-LLM's trace replay and GenAI-Perf's `--session-concurrency`.
+- `workload.use_recorded_waits` sleeps the recorded tool and human time after each turn. A session the builder marked `recorded_waits: false` is dropped before sampling and counted in `sessions_dropped_no_waits`.
+- First starts are 10 ms apart, or less so that every agent starts within 2 s (`sections.client.first_start_stagger_s`).
+- A failed turn ends its session. The turns after it are not sent, are listed in `workload.turns_not_sent`, and count as failed (kind `not_sent`).
+
+## The sample
+
+- Fixed before a sweep: every eligible session, or `workload.num_sessions` of a seeded shuffle, the same set at every concurrency (`sample_digest`).
+- `workload.stratified` orders it round-robin across strata of turn count and prompt size, so the sessions open at any moment mix like the sample (`summary.trace.strata`).
+- A session is cut, never clipped, at the first turn that does not fit `isl_tokens` beside its output or whose output passes `osl_tokens`. The last turn kept says `truncated_by_context_limit`.
+- A file with fewer sessions than asked, or fewer than `mode.concurrency`, is refused.
+
+## Recycled replay (`mode.duration_s`)
+
+- Each agent draws the next session from a cycle over the sample, plays it to the end, and draws again until the deadline. Every play started before the deadline runs to its end.
+- Every play is salted so it cannot hit the prefix cache an earlier play left. `workload.salt: text` (default) puts `[rid:<12 hex>]` before the first user message, as AgentX's `first_turn_prefix` does; `workload.salt: cache_salt` sends vLLM's `cache_salt` field instead. The tag is `sha256(seed:run:session:play)`, where `run` is a fresh id per run (`sections.plays.salt_run`), so a second run on the same server does not reuse the first run's prefixes.
+- `plan_hash` covers the sample, the seed and the play rule (`sections.plays.play_rule`), not how many plays started.
+- Results compare only at the same sample, seed, duration and agent count. A trace that fills its replies from the engine (ShareGPT) cannot be recycled.
+
+## The steady window (`sections.steady`)
+
+- Opens when every agent has finished its first session, so the synchronized cold-cache first sessions stay out. Closes at the deadline for a recycled run, else at the first session finish after the last admission.
+- Not valid, with no steady number and the cause in `reason`, when: it opens after the deadline; a recycled window lasts under 300 s; a per-session run has 2C sessions or fewer; an agent is idle inside it; or any request failed or was not sent. A whole-run number never stands in.
+- The cold start is reported beside it, never dropped: `first_turn_ttft_ms` (each agent's first turn) and `ramp.ttft_ms` (every request before the window).
+- Output throughput counts tokens that arrived inside the window: the server's count per chunk when every chunk has one (`mode.chunk_usage`, off by default so request bodies match vllm bench serve's and AIPerf's), else one token per chunk with characters when those number the output tokens, else output tokens in proportion to each chunk's characters.
+- TTFT, TPOT and ITL percentiles take requests sent at or after the start and completed by the end. `interactivity_p90_tok_s` is 1000 / p90 `tpot_ms`, AgentX's figure. `chunk_gap_ms` is AIPerf's inter-chunk latency.
+- `timeline` bins output tok/s and requests in flight in 10 s bins, so the window can be seen to be steady.
+- If the client loop runs late by more than 5 ms at p99 inside the window, the steady TTFT is withheld (`steady.withheld`).
+
+## Validity (`summary.validity`)
+
+- `throughput_valid` is false when any request failed.
+- `latency_valid` is false when any request failed, or when client stalls could have moved a published percentile by more than 1%. Each row records `client_stall_ms` (stall over send to last chunk) and `client_stall_ttft_ms` (send to first chunk). The run computes TTFT, TPOT and E2EL at p50, p90 and p99 as measured and with each row's stall taken off; if any pair differs by more than 1%, every latency figure is withheld and the reason names the worst percentile with both values.
+- Loop lag and gc pauses are reported in `sections.client` and `validity.notes`; they withhold nothing by themselves.
+- Only a run with no failed request is `ok`. Failure kinds: `connection_error` (the server or network dropped the connection), `http_error`, `server_error`, `timeout`, `client_error` and `not_sent`; the reason names each kind with its count.
+
+## Workload identity
+
+- `workload.plan_hash` is frozen before anything is sent: the file's sha256, the sample, the session order, the play rule, and a digest of every planned request (messages, tools, max_tokens).
+- Each request is digested again at dispatch and compared with the plan. A request that differs, was not planned or was never sent fails the run (exit 3); `workload.first_mismatch` names the first.
+- Only the placeholders filled with the engine's replies are left out of both digests.
+
+## Timing rules
+
+- TTFT ends at the first chunk with choices; E2EL ends at the last chunk, the finish chunk included (vllm bench serve's rule). AIPerf starts at the first chunk with content, so it skips an empty role chunk.
+- The usage chunk, `[DONE]` and the close come after, in `stream_closed_s`.
+- `server_cache_hit_rate` is the engine's reported cached-token share (vLLM: `--enable-prompt-tokens-details`). The per-turn `cache_hit_rate` is the ceiling an ideal cache could reach, not a hit.
+- Percentiles are nearest-rank: the ceil(p/100 * n)-th value.
+- Every row of `requests.jsonl` carries its raw events on the run clock (`sent_at_ms`, `ttft_ms`, `itl_ms`, `stream_closed_ms`, `completed_at_ms`), so any timeline can be rebuilt.

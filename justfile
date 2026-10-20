@@ -56,6 +56,10 @@ dry-run cfg *args:
 sweep cfg *args:
     {{python_bin}} -m quettabench.cli run {{cfg}} {{args}}
 
+# Before a run on a new box: the yaml, the trace file, the client at --agents on a fake server, then --server PORT
+confirm cfg *args:
+    {{python_bin}} -m tools.confirm {{cfg}} {{args}}
+
 # Attach to a results/<run>/ and append profile.json
 profile *args:
     {{python_bin}} -m quettabench.cli profile {{args}}
