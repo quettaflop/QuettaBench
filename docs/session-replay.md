@@ -4,7 +4,7 @@ The README has the short version. This file is the reference: what each field me
 
 ## Measuring a running server
 
-`hardware.launcher: attach` measures the server already answering on `engine.port`. qbench checks it is healthy and serves the model, then starts and stops nothing, so qbench and another harness (vllm bench serve, AIPerf, AgentX) can measure the same server back to back. `engine.json` records what the server serves, its `/version`, and the launch spec qbench would have used; the server's real argv and environment are the operator's to record.
+`hardware.launcher: attach` measures the server already answering on `engine.port`. qbench checks it is healthy and serves the model, then starts and stops nothing, so qbench and another harness can measure the same server back to back. `engine.json` records what the server serves, its `/version`, and the launch spec qbench would have used; the server's real argv and environment are the operator's to record.
 
 ## Trace files
 
@@ -43,13 +43,12 @@ The README has the short version. This file is the reference: what each field me
 - Output throughput counts tokens that arrived inside the window: the server's count per chunk when every chunk has one (`mode.chunk_usage`, off by default so request bodies match vllm bench serve's and AIPerf's), else one token per chunk with characters when those number the output tokens, else output tokens in proportion to each chunk's characters.
 - TTFT, TPOT and ITL percentiles take requests sent at or after the start and completed by the end. `interactivity_p90_tok_s` is 1000 / p90 `tpot_ms`, AgentX's figure. `chunk_gap_ms` is AIPerf's inter-chunk latency.
 - `timeline` bins output tok/s and requests in flight in 10 s bins, so the window can be seen to be steady.
-- If the client loop runs late by more than 5 ms at p99 inside the window, the steady TTFT is withheld (`steady.withheld`).
 
 ## Validity (`summary.validity`)
 
 - `throughput_valid` is false when any request failed.
-- `latency_valid` is false when any request failed, or when client stalls could have moved a published percentile by more than 1%. Each row records `client_stall_ms` (stall over send to last chunk) and `client_stall_ttft_ms` (send to first chunk). The run computes TTFT, TPOT and E2EL at p50, p90 and p99 as measured and with each row's stall taken off; if any pair differs by more than 1%, every latency figure is withheld and the reason names the worst percentile with both values.
-- Loop lag and gc pauses are reported in `sections.client` and `validity.notes`; they withhold nothing by themselves.
+- `latency_valid` is false when any request failed, when client stalls could have moved a published percentile by more than 1%, or when the client loop's mean lag is over 1% of TTFT p50. Each row records `client_stall_ms` (stall over send to last chunk) and `client_stall_ttft_ms` (send to first chunk). The run computes TTFT, TPOT and E2EL at p50, p90 and p99 as measured and with each row's stall taken off; if any pair differs by more than 1%, every latency figure is withheld and the reason names the worst percentile with both values.
+- Loop lag and gc pauses are reported in `sections.client`; the stall bound and the mean-lag rule above are what withhold, a p99 lag over 5 ms is a note.
 - Only a run with no failed request is `ok`. Failure kinds: `connection_error` (the server or network dropped the connection), `http_error`, `server_error`, `timeout`, `client_error` and `not_sent`; the reason names each kind with its count.
 
 ## Workload identity

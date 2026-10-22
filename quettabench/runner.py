@@ -411,14 +411,14 @@ def serve_one(cfg, out, exported, writer, server=None, keep=False, allow_unverif
     try:
         # What the server got, as against what the yaml asked for.
         if isinstance(handle, launcher.Handle):
-            writer.provenance["server_observed"] = observe.server(
+            writer.provenance["server_observed"] = observe.observe_server(
                 handle.endpoint,
                 pid=None if handle.container else handle.pid,
                 log=handle.results_dir / "server.log",
                 container=handle.container,
             )
         elif isinstance(handle, launcher.Attached):
-            writer.provenance["server_observed"] = observe.server(handle.endpoint)
+            writer.provenance["server_observed"] = observe.observe_server(handle.endpoint)
         driver = adapter.driver(spec, handle, trace)
         writer.bind(handle, driver)
         if trace is None:

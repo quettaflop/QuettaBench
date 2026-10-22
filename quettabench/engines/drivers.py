@@ -61,9 +61,7 @@ def _payload(
     cache_salt=None,
     chunk_usage=False,
 ):
-    """cache_salt: vLLM's request field that keeps a request's prefix cache apart from requests with another.
-    chunk_usage asks vLLM for cumulative usage on every chunk (continuous_usage_stats); off, the body is vllm bench
-    serve's and AIPerf's."""
+    """Build the request body; with both options off it matches vllm bench serve's and AIPerf's."""
     payload = {
         "model": model,
         **prompt,
@@ -88,16 +86,14 @@ def _payload(
 
 
 def _read_usage(usage: dict) -> tuple[int, int, int | None, bool]:
-    """Prompt, completion and cached token counts from a usage block. It counts as reported only with both counts,
-    so a block missing one is not read as zero tokens."""
+    """Read token counts from a usage block; a block missing either count is unreported, not zero."""
     reported = all(isinstance(usage.get(k), int) for k in ("prompt_tokens", "completion_tokens"))
     cached = (usage.get("prompt_tokens_details") or {}).get("cached_tokens")
     return usage.get("prompt_tokens") or 0, usage.get("completion_tokens") or 0, cached, reported
 
 
 def _stream_failure(done, bad_line) -> tuple[str, str] | None:
-    """Why a stream that closed is not a whole reply, as (error, kind), or None: a data line that did not parse
-    (its token is lost), or no [DONE]."""
+    """Fail a stream that ended without [DONE] or with a data line that did not parse."""
     if bad_line is not None:
         return f"an SSE data line did not parse: {bad_line[:80]!r}", "malformed_stream"
     if not done:
@@ -106,12 +102,12 @@ def _stream_failure(done, bad_line) -> tuple[str, str] | None:
 
 
 def _chunk_fields(chars: array, tokens: array) -> dict:
-    """A result's per-chunk record: characters always, the server's cumulative counts only when it sent any."""
+    """Per-chunk record used to count tokens by arrival."""
     return {"chunk_chars": chars, "chunk_tokens": tokens if any(t != NO_COUNT for t in tokens) else None}
 
 
 def _chunk_count(chunk: dict) -> int:
-    """The server's cumulative completion_tokens on a chunk, NO_COUNT when it sent none."""
+    """The server's token count on one chunk, for counting tokens by arrival; NO_COUNT when it sent none."""
     count = (chunk.get("usage") or {}).get("completion_tokens")
     return count if isinstance(count, int) else NO_COUNT
 

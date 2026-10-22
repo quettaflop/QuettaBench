@@ -1,5 +1,5 @@
 """What a running server actually got, as opposed to what the yaml asked for: its process's argv and environment,
-what it answers on /version and /v1/models, and the settings its startup log reports. Call server() once the
+what it answers on /version and /v1/models, and the settings its startup log reports. Call observe_server() once the
 server is healthy; run.json keeps the result as provenance.server_observed."""
 
 import glob
@@ -34,7 +34,7 @@ MAX_CONCURRENCY = re.compile(r"Maximum concurrency for ([\d,]+) tokens per reque
 
 
 def log_settings(path) -> dict:
-    """The settings a vLLM server's startup log reports; a setting the log does not show is None."""
+    """Read the parallel and cache settings from a vLLM startup log, for run.json."""
     try:
         with open(path, "rb") as f:
             text = f.read(LOG_HEAD_BYTES).decode("utf-8", "replace")
@@ -53,8 +53,7 @@ def log_settings(path) -> dict:
 
 
 def listening_pid(port) -> int | None:
-    """This user's process listening on port (any address), from /proc/net/tcp and each process's open sockets; the
-    lowest pid when several share the socket. None when none of this user's processes holds it."""
+    """Find the server process on a port qbench did not start (attach)."""
     inodes = set()
     for table in ("/proc/net/tcp", "/proc/net/tcp6"):
         try:
@@ -76,8 +75,8 @@ def listening_pid(port) -> int | None:
     return min(pids) if pids else None
 
 
-def process(pid) -> dict:
-    """pid's argv and environment, from /proc, secrets redacted."""
+def process_argv_and_env(pid) -> dict:
+    """Record what a server process actually runs with, secrets redacted."""
     try:
         argv = [a.decode() for a in Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0") if a]
         pairs = [e.decode().partition("=") for e in Path(f"/proc/{pid}/environ").read_bytes().split(b"\0") if e]
@@ -86,9 +85,8 @@ def process(pid) -> dict:
     return {"pid": pid, "argv": redact_argv(argv), "env": redact({k: v for k, _, v in pairs})}
 
 
-def server(endpoint, pid=None, log=None, container="") -> dict:
-    """What the server at endpoint got. pid is the server's process when qbench started it locally, else the one
-    listening on endpoint's port is looked up; log is its server.log, when qbench has one."""
+def observe_server(endpoint, pid=None, log=None, container="") -> dict:
+    """Observe the running server for run.json; pass pid and log when qbench started it."""
     out: dict = {
         "version": server_version(endpoint + "/version", 10),
         "models": served_models(endpoint + "/v1/models", 10),
@@ -97,6 +95,8 @@ def server(endpoint, pid=None, log=None, container="") -> dict:
         out["process"] = {"why": f"the server runs in container {container}; its argv and env are the container's"}
     else:
         pid = pid or listening_pid(int(endpoint.rsplit(":", 1)[1]))
-        out["process"] = process(pid) if pid else {"why": "no process of this user listens on the server's port"}
+        out["process"] = (
+            process_argv_and_env(pid) if pid else {"why": "no process of this user listens on the server's port"}
+        )
     out["log"] = log_settings(log) if log else {"why": "no server log: qbench did not start the server"}
     return out

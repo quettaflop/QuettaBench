@@ -365,7 +365,7 @@ class _ChatResp:
         self.content = self._Lines(lines, pause_before, pause_s)
 
     class _Lines:
-        """pause_before: a line prefix before which the stream pauses pause_s, as a slow tail would."""
+        """A stream that stalls before a given line, like a slow tail."""
 
         def __init__(self, lines, pause_before=None, pause_s=0.0):
             self._lines, self._pause_before, self._pause_s = lines, pause_before, pause_s

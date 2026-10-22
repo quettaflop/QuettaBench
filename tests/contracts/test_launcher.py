@@ -701,7 +701,7 @@ class ServerObserved(unittest.TestCase):
                 break
             time.sleep(0.05)
         self.assertEqual(observe.listening_pid(port), proc.pid)
-        got = observe.process(proc.pid)
+        got = observe.process_argv_and_env(proc.pid)
         self.assertEqual(got["argv"][:2], [sys.executable, "-c"])
         self.assertEqual((got["env"]["QB_TEST_TOKEN"], got["env"]["QB_PLAIN"]), ("REDACTED", "x"))
 
@@ -711,11 +711,11 @@ class ServerObserved(unittest.TestCase):
         threading.Thread(target=server.serve_forever, daemon=True).start()
         self.addCleanup(server.server_close)
         self.addCleanup(server.shutdown)
-        got = observe.server(f"http://127.0.0.1:{port}")
+        got = observe.observe_server(f"http://127.0.0.1:{port}")
         self.assertEqual((got["version"], got["models"]), ("0.31.0", ["m"]))
         self.assertEqual(got["process"]["pid"], os.getpid())  # the stub listens in this test process
         self.assertIn("qbench did not start the server", got["log"]["why"])
-        boxed = observe.server(f"http://127.0.0.1:{port}", container="qbench-x")
+        boxed = observe.observe_server(f"http://127.0.0.1:{port}", container="qbench-x")
         self.assertIn("container qbench-x", boxed["process"]["why"])
 
 

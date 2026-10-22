@@ -92,7 +92,7 @@ class EngineCfg:
     instrumentation: str = "none"  # armed at launch: none | nsys | torch
     image: str | None = None  # the server's docker image; required by hardware.launcher=docker
     extra: Mapping[str, Any] = field(default_factory=dict)  # quettaserve bench block lives here
-    # The server's environment on top of the shell's: what a verify yaml used to ask for by hand (export ...).
+    # Extra server env, set on top of the shell's.
     env: Mapping[str, Any] = field(default_factory=dict)
     # Facts the capacity gate needs (grid CAPACITY line).
     kv_bytes_per_token: int | None = None  # per token; None allowed only for dense
@@ -123,7 +123,7 @@ class WorkloadCfg:
     # Order the sample round-robin across strata of turn count and prompt size (and, with num_sessions, take each
     # stratum's share), so the sessions open at any moment mix like the whole sample.
     stratified: bool = False
-    # How a recycled play misses earlier plays' cache: text puts a tag before the first user message (AgentX);
+    # How a recycled play misses earlier plays' cache: text puts a tag before the first user message;
     # cache_salt sends vLLM's cache_salt field and leaves the prompt as recorded.
     salt: str = "text"
 

@@ -272,8 +272,7 @@ def read_rows(results_dir):
 
 
 def not_comparable(run) -> str | None:
-    """Why a run's numbers cannot stand beside another's, or None: a status other than ok (failed requests leave
-    survivors), or a replayed file that is not the one data/MANIFEST.json lists."""
+    """Keep a run out of comparisons: a status other than ok, or a file the manifest does not list."""
     validity = (run.get("summary") or {}).get("validity") or {}
     if validity.get("latency_valid") is False:
         return f"latency not valid: {'; '.join(validity.get('reasons') or [])}"
@@ -304,8 +303,7 @@ SERVER_LOG_KEYS = (
 
 
 def server_facts(run) -> dict:
-    """A run's observed server, as server_parity compares it: argv without --port, the server env, the vLLM version,
-    the weights revision and the startup log's settings."""
+    """The server facts server_parity compares; --port is dropped so runs on different ports still match."""
     prov = run.get("provenance") or {}
     seen = prov.get("server_observed") or {}
     proc, log = seen.get("process") or {}, seen.get("log") or {}
@@ -324,8 +322,7 @@ def server_facts(run) -> dict:
 
 
 def server_parity(a, b) -> list[str]:
-    """Every way two runs' servers differ, from their run.json: a fact either run did not observe is a difference
-    too, since a ranking cannot rest on it. Empty when the servers match."""
+    """Name each server difference that blocks ranking two runs; a fact one run did not observe counts as a difference."""
     unseen = [
         side for side, run in (("ours", a), ("theirs", b)) if not (run.get("provenance") or {}).get("server_observed")
     ]
@@ -344,6 +341,7 @@ def server_parity(a, b) -> list[str]:
 
 # Two windows asked the same of their servers when every p50 and mean here is within MIX_TOLERANCE.
 MIX_FIELDS = ("input_tokens", "output_tokens", "uncached_prefill_tokens", "tool_wait_s", "session_turns")
+# Run-to-run mix spread seen on repeated runs stays under this.
 MIX_TOLERANCE = 0.05
 # A difference below a field's floor is noise however large in proportion: with recorded waits off, the realized wait
 # is the client's sub-millisecond turnaround, and 1.6 against 2.0 ms is 21% of nothing.
@@ -351,8 +349,7 @@ MIX_FLOORS = {"tool_wait_s": 0.05}
 
 
 def mix_diff(a, b) -> list[str]:
-    """Every p50 or mean of two runs' window workload mixes more than MIX_TOLERANCE apart, named; a field one run
-    has and the other does not is named too. Empty when the mixes agree or neither run has one."""
+    """Name the mix fields where two windows differ past MIX_TOLERANCE, so every ratio is withheld."""
     if not a and not b:
         return []
     out = []
@@ -400,7 +397,7 @@ def read_run(results_dir):
             rows.append(_fitted_row(step, kv, row_mode))
     notes = bench_log_points(d / "bench.log")[2] if (d / "bench.log").exists() else []
 
-    # A serve run's plan_hash is the one runs share; runs written before it carry only expected.
+    # A serve run's plan_hash is the one runs share; a run.json without one falls back to expected.
     served = summary.get("workload") or {}
     workload = (grid.get("trace") or {}).get("workload_hash") or served.get("plan_hash") or served.get("expected")
     return Side(
@@ -637,7 +634,7 @@ class Report:
     ours_only: list
     theirs_only: list
     agreement: list = field(default_factory=list)
-    # How the two runs' observed servers differ (server_parity); empty when they match.
+    # Non-empty withholds the ranking.
     server_diff: list = field(default_factory=list)
 
     @property
@@ -866,6 +863,8 @@ def main(argv=None):
         if not Path(path).exists():
             sys.exit(f"no results at {path}")
     if args.servers:
+        if args.floor or args.json:
+            ap.error("--servers takes no --floor or --json: it only compares the two servers")
         if not (Path(args.ours).is_dir() and Path(args.theirs).is_dir()):
             ap.error("--servers compares two run dirs")
         diff = server_parity(*(json.loads((Path(p) / "run.json").read_text()) for p in (args.ours, args.theirs)))

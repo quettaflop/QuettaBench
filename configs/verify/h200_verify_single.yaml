@@ -1,6 +1,5 @@
-# H200 verification of fix/session-replay: qbench single-turn timing against vllm bench serve on the same 200 coding
-# prompts, both on a fresh Qwen3.8-27B TP1 server. The model only has to be the same on both sides; a small one loads
-# in minutes.
+# H200 single-turn timing: qbench against another harness on the same 200 coding prompts, each on a fresh
+# Qwen3.8-27B TP1 server.
 model: qwen38_27b
 engine:
   model: Qwen/Qwen3.8-27B

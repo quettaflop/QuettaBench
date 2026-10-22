@@ -88,8 +88,8 @@ class RoundTrip(unittest.TestCase):
         self.assertEqual(results.jsonl_row(r, probe=2)["accepted_tokens"], 3)
         self.assertEqual(results.jsonl_row(r, probe=2)["probe"], 2)
 
-    def test_per_chunk_arrays_are_written_as_the_lists_they_replaced(self):
-        """The lines are what the code that held lists wrote for the same chunks, byte for byte."""
+    def test_rows_serialize_per_chunk_arrays_as_json_lists_byte_for_byte(self):
+        """Rows serialize per-chunk arrays as JSON lists, byte for byte."""
         chunks = dict(
             ttft=0.25,
             itl=array("d", [0.01, 0.0125, 0.02]),

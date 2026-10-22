@@ -1,8 +1,5 @@
-# H200 same-server check: qbench and AIPerf replay the 81 SWE-bench medium sessions at 8 agents against one
-# Qwen3.8-Flash-Next DEP8 server, started by hand from this yaml's --dry-run argv and env (as
-# /workspace/qb-verify/g2.sh does) and measured with hardware.launcher=attach, so launch-to-launch variance drops out.
-# Engine block as configs/verify/h200_verify_fidelity.yaml. Waits off; the waits-on run passes
-# --set workload.use_recorded_waits=true.
+# H200 same-server check: qbench and another harness replay the 81 SWE-bench medium sessions at 8 agents on one
+# attached Qwen3.8-Flash-Next DEP8 server, so launch-to-launch variance drops out; waits off unless --set.
 model: qwen38_flash_next
 engine:
   model: Qwen/Qwen3.8-Flash-Next

@@ -734,9 +734,7 @@ SEED = 7
 NUM_REQUESTS = 12
 WARMUP = 3
 
-# (workload hash, trace digest). The session digests moved twice without the workload hashes, the requests sent,
-# moving: when planned_total_context_tokens became the recorded prompt count, and when source_meta gained
-# sample_digest.
+# Pins (workload hash, trace digest); the trace digest may move without the requests sent changing.
 PINS = {
     "chat-multiturn-short": ("c51f134d3946f53d", "40b315fc6465cb47"),
     "deepresearch-multiturn": ("3f95464ab226ff8f", "b42b5f4449e073e1"),
@@ -1025,8 +1023,8 @@ class Plays(unittest.TestCase):
         self.assertEqual(json.dumps([dataclasses.asdict(r) for r in turns], sort_keys=True), before)
         self.assertTrue(all(r.messages is recorded for r, recorded in zip(turns, lists)))
 
-    def test_a_play_digests_as_the_copied_messages_did(self):
-        """The expected digests are hashed by hand from the JSON a server receives, not taken from the old code."""
+    def test_a_play_digests_match_ones_hashed_by_hand(self):
+        """The expected digests are hashed by hand from the JSON a server receives."""
         tag = "415eee030432"  # sha256("42:7:1")[:12]
         system = '{"content":"sys","role":"system"}'
         ask = '{"content":"ask","role":"user"}'
@@ -1095,7 +1093,7 @@ class ToolSchemas(unittest.TestCase):
         self.assertEqual(workload_hash([ra], live_replies=True), workload_hash([rb], live_replies=True))
 
     def test_a_tool_schema_joins_the_hash_but_not_the_replay_row(self):
-        # A request without tools hashes as before: the PINS above cover that.
+        # A request without tools hashes the same: the PINS above cover that.
         msgs = [{"role": "user", "content": "hi"}]
         plain = Request([], 0, output_length=4, session_id=1, turn=0, messages=msgs)
         with_tools = Request([], 0, output_length=4, session_id=1, turn=0, messages=msgs, tools=self.TOOLS)

@@ -42,11 +42,8 @@ chat-multiturn-short:
   active: false
 
 swebench-qwen-multiturn-medium:
-  # Turns are agent steps, not conversation rounds. An agent profile replays every eligible session; num_sessions
-  # would take the first N of a seeded shuffle, the same N at every concurrency.
-  # Qwen3.8-Flash-Next mini-swe-agent runs on SWE-bench Verified (2026-09-10), each step with the prompt_tokens and
-  # completion_tokens the server reported (data/build_trajectories.py swebench-native). Sessions of 30+ steps, the
-  # first 49 steps.
+  # Agent steps of Qwen3.8-Flash-Next mini-swe-agent runs on SWE-bench Verified, sessions of 30+ steps cut at 49,
+  # each step with the token counts the server reported; every eligible session replays.
   <<: &agent {system_prompt: '', mode: multi-turn, prefix_caching_required: true, active: false}
   isl_tokens: 65536
   osl_tokens: 8192

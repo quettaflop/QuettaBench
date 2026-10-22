@@ -305,7 +305,7 @@ def container_name(run_name):
 
 
 def docker_env(spec, cfg):
-    """The -e set a container gets: the launch spec's env, the collective pins and HF_HOME."""
+    """Env vars passed to the container with -e."""
     hw = cfg.hardware
     return {
         **spec.env,

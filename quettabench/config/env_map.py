@@ -127,7 +127,7 @@ CONTROLLED_ENV_PREFIXES = (
 
 
 def controlled_server_env():
-    """The shell variables a controlled launch passes on: CONTROLLED_ENV_NAMES and CONTROLLED_ENV_PREFIXES."""
+    """Filter the shell down to what a controlled (env -i) launch passes on."""
     return {
         k: v
         for k, v in sorted(os.environ.items())

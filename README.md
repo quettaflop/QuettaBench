@@ -23,27 +23,17 @@ Without `just`, every recipe is one line: `python3 -m quettabench.cli run ...`, 
 
 ## Config
 
-A run is one yaml in `configs/runs/` naming a model (`configs/models/`), a workload, a mode and optionally a `matrix:` (a sweep: one run per point of the axes' product, `just sweep` is `just run`; paths joined by `+` are one axis whose choices list one value per path, as in `mode.concurrency+engine.extra.vllm.max_num_seqs: [[8, 64], [32, 256]]`; a `--set` naming an axis replaces its choices, so `--set 'mode.concurrency+engine.extra.vllm.max_num_seqs=[[32, 256]]'` runs that point alone). Grids and step points live in `configs/grids.yaml`, link-profile facts in `configs/hardware/<profile>.yaml`.
+A run is one yaml in `configs/runs/` naming a model (`configs/models/`), a workload, a mode and optionally a `matrix:` sweep. Grids and step points live in `configs/grids.yaml`, link-profile facts in `configs/hardware/<profile>.yaml`. Matrix axes and `--set` overrides are in [docs/config.md](docs/config.md).
 
-Precedence, highest first: `--set` > env (through `config/env_map.py`, the only reader of `os.environ`) > run yaml > model yaml > hardware yaml > schema defaults. Unknown keys are refused. `engine.extra.<engine>.<flag>` sets one flag in that engine's extra block, keeping the rest; a whole `engine.extra.<engine>` from a higher layer replaces the block. `just dry-run` prints every value with its origin.
+Precedence, highest first: `--set` > env > run yaml > model yaml > hardware yaml > schema defaults. Unknown keys are refused. `just dry-run` prints every value with its origin.
 
 A grid run (`mode.grid` set) times decode ms per step per (ctx, bs) cell: vLLM over HTTP against a launched server (bs concurrent completions per batch, prefix cache reset per cell), QuettaServe through its cargo bench (`--set engine.name=quettaserve`). A vLLM grid run with `mode.return_outputs` text or logits builds vLLM in-process instead, the only path that returns token ids, text or logits; only such a run takes `prompt_mode=corpus`, which a timing grid refuses. `engine.pp` and `engine.cudagraph=false` reach the server as `--pipeline-parallel-size` and `--enforce-eager`. `tests/parity/slope_gate.json` holds the HTTP-vs-in-process gate both paths passed (8x H200, vLLM 0.30.1: 15 cells, worst |delta| 0.228 ms). A serve run (`mode.grid` unset) launches the server and replays the workload against it. `mode: probe` runs a kernel probe (`mode.probe`, `mode.probe_args`) with `--out results/<run>/`. It refuses the torchrun probes (`collective`, `reparallel`, `vllm_allreduce`) and the probes that name output files (`serving_decode_grid`, `serving_stage_split`); run those with `just probe`.
 
 ## Session replay
 
-Agent workloads (`mode: multi-turn` in `configs/workloads.yaml`) replay recorded agent sessions turn by turn.
-
-- **Agents:** `mode.concurrency` agents each play one session at a time, first turn to last.
-- **Tool time:** `workload.use_recorded_waits` pauses each agent for the recorded tool time between turns.
-- **Exact replay:** prompts are sent as recorded. With `mode.exact_output_length`, each answer is held to the recorded length, and a shorter one fails the request.
-- **Recycled runs:** `mode.duration_s` keeps agents drawing new sessions until the deadline. Each play carries a fresh salt, so no play hits the cache another play left.
-- **Steady window:** `sections.steady` measures from when every agent has finished its first session to the deadline. It needs at least 300 s, and it reports nothing rather than a misleading number.
-- **Validity:** `summary.validity` says whether latency and throughput stand, and why not. Any failed request withholds them. So does a client stall that could have moved a latency percentile by more than 1%.
-- **Identity:** `workload.plan_hash` is frozen before the run, and every request sent is checked against it.
-
-Run a server yourself and measure it with `hardware.launcher: attach` to compare qbench with vllm bench serve, AIPerf or AgentX on the same server.
-
-The full contract (every field, every withhold rule, the timing definitions) is in [docs/session-replay.md](docs/session-replay.md).
+Agent workloads (`mode: multi-turn` in `configs/workloads.yaml`) replay recorded agent sessions turn by turn, `mode.concurrency` agents at a time.
+`hardware.launcher: attach` measures a server you started, so another harness can measure the same server.
+The contract (every field, every withhold rule, the timing definitions) is in [docs/session-replay.md](docs/session-replay.md).
 
 ## Provisioning
 
@@ -195,6 +185,8 @@ quettabench/export/quettasim.py  the one route to QuettaSim: tp_comm, roofline_u
 configs/                  models, runs, grids, hardware
 docker/Dockerfile         qbench on the vLLM image (just image)
 docs/runbooks/            the probe guide (probes.md)
+docs/config.md            matrix axes and --set overrides
+docs/session-replay.md    the session replay contract
 tests/golden/             characterization fixtures
 tests/contracts/          one test module per package area, plus the compare contracts and GPU smoke
 tests/parity/             the committed HTTP-vs-in-process slope gate and its test

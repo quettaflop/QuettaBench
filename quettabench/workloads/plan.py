@@ -1,7 +1,5 @@
-"""A run's plan, frozen before anything is sent, and the digest of each request as it goes out. freeze() before the
-run; the run digests every request with sent_digest() just before sending it; Plan.digest() says what that digest
-should have been. Keys are a request's index for single-turn traces and (session, turn) for session traces, the
-session being "<session>#<play>" in a recycled replay."""
+"""Freezes a run's plan before sending and digests each request as sent, so serve can check one against the other.
+plan_hash is what runs compare on; a recycled replay keys each play "<session>#<play>"."""
 
 import copy
 import hashlib
@@ -12,8 +10,7 @@ from .sessions import PLAY_RULES, SessionTrace, play
 
 
 def spliced_at(request, replies) -> frozenset:
-    """Indexes of the messages in request that are placeholders the run fills with the engine's reply (the trace's
-    replies for the session); recorded assistant turns are not among them."""
+    """Positions the run fills with live replies, left out of the digest."""
     placeholders = {id(m) for m in (replies or {}).get(request.session_id) or ()}
     return frozenset(i for i, m in enumerate(request.messages or ()) if id(m) in placeholders)
 
@@ -56,8 +53,7 @@ class Plan:
     _digests: dict = field(default_factory=dict)
 
     def digest(self, key) -> str | None:
-        """A recycled key digests its own turn only, once; digesting a whole play at its first turn took 30 to 65
-        ms."""
+        """The planned digest of one request, computed once per key."""
         if self.frozen is None:
             return self.digests.get(key)
         if key not in self._digests:
@@ -85,10 +81,8 @@ def _hash(header: dict, digests) -> str:
 
 
 def freeze(trace, recycled=False, seed=0, salt="text", run="") -> Plan:
-    """Digests every planned request now. A single-turn trace keeps its workload_hash as plan_hash. A session
-    trace's plan_hash covers the file's sha256, the sample, the session order, the play rule (seed and salt policy)
-    when recycled, and every request's digest; a recycled replay's does not depend on its duration or the server's
-    speed."""
+    """Digest every planned request before the run; plan_hash is what runs compare on and does not depend on
+    duration or server speed."""
     if not isinstance(trace, SessionTrace):
         return Plan(trace.workload_hash(), {i: sent_digest(r) for i, r in enumerate(trace.requests())})
     sessions = trace.sessions()

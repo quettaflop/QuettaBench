@@ -1,4 +1,4 @@
-# H200 verification, G1b: configs/verify/h200_verify_single.yaml twice on one server, to measure run-to-run spread.
+# H200 verification, run-to-run spread: configs/verify/h200_verify_single.yaml twice on one server, to measure run-to-run spread.
 # mode.timeout only gives the two points distinct run names; no request reaches it.
 model: qwen38_27b
 engine:

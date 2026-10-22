@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
-"""Pull the gitignored trajectory datasets from R2 into data/ (`just fetch`) and check each against MANIFEST.json.
-
-A file whose sha256 differs from the manifest is removed and the fetch fails: a replay on a file the manifest does
-not describe is not comparable with one it does. `--check` checks every manifest file already in data/, the ones
-build_trajectories.py builds from the raw traces included, and fetches nothing."""
+"""Pull the gitignored trajectory datasets from R2 into data/ (`just fetch`).
+A file whose sha256 differs from data/MANIFEST.json fails the fetch."""
 
 import hashlib
 import json
@@ -19,8 +16,7 @@ PREFIX = os.environ.get("R2_WORKLOADS_PREFIX", "campaign-2026-10/workloads")
 DEST = Path(__file__).resolve().parent
 MANIFEST = DEST / "MANIFEST.json"
 
-# Files the profiles read as fetched, then the raw traces and recorded agent runs build_trajectories.py builds the
-# deep research, deep search, SWE-bench and Terminal-bench files from after the fetch (just fetch).
+# Used as fetched; RUNS are raw runs that build_trajectories.py turns into replay files.
 DATASETS = ["coding_agent_prompts.jsonl"]
 TRACES = ["dr9k-v4flash.jsonl", "dsqa-v4flash.jsonl"]
 # Directory under the workloads prefix -> directory in data/raw/.
@@ -43,6 +39,7 @@ def manifest() -> dict:
 
 
 def verify(path: Path, expected: str) -> None:
+    """Delete a fetched file and stop when its sha256 is not the manifest's."""
     got = sha256_of(path)
     if got != expected:
         path.unlink()

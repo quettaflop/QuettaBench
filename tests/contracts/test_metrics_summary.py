@@ -806,7 +806,7 @@ class TestOpenLoopUnits(unittest.TestCase):
         self.assertEqual(mix["plays_by_stratum"], {"short": 1, "long": 1})
 
     def test_a_last_bin_under_half_a_bin_folds_into_the_one_before(self):
-        self.assertEqual(bin_widths(10.001, 10.0), [10.001])  # was [10, 0.001], whose rate read 0 and cv 1.0
+        self.assertEqual(bin_widths(10.001, 10.0), [10.001])  # a 0.001 s bin of its own would read rate 0 and cv 1.0
         self.assertEqual(bin_widths(24.0, 10.0), [10.0, 14.0])
         self.assertEqual(bin_widths(25.0, 10.0), [10.0, 10.0, 5.0])  # exactly half a bin stands
         self.assertEqual(bin_widths(26.0, 10.0), [10.0, 10.0, 6.0])

@@ -47,7 +47,8 @@ RUN_KEYS = ("model", "engine", "workload", "mode", "hardware", "matrix")
 HARDWARE_FILE_KEYS = ("world", "timing_steps", "max_seq_headroom", "collective", "provision")
 GRIDS_KEYS = ("grids", "step_points")
 RATE_ARRIVALS = ("poisson", "ramp", "burst")
-# The slowest decode a session run's timeout must allow for: a turn of the profile's longest output at this pace.
+# A session timeout must cover the profile's longest turn at this pace, the floor; a server decoding slower than
+# 5 tokens/s needs mode.timeout raised above it.
 SLOWEST_TOKEN_S = 0.2
 # At most 200 chars (clear_run_dir's sibling name must fit in 255), no trailing '.'.
 RUN_NAME = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._-]{0,198}[A-Za-z0-9_-])?")

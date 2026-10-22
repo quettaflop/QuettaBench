@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-"""Build the session trajectory JSONL from ShareGPT chats, Claw-Eval traces, DeepResearch-9k or DeepSearchQA traces,
-mini-swe-agent SWE-bench runs or Harbor Terminal-Bench ATIF trajectories. Every agent builder writes the prompt_tokens
-and completion_tokens the serving engine reported per step; a step without them ends the session's eligibility."""
+"""Build the session-replay JSONL files from recorded agent runs; each step keeps the token counts the engine reported.
+just fetch calls the four builders; each one keeps only steps whose request and reply were both recorded."""
 
 from __future__ import annotations
 
@@ -425,16 +424,14 @@ MINI_SWE_AGENT_BASH_TOOL = {
 
 
 def wait_after_ms(reqs: list[dict[str, Any]], k: int) -> float:
-    """The recorded gap from reply k's end to request k+1's send, in ms; 0 after the last."""
+    """Tool wait to replay after step k, from the recorded send times."""
     if k + 1 >= len(reqs):
         return 0.0
     return max(0.0, 1000.0 * (float(reqs[k + 1]["t_request_sent"]) - float(reqs[k]["t_response_done"])))
 
 
 def swebench_native_session(run_dir: Path) -> dict[str, Any] | None:
-    """One session from a mini-swe-agent run directory (*.traj.json and requests.jsonl): each step's request as the
-    agent sent it, with the sidecar's token counts and wait. None when the sidecar and the trajectory disagree on
-    the number of model calls."""
+    """Turn one mini-swe-agent run into a replay session; skipped when its request log and trajectory disagree."""
     trajs = sorted(run_dir.glob("*.traj.json"))
     sidecar = run_dir / "requests.jsonl"
     if not trajs or not sidecar.exists():
@@ -500,8 +497,7 @@ def terminus_reply(step: dict[str, Any]) -> str:
 
 
 def telemetry_gaps_ms(path: Path) -> list[float]:
-    """From Harbor's telemetry.jsonl: per model call, ms from its end to the next call's start; 0 after the last,
-    [] without the file."""
+    """Tool waits between model calls, from Harbor's telemetry."""
     if not path.exists():
         return []
     rows = [json.loads(line) for line in path.open() if line.strip()]
@@ -511,9 +507,7 @@ def telemetry_gaps_ms(path: Path) -> list[float]:
 
 
 def atif_session(path: Path, source: str) -> dict[str, Any] | None:
-    """One session from a Harbor ATIF trajectory.json: the rebuilt terminus-2 reply as each assistant turn, the
-    terminal output as the user turn, token counts from the step metrics, waits from telemetry.jsonl. None when a
-    step lacks metrics."""
+    """Turn one Terminal-Bench trajectory into a replay session; skipped when a step lacks token metrics."""
     traj = json.loads(path.read_text())
     history: list[dict[str, str]] = []
     turns = []

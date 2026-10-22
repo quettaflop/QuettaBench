@@ -1,18 +1,16 @@
-# H200 verification of fix/session-replay: the recycled replay (mode.duration_s) on a stratified SWE-bench sample,
-# against SemiAnalysis AgentX on the same server. The engine block is InferenceX's vLLM H200 TP8 DeepSeek V4.1 Flash
-# config as /workspace/qb-verify/g4.sh runs it, plus --enable-prompt-tokens-details; the capture size goes with the
-# lane as InferenceX's agentic.yaml sets it. A fresh server per point (no --reuse-server), as InferenceX requires.
+# H200 recycled replay (mode.duration_s) of a stratified SWE-bench sample on a DeepSeek V4.1 Flash TP8 server,
+# a fresh server per point, for comparison with another agentic harness on the same server.
 model: deepseek_v41_flash
 engine:
   model: deepseek-ai/DeepSeek-V4.1-Flash
-  env:  # g4.sh's exports
+  env:  # the reference server's environment
     VLLM_USE_RUST_FRONTEND: 1
     VLLM_ENGINE_READY_TIMEOUT_S: 7200
     PYTHONUNBUFFERED: 1
   tp: 8
-  ep: false  # InferenceX's TP8 lanes run without expert parallel
+  ep: false  # the reference TP8 server runs without expert parallel
   max_model_len: 1048576
-  # The adapter always passes these three; g4.sh passes none, so they carry vLLM 0.31.0's defaults.
+  # The adapter always passes these three; the reference server passes none, so they carry vLLM 0.31.0's defaults.
   dtype: auto
   gpu_util: 0.92
   prefix_caching: true
