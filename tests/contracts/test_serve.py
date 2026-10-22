@@ -22,7 +22,7 @@ from quettabench.config import loader
 from quettabench.config.schema import Config, ConfigError, EngineCfg, HardwareCfg, ModeCfg, WorkloadCfg
 from quettabench.engines import launcher
 from quettabench.engines.drivers import HttpDriver
-from quettabench.metrics.results import RunWriter, summary_tag_lines
+from quettabench.metrics.results import RunWriter, jsonl_row, summary_tag_lines
 from quettabench.metrics.summary import RequestResult
 from quettabench.modes import serve
 from quettabench.workloads.base import Request
@@ -215,7 +215,7 @@ class SingleTurn(unittest.TestCase):
             [(r["request_index"], r["error_kind"]) for r in rows if not r["success"]], [(2, "missing_usage")]
         )
         self.assertEqual(summary.status, "partial")
-        # --allow-missing-usage keeps the row, zero-filled, as before.
+        # --allow-missing-usage keeps the row, zero-filled.
         kept, _ = run(single_trace(6), NoCount(), ModeCfg(concurrency=2, warmup=0, allow_missing_usage=True))
         self.assertEqual(kept.core.failed_requests, 0)
 
@@ -231,8 +231,7 @@ class SingleTurn(unittest.TestCase):
         self.assertEqual((code, status["status"]), (1, "aborted"))
 
     def test_a_request_changed_after_the_plan_was_frozen_fails_the_identity_gate(self):
-        # Sending request 0 changes request 2's prompt in place; the old gate hashed the same objects on both
-        # sides after the run and passed.
+        # Sending request 0 edits request 2 in place; the frozen plan must catch it.
         trace = single_trace(4)
 
         class Tamper(FakeDriver):
@@ -304,7 +303,8 @@ class Sessions(unittest.TestCase):
                     yield p
                 yield from steady_ttft_keys(v, p)
 
-        with tempfile.TemporaryDirectory() as td:
+        # The fake driver's 1 ms TTFT would be withheld by the mean-lag rule, which has its own test.
+        with tempfile.TemporaryDirectory() as td, mock.patch.object(serve, "LATENCY_BIAS_LIMIT", 1.0):
             summary, out = run(session_trace(12, 3), TimedDriver(), ModeCfg(concurrency=3, warmup=0), results_dir=td)
             run_json = json.loads((Path(td) / "run.json").read_text())
         self.assertEqual(list(steady_ttft_keys(run_json)), [])
@@ -496,7 +496,7 @@ class Sessions(unittest.TestCase):
         self.assertGreater(max(driver.frozen_at_send), driver.frozen_at_send[0])
         self.assertGreater(client["gc_freezes"], 0)
         self.assertGreater(client["gc_frozen_objects_final"], 0)
-        self.assertEqual(gc.get_freeze_count(), 0)  # thawed once the run was done, as before
+        self.assertEqual(gc.get_freeze_count(), 0)  # thawed once the run was done
         self.assertTrue(gc.isenabled())
 
     def test_a_freeze_empties_the_young_generations_a_second_of_allocation_filled(self):
@@ -520,7 +520,9 @@ class Sessions(unittest.TestCase):
         # 199 on-time samples span 1.99 s and one 1 s stall spans 1.01 s: the stall is a third of the time, so
         # p99 is the stall although it is one sample in 200.
         samples = [(0.0, 0.0)] * 199 + [(0.0, 1.0)]
-        self.assertEqual(serve.loop_lag_ms(samples), {"50": 0.0, "99": 1000.0, "max": 1000.0})
+        lag = serve.loop_lag_ms(samples)
+        self.assertEqual({k: v for k, v in lag.items() if k != "mean"}, {"50": 0.0, "99": 1000.0, "max": 1000.0})
+        self.assertAlmostEqual(lag["mean"], 1000 * 1.01 / 3.0, places=6)
         self.assertIsNone(serve.loop_lag_ms([]))
 
     def test_steady_ttft_is_withheld_when_the_loop_lags_inside_the_window(self):
@@ -610,7 +612,8 @@ class Sessions(unittest.TestCase):
             self.assertEqual(summary.sections["client"]["first_start_stagger_s"], 0.01)
 
     def test_two_recycled_runs_of_one_plan_never_share_a_salt_but_share_the_plan_hash(self):
-        # A server that cannot reset its cache must not hand run 2 the prefixes run 1 left (H200, S8: 0.9985 hit).
+        # A server that cannot reset its cache must not hand run 2 the prefixes run 1 left (a second run on one
+        # server reread 99.85% of the first run's prefixes).
         def salts_and_hash():
             trace, driver = recorded_trace(5, 2), TimedDriver(last_turn=1)
             with mock.patch.object(serve, "MIN_RECYCLED_WINDOW_S", 0.0):
@@ -642,8 +645,7 @@ class Sessions(unittest.TestCase):
         self.assertTrue(short[0]["match"] and long_[0]["match"])
 
     def test_a_recycled_plan_digests_only_the_turn_asked_for(self):
-        # The run asks as each request completes, on the event loop; digesting the whole play at its first turn
-        # held the loop 30 to 65 ms per play at 256 agents.
+        # The run asks as each request completes, on the event loop, so a key digests its own turn only, once.
         trace = recorded_trace(2, 6)
         plan = freeze(trace, recycled=True, seed=3, run="r1")
         whole = play(next(s for s in trace.sessions() if s[0].session_id == 1), 3, 4, "text", "r1")
@@ -658,7 +660,6 @@ class Sessions(unittest.TestCase):
         self.assertIsNone(plan.digest(("1#4", 6)))
 
     def test_the_planned_digest_is_taken_after_the_run_and_still_lands_on_every_row(self):
-        # On the event loop a second digest of each request's context was 18% of the loop's time at 256 agents.
         plan_class = freeze.__globals__["Plan"]
         real, on_loop = plan_class.digest, []
 
@@ -722,6 +723,59 @@ class Sessions(unittest.TestCase):
         trace.live_replies = True
         with self.assertRaisesRegex(ConfigError, "needs recorded replies"):
             run(trace, FakeDriver(), ModeCfg(concurrency=2, warmup=0, duration_s=0.05))
+
+    def test_a_recycled_replay_ends_when_no_request_succeeds_any_more(self):
+        # A dead server fails each request at once and the agent draws the next play at once; eight failures in a row
+        # end the run whatever their kind, since a server whose replies the client rejects is as dead to the run.
+        class ShortReplies(FakeDriver):
+            async def send(self, request, **kw):
+                if len(self.sent) < 3:
+                    return await super().send(request, **kw)
+                self.sent.append(request)
+                return RequestResult(success=False, e2el=0.01, error="2 of 4 tokens", error_kind="short_output")
+
+        http_errors = FakeDriver(fail=lambda r: len(http_errors.sent) > 3)
+        for driver, error in ((http_errors, "boom"), (ShortReplies(), "2 of 4 tokens")):
+            with self.subTest(error=error):
+                started = time.perf_counter()
+                code, out = run(recorded_trace(5, 2), driver, ModeCfg(concurrency=4, warmup=0, duration_s=5.0))
+                self.assertEqual(code, 1)
+                self.assertIn("ABORT: 8 requests failed in a row across 4 agents; no request succeeds any more", out)
+                self.assertIn(f"Last error: {error}", out)
+                self.assertLess(time.perf_counter() - started, 2.0)  # not the 5 s deadline
+                self.assertLessEqual(len(driver.sent), 3 + 8 + 4)  # the three that passed, the streak, little more
+
+    def test_rows_carry_the_recorded_prompt_count_and_the_window_reports_served_over_it(self):
+        # A trajectory turn keeps the count the recording reported in its metadata; the served count over it shows
+        # tokenizer drift per request, and the serve line of a session run says it spans the whole run.
+        trace, driver = recorded_trace(5, 2), TimedDriver(last_turn=1)
+        for session in trace.sessions():
+            for request in session:
+                request.metadata = {"planned_total_context_tokens": 100}
+        with (
+            mock.patch.object(serve, "MIN_RECYCLED_WINDOW_S", 0.0),
+            mock.patch.object(serve, "LATENCY_BIAS_LIMIT", 1.0),
+        ):
+            summary, out = run(trace, driver, ModeCfg(concurrency=4, warmup=0, duration_s=0.08))
+        self.assertTrue(all(r.recorded_input_tokens == 100 for r in summary.rows))
+        self.assertEqual(jsonl_row(summary.rows[0])["recorded_input_tokens"], 100)
+        ratio = summary.sections["steady"]["workload_mix"]["input_tokens_served_over_recorded"]
+        self.assertEqual(ratio["p50"], summary.rows[0].input_tokens / 100)
+        self.assertIn("window=whole_run", [line for line in out.splitlines() if line.startswith("SERVE_SUMMARY")][0])
+
+    def test_a_loop_late_by_a_little_on_every_chunk_withholds_ttft(self):
+        # Stalls under the 5 ms limit never enter the stall bound, yet each first chunk is read late by the mean lag.
+        pairs = [(None, RequestResult(success=True, ttft=0.02, e2el=0.1, output_tokens=5)) for _ in range(10)]
+        quiet = {"loop_lag_ms": {"50": 0.1, "99": 0.5, "max": 1.0, "mean": 0.1}}
+        late = {"loop_lag_ms": {"50": 1.4, "99": 4.0, "max": 4.5, "mean": 1.4}}
+        self.assertEqual(serve.client_stall_reasons(pairs, quiet), [])
+        self.assertIn(
+            "late by 1.40 ms on average, over 1% of TTFT p50 20.0 ms", serve.client_stall_reasons(pairs, late)[0]
+        )
+        steady = {"start_s": 0.0, "end_s": 10.0, "ttft_ms": {"n": 10, 50: 20.0, 90: 25.0, 99: 30.0}}
+        serve.withhold_on_client_lag(steady, [(t, 0.0014) for t in range(10)])
+        self.assertIsNone(steady["ttft_ms"])
+        self.assertIn("1.40 ms on average in the window", steady["withheld"]["ttft_ms"])
 
     def test_weights_revision_is_the_cached_snapshot_or_the_local_files_hash_and_a_none_says_why(self):
         with tempfile.TemporaryDirectory() as td:

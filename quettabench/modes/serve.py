@@ -53,6 +53,9 @@ IDENTITY_EXIT = 3
 DEFAULT_WORKLOAD = WorkloadCfg()
 RESERVE_GIB = 5.0  # Per GPU, held back from the KV budget for activations and graphs.
 TEXT_TOKENS = 64
+# A recycled replay ends after this many failures in a row (the agent count when larger): a failed play returns at
+# once, so a dead server would pile up failed plays; 8 is past any blip and under a second of a dead server.
+DEAD_SERVER_STREAK = 8
 
 
 class RunAborted(Exception):
@@ -105,7 +108,7 @@ def trace_name(trace) -> str:
 
 
 def sampling(mode, request) -> dict:
-    """exact_output_length pins min_tokens; chunk_usage is passed only when on, for the drivers that take it."""
+    """Sampling params for the driver; min_tokens enforces exact output length."""
     out = {
         "ignore_eos": mode.ignore_eos or mode.exact_output_length,
         "temperature": mode.temperature,
@@ -116,8 +119,7 @@ def sampling(mode, request) -> dict:
 
 
 def stamp_arrivals(trace, workload):
-    """Stamps an injected schedule on arrival_ts, before the plan is frozen, so it joins the workload hash; returns
-    the injected times, or None when the trace keeps its own."""
+    """Stamp an injected schedule on arrival_ts before the plan is frozen, so it joins the workload hash."""
     reqs = trace.requests()
     injected = parse_arrival(workload.arrival, len(reqs), workload.seed)
     for r, t in zip(reqs, injected or ()):
@@ -126,6 +128,7 @@ def stamp_arrivals(trace, workload):
 
 
 def arrival_offsets(trace, workload) -> list:
+    """Send offsets for an open-loop run: the injected schedule or the trace's arrivals, scaled by speed."""
     injected = stamp_arrivals(trace, workload)
     if injected is None:
         return rebase_arrivals([r.arrival_ts for r in trace.requests()], workload.speed)
@@ -133,8 +136,7 @@ def arrival_offsets(trace, workload) -> list:
 
 
 def note_client_stall(result, stall):
-    """The client's stalled time over the request's send to its last chunk, and over its send to its first chunk,
-    from ClientHealth.stall_s: the most each of e2el and ttft could owe to the client."""
+    """Record how much client stall overlaps a request, to bound its ttft and e2el."""
     if stall is not None and result.sent_perf_s is not None and result.e2el is not None:
         result.client_stall_s = stall(result.sent_perf_s, result.sent_perf_s + result.e2el)
         if result.ttft is not None:
@@ -205,8 +207,7 @@ def emitter(mode, writer, probe=None):
 
 
 async def replay(trace, driver, mode, emit, offsets, request_id, executed, plan=None, stall=None):
-    """The first mode.discard_first requests stay out of the summary. executed gets each request's sent_digest just
-    before it goes out."""
+    """Replay a single-turn trace; fills executed with each sent digest for the identity check."""
     open_loop = mode.load == "open"
     slots = asyncio.Semaphore(mode.concurrency)
     reqs = trace.requests()
@@ -258,6 +259,7 @@ def server_counters(driver):
     return counters() if counters else None
 
 
+# Sampling period for loop lag; fine enough to catch a 5 ms stall.
 LOOP_LAG_INTERVAL_S = 0.01
 # Steady TTFT is withheld above this window p99 loop lag: every timestamp in the window is read off that loop.
 LOOP_LAG_LIMIT_MS = 5.0
@@ -266,8 +268,8 @@ GC_FREEZE_INTERVAL_S = 1.0
 
 
 def loop_lag_ms(samples) -> dict | None:
-    """p50, p99 and max of (time, lag) samples in ms, each weighted by the wall time it spans (the interval plus its
-    lag), so a 1 s stall weighs 1 s rather than one sample."""
+    """Loop lag percentiles for the client section and the window gates, each sample weighted by the wall time it
+    spans so a 1 s stall weighs 1 s rather than one sample."""
     if not samples:
         return None
     spans = sorted((lag, LOOP_LAG_INTERVAL_S + lag) for _, lag in samples)
@@ -281,15 +283,13 @@ def loop_lag_ms(samples) -> dict | None:
                 return lag * 1000
         return spans[-1][0] * 1000
 
-    return {"50": at(0.5), "99": at(0.99), "max": spans[-1][0] * 1000}
+    mean = sum(lag * w for lag, w in spans) / total * 1000
+    return {"50": at(0.5), "99": at(0.99), "max": spans[-1][0] * 1000, "mean": mean}
 
 
 class ClientHealth:
-    """Samples how late the event loop runs and times gc passes while a run measures: start() before the pass,
-    stop() after, section() for run.json. samples holds (perf_counter, lag in s) for slicing to a window; stalls
-    holds the (start, end) perf_counter of every loop stall and gc pause over LOOP_LAG_LIMIT_MS, in end order, and
-    stall_s() says how much of a request's span they cover. Every GC_FREEZE_INTERVAL_S it freezes the survivors,
-    the results and rows a run keeps to its end, which a full pass would otherwise scan again and again."""
+    """Watch the client's event loop and gc during a run, so latency the client caused can be withheld: start()
+    before the pass, stop() after, section() for run.json, stall_s() for a request's share of the stalls."""
 
     def __init__(self):
         self.samples: list[tuple[float, float]] = []
@@ -379,7 +379,8 @@ class ClientHealth:
         return out
 
 
-# A client stall may move a published latency percentile by this share at most; past it, latency is withheld.
+# A client stall may move a published latency percentile by this share at most; past it, latency is withheld. 1% is
+# under the spread of repeated runs, so a client within it cannot reorder a ranking.
 LATENCY_BIAS_LIMIT = 0.01
 # The percentiles the bound is read at, the ones the summary publishes.
 BOUND_PERCENTILES = (50, 90, 99)
@@ -414,24 +415,39 @@ def latency_bounds(results) -> dict:
 
 
 def client_stall_reasons(pairs, client) -> list[str]:
-    """Why the client's own stalls make a pass's latency untrustworthy, or nothing: at some published percentile
-    the stalls could have moved ttft, tpot or e2el by more than LATENCY_BIAS_LIMIT. The worst case is named with
-    the value as measured and the least it could be without the client."""
+    """Withhold a pass's latency when the client itself could have moved a published percentile: a stall bound over
+    LATENCY_BIAS_LIMIT, or a mean loop lag over that share of TTFT p50."""
     ok = [r for _, r in pairs if r.success and not r.excluded_from_summary]
+    bounds = latency_bounds(ok)
     worst = None
-    for name, (measured, corrected) in latency_bounds(ok).items():
+    for name, (measured, corrected) in bounds.items():
         for p in BOUND_PERCENTILES:
             m, c = percentile(measured, p, "linear"), percentile(corrected, p, "linear")
             share = (m - c) / m if m > 0 else 0.0
             if share > LATENCY_BIAS_LIMIT and (worst is None or share > worst[0]):
                 worst = (share, name, p, m, c)
     if worst is None:
-        return []
+        return mean_lag_reasons((client or {}).get("loop_lag_ms"), bounds["ttft"][0])
     share, name, p, m, c = worst
     return [
         f"client stalls could have moved {name} p{p} by {share:.1%}, over {LATENCY_BIAS_LIMIT:.0%}: "
         f"{m:.1f} ms measured, at least {c:.1f} ms without them"
     ]
+
+
+def mean_lag_reasons(lag, ttfts_ms) -> list[str]:
+    """Withhold a pass's latency when the loop's mean lag is over LATENCY_BIAS_LIMIT of TTFT p50: stalls under
+    LOOP_LAG_LIMIT_MS never enter the stall bound, yet a loop late by a little on every chunk reads every first
+    chunk late by that."""
+    if not lag or not ttfts_ms:
+        return []
+    p50, mean = percentile(ttfts_ms, 50, "linear"), lag.get("mean")
+    if p50 > 0 and mean is not None and mean > LATENCY_BIAS_LIMIT * p50:
+        return [
+            f"client event loop late by {lag['mean']:.2f} ms on average, over {LATENCY_BIAS_LIMIT:.0%} of TTFT p50 "
+            f"{p50:.1f} ms"
+        ]
+    return []
 
 
 def client_lag_notes(client) -> list[str]:
@@ -482,7 +498,7 @@ class Measurement:
 
 
 async def measure(trace, driver, mode, emit, workload, request_id, plan=None) -> Measurement:
-    """plan: the frozen plan, whose digest each row carries beside the one taken at its send."""
+    """Run one measured pass and collect what the gates and summary read."""
     multi = isinstance(trace, SessionTrace)
     executed: dict = {}
     offsets = None if multi else arrival_offsets(trace, workload)
@@ -533,16 +549,26 @@ async def measure(trace, driver, mode, emit, workload, request_id, plan=None) ->
 
 
 def withhold_on_client_lag(steady: dict, loop_lag: list) -> None:
-    """Adds the loop lag inside a valid steady window and withholds its TTFT when p99 is over LOOP_LAG_LIMIT_MS: a
-    late loop reads every first chunk late."""
+    """Withhold a valid window's TTFT when the client's loop read first chunks late: p99 lag over LOOP_LAG_LIMIT_MS,
+    or mean lag over LATENCY_BIAS_LIMIT of TTFT p50."""
     inside = [(t, lag) for t, lag in loop_lag if steady["start_s"] <= t <= steady["end_s"]]
     lag = steady["client_loop_lag_ms"] = loop_lag_ms(inside)
     steady["client_loop_lag_samples"] = len(inside)
-    if lag and lag["99"] > LOOP_LAG_LIMIT_MS:
-        steady["ttft_ms"] = None
-        steady["withheld"] = {
-            "ttft_ms": f"client event loop late by {lag['99']:.1f} ms at p99 in the window, over {LOOP_LAG_LIMIT_MS:g} ms"
-        }
+    if not lag:
+        return
+    ttft = steady.get("ttft_ms") or {}
+    p50 = ttft.get(50, ttft.get("50"))
+    if lag["99"] > LOOP_LAG_LIMIT_MS:
+        why = f"client event loop late by {lag['99']:.1f} ms at p99 in the window, over {LOOP_LAG_LIMIT_MS:g} ms"
+    elif p50 and lag.get("mean") is not None and lag["mean"] > LATENCY_BIAS_LIMIT * p50:
+        why = (
+            f"client event loop late by {lag['mean']:.2f} ms on average in the window, over "
+            f"{LATENCY_BIAS_LIMIT:.0%} of TTFT p50 {p50:.1f} ms"
+        )
+    else:
+        return
+    steady["ttft_ms"] = None
+    steady["withheld"] = {"ttft_ms": why}
 
 
 def steady_line(s: dict) -> str:
@@ -623,9 +649,7 @@ def failed_count(pairs) -> int:
 
 
 def summary_sections(pairs, duration, mode, server_spec_decode=None, sessions=False, withheld=False):
-    """spec prefers the server's counters over the rows'. sessions: a session run, whose steady TTFT is
-    sections.steady's, not the requests past the first C indexes. withheld: a run with failed requests, whose
-    latency percentiles and burst recovery are left out."""
+    """Build run.json's summary sections; a run with failed requests gets no latency percentiles."""
     out = {"spec_decode": server_spec_decode or spec_decode_section(pairs)}
     records = serve_records(pairs, mode.load == "open")
     if not records:
@@ -731,8 +755,7 @@ def sweep(trace, driver, mode, writer, workload, request_id, plan):
 
 
 def planned_digests(plan, pairs, multi) -> dict:
-    """request_index -> the plan's digest for that request, taken after the run: on the event loop, this second
-    digest of each request's whole context took 18% of the loop's time at 256 agents."""
+    """Plan digest per row, taken after the run so the event loop never digests a request twice."""
     out = {}
     for request, result in pairs:
         if result is not None and result.request_index is not None:
@@ -765,6 +788,7 @@ def turns_not_sent(planned, executed, pairs) -> list:
 
 
 def key_row(key) -> dict:
+    """Row fields naming a plan key, for the identity report."""
     return {"session": key[0], "turn": key[1]} if isinstance(key, tuple) else {"request": key}
 
 
@@ -829,9 +853,7 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
     plan = freeze(trace, recycled, seed=workload.seed, salt=workload.salt, run=secrets.token_hex(6) if recycled else "")
     goodput = None
     rss_before = rss_mib()
-    # The loaded corpus and the plan live for the whole run: frozen, a collection does not walk them, so a full
-    # pass is shorter, and ClientHealth freezes what the run keeps as it goes. Collections still run; everything
-    # is unfrozen after the run.
+    # Frozen so gc passes skip the corpus and plan; ClientHealth freezes what the run keeps as it goes; thawed after.
     gc.freeze()
     frozen = gc.get_freeze_count()
     try:
@@ -935,7 +957,7 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
             pairs, core.measured_window_s or duration, mode, server_spec_decode, multi, withheld is not None
         )
     )
-    print_summary_tag_lines(summary.sections)
+    print_summary_tag_lines(summary.sections, whole_run=session_times is not None and mode.load == "closed")
     if client is not None:
         summary.sections["client"] = client
         if measured.stagger_s is not None:
@@ -1241,7 +1263,7 @@ class SessionDispatcher:
                 )
 
     async def run(self, executed: dict):
-        """executed gets each request's sent_digest just before it goes out, keyed (session, turn)."""
+        """Dispatch every session under the run's pacing and record each request; executed holds each sent digest."""
         self.executed = executed
         self.slots = asyncio.Semaphore(self.mode.concurrency)
         self.by_turn: dict[int, list] = {i: [] for i in range(self.max_turns)}
@@ -1249,6 +1271,10 @@ class SessionDispatcher:
         self.prev_context: dict = {}
         self.prev_output: dict = {}
         self.dead: set = set()
+        # Failures with no success between them, across every agent, and the latest one's error; a recycled replay
+        # ends when the streak reaches DEAD_SERVER_STREAK or the agent count.
+        self.failed_in_a_row = 0
+        self.last_error = ""
         self.warned = False
         # session_id -> (arrived, admitted, finished), seconds since start; the steady window reads these
         self.session_times: dict = {}
@@ -1327,8 +1353,11 @@ class SessionDispatcher:
             self.prev_context[sid] = int(result.input_tokens)
             self.prev_output[sid] = int(result.output_tokens or 0)
         if result.success:
+            self.failed_in_a_row = 0
             self._feed_reply_back(sid, request.turn, result)
         else:
+            self.failed_in_a_row += 1
+            self.last_error = result.error or result.error_kind or "failed"
             self.dead.add(sid)
 
     def _feed_reply_back(self, sid, turn, result):
@@ -1362,7 +1391,9 @@ class SessionDispatcher:
             )
 
     async def _turns(self, turns, index_of, arrive_at_s=None):
+        """One agent playing a session: its turns in order, each after the recorded wait; a failed turn ends the play."""
         last = len(turns) - 1
+        result = None
         for request in turns:
             result = await self._dispatch(request, index_of(request), arrive_at_s if request.turn == 0 else None)
             self._record(request, result)
@@ -1371,6 +1402,7 @@ class SessionDispatcher:
             wait_s = self._wait_s(request)
             if wait_s > 0 and request.turn < last:
                 await asyncio.sleep(wait_s)
+        return result
 
     async def _open(self):
         n = len(self.sessions)
@@ -1436,8 +1468,9 @@ class SessionDispatcher:
             raise RunAborted(f"ABORT: All {len(results)} requests failed. First error: {first_error(results)}")
 
     async def _recycled(self):
-        """mode.duration_s: each agent draws the next session from a cycle over the sample, plays it to the end and
-        draws again until the deadline; every play is salted (play())."""
+        """Recycled replay: agents draw salted plays until the deadline. A failed turn ends its play; a run in which
+        DEAD_SERVER_STREAK requests (or one per agent, if more) failed in a row ends aborted, because a dead server
+        would otherwise have every agent drawing failed plays at full speed."""
         if self.open_loop or self.pacing.pacing != "per-session":
             raise ConfigError("mode.duration_s needs closed-loop, per-session pacing")
         if self.trace.live_replies:
@@ -1449,6 +1482,7 @@ class SessionDispatcher:
         )
         self._print_waits()
         draws, indexes = itertools.count(), itertools.count()
+        streak_limit = max(agents, DEAD_SERVER_STREAK)
 
         def elapsed():
             return time.perf_counter() - self.start
@@ -1462,8 +1496,20 @@ class SessionDispatcher:
                 admitted = elapsed()
                 await self._turns(turns, lambda r: next(indexes))
                 self.session_times[turns[0].session_id] = (admitted, admitted, self.last_done[turns[0].session_id])
+                if self.failed_in_a_row >= streak_limit:
+                    raise RunAborted(
+                        f"ABORT: {self.failed_in_a_row} requests failed in a row across {agents} agents; no request "
+                        f"succeeds any more. Last error: {self.last_error}"
+                    )
 
-        await asyncio.gather(*[agent(a) for a in range(agents)])
+        # The first abort cancels the other agents, whose requests would otherwise hang on to their timeouts.
+        tasks = [asyncio.create_task(agent(a)) for a in range(agents)]
+        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+        for task in done:
+            task.result()
 
     async def _interleaved(self):
         for turn in range(self.max_turns):

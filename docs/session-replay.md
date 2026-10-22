@@ -28,15 +28,18 @@ The README has the short version. This file is the reference: what each field me
 ## Recycled replay (`mode.duration_s`)
 
 - Each agent draws the next session from a cycle over the sample, plays it to the end, and draws again until the deadline. Every play started before the deadline runs to its end.
-- Every play is salted so it cannot hit the prefix cache an earlier play left. `workload.salt: text` (default) puts `[rid:<12 hex>]` before the first user message, as AgentX's `first_turn_prefix` does; `workload.salt: cache_salt` sends vLLM's `cache_salt` field instead. The tag is `sha256(seed:run:session:play)`, where `run` is a fresh id per run (`sections.plays.salt_run`), so a second run on the same server does not reuse the first run's prefixes.
+- A failed turn ends its play, and the run goes on to the deadline with the failure counted. The run ends aborted (exit 1, the reason in `run.json`) once 8 requests, or as many as there are agents, failed in a row with no success between them, whatever the failure kind: no request succeeds any more, and since a failed play returns at once, drawing on would only pile up failed plays until the deadline.
+- Every play is salted so that, from its first user message on, it cannot hit the prefix cache an earlier play left; the system prompt and tools before it stay shared, as they are between real sessions. `workload.salt: text` (default) puts `[rid:<12 hex>]` before the first user message; `workload.salt: cache_salt` sends vLLM's `cache_salt` field instead, which keeps the whole prefix apart. The tag is `sha256(seed:run:session:play)`, where `run` is a fresh id per run (`sections.plays.salt_run`), so a second run on the same server does not reuse the first run's prefixes.
 - `plan_hash` covers the sample, the seed and the play rule (`sections.plays.play_rule`), not how many plays started.
-- Results compare only at the same sample, seed, duration and agent count. A trace that fills its replies from the engine (ShareGPT) cannot be recycled.
+- Results are comparable only at the same sample, seed, duration and agent count. `compare` checks the sample and seed through `plan_hash` and the window's workload mix; the duration and agent count it does not check, so the run names carry them. A trace that fills its replies from the engine (ShareGPT) cannot be recycled.
 
 ## The steady window (`sections.steady`)
 
 - Opens when every agent has finished its first session, so the synchronized cold-cache first sessions stay out. Closes at the deadline for a recycled run, else at the first session finish after the last admission.
 - Not valid, with no steady number and the cause in `reason`, when: it opens after the deadline; a recycled window lasts under 300 s; a per-session run has 2C sessions or fewer; an agent is idle inside it; or any request failed or was not sent. A whole-run number never stands in.
 - The cold start is reported beside it, never dropped: `first_turn_ttft_ms` (each agent's first turn) and `ramp.ttft_ms` (every request before the window).
+- `workload_mix.input_tokens_served_over_recorded` is each request's served prompt tokens over the count the recording reported; a served model with another tokenizer shows here, and no text is lost either way.
+- The window's TTFT is withheld when the client's own event loop read first chunks late: p99 lag over 5 ms, or mean lag over 1% of TTFT p50.
 - Output throughput counts tokens that arrived inside the window: the server's count per chunk when every chunk has one (`mode.chunk_usage`, off by default so request bodies match vllm bench serve's and AIPerf's), else one token per chunk with characters when those number the output tokens, else output tokens in proportion to each chunk's characters.
 - TTFT, TPOT and ITL percentiles take requests sent at or after the start and completed by the end. `interactivity_p90_tok_s` is 1000 / p90 `tpot_ms`, AgentX's figure. `chunk_gap_ms` is AIPerf's inter-chunk latency.
 - `timeline` bins output tok/s and requests in flight in 10 s bins, so the window can be seen to be steady.

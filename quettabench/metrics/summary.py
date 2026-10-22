@@ -27,6 +27,8 @@ class RequestResult:
     e2el: float | None = None
     input_tokens: int = 0
     output_tokens: int = 0
+    # The prompt tokens the recording reported for this turn; served input_tokens over it shows tokenizer drift.
+    recorded_input_tokens: int | None = None
     error: str | None = None
     # A timeout means the client cut the stream: the slowest requests are missing from the tail.
     error_kind: str | None = None  # "timeout" | "http_error" | "connection_error" | "client_error" | ...
@@ -125,12 +127,15 @@ def annotate_request_observability(
     completed_at_s: float,
     run_start: float | None = None,
 ) -> RequestResult:
-    """Times are seconds on the run clock; run_start is that clock's perf_counter zero, which puts the driver's
-    sent_perf_s on it."""
+    """Put the driver's send times on the run clock that rows and the steady window share, and stamp the request's
+    planned facts on its row."""
     result.request_index = request_index
     if run_start is not None and result.sent_perf_s is not None:
         result.sent_at_s = result.sent_perf_s - run_start
     result.max_tokens_requested = int(getattr(request, "max_tokens", 0) or 0)
+    # A trajectory turn keeps its recorded count in metadata; a token-id request has it as prompt_len.
+    recorded = (getattr(request, "metadata", None) or {}).get("planned_total_context_tokens")
+    result.recorded_input_tokens = int(recorded or getattr(request, "prompt_len", 0) or 0) or None
     messages = getattr(request, "messages", None) or ()
     result.message_count = len(messages)
     result.prompt_chars = sum(len(str(m.get("content", ""))) for m in messages)
@@ -294,8 +299,7 @@ def _sent_intervals(results) -> list[tuple[float, float]]:
 
 
 def _busy_time_and_load(results) -> tuple[float, float, int]:
-    """Busy time (the union of the requests' [send, completion]), mean in flight weighted by time over the first
-    send to the last completion, idle stretches included, and the peak in flight."""
+    """Busy time and load for the whole-run rates; idle stretches count toward the mean in flight."""
     intervals = _sent_intervals(results)
     if not intervals:
         return 0.0, 0.0, 0
@@ -352,8 +356,7 @@ PERCENTILE_METHODS = ("nearest", "linear")
 
 
 def percentile(values, p: float, method: str) -> float:
-    """ "nearest" is the ceil(p/100 * n)-th smallest value and raises on no values; "linear" interpolates and returns
-    0.0 on no values."""
+    """Percentile by nearest rank (what the summary publishes) or by linear interpolation."""
     if method not in PERCENTILE_METHODS:
         raise ValueError(f"unknown percentile method {method!r}; expected one of {PERCENTILE_METHODS}")
     sorted_data = sorted(values)
@@ -377,23 +380,21 @@ def pcts(values, method: str) -> dict:
     return {f"p{q}": percentile(values, q, method) for q in (50, 90, 95, 99)}
 
 
+# Idle longer than this inside the window means an agent waited for an arrival, not a handover between sessions.
 HANDOVER_S = 0.05
+# Shortest recycled window whose steady numbers are published: several session turnovers at the sweeps' agent counts.
 MIN_RECYCLED_WINDOW_S = 300.0
 
 
 def steady_window(
     session_times: dict, concurrency: int, end_s: float | None = None, min_window_s: float = MIN_RECYCLED_WINDOW_S
 ) -> dict:
-    """The span in which every agent is busy: from the moment every agent has finished its first session to the
-    first finish after the last admission, or to end_s, the deadline, for a recycled replay. Invalid, with the
-    reason, when an agent sits idle inside it; per-session, with 2C sessions or fewer; recycled, when it opens
-    after the deadline or lasts under min_window_s."""
+    """Find the span where every agent is busy, the only span steady numbers come from; an invalid window says why
+    in reason."""
     n, c = len(session_times), max(1, concurrency)
     recycled = end_s is not None
     out: dict = {"valid": False, "sessions": n, "agents": c}
-    # Every agent starts its first session at once; with no more than 2C sessions the agents have barely turned
-    # over by the last admission, and the window is mostly that synchronized start. A recycled replay keeps
-    # drawing plays to the deadline, so it is judged by the window's length instead.
+    # With 2C sessions or fewer the window is mostly the synchronized start; a recycled run is judged by length instead.
     if (not recycled and n <= 2 * c) or n == 0:
         out["reason"] = f"{n} sessions for {c} agents; a steady window needs more than {2 * c}"
         return out
@@ -408,9 +409,7 @@ def steady_window(
     if end <= start:
         out["reason"] = "the window closed before it opened"
         return out
-    # A freed agent takes the next session microseconds after the last one finishes; an agent idle for longer
-    # than HANDOVER_S inside the window was waiting for a session's recorded arrival. An idle spell that began
-    # before the window counts for the part inside it; the drain's spell never closes, so infinity closes it.
+    # Idle past HANDOVER_S inside the window voids it; infinity closes the drain's open spell.
     open_now, idle_since = 0, None
     events = sorted([(adm, 1) for _, adm, _ in times] + [(fin, -1) for _, _, fin in times])
     for t, d in events + [(math.inf, 0)]:
@@ -437,8 +436,7 @@ def sent_at(r) -> float | None:
 
 
 def chunk_times(r) -> list[float]:
-    """When each streamed chunk reached the client, seconds since the run's start: the first at the send plus TTFT,
-    each later one an ITL gap after the one before. None without a chunk."""
+    """Arrival time of each chunk on the run clock, for counting tokens by arrival."""
     sent = sent_at(r)
     if sent is None or r.ttft is None:
         return []
@@ -451,11 +449,8 @@ def chunk_times(r) -> list[float]:
 
 
 def chunk_shares(r, n: int) -> list[float]:
-    """The output tokens each of a request's n chunks carried, by the first rule that applies: the server's own
-    counts when every chunk has one (each the rise in cumulative completion_tokens); one token for each chunk with
-    characters when they number exactly output_tokens, the common one-token-per-chunk stream; else output_tokens in
-    proportion to each chunk's delta characters. With no characters at all the finish chunk carries everything.
-    Never negative."""
+    """Split a request's output tokens across its chunks: server counts, else one per chunk, else by characters;
+    never negative."""
     counts = r.chunk_tokens
     if counts and len(counts) == n and all(c != NO_COUNT for c in counts):
         return [max(0, c - prev) for prev, c in zip([0, *counts[:-1]], counts)]
@@ -469,8 +464,7 @@ def chunk_shares(r, n: int) -> list[float]:
 
 
 def tokens_by_arrival(ok, start: float, end: float, widths: list[float]) -> tuple[float, float, list[float]]:
-    """Output tokens whose chunk arrived inside [start, end], in total and per bin (chunk_shares), and the prompt
-    tokens of requests whose first chunk did."""
+    """Count tokens that arrived inside the window, so a request straddling its edge counts only its share."""
     bin_s, out_tok, in_tok, bins = widths[0], 0.0, 0.0, [0.0] * len(widths)
     for r in ok:
         chunks = chunk_times(r)
@@ -494,7 +488,7 @@ def bin_widths(span: float, bin_s: float) -> list[float]:
 
 
 def width_weighted(values: list[float], widths: list[float]) -> dict:
-    """min, mean, max and cv of per-bin values, the mean and cv weighted by each bin's width."""
+    """Summarize per-bin rates so a short last bin weighs less."""
     total = sum(widths)
     mean = sum(v * w for v, w in zip(values, widths)) / total
     sd = math.sqrt(sum(w * (v - mean) ** 2 for v, w in zip(values, widths)) / total)
@@ -518,7 +512,7 @@ def in_flight_by_bin(results, start: float, widths: list[float]) -> list[float]:
 
 
 def ttft_ms_summary(results) -> dict | None:
-    """n and nearest-rank p50, p90 and p99 TTFT in ms over the successful results; None without one."""
+    """TTFT percentiles for the console and run.json."""
     ttfts = [r.ttft * 1000 for r in results if r.success and r.ttft is not None]
     if not ttfts:
         return None
@@ -526,16 +520,14 @@ def ttft_ms_summary(results) -> dict | None:
 
 
 def mix_stats(values) -> dict | None:
-    """p10, p50 and p90 (nearest rank) and the mean of values; None without one."""
+    """Summarize one workload-mix field."""
     if not values:
         return None
     return {**{f"p{p}": percentile(values, p, "nearest") for p in (10, 50, 90)}, "mean": sum(values) / len(values)}
 
 
 def workload_mix(results, inside, done_ids, stratum_of=None) -> dict:
-    """What the window asked of the server, so two runs' mixes can be held side by side: input, output and uncached
-    prefill tokens of the requests inside it and the realized wait after each, the turns of every session (or
-    play) that finished inside it, and those sessions per stratum."""
+    """What the window asked of the server, so compare can withhold ratios between runs with different mixes."""
     inside_ids = {id(r) for r in inside}
     by_session: dict = {}
     for r in results:
@@ -555,6 +547,9 @@ def workload_mix(results, inside, done_ids, stratum_of=None) -> dict:
     return {
         "requests": len(inside),
         "input_tokens": mix_stats([r.input_tokens for r in inside]),
+        "input_tokens_served_over_recorded": mix_stats(
+            [r.input_tokens / r.recorded_input_tokens for r in inside if r.recorded_input_tokens]
+        ),
         "output_tokens": mix_stats([r.output_tokens for r in inside]),
         "uncached_prefill_tokens": mix_stats(
             [r.input_tokens - r.server_cached_tokens for r in inside if r.server_cached_tokens is not None]
@@ -574,10 +569,7 @@ def steady_section(
     min_window_s: float = MIN_RECYCLED_WINDOW_S,
     stratum_of: dict | None = None,
 ) -> dict:
-    """The steady window's throughput, rates and latency percentiles, with a per-bin timeline that shows the window
-    held. Takes the dispatcher's session_times and the run's agent count. The cold start is reported beside it, not
-    dropped: first_turn_ttft_ms over the first turn of each agent's first session, ramp over requests sent before
-    the window opened."""
+    """Steady-window throughput and latency for run.json; the cold start is reported beside it, not dropped."""
     w = steady_window(session_times, concurrency, end_s, min_window_s)
     first_sessions = {sid for sid, _ in sorted(session_times.items(), key=lambda kv: kv[1][1])[: max(1, concurrency)]}
     w["first_turn_ttft_ms"] = ttft_ms_summary(
@@ -644,8 +636,7 @@ def steady_section(
 
 
 def steady_ttfts(indexed_ttfts, concurrency: int) -> list | None:
-    """TTFTs past the first `concurrency` dispatched; None when fewer than `concurrency` remain. Single-turn
-    runs only: a request index says nothing about where a session run is, that is steady_window's job."""
+    """Steady TTFT for single-turn runs: skip the first `concurrency` requests as ramp; None when too few remain."""
     rest = [t for i, t in indexed_ttfts if i >= concurrency]
     return rest if len(rest) >= concurrency else None
 
@@ -681,8 +672,7 @@ def withhold_latency(*summaries) -> None:
 
 
 def sla_verdict(summary: dict, sla_ttft_ms, sla_tpot_ms, failed: int = 0) -> list[str]:
-    """A bound of None or 0 is not checked; empty means PASS. Any failed request FAILs before a p99 is read: the
-    survivors' p99 leaves out the slowest requests, the ones that timed out."""
+    """Pass or fail a run against its SLA bounds; any failed request fails it."""
     if failed:
         return ["failed_requests"]
     bound = []
@@ -731,8 +721,8 @@ def aggregate(
     warmup_concurrency: int = 0,
     planned_turns: dict | None = None,
 ) -> BenchmarkSummary:
-    """Requests held out by --discard-first are in no statistic, busy time included.
-    planned_turns maps a session id to the turns it was to run; without it a session with no failed turn counts."""
+    """Summarize a run's rows; requests held out by --discard-first are in no statistic, and planned_turns says
+    which sessions ran every turn."""
     excluded = sum(1 for r in results if r.excluded_from_summary)
     results = [r for r in results if not r.excluded_from_summary]
     # The whole run, from the rows: the first send to the last completion; the run's wall time only without one.
@@ -791,8 +781,6 @@ def aggregate(
             if r.error:
                 summary.errors.append(r.error)
 
-    # Whole-run rates divide by the first send to the last completion of the kept requests, failed ones too; the
-    # run's wall time only when no request carries both times.
     window_s, summary.measured_window = duration_s, "run wall time"
     timed = [(sent_at(r), r.completed_at_s) for r in results]
     spans = [(a, b) for a, b in timed if a is not None and b is not None]
@@ -1018,8 +1006,7 @@ def aggregate_per_turn(results_by_turn: dict[int, list]) -> list[TurnSummary]:
 
 
 def success_rate_gate(summary, min_rate: float, not_sent: int = 0) -> tuple[str, str | None]:
-    """not_sent: planned turns a failed turn ended before they were sent; they are in summary's failed_requests and
-    error_kinds already, and here they join the planned count the rate divides by."""
+    """Abort a run whose success rate over planned turns is under the floor; unsent turns count as failed."""
     if summary.num_requests == 0:
         return "abort", f"ABORT: No requests completed. Minimum success rate: {min_rate:.0%}"
     planned = summary.num_requests + not_sent

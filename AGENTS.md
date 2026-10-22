@@ -40,7 +40,7 @@ One line each; everything else follows section 2 "Target layout".
 - `engines/drivers.py` also holds the transformers FIDELITY reference adapter (`engine.name: reference`) beside `ReferenceDriver`; `engines/__init__.py` imports the adapters so they register.
 - `modes/serve.py` `model_dir` resolves engine.model through the local HF cache for the grid's KV formula: config resolution inside the procedure, kept there because only a grid run with no `engine.kv_bytes_per_token` needs it.
 - `EngineAdapter` has no `profiler_hook`: the profiler attaches through `engine.json` and nothing would call one.
-- `modes/serve.py` is about 880 lines, not under 400: the replay, the session dispatch and the grid cells all live in serve, as section 2 assigns them.
+- `modes/serve.py` is about 1,500 lines, not under 400: the replay, the session dispatch and the grid cells all live in serve, as section 2 assigns them.
 - `probes/_timing.py` holds the device layer (backend, sync, device name, event timing), the CUDA-graph and NCU timing, not `probes/base.py`: it imports torch, and the runner imports `base.py` on CPU. It is the only probe or profiling module that calls `torch.cuda`; each probe names the backends it supports there with `require_backend`. Probes run on cuda and rocm (`gemm` and `elementwise` also on cpu); rocm is mock-tested only, `--ncu` is cuda only (rocprofv3 is not wired), and tpu and neuron refuse.
 - `serving_decode_grid.py` and `serving_stage_split.py` (read by the export builders) are probes beyond section 2's list.
 - `profiling/client_side.py` holds the `frontend` and `pd_proxy_overhead` sources, not `engine_side.py`: both import QuettaSim at the top, and the profiler imports `engine_side.py` for every source.

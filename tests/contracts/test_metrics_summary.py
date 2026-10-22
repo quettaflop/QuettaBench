@@ -585,10 +585,7 @@ class TestOpenLoopUnits(unittest.TestCase):
         self.assertIsNone(s.server_cache_hit_rate)
 
     def test_steady_window_is_the_interval_with_every_agent_busy(self):
-        # Two agents, six sessions of very unequal length: S5 runs 97 s. S1 and S2 start together at 0 s and the
-        # later of them, S2, finishes at 3 s. The last admission is S6 at 4 s and the first finish after it is S6
-        # at 5 s, so the window is 3 s to 5 s. Closing at the (N - C + 1)-th admitted session's finish would have
-        # run to S5's 100 s and reported 95 s of drain as steady.
+        # Window is 3 s to 5 s; closing at the (N - C + 1)-th finish would count 95 s of drain as steady.
         times = {
             1: (0.0, 0.0, 1.0),
             2: (0.0, 0.0, 3.0),
@@ -602,9 +599,7 @@ class TestOpenLoopUnits(unittest.TestCase):
         self.assertEqual((w["start_s"], w["end_s"], w["window_s"], w["agents"]), (3.0, 5.0, 2.0, 2))
 
     def test_the_synchronized_first_sessions_are_outside_the_window(self):
-        # Three agents start S0 to S2 together at 0 s on a cold cache; they finish at 4 s, 6 s and 7 s, so the
-        # window opens at 7 s. Every finish is a handover until S8, admitted last at 12 s; the first finish after
-        # it is S6's at 14 s.
+        # Opens at the last first-session finish (7 s), closes at the first finish after the last admission (14 s).
         times = {
             0: (0.0, 0.0, 4.0),
             1: (0.0, 0.0, 6.0),
@@ -695,10 +690,16 @@ class TestOpenLoopUnits(unittest.TestCase):
         self.assertFalse(w["valid"])
         self.assertIn("an agent was idle 1.500 s from 2.000 s", w["reason"])
 
+    def test_workload_mix_reports_served_prompt_tokens_over_the_recorded_count(self):
+        # A served model with another tokenizer counts the same text differently; the ratio shows it per request.
+        drifted = RequestResult(success=True, input_tokens=950, output_tokens=5, recorded_input_tokens=1000)
+        unrecorded = RequestResult(success=True, input_tokens=100, output_tokens=5)
+        mix = workload_mix([drifted, unrecorded], [drifted, unrecorded], set())
+        self.assertEqual(mix["input_tokens_served_over_recorded"]["p50"], 0.95)
+        self.assertIsNone(workload_mix([unrecorded], [unrecorded], set())["input_tokens_served_over_recorded"])
+
     def _two_agents_ten_sessions(self):
-        # Two agents, 1 s turns of 5 tokens; sessions 0 to 8 have 3 turns, session 9 has 6: the window is 3 s (S0
-        # and S1, the first sessions, end) to 15 s (S8 finishes first after the last admission at 12 s) and S9's
-        # last three turns fall in the drain.
+        # Window is 3 s to 15 s; S9's last three turns fall in the drain.
         turns = {sid: 6 if sid == 9 else 3 for sid in range(10)}
         times = {sid: (0.0, 3.0 * (sid // 2), 3.0 * (sid // 2) + turns[sid]) for sid in range(10)}
         rows = []

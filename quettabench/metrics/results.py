@@ -230,6 +230,7 @@ NEW_FIELDS = (
     "chunk_tokens",
     "planned_digest",
     "sent_digest",
+    "recorded_input_tokens",
 )
 
 
@@ -442,7 +443,8 @@ def goodput_probe_line(p):
     )
 
 
-def summary_tag_lines(summary):
+def summary_tag_lines(summary, whole_run=False):
+    """The grep-able summary lines; whole_run marks a session run's serve line as spanning ramp and drain."""
     lines = []
     w = summary.get("workload")
     if w is not None:
@@ -472,6 +474,8 @@ def summary_tag_lines(summary):
                 else ("tpot_ms=withheld " if not s["ttft_ms"] else "tpot_ms_p50=- ")
             )
             + f"req_s={s['req_s']:.3f} tok_s={s['tok_s']:.1f}"
+            # A session run's steady numbers are on the Steady window line; this one spans ramp and drain too.
+            + (" window=whole_run" if whole_run else "")
         )
     sla = summary.get("sla")
     if sla is not None:
@@ -517,8 +521,8 @@ def summary_tag_lines(summary):
     return lines
 
 
-def print_summary_tag_lines(summary):
-    for line in summary_tag_lines(summary):
+def print_summary_tag_lines(summary, whole_run=False):
+    for line in summary_tag_lines(summary, whole_run):
         print(line, flush=True)
 
 
