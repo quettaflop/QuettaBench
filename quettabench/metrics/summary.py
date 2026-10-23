@@ -1,6 +1,7 @@
 """Aggregate request results into BenchmarkSummary; failures are counted apart."""
 
 import math
+import random
 import re
 import statistics
 from array import array
@@ -560,23 +561,74 @@ def workload_mix(results, inside, done_ids, stratum_of=None) -> dict:
     }
 
 
-# The server's cache hit share may differ between the window's two halves by this much; past it the cache was still
-# filling or had begun evicting, and the window's hit rate is not one the server will keep.
+# The window's two halves must read the same server cache hit share, else the cache was still filling or had begun
+# evicting and the window's hit rate is not one the server will keep. The halves are compared at the window's own mix
+# of turn depths, since a deeper turn caches more of its prompt by construction; the limit is at least twice the
+# drift's own noise from resampling plays, since a data-parallel server hits or misses almost per request; and fewer
+# than CACHE_PLAYS_PER_HALF plays in a half decide nothing.
 CACHE_DRIFT_LIMIT = 0.05
+CACHE_DRIFT_NOISE_SDS = 2.0
+CACHE_PLAYS_PER_HALF = 30
+CACHE_DRIFT_DRAWS = 200
+# The turn index at which each depth bucket starts.
+TURN_DEPTH_BUCKETS = (0, 1, 4, 10, 20)
+
+
+def turn_depth_bucket(turn_index) -> int:
+    return sum(1 for first in TURN_DEPTH_BUCKETS[1:] if (turn_index or 0) >= first)
+
+
+def hit_share_at_mix(plays: list[dict], weights: dict) -> float:
+    """One half's cache hit share weighted to the window's turn-depth mix; a bucket the half lacks drops out."""
+    totals: dict = {}
+    for buckets in plays:
+        for bucket, (cached, prompt) in buckets.items():
+            cell = totals.setdefault(bucket, [0, 0])
+            cell[0] += cached
+            cell[1] += prompt
+    present = {b: w for b, w in weights.items() if totals.get(b, [0, 0])[1] > 0}
+    norm = sum(present.values())
+    return sum(w / norm * totals[b][0] / totals[b][1] for b, w in present.items()) if norm else 0.0
 
 
 def cache_steady(inside, start: float, end: float) -> dict | None:
     """Compare the server's cache hit share between the window's halves, so a window the cache had not settled in
-    is not published as steady; None when the server reported no cached counts."""
-    halves: list[list] = [[], []]
+    is not published as steady. None when the server reported no cached counts; steady None when a half holds too
+    few plays to judge, with the shares still reported."""
+    halves: list[dict] = [{}, {}]
+    window: dict = {}
     for r in inside:
         sent = sent_at(r)
-        if sent is not None and r.server_cached_tokens is not None and r.input_tokens > 0:
-            halves[int(sent >= (start + end) / 2)].append(r)
+        if sent is None or r.server_cached_tokens is None or r.input_tokens <= 0:
+            continue
+        bucket = turn_depth_bucket(r.turn_index)
+        cell = halves[int(sent >= (start + end) / 2)].setdefault(r.session_id, {}).setdefault(bucket, [0, 0])
+        cell[0] += r.server_cached_tokens
+        cell[1] += r.input_tokens
+        window[bucket] = window.get(bucket, 0) + r.input_tokens
     if not halves[0] or not halves[1]:
         return None
-    first, second = (sum(r.server_cached_tokens for r in h) / sum(r.input_tokens for r in h) for h in halves)
-    return {"hit_first_half": first, "hit_second_half": second, "steady": abs(second - first) <= CACHE_DRIFT_LIMIT}
+    total = sum(window.values())
+    weights = {b: n / total for b, n in window.items()}
+    plays = [list(h.values()) for h in halves]
+    first, second = (hit_share_at_mix(p, weights) for p in plays)
+    draw = random.Random(0)
+    drifts = []
+    for _ in range(CACHE_DRIFT_DRAWS):
+        again = [[p[draw.randrange(len(p))] for _ in p] for p in plays]
+        drifts.append(hit_share_at_mix(again[1], weights) - hit_share_at_mix(again[0], weights))
+    noise = statistics.pstdev(drifts)
+    limit = max(CACHE_DRIFT_LIMIT, CACHE_DRIFT_NOISE_SDS * noise)
+    judged = min(len(plays[0]), len(plays[1])) >= CACHE_PLAYS_PER_HALF
+    return {
+        "hit_first_half": first,
+        "hit_second_half": second,
+        "drift": second - first,
+        "noise_sd": noise,
+        "limit": limit,
+        "plays_per_half": [len(plays[0]), len(plays[1])],
+        "steady": abs(second - first) <= limit if judged else None,
+    }
 
 
 def steady_section(
@@ -613,11 +665,12 @@ def steady_section(
     done = [r for r in ok if start <= r.completed_at_s <= end]
     inside = [r for r in done if sent_at(r) is not None and sent_at(r) >= start]
     cache = w["cache"] = cache_steady(inside, start, end)
-    if cache is not None and not cache["steady"]:
+    if cache is not None and cache["steady"] is False:
         w["valid"] = False
         w["reason"] = (
             f"the cache hit share moved from {cache['hit_first_half']:.3f} in the window's first half to "
-            f"{cache['hit_second_half']:.3f} in its second, over {CACHE_DRIFT_LIMIT:g}: the cache had not settled"
+            f"{cache['hit_second_half']:.3f} in its second at the window's mix of turn depths, over "
+            f"{cache['limit']:.3f}: the cache had not settled"
         )
         return w
     sessions_done = len(done_ids)

@@ -734,26 +734,63 @@ class TestOpenLoopUnits(unittest.TestCase):
         self.assertAlmostEqual(tl["requests_in_flight"]["max"], 2.0)
         self.assertAlmostEqual(tl["requests_in_flight"]["min"], 2.0)
 
+    def _agents_back_to_back(self, turns_of, agents=4):
+        # Each agent runs its sessions back to back, one 1 s turn after another; turns_of[s] is session s's turns.
+        rows, times, free = [], {}, [0.0] * agents
+        for sid, n in enumerate(turns_of):
+            admitted = free[sid % agents]
+            for t in range(n):
+                r = _req(admitted + t, admitted + t + 1.0)
+                r.session_id, r.turn_index = sid, t
+                r.sent_at_s, r.completed_at_s = admitted + t, admitted + t + 1.0
+                rows.append(r)
+            times[sid] = (admitted, admitted, admitted + n)
+            free[sid % agents] = admitted + n
+        return rows, times
+
     def test_a_window_whose_cache_hit_share_moved_between_its_halves_is_not_steady(self):
-        # A cache still filling, or starting to evict, reads a hit share the server will not keep; the halves of the
-        # 3 s to 15 s window (midpoint 9 s) must agree within CACHE_DRIFT_LIMIT.
+        # A cache still filling, or starting to evict, reads a hit share the server will not keep. 80 sessions of
+        # 3 turns over 4 agents: the window is 3 s to 60 s, so each half holds about 38 plays.
+        rows, times = self._agents_back_to_back([3] * 80)
+        for r in rows:
+            r.server_cached_tokens = 9 if r.sent_at_s < 31.5 else 5
+        s = steady_section(rows, times, concurrency=4)
+        self.assertFalse(s["valid"])
+        self.assertIn("moved from 0.900 in the window's first half to 0.500", s["reason"])
+        self.assertIn("over 0.050", s["reason"])
+        self.assertFalse(s["cache"]["steady"])
+        self.assertAlmostEqual(s["cache"]["noise_sd"], 0.0)
+        self.assertTrue(all(n >= 30 for n in s["cache"]["plays_per_half"]))
+
+    def test_a_deeper_second_half_is_a_mix_shift_not_cache_drift(self):
+        # The second half holds 6-turn sessions, the first 3-turn ones; turn 0 is never cached and later turns are,
+        # so the raw share rises, but at the window's own mix of turn depths the halves agree.
+        rows, times = self._agents_back_to_back([3] * 40 + [6] * 40)
+        for r in rows:
+            r.server_cached_tokens = 0 if r.turn_index == 0 else 9
+        s = steady_section(rows, times, concurrency=4)
+        self.assertTrue(s["valid"], s.get("reason"))
+        c = s["cache"]
+        self.assertTrue(c["steady"])
+        self.assertAlmostEqual(c["drift"], 0.0)
+        raw = []
+        for first in (True, False):
+            half = [r for r in rows if 3.0 <= r.sent_at_s and (r.sent_at_s < 46.5) == first]
+            raw.append(sum(r.server_cached_tokens for r in half) / sum(r.input_tokens for r in half))
+        self.assertLess(raw[0] + 0.02, raw[1])  # the raw shares did move with the mix
+
+    def test_too_few_plays_report_the_cache_shares_without_judging(self):
         rows, times = self._two_agents_ten_sessions()
         for r in rows:
             r.server_cached_tokens = 9 if r.semaphore_acquired_at_s < 9.0 else 5
         s = steady_section(rows, times, concurrency=2, bin_s=4.0)
-        self.assertFalse(s["valid"])
-        self.assertIn("moved from 0.900 in the window's first half to 0.500", s["reason"])
-        self.assertFalse(s["cache"]["steady"])
-        for r in rows:
-            r.server_cached_tokens = 9
-        s = steady_section(rows, times, concurrency=2, bin_s=4.0)
         self.assertTrue(s["valid"])
-        self.assertEqual(s["cache"], {"hit_first_half": 0.9, "hit_second_half": 0.9, "steady": True})
+        self.assertAlmostEqual(s["cache"]["hit_first_half"], 0.9)
+        self.assertAlmostEqual(s["cache"]["hit_second_half"], 0.5)
+        self.assertIsNone(s["cache"]["steady"])
         for r in rows:
             r.server_cached_tokens = None
-        s = steady_section(rows, times, concurrency=2, bin_s=4.0)
-        self.assertTrue(s["valid"])
-        self.assertIsNone(s["cache"])
+        self.assertIsNone(steady_section(rows, times, concurrency=2, bin_s=4.0)["cache"])
 
     def test_a_silent_tail_books_its_tokens_at_the_finish_chunk(self):
         # 1,000 tokens in 51 chunks: 50 visible chunks of 2 characters from 0.1 s to 5.0 s, then 15 s of silence
