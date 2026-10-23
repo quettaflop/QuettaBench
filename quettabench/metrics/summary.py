@@ -560,6 +560,25 @@ def workload_mix(results, inside, done_ids, stratum_of=None) -> dict:
     }
 
 
+# The server's cache hit share may differ between the window's two halves by this much; past it the cache was still
+# filling or had begun evicting, and the window's hit rate is not one the server will keep.
+CACHE_DRIFT_LIMIT = 0.05
+
+
+def cache_steady(inside, start: float, end: float) -> dict | None:
+    """Compare the server's cache hit share between the window's halves, so a window the cache had not settled in
+    is not published as steady; None when the server reported no cached counts."""
+    halves: list[list] = [[], []]
+    for r in inside:
+        sent = sent_at(r)
+        if sent is not None and r.server_cached_tokens is not None and r.input_tokens > 0:
+            halves[int(sent >= (start + end) / 2)].append(r)
+    if not halves[0] or not halves[1]:
+        return None
+    first, second = (sum(r.server_cached_tokens for r in h) / sum(r.input_tokens for r in h) for h in halves)
+    return {"hit_first_half": first, "hit_second_half": second, "steady": abs(second - first) <= CACHE_DRIFT_LIMIT}
+
+
 def steady_section(
     results,
     session_times: dict,
@@ -593,6 +612,14 @@ def steady_section(
     ok = [r for r in results if r is not None and r.success and r.completed_at_s is not None]
     done = [r for r in ok if start <= r.completed_at_s <= end]
     inside = [r for r in done if sent_at(r) is not None and sent_at(r) >= start]
+    cache = w["cache"] = cache_steady(inside, start, end)
+    if cache is not None and not cache["steady"]:
+        w["valid"] = False
+        w["reason"] = (
+            f"the cache hit share moved from {cache['hit_first_half']:.3f} in the window's first half to "
+            f"{cache['hit_second_half']:.3f} in its second, over {CACHE_DRIFT_LIMIT:g}: the cache had not settled"
+        )
+        return w
     sessions_done = len(done_ids)
     widths = bin_widths(span, bin_s)
     out_tok, in_tok, bins = tokens_by_arrival(ok, start, end, widths)

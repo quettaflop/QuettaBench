@@ -734,6 +734,27 @@ class TestOpenLoopUnits(unittest.TestCase):
         self.assertAlmostEqual(tl["requests_in_flight"]["max"], 2.0)
         self.assertAlmostEqual(tl["requests_in_flight"]["min"], 2.0)
 
+    def test_a_window_whose_cache_hit_share_moved_between_its_halves_is_not_steady(self):
+        # A cache still filling, or starting to evict, reads a hit share the server will not keep; the halves of the
+        # 3 s to 15 s window (midpoint 9 s) must agree within CACHE_DRIFT_LIMIT.
+        rows, times = self._two_agents_ten_sessions()
+        for r in rows:
+            r.server_cached_tokens = 9 if r.semaphore_acquired_at_s < 9.0 else 5
+        s = steady_section(rows, times, concurrency=2, bin_s=4.0)
+        self.assertFalse(s["valid"])
+        self.assertIn("moved from 0.900 in the window's first half to 0.500", s["reason"])
+        self.assertFalse(s["cache"]["steady"])
+        for r in rows:
+            r.server_cached_tokens = 9
+        s = steady_section(rows, times, concurrency=2, bin_s=4.0)
+        self.assertTrue(s["valid"])
+        self.assertEqual(s["cache"], {"hit_first_half": 0.9, "hit_second_half": 0.9, "steady": True})
+        for r in rows:
+            r.server_cached_tokens = None
+        s = steady_section(rows, times, concurrency=2, bin_s=4.0)
+        self.assertTrue(s["valid"])
+        self.assertIsNone(s["cache"])
+
     def test_a_silent_tail_books_its_tokens_at_the_finish_chunk(self):
         # 1,000 tokens in 51 chunks: 50 visible chunks of 2 characters from 0.1 s to 5.0 s, then 15 s of silence
         # and a finish chunk carrying a 900-character tool call at 20.0 s. 1,000 characters, so a token each.
