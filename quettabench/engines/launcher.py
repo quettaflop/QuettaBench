@@ -10,7 +10,7 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -79,6 +79,85 @@ class NoServer:
 
     def stop(self):
         pass
+
+
+@dataclass
+class Attached:
+    """Handle for a server qbench did not start: hardware.launcher=attach. stop() leaves it running."""
+
+    results_dir: Path
+    endpoint: str
+    gpu: str = ""
+    backend: str = "cuda"
+    # What the server answered on /v1/models and /version when qbench attached.
+    served_models: list = field(default_factory=list)
+    server_version: str | None = None
+
+    def stop(self, grace_s=30):
+        pass
+
+
+def attach(spec, results_dir, timeout_s=60, poll_s=1.0):
+    """Measure the server already answering on spec.port: it must be healthy and serve spec.served_name. engine.json
+    records what it serves and its /version, with the launch spec qbench would have used, since its real argv and
+    environment are not qbench's to know."""
+    endpoint = f"http://127.0.0.1:{spec.port}"
+    # The server's own key, where the yaml set one, so a server that guards /v1/models still answers discovery.
+    headers = discovery_headers(spec)
+    deadline = time.monotonic() + timeout_s
+    while True:
+        try:
+            with urlopen(urllib.request.Request(endpoint + spec.health_path, headers=headers), timeout=poll_s) as resp:
+                if resp.status == 200:
+                    break
+        except (urllib.error.URLError, ConnectionError, TimeoutError):
+            pass
+        if time.monotonic() > deadline:
+            raise RuntimeError(f"hardware.launcher=attach: nothing healthy on {endpoint} after {timeout_s}s")
+        time.sleep(poll_s)
+    served = served_models(endpoint + "/v1/models", poll_s, headers)
+    version = server_version(endpoint + "/version", poll_s, headers)
+    if spec.served_name and spec.served_name not in served:
+        raise RuntimeError(f"hardware.launcher=attach: {endpoint} serves {served}, not {spec.served_name}")
+    results_dir = Path(results_dir)
+    results_dir.mkdir(parents=True, exist_ok=True)
+    record = {
+        "adapter": spec.adapter,
+        "endpoint": endpoint,
+        "attached": True,
+        "served_models": served,
+        "server_version": version,
+        "expected_launch_spec": redact(asdict(spec)),
+        "started_at": datetime.now(timezone.utc).isoformat(),
+    }
+    (results_dir / "engine.json").write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
+    return Attached(results_dir, endpoint, served_models=served, server_version=version)
+
+
+def bearer_headers(api_key) -> dict:
+    """The Authorization header a keyed server wants on every request, discovery included; empty without a key."""
+    return {"Authorization": f"Bearer {api_key}"} if api_key else {}
+
+
+def discovery_headers(spec) -> dict:
+    """The headers attach and any preflight send to a server, so a keyed server answers them as it answers runs."""
+    return bearer_headers(spec.env.get(spec.api_key_env) if spec.api_key_env else None)
+
+
+def served_models(models_url, timeout, headers=None):
+    try:
+        with urlopen(urllib.request.Request(models_url, headers=headers or {}), timeout=timeout) as resp:
+            return [m.get("id") for m in json.load(resp).get("data", [])]
+    except (urllib.error.URLError, ConnectionError, TimeoutError, ValueError, AttributeError):
+        return []
+
+
+def server_version(url, timeout, headers=None):
+    try:
+        with urlopen(urllib.request.Request(url, headers=headers or {}), timeout=timeout) as resp:
+            return json.load(resp).get("version")
+    except (urllib.error.URLError, ConnectionError, TimeoutError, ValueError, AttributeError):
+        return None
 
 
 def visible_env(backend, devices):
@@ -237,6 +316,16 @@ def container_name(run_name):
     return f"qbench-{safe}-{os.getpid()}-{os.urandom(3).hex()}"
 
 
+def docker_env(spec, cfg):
+    """Env vars passed to the container with -e."""
+    hw = cfg.hardware
+    return {
+        **spec.env,
+        **{k: v for k, v in hw.collective.items() if v},
+        **({"HF_HOME": hw.hf_home} if hw.hf_home else {}),
+    }
+
+
 def docker_argv(spec, cfg, gpus, results_dir):
     hw, run_dir = cfg.hardware, Path(results_dir).resolve()
     if not spec.image:
@@ -245,11 +334,7 @@ def docker_argv(spec, cfg, gpus, results_dir):
     model = spec.engine_kwargs.get("model") or cfg.engine.model
     if model and Path(model).is_absolute() and not any(Path(model).is_relative_to(m) for m in [*mounts, REPO]):
         mounts.append(model)
-    env = {
-        **spec.env,
-        **{k: v for k, v in hw.collective.items() if v},
-        **({"HF_HOME": hw.hf_home} if hw.hf_home else {}),
-    }
+    env = docker_env(spec, cfg)
     hidden = docker_secrets(spec)
     devices = device_flags(hw.backend, gpus)
     ports = [] if "--net=host" in devices else ["-p", f"{spec.port}:{spec.port}"]
@@ -323,8 +408,8 @@ def start(spec, results_dir, *, backend="local", cfg=None, gpus="", timeout_s=18
     )
     try:
         models = endpoint + "/v1/models"
-        # A keyed vLLM refuses /v1/models without its key.
-        headers = {"Authorization": f"Bearer {spec.env['VLLM_API_KEY']}"} if "VLLM_API_KEY" in spec.env else {}
+        # A keyed server refuses /v1/models without its key.
+        headers = discovery_headers(spec)
         owns = (lambda: lists_token(models, token, headers, poll_s)) if token else None
         wait_healthy(proc, endpoint + spec.health_path, timeout_s, poll_s, owns)
         record = {

@@ -63,6 +63,8 @@ def header(**known):
         "engine_sha",
         "workload_hash",
         "comm_bound_bs",
+        "not_comparable",
+        "workload_mix",
     )
     unknown = set(known) - set(keys)
     if unknown:
@@ -269,6 +271,104 @@ def read_rows(results_dir):
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
 
+def not_comparable(run) -> str | None:
+    """Keep a run out of comparisons: a status other than ok, or a file the manifest does not list."""
+    validity = (run.get("summary") or {}).get("validity") or {}
+    if validity.get("latency_valid") is False:
+        return f"latency not valid: {'; '.join(validity.get('reasons') or [])}"
+    status = run.get("run_status") or {}
+    if status.get("status", "ok") != "ok":
+        return f"run status {status['status']}: {status.get('reason')}"
+    manifest = ((run.get("summary") or {}).get("trace") or {}).get("manifest") or {}
+    listing = manifest.get("manifest", "data/MANIFEST.json")
+    if manifest.get("listed") is False:
+        return f"{manifest.get('file')} is not listed in {listing}"
+    if manifest.get("comparable") is False:
+        return f"{manifest.get('file')} is not the file {listing} lists"
+    return None
+
+
+# Environment names that change what a server computes or how fast: the launch's own and the libraries under it.
+SERVER_ENV = (*env_map.SERVER_ENV_PREFIXES, "NVSHMEM_", "UCX_", "TRITON_", "FLASHINFER_", "PYTHONPATH", "LD_PRELOAD")
+# What observe.log_settings reads from a startup log.
+SERVER_LOG_KEYS = (
+    "tensor_parallel_size",
+    "pipeline_parallel_size",
+    "data_parallel_size",
+    "expert_parallel",
+    "chunked_prefill",
+    "prefix_caching",
+    "speculative_config",
+    "cudagraph_capture_sizes",
+    "kv_cache_tokens",
+    "max_concurrency",
+)
+
+
+def server_facts(run) -> dict:
+    """The server facts server_parity compares; --port is dropped so runs on different ports still match."""
+    prov = run.get("provenance") or {}
+    seen = prov.get("server_observed") or {}
+    proc, log = seen.get("process") or {}, seen.get("log") or {}
+    argv = list(proc.get("argv") or [])
+    if "--port" in argv:
+        del argv[argv.index("--port") : argv.index("--port") + 2]
+    env = proc.get("env")
+    return {
+        "argv": argv or None,
+        **{f"env {k}": v for k, v in (env or {}).items() if k.startswith(SERVER_ENV)},
+        "env": "observed" if env is not None else None,
+        "version": seen.get("version"),
+        "weights_revision": prov.get("weights_revision"),
+        **{k: log.get(k) for k in SERVER_LOG_KEYS},
+    }
+
+
+def server_parity(a, b) -> list[str]:
+    """Name each server difference that blocks ranking two runs; a fact one run did not observe counts as a difference."""
+    unseen = [
+        side for side, run in (("ours", a), ("theirs", b)) if not (run.get("provenance") or {}).get("server_observed")
+    ]
+    if unseen:
+        return [f"server not observed in {' and '.join(unseen)} (a run made before server_observed)"]
+    fa, fb = server_facts(a), server_facts(b)
+    out = []
+    for key in sorted(set(fa) | set(fb)):
+        x, y = fa.get(key), fb.get(key)
+        if x is None or y is None:
+            out.append(f"{key}: not observed in {'both runs' if x is None and y is None else 'one run'}")
+        elif x != y:
+            out.append(f"{key}: {x!r} vs {y!r}")
+    return out
+
+
+# Two windows asked the same of their servers when every p50 and mean here is within MIX_TOLERANCE.
+MIX_FIELDS = ("input_tokens", "output_tokens", "uncached_prefill_tokens", "tool_wait_s", "session_turns")
+# Run-to-run mix spread seen on repeated runs stays under this.
+MIX_TOLERANCE = 0.05
+# A difference below a field's floor is noise however large in proportion: with recorded waits off, the realized wait
+# is the client's sub-millisecond turnaround, and 1.6 against 2.0 ms is 21% of nothing.
+MIX_FLOORS = {"tool_wait_s": 0.05}
+
+
+def mix_diff(a, b) -> list[str]:
+    """Name the mix fields where two windows differ past MIX_TOLERANCE, so every ratio is withheld."""
+    if not a and not b:
+        return []
+    out = []
+    for name in MIX_FIELDS:
+        x, y = (a or {}).get(name), (b or {}).get(name)
+        if x is None or y is None:
+            if x is not None or y is not None:
+                out.append(f"{name}: in one run only")
+            continue
+        for stat in ("p50", "mean"):
+            bar = max(MIX_TOLERANCE * max(abs(x[stat]), abs(y[stat])), MIX_FLOORS.get(name, 0.0))
+            if abs(x[stat] - y[stat]) > bar:
+                out.append(f"{name} {stat}: {x[stat]:g} vs {y[stat]:g}")
+    return out
+
+
 def read_run(results_dir):
     """Cells take group, kv and method from the BenchDriver rows."""
     d = Path(results_dir)
@@ -300,7 +400,9 @@ def read_run(results_dir):
             rows.append(_fitted_row(step, kv, row_mode))
     notes = bench_log_points(d / "bench.log")[2] if (d / "bench.log").exists() else []
 
-    workload = (grid.get("trace") or {}).get("workload_hash") or (summary.get("workload") or {}).get("expected")
+    # A serve run's plan_hash is the one runs share; a run.json without one falls back to expected.
+    served = summary.get("workload") or {}
+    workload = (grid.get("trace") or {}).get("workload_hash") or served.get("plan_hash") or served.get("expected")
     return Side(
         rows,
         header(
@@ -325,6 +427,8 @@ def read_run(results_dir):
             engine_sha=prov.get("engine_sha"),
             workload_hash=workload,
             comm_bound_bs=(cfg.get("compare") or {}).get("comm_bound_bs"),
+            not_comparable=not_comparable(run),
+            workload_mix=(summary.get("steady") or {}).get("workload_mix"),
         ),
         notes,
     )
@@ -525,14 +629,22 @@ class Report:
     workload_mismatch: bool
     comm_bound_bs: int | None
     tps_without_theirs: list
+    # (side, reason) for each side whose run cannot be compared at all: every ratio is withheld.
+    not_comparable: list
+    # How the two windows' workload mixes differ (mix_diff): every ratio is withheld when they do.
+    mix_diff: list
     rows: list  # ratio None when withheld
     ours_only: list
     theirs_only: list
     agreement: list = field(default_factory=list)
+    # Non-empty withholds the ranking.
+    server_diff: list = field(default_factory=list)
 
     @property
     def comparable(self):
-        return self.method_matched and not (self.serving_mismatch or self.quant_mismatch)
+        return self.method_matched and not (
+            self.serving_mismatch or self.quant_mismatch or self.not_comparable or self.mix_diff
+        )
 
 
 def _short(kv):
@@ -576,6 +688,10 @@ def pair_row(a, b, report):
         withheld.append("serving")
     if report.workload_mismatch:
         withheld.append("workload")
+    if report.not_comparable:
+        withheld.append("run")
+    if report.mix_diff:
+        withheld.append("mix")
     tps_a, tps_b = bs * 1000.0 / ms_a, bs * 1000.0 / ms_b
     return {
         "group": a["group"],
@@ -614,6 +730,10 @@ def pair(ours, theirs, allow_method_mismatch=False, now=0.0):
         workload_mismatch=all(hashes) and hashes[0] != hashes[1],
         comm_bound_bs=None if comm is None else int(comm),
         tps_without_theirs=sorted({k[2] for k in a} - {k[2] for k in b}),
+        mix_diff=mix_diff(o.get("workload_mix"), t.get("workload_mix")),
+        not_comparable=[
+            (side, h["not_comparable"]) for side, h in (("engine", o), ("vllm", t)) if h.get("not_comparable")
+        ],
         rows=[],
         ours_only=sorted(set(a) - set(b)),
         theirs_only=sorted(set(b) - set(a)),
@@ -650,7 +770,11 @@ def render_preamble(report):
         lines.append(f"QUANT MISMATCH engine={report.quant[0]} vllm={report.quant[1]}; ratios withheld")
     if report.workload_mismatch:
         lines.append(f"WORKLOAD MISMATCH engine={o['workload_hash']} vllm={t['workload_hash']}; ratios withheld")
-    if not report.comparable:
+    for side, why in report.not_comparable:
+        lines.append(f"NOT COMPARABLE {side}: {why}; ratios withheld")
+    lines += [f"MIX DIFF {d}; ratios withheld" for d in report.mix_diff]
+    lines += [f"SERVER DIFF {d}" for d in report.server_diff]
+    if not report.method_matched or report.serving_mismatch or report.quant_mismatch:
         lines.append(
             "engine log times one synchronized step per iteration; the baseline "
             "is a pipelined slope. Not the same quantity, so ratios are withheld "
@@ -734,10 +858,21 @@ def main(argv=None):
     ap.add_argument(
         "--json", type=Path, default=None, help="report path (default results/compare/<ours>_vs_<theirs>.json)"
     )
+    ap.add_argument(
+        "--servers", action="store_true", help="only check that two run dirs measured the same server; exit 1 if not"
+    )
     args = ap.parse_args(argv)
     for path in (args.ours, args.theirs, *args.floor):
         if not Path(path).exists():
             sys.exit(f"no results at {path}")
+    if args.servers:
+        if args.floor or args.json:
+            ap.error("--servers takes no --floor or --json: it only compares the two servers")
+        if not (Path(args.ours).is_dir() and Path(args.theirs).is_dir()):
+            ap.error("--servers compares two run dirs")
+        diff = server_parity(*(json.loads((Path(p) / "run.json").read_text()) for p in (args.ours, args.theirs)))
+        print("".join(f"SERVER DIFF {d}\n" for d in diff) or "SERVER PARITY same server\n", end="")
+        sys.exit(1 if diff else 0)
     if args.floor and not all(Path(p).is_dir() for p in (args.ours, args.theirs, *args.floor)):
         ap.error("--floor compares logits runs: ours, theirs and every floor must be run dirs")
 
@@ -750,6 +885,11 @@ def main(argv=None):
     allow = args.allow_method_mismatch or values.get("compare.allow_method_mismatch", False)
     report = pair(ours, theirs, allow, now=time.time())
     if Path(args.ours).is_dir() and Path(args.theirs).is_dir():
+        # Serve runs only: a grid's bench is its own engine, with no server to observe.
+        files = [Path(p) / "run.json" for p in (args.ours, args.theirs)]
+        runs = [json.loads(f.read_text()) for f in files if f.is_file()]
+        if len(runs) == 2 and not any((r.get("summary") or {}).get("grid") for r in runs):
+            report.server_diff = server_parity(*runs)
         ours_rows, theirs_rows = read_rows(args.ours), read_rows(args.theirs)
         report.agreement = compare_runs(ours_rows, theirs_rows)
         if args.floor:

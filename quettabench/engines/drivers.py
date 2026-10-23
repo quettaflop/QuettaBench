@@ -12,6 +12,7 @@ import subprocess
 import sys
 import time
 from abc import ABC, abstractmethod
+from array import array
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -24,7 +25,7 @@ from quettabench.config import env_map
 from quettabench.config.schema import OTHER_ACCELERATORS, ConfigError
 from quettabench.engines import launcher
 from quettabench.engines.base import EngineAdapter, LaunchSpec, register
-from quettabench.metrics.summary import RequestResult, parse_prometheus, spec_decode_counts
+from quettabench.metrics.summary import NO_COUNT, RequestResult, parse_prometheus, spec_decode_counts
 from quettabench.workloads.base import Request
 from quettabench.workloads.grid import distinct_ids
 
@@ -47,15 +48,32 @@ def _headers(api_key, extra_headers, request_id):
     return headers
 
 
-def _payload(model, prompt, max_tokens, temperature, ignore_eos, request_id, seed, min_tokens):
+def _payload(
+    model,
+    prompt,
+    max_tokens,
+    temperature,
+    ignore_eos,
+    request_id,
+    seed,
+    min_tokens,
+    tools=None,
+    cache_salt=None,
+    chunk_usage=False,
+):
+    """Build the request body; with both options off it matches vllm bench serve's and AIPerf's."""
     payload = {
         "model": model,
         **prompt,
         "max_tokens": max_tokens,
         "temperature": temperature,
         "stream": True,
-        "stream_options": {"include_usage": True},
+        "stream_options": {"include_usage": True, **({"continuous_usage_stats": True} if chunk_usage else {})},
     }
+    if tools:
+        payload["tools"] = tools
+    if cache_salt:
+        payload["cache_salt"] = cache_salt
     if ignore_eos:
         payload["ignore_eos"] = True
     if request_id:
@@ -65,6 +83,54 @@ def _payload(model, prompt, max_tokens, temperature, ignore_eos, request_id, see
     if min_tokens > 0:
         payload["min_tokens"] = min_tokens
     return payload
+
+
+def _read_usage(usage: dict) -> tuple[int, int, int | None, bool]:
+    """Read token counts from a usage block; a block missing either count is unreported, not zero."""
+    reported = all(isinstance(usage.get(k), int) for k in ("prompt_tokens", "completion_tokens"))
+    cached = (usage.get("prompt_tokens_details") or {}).get("cached_tokens")
+    return usage.get("prompt_tokens") or 0, usage.get("completion_tokens") or 0, cached, reported
+
+
+def _stream_failure(done, bad_line) -> tuple[str, str] | None:
+    """Fail a stream that ended without [DONE] or with a data line that did not parse."""
+    if bad_line is not None:
+        return f"an SSE data line did not parse: {bad_line[:80]!r}", "malformed_stream"
+    if not done:
+        return "stream ended without [DONE]; the reply is incomplete", "incomplete_stream"
+    return None
+
+
+def _chunk_fields(chars: array, tokens: array) -> dict:
+    """Per-chunk record used to count tokens by arrival."""
+    return {"chunk_chars": chars, "chunk_tokens": tokens if any(t != NO_COUNT for t in tokens) else None}
+
+
+def _chunk_count(chunk: dict) -> int:
+    """The server's token count on one chunk, for counting tokens by arrival; NO_COUNT when it sent none."""
+    count = (chunk.get("usage") or {}).get("completion_tokens")
+    return count if isinstance(count, int) else NO_COUNT
+
+
+def _delta_chars(delta: dict) -> int:
+    """Characters a chat delta carries: content, reasoning and tool-call arguments."""
+    n = len(delta.get("content") or "") + len(delta.get("reasoning_content") or delta.get("reasoning") or "")
+    for call in delta.get("tool_calls") or ():
+        n += len(((call or {}).get("function") or {}).get("arguments") or "")
+    return n
+
+
+# vLLM closes a connection idle for VLLM_HTTP_TIMEOUT_KEEP_ALIVE, 5 s by default; aiohttp keeps one 15 s. Reusing a
+# connection the server closed fails the request about 1 ms after it is sent ("Server disconnected").
+IDLE_CONNECTION_S = 4.0
+
+
+def failure_kind(e: BaseException) -> str:
+    """A dropped or broken connection is "connection_error", the server's or the network's doing; anything else the
+    client raised is "client_error"."""
+    if isinstance(e, (aiohttp.ClientConnectionError, aiohttp.ClientPayloadError, ConnectionError)):
+        return "connection_error"
+    return "client_error"
 
 
 async def _stream_chat(
@@ -81,26 +147,47 @@ async def _stream_chat(
     seed: int | None = None,
     min_tokens: int = 0,
     capture_text: bool = False,
+    tools: list | None = None,
+    cache_salt: str | None = None,
+    chunk_usage: bool = False,
 ) -> RequestResult:
-    """Each chunk with content, reasoning or tool_calls counts as a token."""
+    """Every chunk with choices is a token event; each records its delta characters and, under chunk_usage, the
+    server's cumulative completion_tokens."""
     headers = _headers(api_key, extra_headers, request_id)
-    payload = _payload(model, {"messages": messages}, max_tokens, temperature, ignore_eos, request_id, seed, min_tokens)
+    payload = _payload(
+        model,
+        {"messages": messages},
+        max_tokens,
+        temperature,
+        ignore_eos,
+        request_id,
+        seed,
+        min_tokens,
+        tools,
+        cache_salt,
+        chunk_usage,
+    )
 
     start_time = time.perf_counter()
     ttft = None
-    itl = []
+    itl = array("d")
     last_token_time = start_time
     input_tokens = 0
     output_tokens = 0
     usage_reported = False
+    done = False
+    bad_line: str | None = None  # the first data line that did not parse
     server_cached_tokens = None
     text_parts: list[str] = []
+    chunk_chars = array("q")
+    chunk_tokens = array("q")
 
     try:
         async with session.post(url, headers=headers, json=payload) as resp:
             if resp.status != 200:
                 body = await resp.text()
                 return RequestResult(
+                    sent_perf_s=start_time,
                     success=False,
                     e2el=time.perf_counter() - start_time,
                     error=f"HTTP {resp.status}: {body[:200]}",
@@ -116,41 +203,44 @@ async def _stream_chat(
                 data_str = line[len("data:") :].strip()
 
                 if data_str == "[DONE]":
+                    done = True
                     break
 
                 try:
                     chunk = json.loads(data_str)
                 except json.JSONDecodeError:
+                    bad_line = data_str if bad_line is None else bad_line
                     continue
+                if chunk.get("error"):
+                    return RequestResult(
+                        sent_perf_s=start_time,
+                        success=False,
+                        ttft=ttft,
+                        itl=itl,
+                        e2el=time.perf_counter() - start_time,
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                        usage_reported=usage_reported,
+                        error=f"server error in stream: {json.dumps(chunk['error'])[:200]}",
+                        error_kind="server_error",
+                    )
 
                 now = time.perf_counter()
 
                 if chunk.get("usage"):
-                    usage = chunk["usage"]
-                    input_tokens = usage.get("prompt_tokens", 0)
-                    output_tokens = usage.get("completion_tokens", 0)
-                    server_cached_tokens = (usage.get("prompt_tokens_details") or {}).get("cached_tokens")
-                    usage_reported = True
+                    input_tokens, output_tokens, server_cached_tokens, usage_reported = _read_usage(chunk["usage"])
 
                 choices = chunk.get("choices", [])
                 if not choices:
                     continue
 
-                delta = choices[0].get("delta", {})
-                # Reasoning and tool-call deltas carry content=None; skipping them folds a phase into one ITL gap.
-                has_payload = (
-                    delta.get("content") is not None
-                    or delta.get("reasoning_content") is not None
-                    or delta.get("reasoning") is not None
-                    or bool(delta.get("tool_calls"))
-                )
-                if not has_payload:
-                    continue
-
-                if capture_text:
-                    piece = delta.get("content")
-                    if piece:
-                        text_parts.append(piece)
+                # vllm bench serve's rule: every chunk with choices is a token event, the finish chunk included,
+                # so decode the server buffered (a tool call its parser emits whole) is in the request's time.
+                delta = choices[0].get("delta") or {}
+                if capture_text and delta.get("content"):
+                    text_parts.append(delta["content"])
+                chunk_chars.append(_delta_chars(delta))
+                chunk_tokens.append(_chunk_count(chunk))
 
                 if ttft is None:
                     ttft = now - start_time
@@ -159,17 +249,38 @@ async def _stream_chat(
                     itl.append(now - last_token_time)
                     last_token_time = now
 
-        e2el = time.perf_counter() - start_time
+        # The request ends at its last chunk with choices; the usage chunk, [DONE] and the close come after.
+        stream_closed = time.perf_counter() - start_time
+        e2el = last_token_time - start_time if ttft is not None else stream_closed
+        failure = _stream_failure(done, bad_line)
+        if failure:
+            return RequestResult(
+                sent_perf_s=start_time,
+                success=False,
+                ttft=ttft,
+                itl=itl,
+                e2el=e2el,
+                stream_closed_s=stream_closed,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                usage_reported=usage_reported,
+                error=failure[0],
+                error_kind=failure[1],
+                **_chunk_fields(chunk_chars, chunk_tokens),
+            )
         return RequestResult(
+            sent_perf_s=start_time,
             success=True,
             ttft=ttft,
             itl=itl,
             e2el=e2el,
+            stream_closed_s=stream_closed,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             usage_reported=usage_reported,
             server_cached_tokens=server_cached_tokens,
             generated_text="".join(text_parts) if capture_text else None,
+            **_chunk_fields(chunk_chars, chunk_tokens),
         )
 
     except asyncio.CancelledError:
@@ -178,6 +289,7 @@ async def _stream_chat(
         # A timeout truncates the slowest requests; partial timings are the only evidence.
         is_timeout = isinstance(e, asyncio.TimeoutError)
         return RequestResult(
+            sent_perf_s=start_time,
             success=False,
             ttft=ttft,
             itl=itl,
@@ -187,7 +299,7 @@ async def _stream_chat(
             usage_reported=usage_reported,
             server_cached_tokens=server_cached_tokens,
             error=f"timeout after {time.perf_counter() - start_time:.1f}s" if is_timeout else str(e),
-            error_kind="timeout" if is_timeout else "client_error",
+            error_kind="timeout" if is_timeout else failure_kind(e),
         )
 
 
@@ -215,7 +327,14 @@ async def _stream_completions(
     seed: int | None = None,
     min_tokens: int = 0,
     prompt_token_ids: list[int] | None = None,
+    tools: list | None = None,
+    cache_salt: str | None = None,
+    chunk_usage: bool = False,
 ) -> RequestResult:
+    if tools:
+        return RequestResult(
+            success=False, e2el=0.0, error="completions backend cannot send a tool schema", error_kind="client_error"
+        )
     prompt = resolve_prompt(prompt_token_ids, messages)
     if prompt is None:
         return RequestResult(
@@ -226,22 +345,40 @@ async def _stream_completions(
         )
 
     headers = _headers(api_key, extra_headers, request_id)
-    payload = _payload(model, {"prompt": prompt}, max_tokens, temperature, ignore_eos, request_id, seed, min_tokens)
+    payload = _payload(
+        model,
+        {"prompt": prompt},
+        max_tokens,
+        temperature,
+        ignore_eos,
+        request_id,
+        seed,
+        min_tokens,
+        None,
+        cache_salt,
+        chunk_usage,
+    )
 
     start_time = time.perf_counter()
     ttft = None
-    itl = []
+    itl = array("d")
     last_token_time = start_time
     input_tokens = 0
     output_tokens = 0
     usage_reported = False
+    done = False
+    bad_line: str | None = None  # the first data line that did not parse
+    last_choices_time = start_time
     server_cached_tokens = None
+    chunk_chars = array("q")
+    chunk_tokens = array("q")
 
     try:
         async with session.post(url, headers=headers, json=payload) as resp:
             if resp.status != 200:
                 body = await resp.text()
                 return RequestResult(
+                    sent_perf_s=start_time,
                     success=False,
                     e2el=time.perf_counter() - start_time,
                     error=f"HTTP {resp.status}: {body[:200]}",
@@ -257,28 +394,42 @@ async def _stream_completions(
                 data_str = line[len("data:") :].strip()
 
                 if data_str == "[DONE]":
+                    done = True
                     break
 
                 try:
                     chunk = json.loads(data_str)
                 except json.JSONDecodeError:
+                    bad_line = data_str if bad_line is None else bad_line
                     continue
+                if chunk.get("error"):
+                    return RequestResult(
+                        sent_perf_s=start_time,
+                        success=False,
+                        ttft=ttft,
+                        itl=itl,
+                        e2el=time.perf_counter() - start_time,
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                        usage_reported=usage_reported,
+                        error=f"server error in stream: {json.dumps(chunk['error'])[:200]}",
+                        error_kind="server_error",
+                    )
 
                 now = time.perf_counter()
 
                 if chunk.get("usage"):
-                    usage = chunk["usage"]
-                    input_tokens = usage.get("prompt_tokens", 0)
-                    output_tokens = usage.get("completion_tokens", 0)
-                    server_cached_tokens = (usage.get("prompt_tokens_details") or {}).get("cached_tokens")
-                    usage_reported = True
+                    input_tokens, output_tokens, server_cached_tokens, usage_reported = _read_usage(chunk["usage"])
 
                 choices = chunk.get("choices", [])
                 if not choices:
                     continue
 
-                # A chunk with empty text is not a token event.
+                last_choices_time = now
+                # A chunk with empty text is not a token event (QuettaServe sends one before its first token).
                 if choices[0].get("text"):
+                    chunk_chars.append(len(choices[0]["text"]))
+                    chunk_tokens.append(_chunk_count(chunk))
                     if ttft is None:
                         ttft = now - start_time
                         last_token_time = now
@@ -286,16 +437,38 @@ async def _stream_completions(
                         itl.append(now - last_token_time)
                         last_token_time = now
 
-        e2el = time.perf_counter() - start_time
+        # The request ends at its last chunk with choices, as vllm bench serve counts it; the usage chunk, [DONE]
+        # and the close come after.
+        stream_closed = time.perf_counter() - start_time
+        e2el = last_choices_time - start_time if ttft is not None else stream_closed
+        failure = _stream_failure(done, bad_line)
+        if failure:
+            return RequestResult(
+                sent_perf_s=start_time,
+                success=False,
+                ttft=ttft,
+                itl=itl,
+                e2el=e2el,
+                stream_closed_s=stream_closed,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                usage_reported=usage_reported,
+                error=failure[0],
+                error_kind=failure[1],
+                **_chunk_fields(chunk_chars, chunk_tokens),
+            )
         return RequestResult(
+            sent_perf_s=start_time,
             success=True,
             ttft=ttft,
             itl=itl,
             e2el=e2el,
+            stream_closed_s=stream_closed,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             usage_reported=usage_reported,
             server_cached_tokens=server_cached_tokens,
+            **_chunk_fields(chunk_chars, chunk_tokens),
         )
 
     except asyncio.CancelledError:
@@ -303,6 +476,7 @@ async def _stream_completions(
     except Exception as e:
         is_timeout = isinstance(e, asyncio.TimeoutError)
         return RequestResult(
+            sent_perf_s=start_time,
             success=False,
             ttft=ttft,
             itl=itl,
@@ -312,13 +486,13 @@ async def _stream_completions(
             usage_reported=usage_reported,
             server_cached_tokens=server_cached_tokens,
             error=f"timeout after {time.perf_counter() - start_time:.1f}s" if is_timeout else str(e),
-            error_kind="timeout" if is_timeout else "client_error",
+            error_kind="timeout" if is_timeout else failure_kind(e),
         )
 
 
 # endpoint -> (stream body, first-token rule)
 ENDPOINTS: dict[str, tuple[Callable[..., Awaitable[RequestResult]], str]] = {
-    "chat": (_stream_chat, "first_payload_chunk"),
+    "chat": (_stream_chat, "first_choices_chunk"),
     "completions": (_stream_completions, "first_nonempty_text"),
 }
 
@@ -383,8 +557,12 @@ class HttpDriver(Driver):
 
     @asynccontextmanager
     async def session(self, concurrency, open_loop=False):
-        """Open loop gets no connection limit, which would silently cap its concurrency."""
-        connector = aiohttp.TCPConnector(limit=0 if open_loop else concurrency + 10)
+        """Open loop gets no connection limit, which would silently cap its concurrency. An idle connection is
+        dropped after IDLE_CONNECTION_S, before the server's own keep-alive closes it, so a request after an
+        agent's tool wait never goes out on a connection the server has just closed."""
+        connector = aiohttp.TCPConnector(
+            limit=0 if open_loop else concurrency + 10, keepalive_timeout=IDLE_CONNECTION_S
+        )
         timeout = aiohttp.ClientTimeout(total=self.timeout)
         async with aiohttp.ClientSession(connector=connector, timeout=timeout) as http:
             self._http = http
@@ -403,12 +581,19 @@ class HttpDriver(Driver):
         min_tokens=0,
         request_id=None,
         capture_text=False,
+        chunk_usage=False,
     ) -> RequestResult:
         extra = {}
+        if chunk_usage:
+            extra["chunk_usage"] = True
         if request.prompt_token_ids:
             extra["prompt_token_ids"] = request.prompt_token_ids
         if capture_text:
             extra["capture_text"] = True
+        if request.tools:
+            extra["tools"] = request.tools
+        if request.cache_salt:
+            extra["cache_salt"] = request.cache_salt
         return await self.send_request(
             session=self._http,
             url=self.url,

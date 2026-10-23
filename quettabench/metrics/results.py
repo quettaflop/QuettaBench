@@ -186,6 +186,7 @@ def _ms(seconds, digits=2):
 
 # Written only when not None; seconds become milliseconds, rates keep four digits.
 OPTIONAL_MS = (
+    "sent_at",
     "scheduled_at",
     "dispatch_started_at",
     "semaphore_acquired_at",
@@ -193,6 +194,8 @@ OPTIONAL_MS = (
     "client_schedule_delay",
     "client_queue_wait",
     "client_request_wall",
+    "client_stall",
+    "client_stall_ttft",
 )
 OPTIONAL_PLAIN = ("request_index", "max_tokens_requested", "message_count", "prompt_chars")
 OPTIONAL_CACHE = (
@@ -214,7 +217,21 @@ OPTIONAL_CACHE = (
     "new_prefill_blocks",
 )
 RATES = ("cache_hit_rate", "block_aligned_cache_hit_rate")
-NEW_FIELDS = ("ttft_basis", "ttft_rule", "accepted_tokens", "server_cached_tokens", "cell", "batch_wall_s", "logits")
+NEW_FIELDS = (
+    "ttft_basis",
+    "ttft_rule",
+    "accepted_tokens",
+    "server_cached_tokens",
+    "cell",
+    "batch_wall_s",
+    "logits",
+    "stream_closed_s",
+    "chunk_chars",
+    "chunk_tokens",
+    "planned_digest",
+    "sent_digest",
+    "recorded_input_tokens",
+)
 
 
 def jsonl_row(r, **extra):
@@ -239,6 +256,9 @@ def jsonl_row(r, **extra):
     for name in OPTIONAL_MS:
         if getattr(r, name + "_s") is not None:
             row[name + "_ms"] = _ms(getattr(r, name + "_s"))
+    # The close on the run clock; stream_closed_s counts from the request's own clock start, sent_at.
+    if r.sent_at_s is not None and r.stream_closed_s is not None:
+        row["stream_closed_ms"] = _ms(r.sent_at_s + r.stream_closed_s)
     for name in OPTIONAL_CACHE:
         value = getattr(r, name)
         if value is not None:
@@ -248,6 +268,12 @@ def jsonl_row(r, **extra):
     for name in NEW_FIELDS:
         if getattr(r, name, None) is not None:
             row[name] = getattr(r, name)
+    # The per-chunk series are arrays in memory; JSON gets lists, with null for a chunk without a count (a
+    # negative entry, summary.NO_COUNT; results.py is shipped to probe hosts without summary.py).
+    if "chunk_chars" in row:
+        row["chunk_chars"] = list(row["chunk_chars"])
+    if "chunk_tokens" in row:
+        row["chunk_tokens"] = [None if t < 0 else t for t in row["chunk_tokens"]]
     row.update(extra)
     return row
 
@@ -288,6 +314,7 @@ class RunWriter:
         self._fh = None
         self._probe_fh = None
         self._row_errors = []
+        self._fill: tuple | None = None
         if self.dir is not None:
             self.dir.parent.mkdir(parents=True, exist_ok=True)
             self.dir.mkdir(exist_ok=not exclusive)
@@ -308,6 +335,19 @@ class RunWriter:
         self._row_pool.shutdown(wait=True)
         self._fh.close()
         self._fh = None
+        if self._fill is not None and self.dir is not None:
+            field, by_index = self._fill
+            path = self.dir / "requests.jsonl"
+            rows = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+            for row in rows:
+                if row.get("request_index") in by_index:
+                    row[field] = by_index[row["request_index"]]
+            write_atomic(path, "".join(json.dumps(row) + "\n" for row in rows))
+
+    def fill_rows(self, field, by_index):
+        """Sets field on every row by its request_index when the rows close, for a value known only after the
+        run; the rows are streamed as requests complete."""
+        self._fill = (field, by_index)
 
     def discard(self):
         """For a run this process does not record."""
@@ -384,9 +424,16 @@ PCTS = (50, 90, 95, 99)
 
 
 def workload_line(w):
-    return (
-        f"WORKLOAD_CHECK expected={w['expected']} replayed={w['replayed']} match={int(w['match'])} n={w['n']}/{w['of']}"
+    line = (
+        f"WORKLOAD_CHECK plan={w['plan_hash']} expected={w['expected']} executed={w['executed_hash']} "
+        f"match={int(w['match'])} n={w['n']}/{w['of']}"
     )
+    if w.get("turns_not_sent"):
+        line += f" not_sent={len(w['turns_not_sent'])}"
+    if m := w.get("first_mismatch"):
+        where = ":".join(str(v) for k, v in m.items() if k != "reason")
+        line += f" first_mismatch={where} ({m['reason']})"
+    return line
 
 
 def goodput_probe_line(p):
@@ -396,7 +443,8 @@ def goodput_probe_line(p):
     )
 
 
-def summary_tag_lines(summary):
+def summary_tag_lines(summary, whole_run=False):
+    """The grep-able summary lines; whole_run marks a session run's serve line as spanning ramp and drain."""
     lines = []
     w = summary.get("workload")
     if w is not None:
@@ -409,22 +457,33 @@ def summary_tag_lines(summary):
         tp = s["tpot_ms"]
         lines.append(
             f"SERVE_SUMMARY n={s['n']} "
-            + " ".join(f"ttft_ms_p{q}={s['ttft_ms'][f'p{q}']:.1f}" for q in PCTS)
+            + (
+                " ".join(f"ttft_ms_p{q}={s['ttft_ms'][f'p{q}']:.1f}" for q in PCTS)
+                if s["ttft_ms"]
+                else "ttft_ms=withheld"
+            )
             + " "
             + (
                 " ".join(f"steady_ttft_ms_p{q}={st[f'p{q}']:.1f}" for q in PCTS) + " "
                 if (st := s.get("steady_ttft_ms"))
                 else ""
             )
-            + (" ".join(f"tpot_ms_p{q}={tp[f'p{q}']:.3f}" for q in PCTS) + " " if tp else "tpot_ms_p50=- ")
+            + (
+                " ".join(f"tpot_ms_p{q}={tp[f'p{q}']:.3f}" for q in PCTS) + " "
+                if tp
+                else ("tpot_ms=withheld " if not s["ttft_ms"] else "tpot_ms_p50=- ")
+            )
             + f"req_s={s['req_s']:.3f} tok_s={s['tok_s']:.1f}"
+            # A session run's steady numbers are on the Steady window line; this one spans ramp and drain too.
+            + (" window=whole_run" if whole_run else "")
         )
     sla = summary.get("sla")
     if sla is not None:
         tpot = "-" if sla["tpot_p99"] is None else f"{sla['tpot_p99']:.3f}"
+        ttft = "-" if sla["ttft_p99"] is None else f"{sla['ttft_p99']:.1f}"
         lines.append(
             f"SLA_SUMMARY verdict={sla['verdict']} bound={','.join(sla['bound']) or 'none'} "
-            f"ttft_p99={sla['ttft_p99']:.1f}/{sla['sla_ttft_ms'] or '-'} "
+            f"ttft_p99={ttft}/{sla['sla_ttft_ms'] or '-'} "
             f"tpot_p99={tpot}/{sla['sla_tpot_ms'] or '-'} "
             f"rate_req_s={sla['rate_req_s']:.3f}"
         )
@@ -462,8 +521,8 @@ def summary_tag_lines(summary):
     return lines
 
 
-def print_summary_tag_lines(summary):
-    for line in summary_tag_lines(summary):
+def print_summary_tag_lines(summary, whole_run=False):
+    for line in summary_tag_lines(summary, whole_run):
         print(line, flush=True)
 
 

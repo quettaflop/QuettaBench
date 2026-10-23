@@ -169,6 +169,39 @@ class ReuseServer(unittest.TestCase):
             self.run_matrix({"mode.concurrency": [1, 4]}, reset=False)
 
 
+class AttachProvenance(unittest.TestCase):
+    def test_an_attached_server_records_what_it_answered_and_not_the_clients_env(self):
+        run = {"model": "llama31_8b", "workload": {"source": "mooncake-trace"}, "hardware": {"launcher": "attach"}}
+
+        def attach(spec, out, **kw):
+            Path(out).mkdir(parents=True, exist_ok=True)
+            return launcher.Attached(Path(out), "http://127.0.0.1:1", served_models=["m"], server_version="0.31.0")
+
+        with (
+            scratch_configs("att", run) as (path, td),
+            mock.patch.object(runner.launcher, "attach", side_effect=attach),
+            mock.patch.object(runner.launcher, "idle_gpus") as idle,
+            mock.patch.object(runner, "build_trace"),
+            mock.patch.object(runner, "RunWriter") as writer,
+            mock.patch.object(runner.serve, "run"),
+        ):
+            writer.return_value.provenance = {}
+            runner.main(path, ["engine.model=/w"], results_dir=td, allow_unverified=True)
+        prov = writer.return_value.provenance
+        idle.assert_not_called()  # the attached server already holds its GPUs
+        self.assertEqual(
+            [prov[k] for k in ("launch_env", "inherited_env", "weights_revision", "server_env")],
+            [None, None, None, "unknown (attached)"],
+        )
+        self.assertEqual(
+            prov["attached_server"], {"endpoint": "http://127.0.0.1:1", "models": ["m"], "version": "0.31.0"}
+        )
+        # What the server got is observed, not assumed: nothing answers on port 1 here, and it says so.
+        observed = prov["server_observed"]
+        self.assertEqual((observed["version"], observed["models"]), (None, []))
+        self.assertIn("qbench did not start the server", observed["log"]["why"])
+
+
 class MatrixEnv(unittest.TestCase):
     def test_each_point_gets_its_own_gpus_and_pins(self):
         run = {
@@ -207,6 +240,80 @@ class MatrixEnv(unittest.TestCase):
             runner.main(path, ["engine.model=/w"], results_dir=td, allow_unverified=True)
 
 
+SHELL = {
+    "PATH": "/venv/bin:/usr/bin",
+    "HOME": "/home/q",
+    "CUDA_HOME": "/usr/local/cuda",
+    "CUDA_VISIBLE_DEVICES": "7",
+    "VLLM_LOGGING_LEVEL": "DEBUG",
+    "HF_TOKEN": "hf_secret",
+    "SSH_AUTH_SOCK": "/tmp/agent",
+    "AWS_SECRET_ACCESS_KEY": "aws",
+    "PWD": "/somewhere",
+}
+
+
+class ControlledServerEnv(unittest.TestCase):
+    def served(self, *sets):
+        load = functools.partial(loader.load, RUNS[0].with_name("llama.yaml"), env={})
+        (cfg,) = load(["engine.model=/w", "hardware.visible_devices=1", "mode.grid=null", *sets])
+        return cfg
+
+    def launch(self, cfg):
+        prov: dict = {}
+        with (
+            tempfile.TemporaryDirectory() as td,
+            mock.patch.dict(os.environ, SHELL, clear=True),
+            mock.patch.object(runner.launcher, "start") as start,
+            mock.patch.object(runner, "build_trace"),
+            mock.patch.object(runner.serve, "run"),
+        ):
+            runner.serve_one(cfg, Path(td), set(), mock.Mock(provenance=prov))
+        return start.call_args.args[0], prov
+
+    def test_the_allowlist_keeps_what_a_server_needs_and_nothing_else(self):
+        with mock.patch.dict(os.environ, SHELL, clear=True):
+            kept = runner.env_map.controlled_server_env()
+        self.assertEqual(
+            sorted(kept), ["CUDA_HOME", "CUDA_VISIBLE_DEVICES", "HF_TOKEN", "HOME", "PATH", "VLLM_LOGGING_LEVEL"]
+        )
+
+    def test_a_controlled_server_starts_from_an_empty_environment(self):
+        spec, prov = self.launch(self.served("engine.env={VLLM_USE_RUST_FRONTEND: 1}"))
+        argv = spec.child_argv(list(spec.server_argv))
+        self.assertEqual(argv[:2], ["env", "-i"])
+        given = dict(a.split("=", 1) for a in argv[2 : argv.index(spec.server_argv[0])])
+        self.assertEqual(given["PATH"], "/venv/bin:/usr/bin")
+        self.assertEqual(given["VLLM_USE_RUST_FRONTEND"], "1")  # engine.env on top
+        self.assertEqual(given["CUDA_VISIBLE_DEVICES"], "1")  # the run's pin beats the shell's 7
+        self.assertNotIn("SSH_AUTH_SOCK", given)
+        self.assertNotIn("AWS_SECRET_ACCESS_KEY", given)
+        # run.json gets exactly that environment, its secrets redacted.
+        self.assertEqual(prov["server_env"], "controlled")
+        self.assertEqual(prov["launch_env"], runner.redact(given))
+        self.assertEqual(prov["launch_env"]["HF_TOKEN"], "REDACTED")
+        self.assertIsNone(prov["inherited_env"])
+
+    def test_inherit_keeps_the_shell_and_records_what_it_passes(self):
+        spec, prov = self.launch(self.served("hardware.server_env=inherit"))
+        self.assertFalse(spec.env_clear)
+        self.assertEqual(spec.child_argv(["x"])[0], "env")
+        self.assertNotEqual(spec.child_argv(["x"])[1], "-i")
+        self.assertEqual(prov["server_env"], "inherit")
+        self.assertEqual(prov["inherited_env"]["VLLM_LOGGING_LEVEL"], "DEBUG")
+
+    def test_the_dry_run_shows_the_controlled_argv_with_secrets_redacted(self):
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, SHELL, clear=True), contextlib.redirect_stdout(out):
+            runner.dry_run(self.served(), Path("r"))
+        line = next(x for x in out.getvalue().splitlines() if x.startswith("server = "))
+        self.assertTrue(line.startswith("server = env -i "))
+        self.assertIn("PATH=/venv/bin:/usr/bin", line)
+        self.assertIn("HF_TOKEN=REDACTED", line)
+        self.assertNotIn("hf_secret", line)
+        self.assertNotIn("SSH_AUTH_SOCK", line)
+
+
 class InProcessEnv(unittest.TestCase):
     def test_export_replaces_what_the_process_holds(self):
         with mock.patch.dict(os.environ, {"NCCL_PROTO": "LL"}, clear=True):
@@ -219,7 +326,9 @@ class InProcessEnv(unittest.TestCase):
         (grid,) = load(
             ["engine.model=/w", "hardware.visible_devices=0", "hardware.link_profile=pcie", "mode.return_outputs=text"]
         )
-        (served,) = load(["engine.model=/w", "hardware.visible_devices=1", "mode.grid=null"])
+        (served,) = load(
+            ["engine.model=/w", "hardware.visible_devices=1", "mode.grid=null", "hardware.server_env=inherit"]
+        )
         exported = set()
         with (
             tempfile.TemporaryDirectory() as td,
@@ -423,7 +532,7 @@ def session_trace(td):
         history, turns = [], []
         for t in range(3):
             history = [*history, {"role": "user", "content": f"s{s} t{t}"}]
-            turns.append({"turn_idx": t, "messages": history, "osl_tokens": 3})
+            turns.append({"turn_idx": t, "messages": history, "prompt_tokens": 4 + 2 * t, "osl_tokens": 3})
             history = [*history, {"role": "assistant", "content": f"reply {t}"}]
         sessions.append({"session_id": f"S{s}", "turns": turns})
     path = Path(td, "t.jsonl")

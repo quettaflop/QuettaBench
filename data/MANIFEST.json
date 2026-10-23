@@ -1,0 +1,98 @@
+{
+  "bucket": "quettabench-prod",
+  "prefix": "campaign-2026-10/workloads",
+  "files": {
+    "swebench_native_trajectories.jsonl": {
+      "sha256": "9a6c0eb015f5af1a019f535afa9a02ce8394f345c0175927fe0d26af6f6a0cbe",
+      "built_by": "data/build_trajectories.py swebench-native --runs data/raw/swebench_native_c8 (just fetch builds it)",
+      "source": "sources/swebench-verified_qwen38-flash-next_native_2026-09-10 (mini-swe-agent run qwen-native-c8-2026-09-10, 8 agents)",
+      "benchmark": "SWE-bench Verified",
+      "agent": "mini-swe-agent",
+      "model": "Qwen3.8-Flash-Next",
+      "collected": "2026-09-10",
+      "token_counts": "prompt_tokens and completion_tokens the serving engine reported per request",
+      "sessions": 154,
+      "turns": 5112,
+      "steps_min_median_max": [
+        11,
+        31,
+        78
+      ],
+      "prompt_tokens_p10_p50_p90_max": [
+        5348,
+        19141,
+        37711,
+        49011
+      ],
+      "osl_tokens_p10_p50_p90_max": [
+        99,
+        237,
+        872,
+        6103
+      ],
+      "request_fidelity": "5112 of 5112 steps rebuild the recorded prompt_tokens exactly (chat template + bash tool schema)",
+      "recorded_waits": "tool_ms is the sidecar's reply end to next request sent: p50 0.27 s, p90 4.2 s, max 82 s per step; p50 42 s, max 895 s per session; every session"
+    },
+    "terminalbench_qwen_trajectories.jsonl": {
+      "sha256": "e53c3655cf2cb4c78405774b293148adb0fea2ea0d455bff61716f480cbb26f9",
+      "built_by": "data/build_trajectories.py terminalbench-atif --jobs data/raw/terminalbench_jobs (just fetch builds it)",
+      "source": "sources/terminalbench-2-1_qwen38-flash-next_2026-08-27 (Harbor jobs 2026-08-27__22-17-10 and 2026-08-27__22-40-28)",
+      "benchmark": "Terminal-Bench 2.1",
+      "agent": "terminus-2",
+      "model": "Qwen3.8-Flash-Next",
+      "collected": "2026-08-27",
+      "token_counts": "prompt_tokens and completion_tokens from each step's ATIF metrics",
+      "sessions": 74,
+      "turns": 1563,
+      "steps_min_median_max": [
+        1,
+        17,
+        83
+      ],
+      "prompt_tokens_p10_p50_p90_max": [
+        2411,
+        15338,
+        38147,
+        63086
+      ],
+      "osl_tokens_p10_p50_p90_max": [
+        180,
+        816,
+        6892,
+        41638
+      ],
+      "request_fidelity": "rebuilt / recorded prompt_tokens: p1 0.993, p50 1.000, p99 1.055; 1270 of 1563 steps within 1%, 506 exact; the model's reply text is not recorded, so its JSON whitespace is rebuilt",
+      "recorded_waits": "tool_ms is telemetry.jsonl's model end to next model start: p50 5.2 s, p90 60 s, max 780 s per step; p50 215 s, max 4335 s per session; 65 of 74 sessions (recorded_waits false on the other 9, whose telemetry has a different number of model rows than the trajectory has steps)"
+    },
+    "deepresearch_trajectories.jsonl": {
+      "sha256": "8dbc1998b62a6726a4e444895574f6cd6f15a2a5281997c411acdb9ecaf69347",
+      "built_by": "data/build_trajectories.py deepresearch --trace data/dr9k-v4flash.jsonl (just fetch builds it)",
+      "benchmark": "DeepResearch-9k",
+      "model": "DeepSeek-V4-Flash",
+      "token_counts": "prompt_tokens and completion_tokens recorded in the trace",
+      "sessions": 300,
+      "turns": 2253
+    },
+    "deepsearch_trajectories.jsonl": {
+      "sha256": "6e8d01670e3f55ad5b1b2783c244a5d71bd4e84112bfd32e1a1db69860a1e9c1",
+      "built_by": "data/build_trajectories.py deepsearch --trace data/dsqa-v4flash.jsonl (just fetch builds it)",
+      "benchmark": "DeepSearchQA",
+      "model": "DeepSeek-V4-Flash",
+      "token_counts": "prompt_tokens and completion_tokens recorded in the trace",
+      "sessions": 72,
+      "turns": 2025
+    },
+    "coding_agent_prompts.jsonl": {
+      "sha256": "f32f4e012f1077eb768066ffd647a7d72cdae02f4e89a3443e9bafbe90d2ec13",
+      "built_by": "data/download_coding_prompts.py"
+    },
+    "dr9k-v4flash.jsonl": {
+      "sha256": "a8b4567a3774e32424b7e2ad358916b3acb1fdda4f0dcb59ee2b108ca1327d19",
+      "source": "raw DeepResearch-9k trace, DeepSeek-V4-Flash on RTX 6000 Pro"
+    },
+    "dsqa-v4flash.jsonl": {
+      "sha256": "abfc960609c0c39da20e2df017524bf839e9d8ce76ee53a548f9a5cfa201d2f3",
+      "source": "raw DeepSearchQA trace, DeepSeek-V4-Flash"
+    }
+  }
+}

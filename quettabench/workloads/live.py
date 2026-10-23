@@ -2,13 +2,14 @@
 
 import dataclasses
 import json
+import os
 import random
 from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
 
-from .base import DrawnTrace, Request, Trace, synth_ids
+from .base import DrawnTrace, Request, Trace, sha256_file, synth_ids
 
 BLOCK_SIZE = 512
 
@@ -139,6 +140,8 @@ class RealTrace(Trace):
         self.path = str(path)
         self.reader = reader
         self.supports_spec = any(r.output_token_ids for r in requests)
+        if self.file_sha256 is None and os.path.isfile(self.path):
+            self.file_sha256 = sha256_file(self.path)
 
     @classmethod
     def from_jsonl(cls, path, seed=42):
@@ -153,6 +156,7 @@ class RealTrace(Trace):
     def source_meta(self):
         return {
             "path": self.path,
+            "file_sha256": self.file_sha256,
             "reader": self.reader,
             "reqs": len(self._requests),
             "sources": sorted({"?" if r.source is None else str(r.source) for r in self._requests}),
@@ -213,6 +217,15 @@ class SampledChatTrace(DrawnTrace):
         super().__init__()
         self.samples = samples
         self._stream = reshuffled(samples, random.Random(seed))
+
+    def draw(self, num_requests, warmup=0, profile=None):
+        """Refuses more draws than rows: a repeated prompt hits the prefix cache its first send left."""
+        if warmup + num_requests > len(self.samples):
+            raise ValueError(
+                f"{num_requests} requests and {warmup} warmup from {len(self.samples)} rows would repeat prompts; "
+                f"ask for at most {len(self.samples) - warmup} requests"
+            )
+        return super().draw(num_requests, warmup, profile)
 
     def get_next_request(self):
         messages, max_tokens = next(self._stream)
@@ -319,6 +332,14 @@ class SmokeTrace(DrawnTrace):
 WORKLOADS = Path(__file__).resolve().parents[2] / "configs" / "workloads.yaml"
 
 
+# Agent traces whose turns carry the output length the engine recorded.
+TRAJECTORY_DATASETS = (
+    "swebench-multi-turn",
+    "terminalbench-multi-turn",
+    "deepresearch-multi-turn",
+)
+
+
 @dataclass
 class WorkloadProfile:
     name: str
@@ -331,8 +352,15 @@ class WorkloadProfile:
     prefix_caching_required: bool = False  # server needs --enable-prefix-caching
     min_turns: int = 1
     max_turns: int = 1
-    num_sessions: int = 200
+    num_sessions: int | None = None  # None: every eligible session; a number is the same sample at every point
     active: bool = True  # False: runnable but hidden from default listings
+    # Why the profile cannot run, until its file carries what is missing; empty when it can.
+    refused: str = ""
+
+    @property
+    def recorded_lengths(self) -> bool:
+        """Its turns carry recorded output lengths, which a replay reproduces exactly or fails the turn."""
+        return self.dataset in TRAJECTORY_DATASETS
 
 
 def load_profiles(path=WORKLOADS):

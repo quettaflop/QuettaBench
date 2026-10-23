@@ -47,6 +47,9 @@ RUN_KEYS = ("model", "engine", "workload", "mode", "hardware", "matrix")
 HARDWARE_FILE_KEYS = ("world", "timing_steps", "max_seq_headroom", "collective", "provision")
 GRIDS_KEYS = ("grids", "step_points")
 RATE_ARRIVALS = ("poisson", "ramp", "burst")
+# A session timeout must cover the profile's longest turn at this pace, the floor; a server decoding slower than
+# 5 tokens/s needs mode.timeout raised above it.
+SLOWEST_TOKEN_S = 0.2
 # At most 200 chars (clear_run_dir's sibling name must fit in 255), no trailing '.'.
 RUN_NAME = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._-]{0,198}[A-Za-z0-9_-])?")
 RESERVED_RUN_NAMES = ("probes", "compare", "baselines")
@@ -85,6 +88,10 @@ def _check_path(path, where):
         key = path[len(df) + 1 :]
         allowed = DICT_KEYS[df]
         if "." not in key and (allowed is None or key in allowed):
+            return
+        # engine.extra.<engine>.<flag> sets one flag in one engine's extra block
+        engine, _, flag = key.partition(".")
+        if df == "engine.extra" and engine and flag and "." not in flag:
             return
     raise ConfigError(f"{where}: unknown key {path!r}")
 
@@ -177,7 +184,13 @@ def _apply(values, origins, layer, origin):
     for path, value in layer.items():
         df = dict_field(path)
         if df is not None and path != df:
-            values[df] = {**values[df], path[len(df) + 1 :]: value}
+            key, _, flag = path[len(df) + 1 :].partition(".")
+            if flag:
+                block = values[df].get(key) or {}
+                if not isinstance(block, dict):
+                    raise ConfigError(f"{origin}: {df}.{key} is not a mapping, so {path} cannot set a flag in it")
+                value = {**block, flag: value}
+            values[df] = {**values[df], key: value}
         else:
             values[path] = value
         origins[path] = origin
@@ -205,6 +218,22 @@ def _profile_prefix_caching(values, origins, where):
         )
     values["engine.prefix_caching"] = True
     origins["engine.prefix_caching"] = "profile"
+
+
+def _profile_exact_output_length(values, origins, where):
+    """A trace with recorded output lengths replays them exactly: a turn that stops short fails, it is not faster."""
+    source = values["workload.source"]
+    if values["mode.grid"] is not None or source not in live.PROFILES or not live.get_profile(source).recorded_lengths:
+        return
+    if values["mode.exact_output_length"]:
+        return
+    if origins.get("mode.exact_output_length", "default") not in NOT_ASKED:
+        raise ConfigError(
+            f"{where}: mode.exact_output_length=False contradicts workload profile {source}, "
+            "whose turns carry recorded output lengths"
+        )
+    values["mode.exact_output_length"] = True
+    origins["mode.exact_output_length"] = "profile"
 
 
 def _one_of(allowed):
@@ -256,6 +285,7 @@ def _validate(values, origins, allow_unverified, where):
     elif profile in ("single-turn", "multi-turn"):
         _force(values, origins, "engine.prefix_caching", True, by, where)
     _profile_prefix_caching(values, origins, where)
+    _profile_exact_output_length(values, origins, where)
     # A single-turn profile draws num_requests; other sources set their own.
     source = values["workload.source"]
     if (
@@ -308,6 +338,24 @@ def _validate(values, origins, allow_unverified, where):
         values["mode.load"] != "open" or not (values["mode.sla_ttft_ms"] or values["mode.sla_tpot_ms"])
     ):
         raise ConfigError(f"{where}: goodput sweep needs open load and mode.sla_ttft_ms and/or sla_tpot_ms")
+    source = values["workload.source"]
+    if values["workload.kind"] == "sessions" and source in live.PROFILES:
+        osl = live.get_profile(source).osl_tokens
+        if values["mode.timeout"] < osl * SLOWEST_TOKEN_S:
+            raise ConfigError(
+                f"{where}: mode.timeout={values['mode.timeout']} s cannot cover {source}'s {osl}-token turns at "
+                f"{SLOWEST_TOKEN_S * 1000:g} ms a token ({osl * SLOWEST_TOKEN_S:.0f} s); a cut turn ends its session"
+            )
+    if values["mode.chunk_usage"] and values["engine.name"] != "vllm":
+        raise ConfigError(
+            f"{where}: mode.chunk_usage asks vLLM for continuous_usage_stats; "
+            f"engine.name={values['engine.name']} does not take it"
+        )
+    if values["workload.salt"] == "cache_salt" and values["engine.name"] != "vllm":
+        raise ConfigError(
+            f"{where}: workload.salt=cache_salt sends vLLM's cache_salt request field; "
+            f"engine.name={values['engine.name']} does not take it, so use workload.salt=text"
+        )
     if values["mode.grid"] and values["workload.prompt_mode"] == "corpus" and values["mode.return_outputs"] == "none":
         raise ConfigError(
             f"{where}: prompt_mode=corpus tokenizes in-process, which only a "
@@ -398,23 +446,34 @@ def load(run_yaml, overrides=(), env=None):
     run = {}
     for section in SECTIONS:
         run.update(_flatten(raw.get(section) or {}, f"{section}.", run_path))
-    matrix = raw.get("matrix") or {}
-    for path, choices in matrix.items():
-        _check_path(path, f"{run_path} matrix")
+    matrix = dict(raw.get("matrix") or {})
+    cli = dict(parse_set(item) for item in overrides)
+    # A --set naming a matrix axis replaces its choices, so one run can take part of the sweep.
+    for key in [k for k in cli if k in matrix]:
+        choice = cli.pop(key)
+        matrix[key] = choice if isinstance(choice, list) else [choice]
+    # An axis is one path, or several joined by "+" that move together: each choice lists one value per path.
+    axes = []
+    for key, choices in matrix.items():
+        paths = [p.strip() for p in key.split("+")]
+        for path in paths:
+            _check_path(path, f"{run_path} matrix")
         if not isinstance(choices, list) or not choices:
-            raise ConfigError(f"{run_path} matrix: {path!r} needs a non-empty list")
+            raise ConfigError(f"{run_path} matrix: {key!r} needs a non-empty list")
+        if len(paths) > 1 and any(not isinstance(c, list) or len(c) != len(paths) for c in choices):
+            raise ConfigError(f"{run_path} matrix: each choice of {key!r} lists {len(paths)} values, one per path")
+        axes.append([dict(zip(paths, c)) if len(paths) > 1 else {key: c} for c in choices])
 
     from_env = env_map.read_env(env)
     detect = {k: from_env.pop(k) for k in list(from_env) if k.startswith("detect.")}
-    cli = dict(parse_set(item) for item in overrides)
     allow_unverified = bool(cli.pop("allow_unverified", False))
     for path in cli:
         _check_path(path, "--set")
     grids, step_points = _read_grids(configs)
 
     out = []
-    for combo in itertools.product(*matrix.values()):
-        point = dict(zip(matrix, combo))
+    for combo in itertools.product(*axes):
+        point = {p: v for part in combo for p, v in part.items()}
         run_layer, cli_layer = {**run, **point}, dict(cli)
         named_by = cli_layer if "run_name" in cli else run_layer
         base = cli.get("run_name", run_path.stem)

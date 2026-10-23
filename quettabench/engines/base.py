@@ -36,6 +36,7 @@ class LaunchSpec:
     cwd: str | None = None
     health_path: str = "/health"
     served_name: str = ""  # the model name requests send; set when the server can also answer to a launch token
+    api_key_env: str = ""  # the env entry holding the server's bearer key, sent on discovery when attaching
     port: int = 8000
     instrumentation: str = "none"
     image: str | None = None
@@ -43,10 +44,12 @@ class LaunchSpec:
     log_header: str = ""  # the bench log's `>>> ctx= bs= ...` line for this cell
     cells: tuple = ()  # ((ctx, bs, per-cell spec), ...): one bench run each.
     timeout_s: int = 120  # client timeout per request, from mode.timeout
+    # True: the child starts from an empty environment (env -i), so env is everything it gets.
+    env_clear: bool = False
 
     def child_argv(self, argv):
         """Runs under `env` so env and env_drop apply without reading os.environ here."""
-        unset = [a for name in self.env_drop for a in ("-u", name)]
+        unset = ["-i"] if self.env_clear else [a for name in self.env_drop for a in ("-u", name)]
         return ["env", *unset, *(f"{k}={v}" for k, v in self.env.items()), *argv]
 
 

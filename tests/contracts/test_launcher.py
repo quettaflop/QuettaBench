@@ -4,9 +4,11 @@ import dataclasses
 import json
 import os
 import socket
+import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -15,10 +17,11 @@ from unittest import mock
 from quettabench import provision, runner
 from quettabench.config import loader
 from quettabench.config.schema import ConfigError
-from quettabench.engines import drivers, launcher, vllm
+from quettabench.engines import drivers, launcher, observe, vllm
 from quettabench.engines.base import LaunchSpec
 from quettabench.profiling import engine_side
 from tests.contracts import helpers
+from tests.contracts.helpers import Foreign, Keyed
 
 FAKE = Path(__file__).with_name("fake_server.py")
 
@@ -40,18 +43,6 @@ def alive(pid):
     except FileNotFoundError:
         return False
     return not stat.split(") ")[1].startswith("Z")
-
-
-class Foreign(BaseHTTPRequestHandler):
-    """A server some other run started: healthy, and its models are not ours."""
-
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b'{"data": [{"id": "other"}]}')
-
-    def log_message(self, *args):
-        pass
 
 
 class LocalLauncher(unittest.TestCase):
@@ -193,9 +184,82 @@ def fixed_name(case):
         case.addCleanup(patch.stop)
 
 
+class Attach(unittest.TestCase):
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp())
+        self.port = free_port()
+
+    def spec(self, served_name="other"):
+        return LaunchSpec(
+            adapter="fake", port=self.port, health_path="/health", served_name=served_name, env={"HF_TOKEN": "secret"}
+        )
+
+    def serve(self):
+        server = HTTPServer(("127.0.0.1", self.port), Foreign)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        return server
+
+    def test_attach_measures_the_running_server_and_leaves_it_running(self):
+        self.serve()
+        handle = launcher.attach(self.spec(), self.dir / "run", timeout_s=5, poll_s=0.1)
+        self.assertEqual(handle.endpoint, f"http://127.0.0.1:{self.port}")
+        handle.stop()
+        self.assertTrue(launcher.port_taken(self.port))
+        record = json.loads((self.dir / "run" / "engine.json").read_text())
+        self.assertTrue(record["attached"])
+        self.assertEqual(record["served_models"], ["other"])
+        self.assertEqual((handle.served_models, handle.server_version), (["other"], record["server_version"]))
+        self.assertEqual(record["expected_launch_spec"]["env"], {"HF_TOKEN": "REDACTED"})
+
+    def test_attach_refuses_a_server_that_does_not_serve_the_model(self):
+        self.serve()
+        with self.assertRaisesRegex(RuntimeError, r"serves \['other'\], not mine"):
+            launcher.attach(self.spec("mine"), self.dir / "run", timeout_s=5, poll_s=0.1)
+
+    def test_attach_refuses_an_empty_port(self):
+        with self.assertRaisesRegex(RuntimeError, "nothing healthy on"):
+            launcher.attach(self.spec(), self.dir / "run", timeout_s=0.3, poll_s=0.1)
+
+    def test_attach_sends_the_servers_key_on_discovery(self):
+        # A server started with --api-key answers /health to anyone and /v1/models only with the key: discovery
+        # must carry the key the yaml configured, or a healthy keyed server reads as serving nothing.
+        server = HTTPServer(("127.0.0.1", self.port), Keyed)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        keyed = LaunchSpec(
+            adapter="fake", port=self.port, served_name="other", env={"VLLM_API_KEY": "k"}, api_key_env="VLLM_API_KEY"
+        )
+        handle = launcher.attach(keyed, self.dir / "run", timeout_s=5, poll_s=0.1)
+        self.assertEqual(handle.served_models, ["other"])
+        self.assertEqual(
+            json.loads((self.dir / "run" / "engine.json").read_text())["expected_launch_spec"]["env"],
+            {"VLLM_API_KEY": "REDACTED"},
+        )
+        with self.assertRaisesRegex(RuntimeError, r"serves \[\], not other"):
+            launcher.attach(self.spec(), self.dir / "run2", timeout_s=5, poll_s=0.1)
+
+
 class DockerArgv(unittest.TestCase):
     def setUp(self):
         fixed_name(self)
+
+    def test_a_containers_env_is_its_e_set_and_run_json_records_that(self):
+        cfg, spec = keyed_docker_spec("sk-1")
+        argv = launcher.docker_argv(spec, cfg, "2", "/r/run")
+        given = {argv[i + 1].split("=", 1)[0] for i, a in enumerate(argv) if a == "-e"}
+        self.assertEqual(given, set(launcher.docker_env(spec, cfg)))
+        self.assertEqual(
+            runner.server_env_record(cfg, spec, "docker"),
+            {
+                "server_env": "docker -e",
+                "launch_env": runner.redact(launcher.docker_env(spec, cfg)),
+                "inherited_env": None,
+            },
+        )
+        self.assertEqual(runner.server_env_record(cfg, spec, "docker")["launch_env"]["VLLM_API_KEY"], "REDACTED")
 
     def test_example_yaml_argv(self):
         cfg, spec = docker_spec()
@@ -485,10 +549,17 @@ class Backends(unittest.TestCase):
     def test_the_server_gets_its_backends_devices(self):
         for backend, launch in (("rocm", "local"), ("tpu", "docker"), ("neuron", "local")):
             with self.subTest(backend=backend):
-                spec = self.child_spec(backend, f"hardware.launcher={launch}")
+                spec = self.child_spec(backend, f"hardware.launcher={launch}", "hardware.server_env=inherit")
                 want, unset = launcher.visible_env(backend, "0,1")
                 self.assertEqual({k: spec.env[k] for k in want}, want)
                 self.assertEqual(set(unset) <= set(spec.env_drop), True)
+        # Controlled, a name to unset is simply not in the empty environment, even when the shell has it.
+        with mock.patch.dict(os.environ, {"CUDA_VISIBLE_DEVICES": "7"}):
+            spec = self.child_spec("neuron", "hardware.launcher=local")
+        want, unset = launcher.visible_env("neuron", "0,1")
+        self.assertTrue(spec.env_clear)
+        self.assertEqual({k: spec.env[k] for k in want}, want)
+        self.assertFalse(set(unset) & set(spec.env) - set(want))
         self.assertNotIn("CUDA_VISIBLE_DEVICES", self.child_spec("cuda", "hardware.launcher=docker").env)
 
     def test_docker_device_flags_per_backend(self):
@@ -576,6 +647,84 @@ class Backends(unittest.TestCase):
                 plan = provision.Plan(True)
                 with self.assertRaisesRegex(ConfigError, "nccl_lib is CUDA's NCCL"):
                     provision.machine(plan, {"cache_root": "/tmp/q", "nccl_lib": "/n"}, True, backend)
+
+
+VLLM_LOG = (
+    "INFO 10-19 02:00:00 [core.py:69] Initializing a V1 LLM engine (v0.31.0) with config: model='m', "
+    "speculative_config=SpeculativeConfig(method='dspark', num_spec_tokens=5), tokenizer='m', "
+    "tensor_parallel_size=8, pipeline_parallel_size=1, data_parallel_size=1, enable_prefix_caching=True, "
+    "chunked_prefill_enabled=True, compilation_config={'level': 3, 'cudagraph_capture_sizes': [64, 32, 16, 8], "
+    "'max_capture_size': 64}\n"
+    "INFO 10-19 02:05:00 [kv_cache_utils.py:1087] GPU KV cache size: 1,234,567 tokens\n"
+    "INFO 10-19 02:05:00 [kv_cache_utils.py:1091] Maximum concurrency for 1,048,576 tokens per request: 1.18x\n"
+)
+
+
+class Observed(BaseHTTPRequestHandler):
+    """A server that answers /version and /v1/models."""
+
+    def do_GET(self):
+        body = {"version": "0.31.0"} if self.path == "/version" else {"data": [{"id": "m"}]}
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(json.dumps(body).encode())
+
+    def log_message(self, *args):
+        pass
+
+
+class ServerObserved(unittest.TestCase):
+    def test_the_startup_log_gives_the_settings_the_server_runs_with(self):
+        with tempfile.TemporaryDirectory() as td:
+            log = Path(td) / "server.log"
+            log.write_text(VLLM_LOG)
+            got = observe.log_settings(log)
+            missing = observe.log_settings(Path(td) / "gone.log")
+        self.assertEqual(
+            got,
+            {
+                "tensor_parallel_size": 8,
+                "pipeline_parallel_size": 1,
+                "data_parallel_size": 1,
+                "expert_parallel": None,  # not in this line: unknown, not False
+                "chunked_prefill": True,
+                "prefix_caching": True,
+                "speculative_config": "SpeculativeConfig(method='dspark', num_spec_tokens=5)",
+                "cudagraph_capture_sizes": [64, 32, 16, 8],
+                "kv_cache_tokens": [1234567],
+                "max_concurrency": [{"tokens_per_request": 1048576, "x": 1.18}],
+            },
+        )
+        self.assertIn("no server log", missing["why"])
+
+    def test_the_process_on_the_port_gives_its_argv_and_environment_with_secrets_redacted(self):
+        port = free_port()
+        code = f"import socket, time; s = socket.socket(); s.bind(('127.0.0.1', {port})); s.listen(); time.sleep(30)"
+        env = {**os.environ, "QB_TEST_TOKEN": "secret", "QB_PLAIN": "x"}
+        proc = subprocess.Popen([sys.executable, "-c", code], env=env)
+        self.addCleanup(proc.wait)
+        self.addCleanup(proc.kill)
+        for _ in range(100):
+            if observe.listening_pid(port):
+                break
+            time.sleep(0.05)
+        self.assertEqual(observe.listening_pid(port), proc.pid)
+        got = observe.process_argv_and_env(proc.pid)
+        self.assertEqual(got["argv"][:2], [sys.executable, "-c"])
+        self.assertEqual((got["env"]["QB_TEST_TOKEN"], got["env"]["QB_PLAIN"]), ("REDACTED", "x"))
+
+    def test_an_attached_server_records_what_it_answers_and_its_listening_process(self):
+        port = free_port()
+        server = HTTPServer(("127.0.0.1", port), Observed)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        got = observe.observe_server(f"http://127.0.0.1:{port}")
+        self.assertEqual((got["version"], got["models"]), ("0.31.0", ["m"]))
+        self.assertEqual(got["process"]["pid"], os.getpid())  # the stub listens in this test process
+        self.assertIn("qbench did not start the server", got["log"]["why"])
+        boxed = observe.observe_server(f"http://127.0.0.1:{port}", container="qbench-x")
+        self.assertIn("container qbench-x", boxed["process"]["why"])
 
 
 if __name__ == "__main__":
