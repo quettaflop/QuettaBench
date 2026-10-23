@@ -18,6 +18,7 @@ import yaml
 
 from quettabench import runner
 from quettabench.config import loader
+from quettabench.engines import base as engines, launcher
 from quettabench.modes.serve import LOOP_LAG_LIMIT_MS, first_start_stagger_s
 from quettabench.workloads.sessions import inter_turn_wait_s
 
@@ -283,17 +284,22 @@ def phase_client(args, results, base, served, timing=None) -> dict:
     return {**out, "run_dir": str(run_dir)}
 
 
-def phase_server(port, served) -> dict:
+def phase_server(port, served, headers=None) -> dict:
+    """Check the real server answers and serves the yaml's model, sending the key qbench itself would send."""
     endpoint = f"http://127.0.0.1:{port}"
+
+    def get(path):
+        return urllib.request.urlopen(urllib.request.Request(endpoint + path, headers=headers or {}), timeout=5)
+
     try:
-        with urllib.request.urlopen(endpoint + "/health", timeout=5) as resp:
+        with get("/health") as resp:
             healthy_ = resp.status == 200
-        with urllib.request.urlopen(endpoint + "/v1/models", timeout=5) as resp:
+        with get("/v1/models") as resp:
             models = [m.get("id") for m in json.load(resp).get("data", [])]
     except (OSError, ValueError, AttributeError) as e:
         return {"passed": False, "detail": f"{endpoint}: {e}"}
     try:
-        with urllib.request.urlopen(endpoint + "/version", timeout=5) as resp:
+        with get("/version") as resp:
             version = (json.load(resp) or {}).get("version")
     except (OSError, ValueError, AttributeError):
         version = None
@@ -427,7 +433,8 @@ def main(argv=None) -> int:
     if not record_phase("client", outcome):
         return 1
     if args.server is not None:
-        if not record_phase("server", phase_server(args.server, served)):
+        headers = launcher.discovery_headers(engines.get(cfg.engine.name).translate(cfg))
+        if not record_phase("server", phase_server(args.server, served, headers)):
             return 1
         outcome, smoke_run = phase_smoke(args, results, base)
         if not record_phase("smoke", outcome):

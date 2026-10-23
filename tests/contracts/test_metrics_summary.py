@@ -947,6 +947,24 @@ class TestOpenLoopUnits(unittest.TestCase):
         self.assertEqual(none["first_turn_ttft_ms"]["n"], 2)
         self.assertNotIn("ramp", none)
 
+    def test_the_cold_start_sample_is_each_agents_own_first_session(self):
+        # Agent 0 plays three quick sessions before the others start: the first four admissions are agent 0's
+        # and would report its 1 ms first turn four times. With the agent map, each agent's own first turn counts.
+        rows, times, agent_of = [], {}, {}
+        starts = {0: [0.0, 0.01, 0.02, 0.03], 1: [0.04], 2: [0.05], 3: [0.06]}
+        first_ttft = {0: 0.001, 1: 0.1, 2: 0.2, 3: 0.3}
+        sid = 0
+        for agent, admitted in starts.items():
+            for k, t in enumerate(admitted):
+                r = _req(t, t + 0.005, ttft=first_ttft[agent] if k == 0 else 0.001)
+                r.session_id, r.turn_index, r.sent_at_s, r.completed_at_s = sid, 0, t, t + 0.005
+                rows.append(r)
+                times[sid], agent_of[sid] = (t, t, t + 0.005), agent
+                sid += 1
+        s = steady_section(rows, times, concurrency=4, agent_of=agent_of)
+        self.assertEqual(s["first_turn_ttft_ms"], {"n": 4, 50: 100.0, 90: 300.0, 99: 300.0})
+        self.assertEqual(steady_section(rows, times, concurrency=4)["first_turn_ttft_ms"][99], 1.0)
+
     def test_the_window_takes_a_request_by_its_send_not_its_slot_grant(self):
         # S2's first turn got its slot at 2.95 s, before the window opened at 3 s, but was sent at 3 s.
         rows, times = self._two_agents_ten_sessions()

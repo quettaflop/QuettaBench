@@ -103,7 +103,7 @@ def attach(spec, results_dir, timeout_s=60, poll_s=1.0):
     environment are not qbench's to know."""
     endpoint = f"http://127.0.0.1:{spec.port}"
     # The server's own key, where the yaml set one, so a server that guards /v1/models still answers discovery.
-    headers = bearer_headers(spec.env.get(spec.api_key_env) if spec.api_key_env else None)
+    headers = discovery_headers(spec)
     deadline = time.monotonic() + timeout_s
     while True:
         try:
@@ -137,6 +137,11 @@ def attach(spec, results_dir, timeout_s=60, poll_s=1.0):
 def bearer_headers(api_key) -> dict:
     """The Authorization header a keyed server wants on every request, discovery included; empty without a key."""
     return {"Authorization": f"Bearer {api_key}"} if api_key else {}
+
+
+def discovery_headers(spec) -> dict:
+    """The headers attach and any preflight send to a server, so a keyed server answers them as it answers runs."""
+    return bearer_headers(spec.env.get(spec.api_key_env) if spec.api_key_env else None)
 
 
 def served_models(models_url, timeout, headers=None):

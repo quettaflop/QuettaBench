@@ -659,7 +659,15 @@ def steady_section(
 ) -> dict:
     """Steady-window throughput and latency for run.json; the cold start is reported beside it, not dropped."""
     w = steady_window(session_times, concurrency, end_s, min_window_s, agent_of)
-    first_sessions = {sid for sid, _ in sorted(session_times.items(), key=lambda kv: kv[1][1])[: max(1, concurrency)]}
+    by_admission = sorted(session_times.items(), key=lambda kv: kv[1][1])
+    if agent_of and all(sid in agent_of for sid in session_times):
+        # Each agent's own earliest session; a fast agent's second play is not another agent's cold start.
+        firsts: dict = {}
+        for sid, _ in by_admission:
+            firsts.setdefault(agent_of[sid], sid)
+        first_sessions = set(firsts.values())
+    else:
+        first_sessions = {sid for sid, _ in by_admission[: max(1, concurrency)]}
     w["first_turn_ttft_ms"] = ttft_ms_summary(
         r for r in results if r is not None and r.session_id in first_sessions and r.turn_index == 0
     )

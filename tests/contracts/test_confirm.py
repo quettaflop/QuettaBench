@@ -6,12 +6,17 @@ import io
 import json
 import os
 import tempfile
+import threading
 import unittest
+from http.server import HTTPServer
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+from quettabench.engines import launcher
+from quettabench.engines.base import LaunchSpec
 from quettabench.modes.serve import first_start_stagger_s
+from tests.contracts.test_launcher import Keyed
 from tests.contracts.test_workloads import write_fixtures
 from tools.confirm import confirm
 
@@ -175,6 +180,22 @@ class WindowEstimate(unittest.TestCase):
         self.assertAlmostEqual(confirm.window_opens_s(sessions, 3, 0.1, 0.01, waits=True), 2.70)
         self.assertAlmostEqual(confirm.window_opens_s(sessions, 3, 0.1, 0.01, waits=False), 1.70)
         self.assertAlmostEqual(confirm.window_opens_s(sessions, 2, 0.1, 0.01, waits=True), 2.68)
+
+
+class ServerPreflight(unittest.TestCase):
+    def test_the_server_phase_sends_the_key_qbench_would_send(self):
+        # A server started with --api-key answers /health to anyone and /v1/models only with the key; the preflight
+        # must accept the same keyed server qbench can benchmark.
+        port = confirm.free_port()
+        server = HTTPServer(("127.0.0.1", port), Keyed)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        spec = LaunchSpec(adapter="vllm", env={"VLLM_API_KEY": "k"}, api_key_env="VLLM_API_KEY")
+        keyed = confirm.phase_server(port, "other", launcher.discovery_headers(spec))
+        self.assertTrue(keyed["passed"], keyed)
+        self.assertIn("serves ['other']", keyed["detail"])
+        self.assertFalse(confirm.phase_server(port, "other")["passed"])
 
 
 class EveryPhase(unittest.TestCase):
