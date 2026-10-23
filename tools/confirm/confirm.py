@@ -19,6 +19,7 @@ import yaml
 from quettabench import runner
 from quettabench.config import loader
 from quettabench.modes.serve import LOOP_LAG_LIMIT_MS, first_start_stagger_s
+from quettabench.workloads.sessions import inter_turn_wait_s
 
 REPO = Path(__file__).resolve().parents[2]
 # Fake server timing: 30 ms to the first token, 20 ms a token, four processes so request parsing never lands on the
@@ -210,8 +211,7 @@ def session_s(turns, ttft_s, tpot_s, waits) -> float:
     for i, turn in enumerate(turns):
         total += ttft_s + max((turn.max_tokens or 1) - 1, 0) * tpot_s
         if waits and i < len(turns) - 1:
-            meta = getattr(turn, "metadata", None) or {}
-            total += ((meta.get("tool_wait_after_ms") or 0.0) + (meta.get("human_wait_after_ms") or 0.0)) / 1000.0
+            total += inter_turn_wait_s(turn, use_recorded_waits=True)
     return total
 
 

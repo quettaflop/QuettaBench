@@ -11,7 +11,7 @@ just fetch                             # trajectories from R2 (gitignored)
 just provision configs/runs/llama.yaml --dry-run \
     --set hardware.provision.py=/venv/bin/python --set llama:hardware.provision.weights=/w/llama
 just dry-run configs/runs/llama.yaml --set engine.model=/w/llama   # Config + LaunchSpec, starts nothing
-just confirm configs/verify/h200_recycled.yaml --agents 256 --allow-unverified   # new box: yaml, data, client; add --server PORT once the server is up
+just confirm configs/runs/llama.yaml --agents 256 --allow-unverified   # new box: yaml, data, client; add --server PORT once the server is up
 just run configs/runs/llama.yaml --set engine.model=/w/llama   # -> results/llama/
 just profile --run results/llama --source metrics --source energy
 just compare results/<ours> results/<theirs>       # compares two results dirs
