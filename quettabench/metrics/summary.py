@@ -561,20 +561,20 @@ def workload_mix(results, inside, done_ids, stratum_of=None) -> dict:
     }
 
 
-# The window's two halves must read the same server cache hit share, else the cache was still filling or had begun
-# evicting and the window's hit rate is not one the server will keep. The halves are compared at the window's own mix
-# of turn depths, since a deeper turn caches more of its prompt by construction; the limit is at least twice the
-# drift's own noise from resampling plays, since a data-parallel server hits or misses almost per request; and fewer
-# than CACHE_PLAYS_PER_HALF plays in a half decide nothing.
+# Past this drift in the halves' cache hit share the cache was still filling or had begun evicting.
 CACHE_DRIFT_LIMIT = 0.05
+# A data-parallel server hits or misses almost per play, so the limit widens to this many SDs of resampled drift.
 CACHE_DRIFT_NOISE_SDS = 2.0
+# Fewer plays than this in a half make the resampled noise itself unreliable, so the halves are not judged.
 CACHE_PLAYS_PER_HALF = 30
+# Resamples for the drift's noise: enough for its SD to settle within about 5%.
 CACHE_DRIFT_DRAWS = 200
-# The turn index at which each depth bucket starts.
+# Turn index at which each depth bucket starts: a deeper turn caches more of its prompt by construction.
 TURN_DEPTH_BUCKETS = (0, 1, 4, 10, 20)
 
 
 def turn_depth_bucket(turn_index) -> int:
+    """The depth bucket of a turn, so the halves are compared at one turn-depth mix."""
     return sum(1 for first in TURN_DEPTH_BUCKETS[1:] if (turn_index or 0) >= first)
 
 
@@ -593,10 +593,10 @@ def hit_share_at_mix(plays: list[dict], weights: dict) -> float:
 
 def cache_steady(inside, start: float, end: float) -> dict | None:
     """Compare the server's cache hit share between the window's halves, so a window the cache had not settled in
-    is not published as steady. None when the server reported no cached counts; steady None when a half holds too
-    few plays to judge, with the shares still reported."""
+    is not published as steady. None when the server reported no cached counts or a half is empty; steady None when
+    a half holds too few plays to judge, with the shares still reported."""
     halves: list[dict] = [{}, {}]
-    window: dict = {}
+    prompt_tokens_by_depth: dict = {}
     for r in inside:
         sent = sent_at(r)
         if sent is None or r.server_cached_tokens is None or r.input_tokens <= 0:
@@ -605,18 +605,18 @@ def cache_steady(inside, start: float, end: float) -> dict | None:
         cell = halves[int(sent >= (start + end) / 2)].setdefault(r.session_id, {}).setdefault(bucket, [0, 0])
         cell[0] += r.server_cached_tokens
         cell[1] += r.input_tokens
-        window[bucket] = window.get(bucket, 0) + r.input_tokens
+        prompt_tokens_by_depth[bucket] = prompt_tokens_by_depth.get(bucket, 0) + r.input_tokens
     if not halves[0] or not halves[1]:
         return None
-    total = sum(window.values())
-    weights = {b: n / total for b, n in window.items()}
+    total = sum(prompt_tokens_by_depth.values())
+    weights = {b: n / total for b, n in prompt_tokens_by_depth.items()}
     plays = [list(h.values()) for h in halves]
     first, second = (hit_share_at_mix(p, weights) for p in plays)
     draw = random.Random(0)
     drifts = []
     for _ in range(CACHE_DRIFT_DRAWS):
-        again = [[p[draw.randrange(len(p))] for _ in p] for p in plays]
-        drifts.append(hit_share_at_mix(again[1], weights) - hit_share_at_mix(again[0], weights))
+        resampled = [[p[draw.randrange(len(p))] for _ in p] for p in plays]
+        drifts.append(hit_share_at_mix(resampled[1], weights) - hit_share_at_mix(resampled[0], weights))
     noise = statistics.pstdev(drifts)
     limit = max(CACHE_DRIFT_LIMIT, CACHE_DRIFT_NOISE_SDS * noise)
     judged = min(len(plays[0]), len(plays[1])) >= CACHE_PLAYS_PER_HALF

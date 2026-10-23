@@ -13,6 +13,8 @@ from quettabench.config.schema import Config, EngineCfg, HardwareCfg, ModeCfg, W
 from quettabench.metrics.results import RunWriter
 from quettabench.metrics.step_fit import fit, fit_run, ms_at_eval
 from quettabench.metrics.summary import (
+    CACHE_DRIFT_LIMIT,
+    CACHE_DRIFT_NOISE_SDS,
     ITL_COALESCED_MS,
     NO_COUNT,
     RequestResult,
@@ -778,6 +780,19 @@ class TestOpenLoopUnits(unittest.TestCase):
             half = [r for r in rows if 3.0 <= r.sent_at_s and (r.sent_at_s < 46.5) == first]
             raw.append(sum(r.server_cached_tokens for r in half) / sum(r.input_tokens for r in half))
         self.assertLess(raw[0] + 0.02, raw[1])  # the raw shares did move with the mix
+
+    def test_a_per_play_hit_or_miss_widens_the_limit_past_its_floor(self):
+        # A data-parallel server hits a whole play or none of it: every third play in the first half and every second
+        # in the second misses, a drift over 0.05 that resampling plays shows is within noise.
+        rows, times = self._agents_back_to_back([3] * 80)
+        for r in rows:
+            miss_every = 3 if r.sent_at_s < 31.5 else 2
+            r.server_cached_tokens = 0 if r.session_id % miss_every == 0 else 9
+        c = steady_section(rows, times, concurrency=4)["cache"]
+        self.assertGreater(abs(c["drift"]), CACHE_DRIFT_LIMIT)
+        self.assertGreater(c["limit"], abs(c["drift"]))
+        self.assertAlmostEqual(c["limit"], CACHE_DRIFT_NOISE_SDS * c["noise_sd"])
+        self.assertTrue(c["steady"])
 
     def test_too_few_plays_report_the_cache_shares_without_judging(self):
         rows, times = self._two_agents_ten_sessions()
