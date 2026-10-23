@@ -104,12 +104,12 @@ def manifest_check(path, allow_unverified=False) -> dict:
     manifest = file.parent / "MANIFEST.json"
     entry = json.loads(manifest.read_text()).get("files", {}).get(file.name) if manifest.is_file() else None
     if not entry or "sha256" not in entry:
-        return {"file": str(file), "listed": False, "comparable": False}
+        return {"file": str(file), "manifest": str(manifest), "listed": False, "comparable": False}
     if not file.is_file():
         # The trace's own loader says what is wrong with a missing file.
-        return {"file": str(file), "listed": True}
+        return {"file": str(file), "manifest": str(manifest), "listed": True}
     actual = sha256_file(file)
-    out = {"file": str(file), "listed": True, "sha256": actual, "expected": entry["sha256"]}
+    out = {"file": str(file), "manifest": str(manifest), "listed": True, "sha256": actual, "expected": entry["sha256"]}
     out["comparable"] = actual == entry["sha256"]
     if not out["comparable"] and not allow_unverified:
         raise ConfigError(

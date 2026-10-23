@@ -280,10 +280,11 @@ def not_comparable(run) -> str | None:
     if status.get("status", "ok") != "ok":
         return f"run status {status['status']}: {status.get('reason')}"
     manifest = ((run.get("summary") or {}).get("trace") or {}).get("manifest") or {}
+    listing = manifest.get("manifest", "data/MANIFEST.json")
     if manifest.get("listed") is False:
-        return f"{manifest.get('file')} is not listed in data/MANIFEST.json"
+        return f"{manifest.get('file')} is not listed in {listing}"
     if manifest.get("comparable") is False:
-        return f"{manifest.get('file')} is not the file data/MANIFEST.json lists"
+        return f"{manifest.get('file')} is not the file {listing} lists"
     return None
 
 

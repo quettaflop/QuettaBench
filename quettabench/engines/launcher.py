@@ -408,8 +408,8 @@ def start(spec, results_dir, *, backend="local", cfg=None, gpus="", timeout_s=18
     )
     try:
         models = endpoint + "/v1/models"
-        # A keyed vLLM refuses /v1/models without its key.
-        headers = {"Authorization": f"Bearer {spec.env['VLLM_API_KEY']}"} if "VLLM_API_KEY" in spec.env else {}
+        # A keyed server refuses /v1/models without its key.
+        headers = discovery_headers(spec)
         owns = (lambda: lists_token(models, token, headers, poll_s)) if token else None
         wait_healthy(proc, endpoint + spec.health_path, timeout_s, poll_s, owns)
         record = {

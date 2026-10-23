@@ -4,12 +4,12 @@ The README has the short version. This file is the reference: what each field me
 
 ## Measuring a running server
 
-`hardware.launcher: attach` measures the server already answering on `engine.port`. qbench checks it is healthy and serves the model, then starts and stops nothing, so qbench and another harness can measure the same server back to back. `engine.json` records what the server serves, its `/version`, and the launch spec qbench would have used; the server's real argv and environment are the operator's to record.
+`hardware.launcher: attach` measures the server already answering on `engine.port`. qbench checks it is healthy and serves the model, sending the server's own key (`engine.extra.vllm.api_key`) on those calls as it does on every request, then starts and stops nothing, so qbench and another harness can measure the same server back to back. `engine.json` records what the server serves, its `/version`, and the launch spec qbench would have used; the server's real argv and environment are the operator's to record.
 
 ## Trace files
 
 - Each turn's prompt is the session's whole context so far, with the `prompt_tokens` and `osl_tokens` the serving engine reported when the session was recorded. A turn without the counts refuses the file; nothing is estimated.
-- `just fetch` pulls the files in `data/MANIFEST.json` (sha256, source run, agent, model, date, token quantiles) and refuses one whose digest differs. `data/build_trajectories.py` rebuilds them from the recorded runs. A run on a file whose digest is not the manifest's needs `--allow-unverified` and is marked not comparable; a file the manifest does not list runs without the flag but is not comparable either, and `compare` withholds every ratio for both.
+- `just fetch` pulls the files in `data/MANIFEST.json` (sha256, source run, agent, model, date, token quantiles) and refuses one whose digest differs. `data/build_trajectories.py` rebuilds them from the recorded runs. A run on a file whose digest is not the manifest's needs `--allow-unverified` and is marked not comparable; a file the manifest does not list runs without the flag but is not comparable either, and `compare` withholds every ratio for both. The manifest is the `MANIFEST.json` beside the file, so a file in another directory (the Mooncake trace under `data/mooncake/`, or any path given directly) is not comparable until a manifest beside it lists it; run.json names the manifest the check read.
 
 ## Agents and sessions
 

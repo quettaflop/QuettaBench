@@ -18,7 +18,8 @@ import yaml
 
 from quettabench import runner
 from quettabench.config import loader
-from quettabench.engines import base as engines, launcher
+from quettabench.config.schema import ConfigError
+from quettabench.engines import base as adapters, launcher
 from quettabench.modes.serve import LOOP_LAG_LIMIT_MS, first_start_stagger_s
 from quettabench.workloads.sessions import inter_turn_wait_s
 
@@ -433,7 +434,11 @@ def main(argv=None) -> int:
     if not record_phase("client", outcome):
         return 1
     if args.server is not None:
-        headers = launcher.discovery_headers(engines.get(cfg.engine.name).translate(cfg))
+        try:
+            headers = launcher.discovery_headers(adapters.get(cfg.engine.name).translate(cfg))
+        except ConfigError as e:
+            record_phase("server", {"passed": False, "detail": f"the yaml's engine block does not translate: {e}"})
+            return 1
         if not record_phase("server", phase_server(args.server, served, headers)):
             return 1
         outcome, smoke_run = phase_smoke(args, results, base)

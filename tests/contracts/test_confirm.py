@@ -16,7 +16,7 @@ from unittest import mock
 from quettabench.engines import launcher
 from quettabench.engines.base import LaunchSpec
 from quettabench.modes.serve import first_start_stagger_s
-from tests.contracts.test_launcher import Keyed
+from tests.contracts.helpers import Keyed
 from tests.contracts.test_workloads import write_fixtures
 from tools.confirm import confirm
 
@@ -194,7 +194,7 @@ class ServerPreflight(unittest.TestCase):
         spec = LaunchSpec(adapter="vllm", env={"VLLM_API_KEY": "k"}, api_key_env="VLLM_API_KEY")
         keyed = confirm.phase_server(port, "other", launcher.discovery_headers(spec))
         self.assertTrue(keyed["passed"], keyed)
-        self.assertIn("serves ['other']", keyed["detail"])
+        self.assertIn("serves ['other'], version 0.0-test", keyed["detail"])  # /version got the key too
         self.assertFalse(confirm.phase_server(port, "other")["passed"])
 
 

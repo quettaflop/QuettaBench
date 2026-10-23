@@ -21,6 +21,7 @@ from quettabench.engines import drivers, launcher, observe, vllm
 from quettabench.engines.base import LaunchSpec
 from quettabench.profiling import engine_side
 from tests.contracts import helpers
+from tests.contracts.helpers import Foreign, Keyed
 
 FAKE = Path(__file__).with_name("fake_server.py")
 
@@ -42,29 +43,6 @@ def alive(pid):
     except FileNotFoundError:
         return False
     return not stat.split(") ")[1].startswith("Z")
-
-
-class Foreign(BaseHTTPRequestHandler):
-    """A server some other run started: healthy, and its models are not ours."""
-
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b'{"data": [{"id": "other"}]}')
-
-    def log_message(self, *args):
-        pass
-
-
-class Keyed(Foreign):
-    """A server started with --api-key: /health is public, /v1/models and /version want the bearer key."""
-
-    def do_GET(self):
-        if self.path != "/health" and self.headers.get("Authorization") != "Bearer k":
-            self.send_response(401)
-            self.end_headers()
-            return
-        super().do_GET()
 
 
 class LocalLauncher(unittest.TestCase):

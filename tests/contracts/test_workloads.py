@@ -219,7 +219,15 @@ class SingleTurn(unittest.TestCase):
         self.assertEqual((loose["comparable"], loose["sha256"], loose["expected"]), (False, actual, "0" * 64))
         self.assertEqual((listed["listed"], listed["comparable"]), (True, True))
         # Unlisted runs, but nothing pins what the file held, so it compares with nothing.
-        self.assertEqual(unlisted, {"file": "data/deepsearch_trajectories.jsonl", "listed": False, "comparable": False})
+        self.assertEqual(
+            unlisted,
+            {
+                "file": "data/deepsearch_trajectories.jsonl",
+                "manifest": "data/MANIFEST.json",
+                "listed": False,
+                "comparable": False,
+            },
+        )
 
     def test_a_profile_with_estimated_output_lengths_is_refused(self):
         for name in ("chat-singleturn", "coding-singleturn"):

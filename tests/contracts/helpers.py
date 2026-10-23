@@ -15,6 +15,30 @@ from quettabench.metrics.results import RunWriter
 from quettabench.metrics.step_fit import fit_run
 from tests.golden._harness import grid_argv, run_grid_cli
 
+
+class Foreign(http.server.BaseHTTPRequestHandler):
+    """A server some other run started: healthy, with a version, and its models are not ours."""
+
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b'{"version": "0.0-test"}' if self.path == "/version" else b'{"data": [{"id": "other"}]}')
+
+    def log_message(self, *args):
+        pass
+
+
+class Keyed(Foreign):
+    """A server started with --api-key: /health is public, /v1/models and /version want the bearer key."""
+
+    def do_GET(self):
+        if self.path != "/health" and self.headers.get("Authorization") != "Bearer k":
+            self.send_response(401)
+            self.end_headers()
+            return
+        super().do_GET()
+
+
 METRICS = """\
 # HELP vllm:gpu_prefix_cache_queries_total GPU prefix cache queries, in terms of number of queried tokens.
 # TYPE vllm:gpu_prefix_cache_queries_total counter

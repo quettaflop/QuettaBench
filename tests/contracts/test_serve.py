@@ -303,8 +303,12 @@ class Sessions(unittest.TestCase):
                     yield p
                 yield from steady_ttft_keys(v, p)
 
-        # The fake driver's 1 ms TTFT would be withheld by the mean-lag rule, which has its own test.
-        with tempfile.TemporaryDirectory() as td, mock.patch.object(serve, "LATENCY_BIAS_LIMIT", 1.0):
+        # The fake driver's 1 ms TTFT would be withheld by the lag rules, which have their own tests.
+        with (
+            tempfile.TemporaryDirectory() as td,
+            mock.patch.object(serve, "LATENCY_BIAS_LIMIT", 1.0),
+            mock.patch.object(serve, "LOOP_LAG_LIMIT_MS", 1e9),
+        ):
             summary, out = run(session_trace(12, 3), TimedDriver(), ModeCfg(concurrency=3, warmup=0), results_dir=td)
             run_json = json.loads((Path(td) / "run.json").read_text())
         self.assertEqual(list(steady_ttft_keys(run_json)), [])
@@ -717,6 +721,20 @@ class Sessions(unittest.TestCase):
         self.assertEqual(set(by_stratum), {"long", "short"})
         # 50 ms is far short of a recycled window's 300 s floor: no steady numbers, and the reason says why.
         self.assertIn("a recycled window needs at least 300 s", summary.sections["steady"]["reason"])
+
+    def test_a_recycled_window_waits_for_the_last_agents_own_first_play(self):
+        # Agents start 0.2 s apart and a play takes a few ms, so agent 0 has played many times before agent 3
+        # starts: the first C admissions are all agent 0's, and the window must still wait for agent 3's first play.
+        with (
+            mock.patch.object(serve, "MIN_RECYCLED_WINDOW_S", 0.0),
+            mock.patch.object(serve, "first_start_stagger_s", lambda agents: 0.2),
+        ):
+            summary, _ = run(
+                recorded_trace(5, 2), TimedDriver(last_turn=1), ModeCfg(concurrency=4, warmup=0, duration_s=1.0)
+            )
+        steady = summary.sections["steady"]
+        self.assertTrue(steady["valid"], steady)
+        self.assertGreaterEqual(steady["start_s"], 3 * 0.2)  # the first C admissions would open it at a few ms
 
     def test_the_dispatcher_tells_the_window_which_agent_played_each_session(self):
         # Per-session and recycled runs both hand steady_section a session-to-agent map covering every session,

@@ -953,7 +953,8 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
     }
     if manifest and manifest.get("comparable") is False:
         what = "is not listed in" if manifest.get("listed") is False else "is not the file listed in"
-        print(f"WARNING: {manifest['file']} {what} data/MANIFEST.json; this run is not comparable")
+        listing = manifest.get("manifest", "data/MANIFEST.json")
+        print(f"WARNING: {manifest['file']} {what} {listing}; this run is not comparable")
     summary.sections.update(
         {"goodput": goodput}
         if goodput
@@ -1465,8 +1466,8 @@ class SessionDispatcher:
                 # The first C sessions would all start at once; later ones wait for an agent anyway.
                 await asyncio.sleep(min(k, self.mode.concurrency - 1) * self.stagger_s)
             async with agents:
-                # Lanes hand over first in, first out, so lane k's first session is session k unless a session
-                # finished before the last lane started, the case the window must see.
+                # Agents hand over first in, first out: the first C sessions take distinct agents, and a session
+                # that finishes early frees its agent for the next session instead of a fresh one.
                 agent = self.free_agents.pop(0)
                 admitted = elapsed()
                 await self._turns(turns, lambda r: index[(r.session_id, r.turn)])
