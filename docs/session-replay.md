@@ -9,7 +9,7 @@ The README has the short version. This file is the reference: what each field me
 ## Trace files
 
 - Each turn's prompt is the session's whole context so far, with the `prompt_tokens` and `osl_tokens` the serving engine reported when the session was recorded. A turn without the counts refuses the file; nothing is estimated.
-- `just fetch` pulls the files in `data/MANIFEST.json` (sha256, source run, agent, model, date, token quantiles) and refuses one whose digest differs. `data/build_trajectories.py` rebuilds them from the recorded runs.
+- `just fetch` pulls the files in `data/MANIFEST.json` (sha256, source run, agent, model, date, token quantiles) and refuses one whose digest differs. `data/build_trajectories.py` rebuilds them from the recorded runs. A run on a file whose digest is not the manifest's needs `--allow-unverified` and is marked not comparable; a file the manifest does not list runs without the flag but is not comparable either, and `compare` withholds every ratio for both.
 
 ## Agents and sessions
 
@@ -35,7 +35,7 @@ The README has the short version. This file is the reference: what each field me
 
 ## The steady window (`sections.steady`)
 
-- Opens when every agent has finished its first session, so the synchronized cold-cache first sessions stay out. Closes at the deadline for a recycled run, else at the first session finish after the last admission.
+- Opens when every agent has finished its own first session (the dispatcher records which agent played each session; the first C admissions are not that, since a fast agent can play again before the last agent has started), so the synchronized cold-cache first sessions stay out. Closes at the deadline for a recycled run, else at the first session finish after the last admission. A completion at the opening itself was a cold first play and is not counted.
 - Not valid, with no steady number and the cause in `reason`, when: it opens after the deadline; a recycled window lasts under 300 s; a per-session run has 2C sessions or fewer; an agent is idle inside it; any request failed or was not sent; or the server's cache hit share differs between the window's two halves (`steady.cache`), which means the cache was still filling or had begun evicting, so a GPU with more KV memory cannot bank an unsettled cache as steady. The halves are compared at the window's own mix of turn depths (a deeper turn caches more of its prompt by construction); the limit is 0.05 or twice the drift's own noise from resampling plays, whichever is larger (a data-parallel server hits or misses almost per request); a half with fewer than 30 plays is reported but not judged; a server that reports no cached counts is not checked (`steady.cache` is null). A whole-run number never stands in.
 - The cold start is reported beside it, never dropped: `first_turn_ttft_ms` (each agent's first turn) and `ramp.ttft_ms` (every request before the window).
 - `workload_mix.input_tokens_served_over_recorded` is each request's served prompt tokens over the count the recording reported; a served model with another tokenizer shows here, and no text is lost either way.

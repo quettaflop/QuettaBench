@@ -143,6 +143,7 @@ class VllmAdapter(EngineAdapter):
             env=env,
             health_path="/health",
             served_name=str(extra.get("served_model_name") or engine.model),
+            api_key_env=API_KEY_ENV,
             port=engine.port,
             image=engine.image,
             instrumentation=engine.instrumentation,

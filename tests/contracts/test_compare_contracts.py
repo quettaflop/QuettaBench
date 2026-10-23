@@ -1015,6 +1015,8 @@ class NotComparableGate(unittest.TestCase):
         loose = {"summary": {"trace": {"manifest": {"file": "data/t.jsonl", "comparable": False}}}}
         self.assertEqual(compare.not_comparable(partial), "run status partial: 1 of 8 requests failed")
         self.assertEqual(compare.not_comparable(loose), "data/t.jsonl is not the file data/MANIFEST.json lists")
+        unlisted = {"summary": {"trace": {"manifest": {"file": "data/u.jsonl", "listed": False, "comparable": False}}}}
+        self.assertEqual(compare.not_comparable(unlisted), "data/u.jsonl is not listed in data/MANIFEST.json")
         self.assertIsNone(compare.not_comparable({"run_status": {"status": "ok"}}))
         ours = compare.read_bench_log(FIXTURES / "bench_loop.log")
         theirs = compare.read_baseline(BASELINE)

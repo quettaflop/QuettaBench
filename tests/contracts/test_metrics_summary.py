@@ -600,6 +600,35 @@ class TestOpenLoopUnits(unittest.TestCase):
         self.assertTrue(w["valid"], w)
         self.assertEqual((w["start_s"], w["end_s"], w["window_s"], w["agents"]), (3.0, 5.0, 2.0, 2))
 
+    def test_the_window_opens_at_the_last_agents_own_first_play(self):
+        # Agent 0 plays four 2 ms sessions before agent 1 has even started, so the first four admissions are all
+        # agent 0's; the first C admissions would open the window at 0.008 s, long before agent 3's first play
+        # ends at 10.03 s. Every agent then plays back to back to the 320 s deadline.
+        times, agent_of = {}, {}
+        sid = 0
+        for agent in range(4):
+            t = agent * 0.01
+            lengths = [0.002] * 4 + [5.0] * 64 if agent == 0 else [10.0] + [5.0] * 62
+            for length in lengths:
+                times[sid], agent_of[sid] = (t, t, t + length), agent
+                t, sid = t + length, sid + 1
+        with_agents = steady_window(times, concurrency=4, end_s=320.0, agent_of=agent_of)
+        self.assertTrue(with_agents["valid"], with_agents)
+        self.assertAlmostEqual(with_agents["start_s"], 10.03)
+        self.assertAlmostEqual(steady_window(times, concurrency=4, end_s=320.0)["start_s"], 0.008)
+        never = {k: v for k, v in times.items() if agent_of[k] != 3}
+        w = steady_window(never, concurrency=4, end_s=320.0, agent_of=agent_of)
+        self.assertEqual((w["valid"], w["reason"]), (False, "1 of 4 agents never finished a first session"))
+
+    def test_the_completion_that_opened_the_window_is_not_counted(self):
+        # One agent, three 1 s sessions: the window is 1 s to 3 s and holds two completions, not the cold one at 1 s.
+        rows, times = self._agents_back_to_back([1] * 3, agents=1)
+        s = steady_section(rows, times, concurrency=1, bin_s=1.0)
+        self.assertEqual((s["start_s"], s["end_s"]), (1.0, 3.0))
+        self.assertEqual((s["requests_completed"], s["sessions_completed"]), (2, 2))
+        self.assertAlmostEqual(s["sessions_per_hour"], 3600.0)
+        self.assertAlmostEqual(s["request_throughput"], 1.0)
+
     def test_the_synchronized_first_sessions_are_outside_the_window(self):
         # Opens at the last first-session finish (7 s), closes at the first finish after the last admission (14 s).
         times = {
@@ -630,8 +659,9 @@ class TestOpenLoopUnits(unittest.TestCase):
         w = steady_section([], times, concurrency=2, end_s=1000.0)
         self.assertTrue(w["valid"], w)
         self.assertEqual((w["start_s"], w["end_s"], w["window_s"]), (300.0, 1000.0, 700.0))
-        # Finished inside [300, 1000]: a1 to a4 at 400, 600, 800 and 1000 s, b0 to b2 at 300, 600 and 900 s.
-        self.assertEqual(w["plays_completed"], 7)
+        # Finished inside (300, 1000]: a1 to a4 at 400, 600, 800 and 1000 s, b1 and b2 at 600 and 900 s; b0's
+        # finish at 300 s opened the window and was a cold first play.
+        self.assertEqual(w["plays_completed"], 6)
 
     def test_a_recycled_window_is_judged_by_its_length_not_the_plays_started(self):
         # Four plays for two agents (N = 2C) would void a per-session run; recycled, the window is 700 s.
@@ -645,7 +675,8 @@ class TestOpenLoopUnits(unittest.TestCase):
         short = steady_section([], times, concurrency=2, end_s=400.0)
         self.assertFalse(short["valid"])
         self.assertEqual(short["reason"], "the window lasts 100.0 s; a recycled window needs at least 300 s")
-        self.assertEqual((short["window_s"], short["plays_completed"]), (100.0, 2))  # b0 at 300 s, a1 at 400 s
+        # a1 at 400 s; b0's finish at 300 s opened the window and was a cold first play
+        self.assertEqual((short["window_s"], short["plays_completed"]), (100.0, 1))
         late = steady_window({"a0": (0.0, 0.0, 120.0), "b0": (0.0, 0.0, 150.0)}, concurrency=2, end_s=100.0)
         self.assertEqual(late["reason"], "the first plays end at 150.0 s, after the 100 s deadline")
         idle = dict(times, a2=(450.0, 450.0, 600.0))  # a's agent idles from a1's end at 400 s to 450 s
@@ -718,11 +749,12 @@ class TestOpenLoopUnits(unittest.TestCase):
         next(r for r in rows if (r.session_id, r.turn_index) == (8, 2)).success = False
         s = steady_section(rows, times, concurrency=2, bin_s=4.0)
         self.assertEqual((s["start_s"], s["end_s"]), (3.0, 15.0))
-        # 24 turns start between 3 s and 14 s and one fails; S0's and S1's last turns end at 3 s but began at 2 s.
-        self.assertEqual((s["requests_completed"], s["requests_inside"]), (25, 23))
+        # 24 turns start between 3 s and 14 s and one fails; S0's and S1's last turns end at 3 s, the opening, and
+        # a completion at the opening was a cold first play, so it is not counted.
+        self.assertEqual((s["requests_completed"], s["requests_inside"]), (23, 23))
         self.assertAlmostEqual(s["output_token_throughput"], 5 * 23 / 12.0)
-        self.assertEqual(s["sessions_completed"], 8)  # S0 to S7; S8 failed a turn, S9 is still running
-        self.assertAlmostEqual(s["sessions_per_hour"], 3600 * 8 / 12.0)
+        self.assertEqual(s["sessions_completed"], 6)  # S2 to S7; S0 and S1 opened the window, S8 failed, S9 runs on
+        self.assertAlmostEqual(s["sessions_per_hour"], 3600 * 6 / 12.0)
         self.assertEqual(s["ttft_ms"][50], 10.0)
         # Every request: (1000 - 10) ms over 4 tokens after the first, so 247.5 ms per token.
         self.assertAlmostEqual(s["tpot_ms"][90], 247.5)

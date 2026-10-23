@@ -56,6 +56,17 @@ class Foreign(BaseHTTPRequestHandler):
         pass
 
 
+class Keyed(Foreign):
+    """A server started with --api-key: /health is public, /v1/models and /version want the bearer key."""
+
+    def do_GET(self):
+        if self.path != "/health" and self.headers.get("Authorization") != "Bearer k":
+            self.send_response(401)
+            self.end_headers()
+            return
+        super().do_GET()
+
+
 class LocalLauncher(unittest.TestCase):
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp())
@@ -232,6 +243,25 @@ class Attach(unittest.TestCase):
     def test_attach_refuses_an_empty_port(self):
         with self.assertRaisesRegex(RuntimeError, "nothing healthy on"):
             launcher.attach(self.spec(), self.dir / "run", timeout_s=0.3, poll_s=0.1)
+
+    def test_attach_sends_the_servers_key_on_discovery(self):
+        # A server started with --api-key answers /health to anyone and /v1/models only with the key: discovery
+        # must carry the key the yaml configured, or a healthy keyed server reads as serving nothing.
+        server = HTTPServer(("127.0.0.1", self.port), Keyed)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        keyed = LaunchSpec(
+            adapter="fake", port=self.port, served_name="other", env={"VLLM_API_KEY": "k"}, api_key_env="VLLM_API_KEY"
+        )
+        handle = launcher.attach(keyed, self.dir / "run", timeout_s=5, poll_s=0.1)
+        self.assertEqual(handle.served_models, ["other"])
+        self.assertEqual(
+            json.loads((self.dir / "run" / "engine.json").read_text())["expected_launch_spec"]["env"],
+            {"VLLM_API_KEY": "REDACTED"},
+        )
+        with self.assertRaisesRegex(RuntimeError, r"serves \[\], not other"):
+            launcher.attach(self.spec(), self.dir / "run2", timeout_s=5, poll_s=0.1)
 
 
 class DockerArgv(unittest.TestCase):

@@ -388,10 +388,15 @@ MIN_RECYCLED_WINDOW_S = 300.0
 
 
 def steady_window(
-    session_times: dict, concurrency: int, end_s: float | None = None, min_window_s: float = MIN_RECYCLED_WINDOW_S
+    session_times: dict,
+    concurrency: int,
+    end_s: float | None = None,
+    min_window_s: float = MIN_RECYCLED_WINDOW_S,
+    agent_of: dict | None = None,
 ) -> dict:
     """Find the span where every agent is busy, the only span steady numbers come from; an invalid window says why
-    in reason."""
+    in reason. agent_of (session id to agent) says whose first play each session was; without it the first C
+    admissions stand in, which is wrong when a fast agent plays again before the last agent has started."""
     n, c = len(session_times), max(1, concurrency)
     recycled = end_s is not None
     out: dict = {"valid": False, "sessions": n, "agents": c}
@@ -400,9 +405,20 @@ def steady_window(
         out["reason"] = f"{n} sessions for {c} agents; a steady window needs more than {2 * c}"
         return out
     times = sorted(session_times.values(), key=lambda t: t[1])
-    # The first C sessions start together, in phase, their first prefills on an empty cache; the window opens
-    # when the last of them finishes.
-    start, last_admitted = max(fin for _, _, fin in times[:c]), times[-1][1]
+    last_admitted = times[-1][1]
+    if agent_of and all(sid in agent_of for sid in session_times):
+        # The window opens when the last agent finishes its own first play, a cold start on an empty cache.
+        first_done: dict = {}
+        for sid, (_, _, fin) in session_times.items():
+            first_done[agent_of[sid]] = min(fin, first_done.get(agent_of[sid], math.inf))
+        if len(first_done) < c:
+            out["reason"] = f"{c - len(first_done)} of {c} agents never finished a first session"
+            return out
+        start = max(first_done.values())
+    else:
+        # The first C sessions start together, in phase, their first prefills on an empty cache; the window opens
+        # when the last of them finishes.
+        start = max(fin for _, _, fin in times[:c])
     if recycled and start >= end_s:
         out["reason"] = f"the first plays end at {start:.1f} s, after the {end_s:g} s deadline"
         return out
@@ -639,18 +655,20 @@ def steady_section(
     end_s: float | None = None,
     min_window_s: float = MIN_RECYCLED_WINDOW_S,
     stratum_of: dict | None = None,
+    agent_of: dict | None = None,
 ) -> dict:
     """Steady-window throughput and latency for run.json; the cold start is reported beside it, not dropped."""
-    w = steady_window(session_times, concurrency, end_s, min_window_s)
+    w = steady_window(session_times, concurrency, end_s, min_window_s, agent_of)
     first_sessions = {sid for sid, _ in sorted(session_times.items(), key=lambda kv: kv[1][1])[: max(1, concurrency)]}
     w["first_turn_ttft_ms"] = ttft_ms_summary(
         r for r in results if r is not None and r.session_id in first_sessions and r.turn_index == 0
     )
     failed = {r.session_id for r in results if r is not None and not r.success}
     if "start_s" in w:
-        # Every play that finished inside the window with each turn successful; reported when too short as well.
+        # Every play that finished inside the window with each turn successful; reported when too short as well. The
+        # opening is exclusive: the play whose finish opened the window was a cold first play.
         start, end = w["start_s"], w["end_s"]
-        done_ids = [sid for sid, (_, _, fin) in session_times.items() if start <= fin <= end and sid not in failed]
+        done_ids = [sid for sid, (_, _, fin) in session_times.items() if start < fin <= end and sid not in failed]
         if end_s is not None:
             w["plays_completed"] = len(done_ids)
     if not w["valid"]:
@@ -662,7 +680,7 @@ def steady_section(
         )
     }
     ok = [r for r in results if r is not None and r.success and r.completed_at_s is not None]
-    done = [r for r in ok if start <= r.completed_at_s <= end]
+    done = [r for r in ok if start < r.completed_at_s <= end]
     inside = [r for r in done if sent_at(r) is not None and sent_at(r) >= start]
     cache = w["cache"] = cache_steady(inside, start, end)
     if cache is not None and cache["steady"] is False:

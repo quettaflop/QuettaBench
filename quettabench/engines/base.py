@@ -36,6 +36,7 @@ class LaunchSpec:
     cwd: str | None = None
     health_path: str = "/health"
     served_name: str = ""  # the model name requests send; set when the server can also answer to a launch token
+    api_key_env: str = ""  # the env entry holding the server's bearer key, sent on discovery when attaching
     port: int = 8000
     instrumentation: str = "none"
     image: str | None = None

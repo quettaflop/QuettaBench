@@ -102,10 +102,12 @@ def attach(spec, results_dir, timeout_s=60, poll_s=1.0):
     records what it serves and its /version, with the launch spec qbench would have used, since its real argv and
     environment are not qbench's to know."""
     endpoint = f"http://127.0.0.1:{spec.port}"
+    # The server's own key, where the yaml set one, so a server that guards /v1/models still answers discovery.
+    headers = bearer_headers(spec.env.get(spec.api_key_env) if spec.api_key_env else None)
     deadline = time.monotonic() + timeout_s
     while True:
         try:
-            with urlopen(endpoint + spec.health_path, timeout=poll_s) as resp:
+            with urlopen(urllib.request.Request(endpoint + spec.health_path, headers=headers), timeout=poll_s) as resp:
                 if resp.status == 200:
                     break
         except (urllib.error.URLError, ConnectionError, TimeoutError):
@@ -113,8 +115,8 @@ def attach(spec, results_dir, timeout_s=60, poll_s=1.0):
         if time.monotonic() > deadline:
             raise RuntimeError(f"hardware.launcher=attach: nothing healthy on {endpoint} after {timeout_s}s")
         time.sleep(poll_s)
-    served = served_models(endpoint + "/v1/models", poll_s)
-    version = server_version(endpoint + "/version", poll_s)
+    served = served_models(endpoint + "/v1/models", poll_s, headers)
+    version = server_version(endpoint + "/version", poll_s, headers)
     if spec.served_name and spec.served_name not in served:
         raise RuntimeError(f"hardware.launcher=attach: {endpoint} serves {served}, not {spec.served_name}")
     results_dir = Path(results_dir)
@@ -132,17 +134,22 @@ def attach(spec, results_dir, timeout_s=60, poll_s=1.0):
     return Attached(results_dir, endpoint, served_models=served, server_version=version)
 
 
-def served_models(models_url, timeout):
+def bearer_headers(api_key) -> dict:
+    """The Authorization header a keyed server wants on every request, discovery included; empty without a key."""
+    return {"Authorization": f"Bearer {api_key}"} if api_key else {}
+
+
+def served_models(models_url, timeout, headers=None):
     try:
-        with urlopen(models_url, timeout=timeout) as resp:
+        with urlopen(urllib.request.Request(models_url, headers=headers or {}), timeout=timeout) as resp:
             return [m.get("id") for m in json.load(resp).get("data", [])]
     except (urllib.error.URLError, ConnectionError, TimeoutError, ValueError, AttributeError):
         return []
 
 
-def server_version(url, timeout):
+def server_version(url, timeout, headers=None):
     try:
-        with urlopen(url, timeout=timeout) as resp:
+        with urlopen(urllib.request.Request(url, headers=headers or {}), timeout=timeout) as resp:
             return json.load(resp).get("version")
     except (urllib.error.URLError, ConnectionError, TimeoutError, ValueError, AttributeError):
         return None

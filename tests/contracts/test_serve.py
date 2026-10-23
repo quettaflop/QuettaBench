@@ -718,6 +718,20 @@ class Sessions(unittest.TestCase):
         # 50 ms is far short of a recycled window's 300 s floor: no steady numbers, and the reason says why.
         self.assertIn("a recycled window needs at least 300 s", summary.sections["steady"]["reason"])
 
+    def test_the_dispatcher_tells_the_window_which_agent_played_each_session(self):
+        # Per-session and recycled runs both hand steady_section a session-to-agent map covering every session,
+        # with one entry per agent, so the window opens on each agent's own first play.
+        for mode in (ModeCfg(concurrency=3, warmup=0), ModeCfg(concurrency=3, warmup=0, duration_s=0.05)):
+            with (
+                self.subTest(recycled=mode.duration_s > 0),
+                mock.patch.object(serve, "steady_section", wraps=serve.steady_section) as spy,
+            ):
+                run(recorded_trace(9, 2), TimedDriver(last_turn=1), mode)
+            agent_of = spy.call_args.kwargs["agent_of"]
+            sessions = spy.call_args.args[1]
+            self.assertEqual(set(agent_of), set(sessions))
+            self.assertEqual(set(agent_of.values()), {0, 1, 2})
+
     def test_a_recycled_replay_refuses_a_trace_that_fills_replies_live(self):
         trace = session_trace()
         trace.live_replies = True

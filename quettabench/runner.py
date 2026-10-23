@@ -98,13 +98,16 @@ def session_trace(profile, num_sessions, seed, **trace_kw):
 
 def manifest_check(path, allow_unverified=False) -> dict:
     """The replayed file's sha256 against the MANIFEST.json beside it (data/MANIFEST.json). A mismatch is refused
-    unless allow_unverified, which marks the run not comparable; a file no manifest lists is recorded as such."""
+    unless allow_unverified, which marks the run not comparable; a file no manifest lists runs, but is not comparable
+    either, since nothing pins what it held."""
     file = Path(path)
     manifest = file.parent / "MANIFEST.json"
     entry = json.loads(manifest.read_text()).get("files", {}).get(file.name) if manifest.is_file() else None
-    if not entry or "sha256" not in entry or not file.is_file():
-        # Unlisted, or missing: the trace's own loader says what is wrong with a missing file.
-        return {"file": str(file), "listed": bool(entry and "sha256" in entry)}
+    if not entry or "sha256" not in entry:
+        return {"file": str(file), "listed": False, "comparable": False}
+    if not file.is_file():
+        # The trace's own loader says what is wrong with a missing file.
+        return {"file": str(file), "listed": True}
     actual = sha256_file(file)
     out = {"file": str(file), "listed": True, "sha256": actual, "expected": entry["sha256"]}
     out["comparable"] = actual == entry["sha256"]

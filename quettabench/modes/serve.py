@@ -495,6 +495,8 @@ class Measurement:
     executed: dict = field(default_factory=dict)
     # Seconds between two agents' first starts in a closed-loop session run.
     stagger_s: float | None = None
+    # session_id -> the agent that played it, for the window's opening.
+    agent_of: dict | None = None
 
 
 async def measure(trace, driver, mode, emit, workload, request_id, plan=None) -> Measurement:
@@ -545,6 +547,7 @@ async def measure(trace, driver, mode, emit, workload, request_id, plan=None) ->
         [(t - start, lag) for t, lag in health.samples],
         executed,
         stagger_s=sessions.stagger_s if not sessions.open_loop else None,
+        agent_of=sessions.agent_of or None,
     )
 
 
@@ -949,7 +952,8 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
         "manifest": manifest,
     }
     if manifest and manifest.get("comparable") is False:
-        print(f"WARNING: {manifest['file']} is not the file data/MANIFEST.json lists; this run is not comparable")
+        what = "is not listed in" if manifest.get("listed") is False else "is not the file listed in"
+        print(f"WARNING: {manifest['file']} {what} data/MANIFEST.json; this run is not comparable")
     summary.sections.update(
         {"goodput": goodput}
         if goodput
@@ -971,6 +975,7 @@ def run(trace, driver, mode, writer, workload=DEFAULT_WORKLOAD) -> Summary:
             end_s=measured.deadline_s,
             min_window_s=MIN_RECYCLED_WINDOW_S,
             stratum_of=getattr(trace, "stratum_of", None),
+            agent_of=measured.agent_of,
         )
         if failures and steady["valid"]:
             # A failed turn ends its session early, so the window holds a different mix than the plan's and its
@@ -1278,6 +1283,9 @@ class SessionDispatcher:
         self.warned = False
         # session_id -> (arrived, admitted, finished), seconds since start; the steady window reads these
         self.session_times: dict = {}
+        # session_id -> the agent that played it, so the window opens only once each agent's first play is done
+        self.agent_of: dict = {}
+        self.free_agents: list = list(range(self.mode.concurrency))
         # session_id -> its last turn's completed_at_s, the rows' clock: a session finishes there
         self.last_done: dict = {}
         self.plays: list = []
@@ -1457,10 +1465,15 @@ class SessionDispatcher:
                 # The first C sessions would all start at once; later ones wait for an agent anyway.
                 await asyncio.sleep(min(k, self.mode.concurrency - 1) * self.stagger_s)
             async with agents:
+                # Lanes hand over first in, first out, so lane k's first session is session k unless a session
+                # finished before the last lane started, the case the window must see.
+                agent = self.free_agents.pop(0)
                 admitted = elapsed()
                 await self._turns(turns, lambda r: index[(r.session_id, r.turn)])
                 sid = turns[0].session_id
                 self.session_times[sid] = (arrived if recorded else admitted, admitted, self.last_done[sid])
+                self.agent_of[sid] = agent
+                self.free_agents.append(agent)
 
         await asyncio.gather(*[session(s, k) for k, s in enumerate(self.sessions)])
         results = [r for v in self.by_turn.values() for r in v]
@@ -1496,6 +1509,7 @@ class SessionDispatcher:
                 admitted = elapsed()
                 await self._turns(turns, lambda r: next(indexes))
                 self.session_times[turns[0].session_id] = (admitted, admitted, self.last_done[turns[0].session_id])
+                self.agent_of[turns[0].session_id] = a
                 if self.failed_in_a_row >= streak_limit:
                     raise RunAborted(
                         f"ABORT: {self.failed_in_a_row} requests failed in a row across {agents} agents; no request "

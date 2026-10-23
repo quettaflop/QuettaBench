@@ -218,7 +218,8 @@ class SingleTurn(unittest.TestCase):
             unlisted = runner.build_trace(profile_config("deepsearch-multiturn", "sessions")).manifest
         self.assertEqual((loose["comparable"], loose["sha256"], loose["expected"]), (False, actual, "0" * 64))
         self.assertEqual((listed["listed"], listed["comparable"]), (True, True))
-        self.assertEqual(unlisted, {"file": "data/deepsearch_trajectories.jsonl", "listed": False})
+        # Unlisted runs, but nothing pins what the file held, so it compares with nothing.
+        self.assertEqual(unlisted, {"file": "data/deepsearch_trajectories.jsonl", "listed": False, "comparable": False})
 
     def test_a_profile_with_estimated_output_lengths_is_refused(self):
         for name in ("chat-singleturn", "coding-singleturn"):
