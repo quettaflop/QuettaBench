@@ -1,9 +1,11 @@
 """env_map.read_env maps each env var to its Config path; no other module reads os.environ."""
 
 import ast
+import os
 import unittest
+from unittest import mock
 
-from quettabench.config import loader
+from quettabench.config import env_map, loader
 from quettabench.config.env_map import ENV_MAP, read_env
 from quettabench.config.schema import ConfigError, default_values, dict_field
 from tests.golden._harness import REPO, RUNS
@@ -146,6 +148,12 @@ class NoEnviron(unittest.TestCase):
         readers = env_readers()
         self.assertIn(OWNER, readers)
         self.assertEqual(sorted(readers - ALLOWLIST - {OWNER}), [], "read env through config/env_map.read_env instead")
+
+    def test_server_env_keeps_what_changes_a_server_and_nothing_else(self):
+        with mock.patch.dict(
+            os.environ, {"VLLM_USE_V1": "1", "NCCL_IB_DISABLE": "1", "HF_TOKEN": "x", "HOME": "/h"}, clear=True
+        ):
+            self.assertEqual(env_map.server_env(), {"HF_TOKEN": "x", "NCCL_IB_DISABLE": "1", "VLLM_USE_V1": "1"})
 
     def test_allowlist_has_no_stale_entries(self):
         stale = sorted(ALLOWLIST - env_readers())

@@ -35,7 +35,10 @@ def parser():
     )
     run.add_argument("--results-dir", default="results", help="parent of <run>/ (default results)")
     run.add_argument(
-        "--allow-unverified", action="store_true", help="run a model whose yaml says verified: false (bring-up only)"
+        "--allow-unverified",
+        action="store_true",
+        help="run a model whose yaml says verified: false, or a trace whose sha256 is not its manifest's "
+        "(the run is marked not comparable)",
     )
     run.add_argument(
         "--overwrite", action="store_true", help="empty a results/<run>/ that already holds a run before running"

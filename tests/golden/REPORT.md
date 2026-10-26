@@ -4,6 +4,18 @@ Run `python3 -m pytest tests/golden -q`. `QBENCH_GOLDEN_REGEN=1` rewrites the fi
 
 ## Fixture changes
 
+2026-10-18: no fixture changed; the session digests in `tests/contracts/test_workloads.py` moved because `source_meta()` carries `strata` (the stratum counts of a stratified sample, null otherwise). Workload hashes did not move.
+
+2026-10-18: no fixture changed; the trajectory and chat session digests in `tests/contracts/test_workloads.py` moved because `source_meta()` now carries `file_sha256`, the replayed file's digest, and `run.json` gains `summary.trace` (the source metadata with the sample's session ids in order). `workload_hash` now hashes recorded assistant content; a trace whose replies are live (ShareGPT placeholders) leaves it out as before. The fixture trajectories have no assistant turns, so their workload hashes did not move.
+
+2026-10-18: `aggregate_summary.json` TPOT fields moved: `summary.mean_tpot_ms` 22.4 to 24.6, `summary.median_tpot_ms` 20.5 to 23.5, `summary.p90_tpot_ms` 26.2 to 27.6, `summary.p99_tpot_ms` 29.62 to 29.76, and `per_request_tpot_s` for requests 0 to 3 from 0.0205 (the mean chunk gap) to 0.0225, 0.023, 0.0235 and 0.024 (decode time over 40 tokens), request 6 from 0.05 to null (one output token). `RequestResult.tpot` is now (e2el - ttft) / (output_tokens - 1) for every request; it averaged the streamed chunk gaps when chunks covered 80% of the tokens, so two servers chunking the same decode differently read different TPOTs. Chunk gaps stay in `itl`. Every other value is as before.
+
+2026-10-18: `aggregate_summary.json` gains `server_cached_tokens` and `server_cache_hit_rate`, null here because no request in the fixture carries an engine-reported cached count. These are the cache-hit metric; `cache_hit_rate` and the per-turn `median_cache_hit_rate` are the prompt share an ideal cache could reuse, an upper bound. Every other value is as before.
+
+2026-10-18: `percentiles.json` nearest-rank values moved one rank down where `p/100 * n` is a whole number: `arange_1000` p50/p90/p95/p99 are 499/899/949/989 (were 500/900/950/990) and `two` p50 is 10 (was 20). `percentile(..., "nearest")` now takes the ceil(p/100 * n)-th smallest value, the nearest-rank definition; it took the (floor(p/100 * n) + 1)-th, one rank high whenever the product was whole. Serve, SLA and burst percentiles in recorded runs are from the old rank; linear percentiles did not move.
+
+2026-10-18: `aggregate_summary.json` gains `sessions_failed`, 0 here. `sessions_completed` now counts sessions whose every planned turn succeeded instead of sessions that sent anything; the fixture's sessions all succeed, so its value and every other value are as before.
+
 2026-10-12: `aggregate_summary.json` gains `itl_coalesced_frac`, 0.0 here. Every other value is as before.
 
 2026-10-12: `aggregate_summary.json` gains `steady_median_ttft_ms` and `steady_p99_ttft_ms`, null here because the fixture is not a closed-loop run. Every other value is as before.
@@ -147,3 +159,5 @@ Run `python3 -m pytest tests/golden -q`. `QBENCH_GOLDEN_REGEN=1` rewrites the fi
 2026-10-12: `config_failures.json`, `config_workloads.json` and `engine_args.json` changed by rename only: the `vmin_fit` keys (`vmin_fit_unknown_grid`, `vmin_fit_env_override`, `diff_vmin_fit_vs_trace_serve` and the rest) start `grid_fit`; no value changed.
 
 2026-10-12: no fixture changed. `RunWriter` writes `requests.jsonl` rows on one background thread in append order, so a slow disk never blocks the event loop; a hard kill keeps every row already written, which is every row older than a few milliseconds, and a failed row write marks the run failed.
+
+2026-10-19: `mooncake_readers.json` gains `file_sha256` in each reader's `source_meta`, the sha256 of the file a single-turn trace replayed, so a run names the exact file and a path source can be met against the manifest; no value moved.

@@ -56,6 +56,10 @@ dry-run cfg *args:
 sweep cfg *args:
     {{python_bin}} -m quettabench.cli run {{cfg}} {{args}}
 
+# Before a run on a new box: the yaml, the trace file, the client at --agents on a fake server, then --server PORT
+confirm cfg *args:
+    {{python_bin}} -m tools.confirm {{cfg}} {{args}}
+
 # Attach to a results/<run>/ and append profile.json
 profile *args:
     {{python_bin}} -m quettabench.cli profile {{args}}
@@ -151,10 +155,14 @@ profile-gpu gpu=gpu:
     @echo "  just gdn {{gpu}}     # Qwen3.5 hybrids only"
     @echo "Then route the tables to QuettaSim: just export --only kernel_tables --results results/probes --kernel-dest <QuettaSim data root, e.g. ../QuettaSim/data>"
 
-# Trajectory datasets from R2 into data/
+# Trajectory datasets from R2 into data/, each checked against data/MANIFEST.json
 fetch:
     R2_ENDPOINT={{r2_endpoint}} AWS_PROFILE={{r2_profile}} {{python_bin}} data/fetch.py
     {{python_bin}} data/build_trajectories.py deepresearch --trace data/dr9k-v4flash.jsonl
+    {{python_bin}} data/build_trajectories.py deepsearch --trace data/dsqa-v4flash.jsonl
+    {{python_bin}} data/build_trajectories.py swebench-native --runs data/raw/swebench_native_c8
+    {{python_bin}} data/build_trajectories.py terminalbench-atif --jobs data/raw/terminalbench_jobs
+    {{python_bin}} data/fetch.py --check
 
 mirror-preview:
     aws --profile {{r2_profile}} --endpoint-url {{r2_endpoint}} s3 sync {{probe_results_dir}}/ s3://{{r2_bucket}}/{{r2_prefix}}/ --dryrun --exclude '*/__pycache__/*' --exclude '*.pyc'

@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import os
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass, replace
 
@@ -31,26 +32,43 @@ class Request:
     source: str | None = None
     # Not in the replay schema; hashed only without token ids.
     messages: list | None = None
+    # The tool schema an agent sent with its messages; not in the replay schema, hashed like messages.
+    tools: list | None = None
     metadata: dict | None = None
+    # vLLM's cache_salt field, set on a recycled play under workload.salt=cache_salt; not in the replay schema.
+    cache_salt: str | None = None
 
     @property
     def max_tokens(self):
         return self.output_length
 
     def to_dict(self):
-        plain = replace(self, messages=None, metadata=None)
+        plain = replace(self, messages=None, tools=None, metadata=None, cache_salt=None)
         return {k: v for k, v in asdict(plain).items() if v is not None}
 
 
-def messages_digest(messages):
-    """Assistant content left out because a live run writes replies there."""
-    plain = [{k: v for k, v in m.items() if not (m.get("role") == "assistant" and k == "content")} for m in messages]
+def sha256_file(path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def messages_digest(messages, live_replies=False):
+    """Everything sent. With live_replies the assistant content is left out, because the run writes the engine's
+    replies there before later turns go out."""
+    plain = [
+        {k: v for k, v in m.items() if not (live_replies and m.get("role") == "assistant" and k == "content")}
+        for m in messages
+    ]
     return hashlib.sha256(json.dumps(plain, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
-def request_digest(r):
+def request_digest(r, live_replies=False):
     """Never generated tokens or timings."""
     messages = r.messages if isinstance(r, Request) else r.get("messages")
+    tools = r.tools if isinstance(r, Request) else r.get("tools")
     if isinstance(r, Request):
         r = r.to_dict()
     ids = r.get("prompt_token_ids") or []
@@ -65,13 +83,15 @@ def request_digest(r):
         str(r.get("turn", "")),
     ]
     if not ids and messages:
-        parts.append(messages_digest(messages))
+        parts.append(messages_digest(messages, live_replies))
+    if not ids and tools:
+        parts.append(hashlib.sha256(json.dumps(tools, sort_keys=True, separators=(",", ":")).encode()).hexdigest())
     return hashlib.sha256("|".join(parts).encode()).hexdigest()
 
 
-def workload_hash(reqs):
+def workload_hash(reqs, live_replies=False):
     """Independent of order."""
-    digs = sorted(request_digest(r) for r in reqs)
+    digs = sorted(request_digest(r, live_replies) for r in reqs)
     h = hashlib.sha256()
     h.update(str(len(digs)).encode())
     for d in digs:
@@ -84,6 +104,13 @@ class Trace(ABC):
     """supports_spec: requests carry real assistant tokens to score acceptance against."""
 
     supports_spec: bool = False
+    # True when the run splices the engine's replies into later turns, so assistant content is not part of
+    # what the trace sends.
+    live_replies: bool = False
+    # The replayed file against its manifest (runner.manifest_check); None for a trace from no profile file.
+    manifest: dict | None = None
+    # The replayed file's sha256, the one data/MANIFEST.json lists; None when the source is not a file.
+    file_sha256: str | None = None
 
     @abstractmethod
     def requests(self) -> list[Request]:
@@ -94,7 +121,7 @@ class Trace(ABC):
         """Provenance for the results file: path, reader, sources."""
 
     def workload_hash(self) -> str:
-        return workload_hash(self.requests())
+        return workload_hash(self.requests(), self.live_replies)
 
     def warmup_requests(self, n) -> list[Request]:
         """The trace's own, cycled."""
@@ -119,6 +146,8 @@ class DrawnTrace(Trace):
 
     def draw(self, num_requests, warmup=0, profile=None):
         self.profile = profile
+        if profile is not None and profile.file_path and os.path.isfile(profile.file_path):
+            self.file_sha256 = sha256_file(profile.file_path)
         self._warmup = [replace(self.get_next_request(), order=i) for i in range(warmup)]
         if warmup and self.rewinds:
             self.reset()
@@ -134,4 +163,4 @@ class DrawnTrace(Trace):
     def source_meta(self):
         p = self.profile
         meta = {"profile": p.name, "dataset": p.dataset, "path": p.file_path} if p else {"reader": type(self).__name__}
-        return {**meta, "reqs": len(self._requests)}
+        return {**meta, "file_sha256": self.file_sha256, "reqs": len(self._requests)}

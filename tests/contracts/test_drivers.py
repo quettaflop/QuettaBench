@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import gc
 import io
 import json
 import os
@@ -31,7 +32,7 @@ from quettabench.engines.drivers import (
 )
 from quettabench.metrics.results import RunWriter, jsonl_row
 from quettabench.metrics.step_fit import fit_run
-from quettabench.metrics.summary import RequestResult
+from quettabench.metrics.summary import RequestResult, annotate_request_observability
 from quettabench.modes import serve
 from quettabench.workloads.base import Request
 from tests.contracts import helpers
@@ -93,7 +94,7 @@ class TtftRules(unittest.TestCase):
         r, payload = send(
             "chat", [{"choices": [{"delta": {"reasoning": "r"}}]}, {"choices": [{"delta": {"content": "a"}}]}]
         )
-        self.assertEqual((r.ttft_rule, len(r.itl)), ("first_payload_chunk", 1))
+        self.assertEqual((r.ttft_rule, len(r.itl)), ("first_choices_chunk", 1))
         self.assertEqual(payload["messages"][0]["content"], "hi")
 
     def test_completions_skips_empty_text(self):
@@ -201,6 +202,46 @@ class BoundDriver(unittest.TestCase):
         result = asyncio.run(go())
         self.assertEqual(self.stub.posts[0][1]["messages"], msgs)
         self.assertEqual(result.generated_text, "hey")
+
+    def test_a_request_with_a_tool_schema_sends_it_and_one_without_sends_none(self):
+        drv, session = self.driver("chat", [{"choices": [{"delta": {"content": "x"}}]}])
+        tools = [{"type": "function", "function": {"name": "bash", "parameters": {"type": "object"}}}]
+        msgs = [{"role": "user", "content": "hi"}]
+
+        async def go():
+            async with session(1):
+                await drv.send(Request([], 0, output_length=2, messages=msgs, tools=tools))
+                await drv.send(Request([], 0, output_length=2, messages=msgs))
+
+        asyncio.run(go())
+        self.assertEqual(self.stub.posts[0][1]["tools"], tools)
+        self.assertNotIn("tools", self.stub.posts[1][1])
+
+    def test_a_request_with_a_cache_salt_sends_it_and_one_without_sends_none(self):
+        drv, session = self.driver("chat", [{"choices": [{"delta": {"content": "x"}}]}])
+        msgs = [{"role": "user", "content": "hi"}]
+
+        async def go():
+            async with session(1):
+                await drv.send(Request([], 0, output_length=2, messages=msgs, cache_salt="0123abcd4567"))
+                await drv.send(Request([], 0, output_length=2, messages=msgs))
+
+        asyncio.run(go())
+        self.assertEqual(self.stub.posts[0][1]["cache_salt"], "0123abcd4567")
+        self.assertEqual(self.stub.posts[0][1]["messages"], msgs)
+        self.assertNotIn("cache_salt", self.stub.posts[1][1])
+
+    def test_completions_refuses_a_tool_schema(self):
+        drv, session = self.driver("completions", [{"choices": [{"text": "x"}]}])
+        request = Request([], 0, output_length=2, messages=[{"role": "user", "content": "hi"}], tools=[{}])
+
+        async def go():
+            async with session(1):
+                return await drv.send(request)
+
+        result = asyncio.run(go())
+        self.assertEqual((result.success, result.error_kind), (False, "client_error"))
+        self.assertIn("cannot send a tool schema", result.error)
 
     def test_run_yields_in_request_order(self):
         drv, session = self.driver()
@@ -319,17 +360,21 @@ def _delta(content=None, **extra) -> dict:
 
 
 class _ChatResp:
-    def __init__(self, lines, status=200):
+    def __init__(self, lines, status=200, pause_before=None, pause_s=0.0):
         self.status = status
-        self.content = self._Lines(lines)
+        self.content = self._Lines(lines, pause_before, pause_s)
 
     class _Lines:
-        def __init__(self, lines):
-            self._lines = lines
+        """A stream that stalls before a given line, like a slow tail."""
+
+        def __init__(self, lines, pause_before=None, pause_s=0.0):
+            self._lines, self._pause_before, self._pause_s = lines, pause_before, pause_s
 
         def __aiter__(self):
             async def gen():
                 for line in self._lines:
+                    if self._pause_before and line.startswith(self._pause_before):
+                        await asyncio.sleep(self._pause_s)
                     yield line
 
             return gen()
@@ -345,13 +390,14 @@ class _ChatResp:
 
 
 class _ChatSession:
-    def __init__(self, lines, status=200):
+    def __init__(self, lines, status=200, pause_before=None, pause_s=0.0):
         self._lines, self._status = lines, status
+        self._pause = (pause_before, pause_s)
         self.payload = None
 
     def post(self, url, headers=None, json=None):
         self.payload = json
-        return _ChatResp(self._lines, self._status)
+        return _ChatResp(self._lines, self._status, *self._pause)
 
 
 def _run(session):
@@ -365,6 +411,31 @@ def _run(session):
             capture_text=True,
         )
     )
+
+
+class IdleConnectionTests(unittest.TestCase):
+    def test_idle_connections_close_before_the_server_closes_them(self):
+        # vLLM's keep-alive is 5 s; a client keeping connections longer reuses ones the server already closed.
+        drv = HttpDriver("chat", url="http://h:8000/v1/chat/completions", model="m", timeout=9)
+
+        async def go():
+            async with drv.session(8) as http:
+                return http.connector._keepalive_timeout
+
+        self.assertEqual(asyncio.run(go()), drivers.IDLE_CONNECTION_S)
+        self.assertLess(drivers.IDLE_CONNECTION_S, 5.0)
+
+
+class FailureKindTests(unittest.TestCase):
+    def test_a_dropped_connection_is_a_connection_error_not_a_client_error(self):
+        class Dropping(_ChatSession):
+            def post(self, url, headers=None, json=None):
+                raise aiohttp.ServerDisconnectedError()
+
+        r = _run(Dropping([]))
+        self.assertEqual((r.success, r.error_kind), (False, "connection_error"))
+        self.assertEqual(drivers.failure_kind(ConnectionResetError()), "connection_error")
+        self.assertEqual(drivers.failure_kind(ValueError("bad payload")), "client_error")
 
 
 class PinnedOutputTests(unittest.TestCase):
@@ -382,6 +453,156 @@ class PinnedOutputTests(unittest.TestCase):
         )
         self.assertEqual(session.payload["min_tokens"], 120)
         self.assertEqual(session.payload["max_tokens"], 120)
+
+    def test_the_request_ends_at_its_last_token_chunk_not_at_the_stream_close(self):
+        # The usage chunk and [DONE] come 60 ms after the last token: e2el stops at the token, stream_closed_s does not.
+        lines = _chat_sse(
+            [_delta("a"), _delta("b"), {"choices": [], "usage": {"prompt_tokens": 3, "completion_tokens": 2}}]
+        )
+        session = _ChatSession(lines, pause_before=b'data: {"choices": [], "usage"', pause_s=0.06)
+        r = asyncio.run(
+            send_request(
+                session=session,
+                url="http://stub/v1/chat/completions",
+                model="m",
+                messages=[{"role": "user", "content": "hi"}],
+                max_tokens=2,
+            )
+        )
+        self.assertTrue(r.success)
+        self.assertLess(r.e2el, 0.03)
+        self.assertGreaterEqual(r.stream_closed_s - r.e2el, 0.055)
+        self.assertEqual(jsonl_row(r)["stream_closed_s"], r.stream_closed_s)
+
+    def test_a_data_line_that_does_not_parse_fails_the_request(self):
+        lines = _chat_sse([_delta("a"), {"choices": [], "usage": {"prompt_tokens": 3, "completion_tokens": 2}}])
+        lines.insert(1, b'data: {"choices": [{"delta": {"content": "b"\n')  # cut short: a token lost
+        r = _run(_ChatSession(lines))
+        self.assertEqual((r.success, r.error_kind), (False, "malformed_stream"))
+        self.assertIn("did not parse", r.error)
+        self.assertIsNotNone(r.ttft)  # the timings it did see are kept
+
+    def test_each_chunk_records_its_delta_characters_and_the_servers_count(self):
+        role = {"choices": [{"delta": {"role": "assistant", "content": ""}}]}
+        finish = {"choices": [{"delta": {}, "finish_reason": "stop"}]}
+        usage = {"choices": [], "usage": {"prompt_tokens": 3, "completion_tokens": 6}}
+        r = _run(_ChatSession(_chat_sse([role, _delta("ab"), _delta("c"), _delta("def"), finish, usage])))
+        self.assertEqual((list(r.chunk_chars), r.chunk_tokens), ([0, 2, 1, 3, 0], None))
+        self.assertEqual(jsonl_row(r)["chunk_chars"], [0, 2, 1, 3, 0])
+        # Reasoning and tool-call arguments count; the tool call's name does not.
+        call = {"index": 0, "function": {"name": "bash", "arguments": '{"a": 1}'}}
+        r = _run(_ChatSession(_chat_sse([_delta(None, reasoning_content="xyz"), _delta(None, tool_calls=[call])])))
+        self.assertEqual(list(r.chunk_chars), [3, 8])
+        # Under continuous usage the server's cumulative count rides on every chunk; a speculative chunk adds 3.
+        counted = [
+            {**c, "usage": {"prompt_tokens": 3, "completion_tokens": k}}
+            for c, k in zip([role, _delta("ab"), _delta("cdefg"), finish], [0, 1, 4, 4])
+        ]
+        session = _ChatSession(_chat_sse(counted))
+        r = asyncio.run(
+            send_request(
+                session=session,
+                url="http://stub",
+                model="m",
+                messages=[{"role": "user", "content": "hi"}],
+                max_tokens=4,
+                chunk_usage=True,
+            )
+        )
+        self.assertEqual((list(r.chunk_tokens), r.output_tokens), ([0, 1, 4, 4], 4))
+        self.assertEqual(session.payload["stream_options"], {"include_usage": True, "continuous_usage_stats": True})
+        plain = _ChatSession(_chat_sse([_delta("a")]))
+        _run(plain)
+        self.assertEqual(plain.payload["stream_options"], {"include_usage": True})  # vllm bench serve's body
+
+    def test_a_streamed_result_keeps_its_chunk_series_in_arrays_gc_does_not_walk(self):
+        # An array is a tracked object, but gc visits only its type, not an item; a list is walked item by item.
+        self.assertEqual(len(gc.get_referents([0.1, 0.2])), 2)
+        chat = [
+            {"choices": [{"delta": {"content": c}}], "usage": {"completion_tokens": n}}
+            for c, n in (("ab", 1), ("c", 3), ("d", 4))
+        ]
+        text = [{"choices": [{"text": c}], "usage": {"completion_tokens": n}} for c, n in (("ab", 1), ("c", 2))]
+        for endpoint, chunks in (("chat", chat), ("completions", text)):
+            r, _ = send(endpoint, chunks, chunk_usage=True)
+            self.assertEqual(len(r.itl), len(chunks) - 1)
+            for series in (r.itl, r.chunk_chars, r.chunk_tokens):
+                self.assertLessEqual(len(gc.get_referents(series)), 1, (endpoint, series))
+        self.assertEqual((list(r.chunk_chars), list(r.chunk_tokens)), ([2, 1], [1, 2]))
+        self.assertLessEqual(len(gc.get_referents(RequestResult(success=False).itl)), 1)
+
+    def test_the_row_carries_the_send_and_the_close_on_the_run_clock(self):
+        before = time.perf_counter()
+        r = _run(_ChatSession(_chat_sse([_delta("a")])))
+        self.assertTrue(
+            before <= r.sent_perf_s <= time.perf_counter()
+        )  # the driver's clock start, just before the POST
+        # By hand: a run clock with its zero at perf_counter 100.0, a request sent at 101.5 that closed 0.75 s later.
+        hand = RequestResult(success=True, ttft=0.2, e2el=0.5, stream_closed_s=0.75, sent_perf_s=101.5)
+        annotate_request_observability(
+            hand,
+            request_index=0,
+            request=None,
+            scheduled_at_s=None,
+            dispatch_started_at_s=1.4,
+            semaphore_acquired_at_s=1.45,
+            completed_at_s=2.3,
+            run_start=100.0,
+        )
+        row = jsonl_row(hand)
+        self.assertEqual((row["sent_at_ms"], row["stream_closed_ms"], row["completed_at_ms"]), (1500.0, 2250.0, 2300.0))
+        self.assertNotIn("sent_perf_s", row)
+
+    def test_a_finish_chunk_with_an_empty_delta_ends_the_request_and_counts_as_a_chunk(self):
+        # A tool-call parser can emit nothing for seconds and then a bare finish chunk: that decode counts.
+        finish = {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]}
+        lines = _chat_sse(
+            [_delta("a"), _delta("b"), finish, {"choices": [], "usage": {"prompt_tokens": 3, "completion_tokens": 40}}]
+        )
+        session = _ChatSession(lines, pause_before=b'data: {"choices": [{"delta": {}', pause_s=0.06)
+        r = asyncio.run(
+            send_request(
+                session=session,
+                url="http://stub/v1/chat/completions",
+                model="m",
+                messages=[{"role": "user", "content": "hi"}],
+                max_tokens=40,
+            )
+        )
+        self.assertTrue(r.success)
+        self.assertGreaterEqual(r.e2el - r.ttft, 0.055)
+        self.assertEqual(len(r.itl), 2)
+        self.assertGreaterEqual(r.itl[-1], 0.055)
+
+    def test_a_stream_that_ends_without_done_is_an_incomplete_failure_with_its_timings(self):
+        session = _ChatSession(_chat_sse([_delta("a"), _delta("b")])[:-1])
+        r = asyncio.run(
+            send_request(
+                session=session,
+                url="http://stub/v1/chat/completions",
+                model="m",
+                messages=[{"role": "user", "content": "hi"}],
+                max_tokens=2,
+            )
+        )
+        self.assertEqual((r.success, r.error_kind), (False, "incomplete_stream"))
+        self.assertIn("without [DONE]", r.error)
+        self.assertIsNotNone(r.ttft)
+        self.assertEqual(len(r.itl), 1)
+
+    def test_an_error_payload_in_the_stream_is_a_server_error(self):
+        lines = _chat_sse([_delta("a"), {"error": {"message": "context length exceeded", "type": "invalid_request"}}])
+        r = asyncio.run(
+            send_request(
+                session=_ChatSession(lines),
+                url="http://stub/v1/chat/completions",
+                model="m",
+                messages=[{"role": "user", "content": "hi"}],
+                max_tokens=2,
+            )
+        )
+        self.assertEqual((r.success, r.error_kind), (False, "server_error"))
+        self.assertIn("context length exceeded", r.error)
 
     def test_absent_unless_asked(self):
         session = _ChatSession(_chat_sse([_delta("a")]))
@@ -438,6 +659,17 @@ class CaptureTextTests(unittest.TestCase):
         self.assertIsNone(plain.server_cached_tokens)
         self.assertNotIn("server_cached_tokens", jsonl_row(plain))
 
+    def test_a_usage_block_counts_as_reported_only_with_both_token_counts(self):
+        def usage_of(usage):
+            r = _run(_ChatSession(_chat_sse([_delta("a"), {"choices": [{"delta": {}}], "usage": usage}])))
+            return r.usage_reported, r.input_tokens, r.output_tokens
+
+        self.assertEqual(usage_of({"prompt_tokens": 4, "completion_tokens": 1}), (True, 4, 1))
+        # A block missing a count would otherwise pass the usage gate as zero tokens.
+        self.assertEqual(usage_of({"prompt_tokens": 4}), (False, 4, 0))
+        self.assertEqual(usage_of({"completion_tokens": 1}), (False, 0, 1))
+        self.assertEqual(usage_of({"prompt_tokens": 4, "completion_tokens": None}), (False, 4, 0))
+
     def test_reasoning_and_tool_calls_are_not_transcript_content(self):
         r = _run(
             _ChatSession(
@@ -491,34 +723,30 @@ except ModuleNotFoundError:
     HAVE_AIOHTTP = False
 
 
-class TestTpotCoverageGuard(unittest.TestCase):
-    def test_full_coverage_keeps_mean_itl(self):
+class TestTpot(unittest.TestCase):
+    """One formula, (e2el - ttft) / (output_tokens - 1), whatever the server's chunking."""
+
+    def test_decode_time_per_generated_token(self):
         r = RequestResult(success=True, ttft=0.05, e2el=1.05, itl=[0.01] * 99, output_tokens=100)
-        self.assertAlmostEqual(r.tpot, 0.01)
+        self.assertAlmostEqual(r.tpot, 1.0 / 99)
 
-    def test_sparse_coverage_falls_back_to_wall_clock(self):
-        # gpt-oss-on-vllm signature: 54 chunks for 269 tokens, one giant gap.
-        itl = [2.505] + [0.0104] * 53
-        r = RequestResult(success=True, ttft=0.25, e2el=3.32, itl=itl, output_tokens=269)
-        # Wall clock gives ~11.5 ms/token; mean(itl) would say ~57.
+    def test_chunking_does_not_change_it(self):
+        # gpt-oss-on-vllm signature: 54 chunks for 269 tokens, one giant gap; mean(itl) would say 57 ms/token.
+        r = RequestResult(success=True, ttft=0.25, e2el=3.32, itl=[2.505] + [0.0104] * 53, output_tokens=269)
         self.assertAlmostEqual(r.tpot, (3.32 - 0.25) / 268)
-        self.assertLess(r.tpot, 0.013)
 
-    def test_short_outputs_keep_mean_itl(self):
+    def test_short_outputs_use_the_same_formula(self):
         r = RequestResult(success=True, ttft=0.05, e2el=0.10, itl=[0.011, 0.012], output_tokens=3)
-        self.assertAlmostEqual(r.tpot, (0.011 + 0.012) / 2)
+        self.assertAlmostEqual(r.tpot, 0.05 / 2)
 
-    def test_no_itl_falls_back(self):
+    def test_without_chunk_gaps(self):
         r = RequestResult(success=True, ttft=0.4, e2el=2.4, itl=[], output_tokens=201)
         self.assertAlmostEqual(r.tpot, 2.0 / 200)
 
-    def test_no_itl_no_ttft_is_none(self):
-        r = RequestResult(success=True, e2el=2.4, output_tokens=201)
-        self.assertIsNone(r.tpot)
-
-    def test_sparse_coverage_without_wall_clock_keeps_mean(self):
-        r = RequestResult(success=True, itl=[0.5, 0.01], output_tokens=100)
-        self.assertAlmostEqual(r.tpot, 0.255)
+    def test_none_without_a_first_or_second_token(self):
+        self.assertIsNone(RequestResult(success=True, e2el=2.4, output_tokens=201).tpot)
+        self.assertIsNone(RequestResult(success=True, ttft=0.1, e2el=0.3, output_tokens=1).tpot)
+        self.assertIsNone(RequestResult(success=True, itl=[0.5, 0.01], output_tokens=100).tpot)
 
 
 def _sse(payload) -> bytes:
@@ -575,9 +803,9 @@ class TestReasoningChunksCounted(unittest.TestCase):
         )
         r = asyncio.run(_serve_and_request(chunks))
         self.assertTrue(r.success)
-        # 8 token events (1 role + 3 reasoning + 4 content): ttft + 7 ITLs.
+        # 9 chunks with choices (role, 3 reasoning, 4 content, finish): ttft + 8 gaps.
         self.assertIsNotNone(r.ttft)
-        self.assertEqual(len(r.itl), 7)
+        self.assertEqual(len(r.itl), 8)
         self.assertEqual(r.output_tokens, 8)
 
     def test_newer_reasoning_field_and_tool_calls_count(self):
@@ -589,7 +817,7 @@ class TestReasoningChunksCounted(unittest.TestCase):
         )
         r = asyncio.run(_serve_and_request(chunks))
         self.assertTrue(r.success)
-        self.assertEqual(len(r.itl), 5)
+        self.assertEqual(len(r.itl), 5)  # role, 2 reasoning, 2 tool-call, 1 content: no finish chunk here
 
     def test_plain_content_stream_unchanged(self):
         chunks = (
@@ -599,7 +827,8 @@ class TestReasoningChunksCounted(unittest.TestCase):
         )
         r = asyncio.run(_serve_and_request(chunks))
         self.assertTrue(r.success)
-        self.assertEqual(len(r.itl), 5)
+        # 7 chunks with choices (role, 5 content, finish): ttft + 6 gaps, vllm bench serve's count.
+        self.assertEqual(len(r.itl), 6)
 
 
 FAKE = Path(__file__).with_name("fake_bench.py")

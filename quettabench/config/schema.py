@@ -24,13 +24,15 @@ CHOICES = {
     "workload.kind": ("live", "grid", "sessions"),
     "workload.prompt_mode": PROMPT_MODES,
     "workload.pacing": ("per-session", "interleaved"),
+    "workload.salt": ("text", "cache_salt"),
     "mode.mode": ("serve", "probe"),
     "mode.serve_profile": (None, "stress-test", "single-turn", "multi-turn"),
     "mode.load": ("closed", "open"),
     "mode.return_outputs": ("none", "text", "logits"),
     "hardware.backend": ("auto", "cuda", "rocm", "neuron", "tpu", "cpu"),
     "hardware.link_profile": ("auto", "pcie", "nvlink"),
-    "hardware.launcher": ("local", "docker"),
+    "hardware.launcher": ("local", "docker", "attach"),
+    "hardware.server_env": ("controlled", "inherit"),
 }
 
 # Accelerators qbench launches vLLM on besides cuda; cpu is the stub backend the tests run.
@@ -39,6 +41,7 @@ OTHER_ACCELERATORS = ("rocm", "neuron", "tpu")
 # Keys each dict-valued field accepts; None means free-form.
 DICT_KEYS = {
     "engine.extra": None,
+    "engine.env": None,
     "hardware.collective": (
         "NCCL_ALGO",
         "NCCL_PROTO",
@@ -89,6 +92,8 @@ class EngineCfg:
     instrumentation: str = "none"  # armed at launch: none | nsys | torch
     image: str | None = None  # the server's docker image; required by hardware.launcher=docker
     extra: Mapping[str, Any] = field(default_factory=dict)  # quettaserve bench block lives here
+    # Extra server env, set on top of the shell's.
+    env: Mapping[str, Any] = field(default_factory=dict)
     # Facts the capacity gate needs (grid CAPACITY line).
     kv_bytes_per_token: int | None = None  # per token; None allowed only for dense
     weights_gib: float | None = None
@@ -115,6 +120,12 @@ class WorkloadCfg:
     use_recorded_arrivals: bool = False
     max_turn_index: int | None = None
     num_sessions: int | None = None  # None: the profile's count; at least concurrency
+    # Order the sample round-robin across strata of turn count and prompt size (and, with num_sessions, take each
+    # stratum's share), so the sessions open at any moment mix like the whole sample.
+    stratified: bool = False
+    # How a recycled play misses earlier plays' cache: text puts a tag before the first user message;
+    # cache_salt sends vLLM's cache_salt field and leaves the prompt as recorded.
+    salt: str = "text"
 
 
 @dataclass(frozen=True)
@@ -130,10 +141,15 @@ class ModeCfg:
     temperature: float = 0.0
     sampling_seed: int | None = None
     exact_output_length: bool = False
+    # Recycled replay: the agents draw the sample in a cycle for this long, each play salted; 0 plays each once.
+    duration_s: float = 0.0
     timeout: int = 120
     min_success_rate: float = 0.75
     reset_prefix_cache: bool = False  # POST the engine's prefix-cache reset after warmup
     allow_missing_usage: bool = False
+    # Ask vLLM for cumulative usage on every chunk (continuous_usage_stats), so window tokens use the server's
+    # per-chunk counts; off, request bodies match vllm bench serve's and AIPerf's.
+    chunk_usage: bool = False
     trace_request_ids: bool = False  # stable request ids for engine tracing
     prefix_cache_block_size: int | None = 16  # block-aligned cache estimates (multi-turn)
     sla_ttft_ms: float | None = None
@@ -168,7 +184,12 @@ class HardwareCfg:
     provision: Mapping[str, str] = field(default_factory=dict)
     visible_devices: str | None = None  # CUDA_VISIBLE_DEVICES; rocm/tpu/neuron runs must set it
     ready_timeout_s: int = 1800  # seconds the launcher waits for the server health check
-    launcher: str = "local"  # local: a host process | docker: engine.image in a container
+    # local: a host process | docker: engine.image in a container | attach: measure the server already on
+    # engine.port; qbench starts and stops nothing, so the same server can serve another harness too
+    launcher: str = "local"
+    # controlled: a local server starts from an empty environment (env -i) plus an allowlist from the shell
+    # (config/env_map.py) and the launch spec's env; inherit: it inherits the whole shell
+    server_env: str = "controlled"
     shm_size: str = "16g"  # docker --shm-size
     hf_home: str | None = None  # HF cache; docker mounts it at the same path
 

@@ -11,6 +11,7 @@ just fetch                             # trajectories from R2 (gitignored)
 just provision configs/runs/llama.yaml --dry-run \
     --set hardware.provision.py=/venv/bin/python --set llama:hardware.provision.weights=/w/llama
 just dry-run configs/runs/llama.yaml --set engine.model=/w/llama   # Config + LaunchSpec, starts nothing
+just confirm configs/runs/llama.yaml --agents 256 --allow-unverified   # new box: yaml, data, client; add --server PORT once the server is up
 just run configs/runs/llama.yaml --set engine.model=/w/llama   # -> results/llama/
 just profile --run results/llama --source metrics --source energy
 just compare results/<ours> results/<theirs>       # compares two results dirs
@@ -22,11 +23,17 @@ Without `just`, every recipe is one line: `python3 -m quettabench.cli run ...`, 
 
 ## Config
 
-A run is one yaml in `configs/runs/` naming a model (`configs/models/`), a workload, a mode and optionally a `matrix:` (a sweep: one run per point, `just sweep` is `just run`). Grids and step points live in `configs/grids.yaml`, link-profile facts in `configs/hardware/<profile>.yaml`.
+A run is one yaml in `configs/runs/` naming a model (`configs/models/`), a workload, a mode and optionally a `matrix:` sweep. Grids and step points live in `configs/grids.yaml`, link-profile facts in `configs/hardware/<profile>.yaml`. Matrix axes and `--set` overrides are in [docs/config.md](docs/config.md).
 
-Precedence, highest first: `--set` > env (through `config/env_map.py`, the only reader of `os.environ`) > run yaml > model yaml > hardware yaml > schema defaults. Unknown keys are refused. `just dry-run` prints every value with its origin.
+Precedence, highest first: `--set` > env > run yaml > model yaml > hardware yaml > schema defaults. Unknown keys are refused. `just dry-run` prints every value with its origin.
 
 A grid run (`mode.grid` set) times decode ms per step per (ctx, bs) cell: vLLM over HTTP against a launched server (bs concurrent completions per batch, prefix cache reset per cell), QuettaServe through its cargo bench (`--set engine.name=quettaserve`). A vLLM grid run with `mode.return_outputs` text or logits builds vLLM in-process instead, the only path that returns token ids, text or logits; only such a run takes `prompt_mode=corpus`, which a timing grid refuses. `engine.pp` and `engine.cudagraph=false` reach the server as `--pipeline-parallel-size` and `--enforce-eager`. `tests/parity/slope_gate.json` holds the HTTP-vs-in-process gate both paths passed (8x H200, vLLM 0.30.1: 15 cells, worst |delta| 0.228 ms). A serve run (`mode.grid` unset) launches the server and replays the workload against it. `mode: probe` runs a kernel probe (`mode.probe`, `mode.probe_args`) with `--out results/<run>/`. It refuses the torchrun probes (`collective`, `reparallel`, `vllm_allreduce`) and the probes that name output files (`serving_decode_grid`, `serving_stage_split`); run those with `just probe`.
+
+## Session replay
+
+Agent workloads (`mode: multi-turn` in `configs/workloads.yaml`) replay recorded agent sessions turn by turn, `mode.concurrency` agents at a time.
+`hardware.launcher: attach` measures a server you started, so another harness can measure the same server.
+The contract (every field, every withhold rule, the timing definitions) is in [docs/session-replay.md](docs/session-replay.md).
 
 ## Provisioning
 
@@ -178,6 +185,8 @@ quettabench/export/quettasim.py  the one route to QuettaSim: tp_comm, roofline_u
 configs/                  models, runs, grids, hardware
 docker/Dockerfile         qbench on the vLLM image (just image)
 docs/runbooks/            the probe guide (probes.md)
+docs/config.md            matrix axes and --set overrides
+docs/session-replay.md    the session replay contract
 tests/golden/             characterization fixtures
 tests/contracts/          one test module per package area, plus the compare contracts and GPU smoke
 tests/parity/             the committed HTTP-vs-in-process slope gate and its test
