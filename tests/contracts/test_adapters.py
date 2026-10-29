@@ -483,6 +483,106 @@ class Qwen3Gdn(unittest.TestCase):
         self.assertIn(" ar=0 ", spec.log_header)
 
 
+QS_SERVE = [
+    "allow_unverified=true",
+    "hardware.backend=cuda",
+    "hardware.link_profile=pcie",
+    "engine.name=quettaserve",
+    "engine.model=/w",
+    "mode.grid=null",
+    "engine.extra.quettaserve_bin_dir=/qs/bin",
+]
+
+
+class QuettaServeServe(unittest.TestCase):
+    """A serve run launches scripts/quettaserve-serve.sh; a grid run stays the cargo bench."""
+
+    def cfg(self, *sets):
+        (cfg,) = loader.load(RUNS / "llama.yaml", [*QS_SERVE, *sets], env={})
+        return cfg
+
+    def spec(self, *sets):
+        return quettaserve.ADAPTER.translate(self.cfg(*sets))
+
+    def test_a_serve_run_launches_the_script_with_the_table_flags(self):
+        cfg = self.cfg(
+            "engine.tp=4",
+            "engine.port=18450",
+            "engine.prefix_caching=true",
+            "engine.extra.quettaserve_serve={num_cache_slots: 32, kv_memory_fraction: 0.5}",
+            "mode.timeout=1800",
+        )
+        self.assertTrue(quettaserve.ADAPTER.needs_server(cfg))
+        spec = quettaserve.ADAPTER.translate(cfg)
+        self.assertEqual(
+            list(spec.server_argv),
+            [
+                str(launcher.REPO / "scripts" / "quettaserve-serve.sh"),
+                *("--bin-dir", "/qs/bin", "--model", "/w", "--tp", "4", "--pp", "1", "--http-port", "18450"),
+                *("--prefix-cache", "--max-context-length", "9216", "--num-cache-slots", "32"),
+                *("--kv-memory-fraction", "0.5"),
+            ],
+        )
+        self.assertEqual(spec.env, {"RUST_LOG": "info"})
+        self.assertEqual(spec.env_drop, quettaserve.SERVE_ENV_DROP)
+        self.assertEqual(
+            (spec.health_path, spec.served_name, spec.port, spec.timeout_s, spec.bench_argv),
+            ("/health", "/w", 18450, 1800, ()),
+        )
+
+    def test_kv_dtype_flag_and_no_context_cap_when_unset(self):
+        argv = self.spec("engine.kv_cache_dtype=f8e4m3", "engine.max_model_len=null").server_argv
+        self.assertEqual(argv[argv.index("--kv-cache-dtype") + 1], "f8e4m3")
+        self.assertNotIn("--max-context-length", argv)
+        self.assertNotIn("--prefix-cache", argv)
+
+    def test_the_served_name_takes_the_launch_token_after_it(self):
+        spec = self.spec("engine.extra.quettaserve_serve={served_model_name: glm, prefill_chunk_size: 2048}")
+        self.assertEqual(spec.served_name, "glm")
+        self.assertEqual(
+            launcher.tagged(spec, "tok").server_argv[-5:],
+            ("--served-model-name", "glm", "tok", "--prefill-chunk-size", "2048"),
+        )
+
+    def test_the_driver_streams_chat_to_api_and_resets_it(self):
+        spec = self.spec("mode.timeout=9")
+        handle = launcher.NoServer(Path("r"), endpoint="http://127.0.0.1:8000")
+        chat = mock.Mock(**{"requests.return_value": [Request([], 3, messages=[{"role": "user"}])]})
+        driver = quettaserve.ADAPTER.driver(spec, handle, chat)
+        self.assertIsInstance(driver, HttpDriver)
+        self.assertEqual(
+            (driver.endpoint, driver.backend_name, driver.url, driver.model, driver.timeout),
+            ("chat", "quettaserve", "http://127.0.0.1:8000/v1/chat/completions", "/w", 9),
+        )
+
+    def test_the_binaries_default_to_the_checkouts_release_build(self):
+        for sets, bin_dir in (
+            (["engine.extra.quettaserve_dir=/qs"], "/qs/target/release"),
+            ([], "target/release"),
+        ):
+            with self.subTest(sets):
+                argv = self.spec("engine.extra.quettaserve_bin_dir=", *sets).server_argv
+                self.assertEqual(argv[1:3], ("--bin-dir", bin_dir))
+
+    def test_a_model_is_required(self):
+        with self.assertRaisesRegex(ConfigError, "engine.model is required"):
+            self.spec("engine.model=null")
+
+    def test_fields_and_flags_the_server_cannot_carry_are_refused(self):
+        for setting, shown in (
+            ("engine.gpu_util=0.5", "gpu_util=0.5"),
+            ("engine.cudagraph=false", "cudagraph=False"),
+            ("engine.layers=6", "layers=6"),
+            ("engine.instrumentation=nsys", "instrumentation=nsys"),
+            ("engine.extra.quettaserve_serve={tensor_parallel: 2}", "quettaserve_serve.tensor_parallel"),
+            ("engine.extra.quettaserve_serve={port: 1}", "quettaserve_serve.port"),
+            ("engine.extra.quettaserve_serve={x: [1]}", "quettaserve_serve.x"),
+            ("engine.extra.quettaserve_serve=notamapping", "quettaserve_serve"),
+        ):
+            with self.subTest(setting), self.assertRaisesRegex(base.UnsupportedField, shown):
+                self.spec(setting)
+
+
 class OkPattern(unittest.TestCase):
     def test_matches_the_workload_records(self):
         records = json.loads((FIXTURES / "config_workloads.json").read_text())

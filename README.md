@@ -124,6 +124,10 @@ The model yaml's `quettaserve:` block names the cargo `crate` and `test`, the en
 
 A host without cargo sets `engine.extra.bench_bin` to a prebuilt test binary.
 
+### QuettaServe serve runs
+
+A QuettaServe serve run (`mode.grid` unset) launches `scripts/quettaserve-serve.sh` from the `api` and `dist` binaries in `engine.extra.quettaserve_bin_dir` (default `<engine.extra.quettaserve_dir>/target/release`, the checkout's release build): api with the primary on GPU 0, then one dist secondary per GPU (`engine.tp` x `engine.pp`) in GPU order, all in one process group. `engine.port` is the HTTP port; the next 1 + tp x pp ports are the primary's and the secondaries'. `engine.prefix_caching`, `kv_cache_dtype` and `max_model_len` reach the server as `--prefix-cache`, `--kv-cache-dtype` and `--max-context-length`. `engine.extra.quettaserve_serve` holds any other flag as `flag: value` (true for a switch): `kv_memory_fraction` goes to the secondaries, the rest (`num_cache_slots`, `max_num_batched_tokens`, `served_model_name`) to api. The launcher waits for `GET /health` and for its token in `GET /v1/models`, and a reset posts to `/reset_prefix_cache`. The secondaries load libnccl, so `LD_LIBRARY_PATH` must hold it (`hardware.provision.nccl_lib`).
+
 ### NCCL link profiles
 
 `hardware.link_profile` is detected once (an NV* link in `nvidia-smi topo -m` is nvlink, else pcie; non-cuda backends take nvlink) and feeds both engines. pcie pins `NCCL_ALGO=allreduce:tree;allgather:ring`, `NCCL_PROTO=Simple`, `NCCL_P2P_LEVEL=SYS` (without it cross-socket links fall back to TCP), `LLMSRV_NO_NVLS=1`, `LLMSRV_TWOSHOT_MIN_BYTES=0`, `NCCL_IB_DISABLE=1`. nvlink exports only `NCCL_IB_DISABLE=1`: NCCL picks NVLS/LL128 and the engine keeps its peer all-reduce. Empty values are never exported. The caller's `NCCL_ALGO`/`NCCL_PROTO` win.
