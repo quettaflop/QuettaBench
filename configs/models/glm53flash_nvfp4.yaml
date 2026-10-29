@@ -1,0 +1,11 @@
+name: GLM-5.3-Flash-NVFP4
+dtype: auto
+# nvidia/GLM-5.3-Flash-NVFP4 @ da920bb0: 204.5 GB on disk, including the bf16 MTP layer (~14.9 GB).
+weights_gib: 190.5
+max_model_len: 262144
+tp: 1
+# fp8_ds_mla 656 B + pooled indexer K 132 B per token per DSA layer, 11 DSA layers; the 34 KDA layers keep per-sequence state, not per-token KV.
+kv_bytes_per_token: 8668
+ep: false
+verified: false
+attention: mla
