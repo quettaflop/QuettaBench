@@ -6,8 +6,7 @@
 # plus --set engine.extra.quettaserve_bin_dir=<dir of api and dist built from glm53-flash-speedup>.
 # It runs on the host, not in a container: LD_LIBRARY_PATH must hold libnccl.
 # KV is 16,896 B per token on every TP rank (latent and indexer rows, replicated), not the model yaml's vLLM figure.
-# QuettaServe's GLM context is 32,768 tokens (8,192 indexer pools of 4); 10 of the bar's requests, in two sessions at
-# every concurrency, have 32.8K-43.5K prompt tokens (vLLM's count) and fail as too long until it rises.
+# QuettaServe's GLM context is 65,536 tokens (16,384 indexer pools of 4), above the bar's longest prompt (43,474).
 model: glm53flash_nvfp4
 engine:
   name: quettaserve
@@ -18,10 +17,11 @@ engine:
   port: 18450
   extra:
     quettaserve_serve:
-      # Phase C's soak settings. 32 slots hold at most 678K tokens on this workload (the 32 longest sessions at
-      # their last turn), under the 838K that 0.3 of each rank's free memory holds at 32 slots.
-      num_cache_slots: 32
-      kv_memory_fraction: 0.3
+      # Every session of a point needs its own slot: QuettaBench runs all 2C sessions at once behind a C-request
+      # limit, so with fewer slots than sessions each turn evicts the next turn's prefix (c32 at 32 slots: 0.29
+      # req/s, 0% hits). 64 sessions peak at 985K tokens; fraction 0.45 holds 1.17M per rank at 64 slots.
+      num_cache_slots: 64
+      kv_memory_fraction: 0.45
       max_num_batched_tokens: 8192
 workload:
   kind: sessions
