@@ -1,0 +1,52 @@
+# GLM-5.3-Flash NVFP4 on QuettaServe, TP4 in one stage on 4 RTX PRO 6000 (gpu08 host GPUs 0-3, primary on GPU 0),
+# prefix cache on, FULL swebench-multiturn-short profile. The workload and mode are glm53flash_nvfp4_pp4_full.yaml's,
+# the vLLM PP4 bar of 2026-10-28, so each point replays the bar's requests: WORKLOAD_CHECK expected= is
+# "3af8d25c8ee87d6c" (c8), "034c944993ce7837" (c16), "f1a2e1add2ba658e" (c32). Per point, as for the bar:
+#   --set mode.concurrency=C --set workload.num_sessions=2C --set run_name=<tag>-cC
+# plus --set engine.extra.quettaserve_bin_dir=<dir of api and dist built from glm53-flash-speedup>.
+# It runs on the host, not in a container: LD_LIBRARY_PATH must hold libnccl.
+# KV is 16,896 B per token on every TP rank (latent and indexer rows, replicated), not the model yaml's vLLM figure.
+# QuettaServe's GLM context is 32,768 tokens (8,192 indexer pools of 4); 10 of the bar's requests, in two sessions at
+# every concurrency, have 32.8K-43.5K prompt tokens (vLLM's count) and fail as too long until it rises.
+model: glm53flash_nvfp4
+engine:
+  name: quettaserve
+  model: /mnt/scratch4/clau/models/hub/models--nvidia--GLM-5.3-Flash-NVFP4/snapshots/da920bb0b9f4a06727223a349e55468e38352348
+  tp: 4
+  pp: 1
+  prefix_caching: true
+  port: 18450
+  extra:
+    quettaserve_serve:
+      # Phase C's soak settings. 32 slots hold at most 678K tokens on this workload (the 32 longest sessions at
+      # their last turn), under the 838K that 0.3 of each rank's free memory holds at 32 slots.
+      num_cache_slots: 32
+      kv_memory_fraction: 0.3
+      max_num_batched_tokens: 8192
+workload:
+  kind: sessions
+  source: swebench-multiturn-short
+  # No max_turn_index: every turn of each session. num_sessions = 2 x concurrency is set per point (--set).
+mode:
+  mode: serve
+  serve_profile: multi-turn
+  load: closed
+  concurrency: 16
+  reset_prefix_cache: true
+  timeout: 1800
+  exact_output_length: true
+  ignore_eos: true
+  sla_ttft_ms: 5000
+  sla_tpot_ms: 16.7
+hardware:
+  link_profile: pcie
+  world: 4
+  visible_devices: "0,1,2,3"
+  collective:
+    # NCCL's own choice, as QuettaServe's TP4 was measured. The pcie profile pins all-reduce to tree/Simple, which
+    # matters for TP4 and hardly for the bar's PP4 x TP1 vLLM, which has no tensor-parallel all-reduce.
+    NCCL_ALGO: ""
+    NCCL_PROTO: ""
+    NCCL_P2P_LEVEL: SYS
+    NCCL_IB_DISABLE: "1"
+    NCCL_SOCKET_IFNAME: lo

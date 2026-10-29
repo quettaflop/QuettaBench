@@ -70,7 +70,8 @@ class DryRun(unittest.TestCase):
                 lines = out.splitlines()
                 self.assertEqual(lines[0], f"== {path.stem}")
                 self.assertIn("engine.model = '/w'  (cli)", lines)
-                self.assertIn("spec.adapter = 'vllm'", lines)
+                engine = (yaml.safe_load(path.read_text()).get("engine") or {}).get("name", "vllm")
+                self.assertIn(f"spec.adapter = '{engine}'", lines)
 
     def test_matrix_is_one_run_per_point(self):
         run = {
