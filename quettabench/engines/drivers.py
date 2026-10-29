@@ -322,11 +322,12 @@ ENDPOINTS: dict[str, tuple[Callable[..., Awaitable[RequestResult]], str]] = {
     "completions": (_stream_completions, "first_nonempty_text"),
 }
 
-# vLLM mounts the reset router only with VLLM_SERVER_DEV_MODE=1; otherwise 404.
+# vLLM mounts the reset router only with VLLM_SERVER_DEV_MODE=1; otherwise 404. QuettaServe's api always mounts it.
 _RESET_ENDPOINTS = {
     "vllm": "/reset_prefix_cache",
     "vllm-completions": "/reset_prefix_cache",
     "openai": "/reset_prefix_cache",
+    "quettaserve": "/reset_prefix_cache",
 }
 
 _DEV_MODE_HINT = (
@@ -519,7 +520,8 @@ class HttpDriver(Driver):
             ) as resp:
                 if resp.status != 200:
                     body = (await resp.text())[:200]
-                    hint = f" {_DEV_MODE_HINT}" if resp.status == 404 else ""
+                    vllm_404 = resp.status == 404 and backend_name.lower() != "quettaserve"
+                    hint = f" {_DEV_MODE_HINT}" if vllm_404 else ""
                     raise PrefixCacheResetError(f"POST {reset_url} returned HTTP {resp.status}: {body}.{hint}")
         except PrefixCacheResetError:
             raise
