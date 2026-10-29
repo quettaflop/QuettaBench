@@ -1,9 +1,12 @@
 """start/health/engine.json/stop on a fake server; no child survives stop."""
 
+import contextlib
 import dataclasses
 import json
 import os
+import signal
 import socket
+import subprocess
 import sys
 import tempfile
 import threading
@@ -162,6 +165,101 @@ class LocalLauncher(unittest.TestCase):
             launcher.tagged(spec, "tok").server_argv,
             ("vllm", "serve", "--served-model-name", "llama", "tok", "--port", "1"),
         )
+
+
+QS_SERVE = launcher.REPO / "scripts" / "quettaserve-serve.sh"
+FAKE_QS = Path(__file__).with_name("fake_quettaserve.py")
+
+
+def free_ports(n):
+    """The first of n consecutive ports that are all free now."""
+    for _ in range(20):
+        first = free_port()
+        try:
+            for p in range(first, first + n):
+                with socket.socket() as s:
+                    s.bind(("127.0.0.1", p))
+        except OSError:
+            continue
+        return first
+    raise RuntimeError(f"no {n} consecutive free ports")
+
+
+class QuettaServeScript(unittest.TestCase):
+    """scripts/quettaserve-serve.sh under the launcher, with stand-in api and dist binaries."""
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp())
+        self.bin = self.dir / "bin"
+        self.bin.mkdir()
+        for role in ("api", "dist"):
+            exe = self.bin / role
+            exe.write_text(f'#!/bin/sh\nexec {sys.executable} {FAKE_QS} {role} "$@"\n')
+            exe.chmod(0o755)
+        self.http = free_ports(5)
+
+    def spec(self, tp=2, visible="5,6", **env):
+        argv = (str(QS_SERVE), "--bin-dir", str(self.bin), "--model", "/m", "--tp", str(tp), "--pp", "1")
+        argv += ("--http-port", str(self.http), "--kv-memory-fraction", "0.4", "--stagger", "0.2")
+        return LaunchSpec(
+            adapter="quettaserve",
+            port=self.http,
+            served_name="glm",
+            server_argv=(*argv, "--num-cache-slots", "8", "--prefix-cache"),
+            env={"CUDA_VISIBLE_DEVICES": visible, "FAKE_QS_STATE": str(self.dir), **env},
+        )
+
+    def state(self, name):
+        return json.loads((self.dir / f"{name}.json").read_text())
+
+    @staticmethod
+    def kill_group(pgid):
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(pgid, signal.SIGKILL)
+
+    def test_api_then_a_secondary_per_gpu_in_rank_order_and_stop_ends_them_all(self):
+        handle = launcher.start(self.spec(), self.dir / "run", timeout_s=30, poll_s=0.1)
+        api, dists = self.state("api"), [self.state(f"dist{g}") for g in (0, 1)]
+        peer = self.http + 1
+        self.assertEqual(
+            api["argv"][:-1],
+            [
+                *("--gpu", "0", "--model", "/m", "--tokenizer", "/m/tokenizer.json", "--port", str(peer)),
+                *("--num-nodes", "3", "--tensor-parallel", "2", "--http-addr", f"127.0.0.1:{self.http}"),
+                *("--num-cache-slots", "8", "--prefix-cache", "--served-model-name", "glm"),
+            ],
+        )
+        self.assertRegex(api["argv"][-1], "^qbench-[0-9a-f]{16}$")
+        self.assertEqual(api["ranks"], ["0", "1"])
+        for g, dist in enumerate(dists):
+            self.assertEqual(
+                dist["argv"],
+                [
+                    *("--gpu", str(g), "secondary", "--primary", f"127.0.0.1:{peer}"),
+                    *("--port", str(peer + 1 + g), "--kv-memory-fraction", "0.4"),
+                ],
+            )
+            self.assertEqual(dist["model"], "/m")
+        self.assertEqual({d["visible"] for d in [api, *dists]}, {"5,6"})
+        handle.stop(grace_s=5)
+        for pid in (handle.pid, api["pid"], *(d["pid"] for d in dists)):
+            self.assertFalse(alive(pid))
+
+    def test_a_secondary_that_exits_ends_the_server_with_its_status(self):
+        # Run alone: the launcher's stop would also end the rest of the group.
+        spec = self.spec(FAKE_QS_DIST_GPU="1", FAKE_QS_DIST_EXIT="3")
+        proc = subprocess.Popen(spec.child_argv(spec.server_argv), start_new_session=True, stderr=subprocess.DEVNULL)
+        self.addCleanup(self.kill_group, proc.pid)
+        self.assertEqual(proc.wait(timeout=30), 3)
+        self.assertFalse(alive(self.state("api")["pid"]))
+        self.assertFalse(alive(self.state("dist0")["pid"]))
+
+    def test_too_few_gpus_is_refused(self):
+        spec = self.spec(tp=4, visible="0,1")
+        with self.assertRaisesRegex(RuntimeError, "server exited with 2"):
+            launcher.start(spec, self.dir / "run", timeout_s=30, poll_s=0.1)
+        self.assertIn("names fewer than tp*pp=4 GPUs", (self.dir / "run" / "server.log").read_text())
+        self.assertFalse((self.dir / "api.json").exists())
 
 
 DOCKER_YAML = launcher.REPO / "configs" / "runs" / "llama-tp1-docker.yaml"
