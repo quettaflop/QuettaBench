@@ -22,6 +22,7 @@ QuettaBench is a measurement harness. It has one command, `qbench`, with four su
 - `quettabench/export/quettasim.py`: the only measurement code that writes outside the repo; its builders are `tp_comm`, `roofline_utils`, `serving_decode_grid` and `kernel_tables`; `provision.py` sets the box up outside it (below).
 - `configs/`: `models/` holds per-model facts, once. `runs/` reference a model and never restate its facts. `grids.yaml` holds the grids and step points, `hardware/` the link profiles, `workloads.yaml` every workload profile by name.
 - `data/`: fetch scripts. Never imported by `quettabench/`, enforced by `tests/contracts/test_imports.py`.
+- `scripts/quettaserve-serve.sh`: QuettaServe's OpenAI-compatible server, api then one dist secondary per GPU, all in one process group.
 - `docs/runbooks/`: the probe guide; with README.md and AGENTS.md the only docs.
 - `tests/golden/`: characterization fixtures of the measured behaviour. Change a fixture only with a dated line in `tests/golden/REPORT.md` saying why.
 - `tests/contracts/`: one test module per package area, not per module: `test_workloads.py` covers `workloads/` (sessions included), `test_probes.py` `probes/`, `test_adapters.py` the adapters, `test_export.py` `export/`, `test_profiling.py` `profiling/`, `test_metrics_summary.py` `metrics/summary.py` and `metrics/step_fit.py`, and `config/schema.py` is tested through `test_loader.py`; `provision.py` is tested in `tests/golden/test_provision.py` only. Plus `test_compare_contracts.py` (with `compare.py`'s tests), `test_imports.py` and the GPU smoke module `test_probes_gpu.py`; `helpers.py` and the `fake_*.py` modules are their plumbing.
@@ -50,6 +51,7 @@ One line each; everything else follows section 2 "Target layout".
 - `tests/` has `golden/`, `contracts/`, `parity/` and `_stubs/` (the vllm, torch and transformers stand-ins the golden CPU runs import): the probe contracts and GPU smoke tests live in `contracts/`.
 - `data/` keeps `download_agent_trajectories.py` and `download_coding_prompts.py` apart: section 2's `fetch.py` merge is not done.
 - `tools/pre_commit/` (the commit-message and em-dash hooks) and `docker/` (the qbench plus vLLM image `just image` builds) sit outside section 2's tree.
+- `scripts/quettaserve-serve.sh` sits outside section 2's tree: QuettaServe serves from two binaries started in order, api and then a dist secondary per GPU, and the launcher starts one argv.
 - The root also holds plumbing outside section 2's tree: `.github/`, `.pre-commit-config.yaml`, `_typos.toml`, `.dockerignore` and `LICENSE`.
 - `data/truncate_checkpoint.py` builds the layer-truncated vLLM checkpoint for truncated-model runs; it is not a fetch script.
 - rocm, tpu and neuron launch paths are tested against mocks only; no hardware run is recorded yet. On them the loader refuses `engine.name=quettaserve` and `qbench profile` refuses the `energy` source, which reads nvidia-smi.
@@ -69,6 +71,7 @@ One line each; everything else follows section 2 "Target layout".
 Every writer and every process starter, exactly:
 
 - `engines/launcher.py`: `engine.json` and `server.log` in the run dir; starts the engine server process (local, or `docker run`), for a run or a probe.
+- `scripts/quettaserve-serve.sh`, the server the launcher starts for a QuettaServe serve run: starts api and one dist secondary per GPU in its process group, stops them all when one exits; writes nothing (their output is `server.log`).
 - `BenchDriver` (`engines/drivers.py`): `bench.log` in the run dir; starts the QuettaServe bench process, once per grid cell.
 - `InProcessDriver` (`engines/drivers.py`): builds the vLLM engine inside this process; starts no process.
 - `metrics/results.py` `RunWriter`: `run.json`, `requests.jsonl` and a probe run's `rows.jsonl`.

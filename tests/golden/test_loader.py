@@ -27,7 +27,7 @@ from tests.golden._harness import (
 )
 
 SCENARIOS = {"cleared": {}, "override": ENV_OVERRIDE}
-ADDED_RUNS = {"decode_batch_llama", "llama-tp1-docker"}
+ADDED_RUNS = {"decode_batch_llama", "glm53flash_nvfp4_qs_tp4", "llama-tp1-docker"}
 ADDED_GRIDS = {"decode_batch"}
 WORKLOAD_NAMES = sorted(p.stem for p in RUNS.glob("*.yaml") if p.stem not in ADDED_RUNS)
 WORKLOADS = json.loads((FIXTURES / "config_workloads.json").read_text())

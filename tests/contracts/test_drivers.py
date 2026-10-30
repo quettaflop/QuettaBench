@@ -130,6 +130,17 @@ class Reset(unittest.TestCase):
         with self.assertRaisesRegex(PrefixCacheResetError, "VLLM_SERVER_DEV_MODE=1"):
             asyncio.run(HttpDriver("chat", "vllm").reset(_Session([], status=404), "http://h:1/v1/x"))
 
+    def test_quettaserve_resets_at_its_api(self):
+        session = _Session([])
+        status = asyncio.run(HttpDriver("chat", "quettaserve").reset(session, "http://h:8000/v1/chat/completions"))
+        self.assertEqual(status, "prefix cache reset via http://h:8000/reset_prefix_cache")
+
+    def test_quettaserve_404_names_no_vllm_dev_mode(self):
+        with self.assertRaises(PrefixCacheResetError) as e:
+            asyncio.run(HttpDriver("chat", "quettaserve").reset(_Session([], status=404), "http://h:1/v1/x"))
+        self.assertIn("returned HTTP 404", str(e.exception))
+        self.assertNotIn("VLLM_SERVER_DEV_MODE", str(e.exception))
+
     def test_a_bad_url_is_not_a_reset_error(self):
         with self.assertRaisesRegex(ValueError, "'nowhere'"):
             asyncio.run(HttpDriver("chat", "vllm").reset(_Session([]), "nowhere"))

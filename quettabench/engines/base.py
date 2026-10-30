@@ -59,11 +59,13 @@ class EngineAdapter(ABC):
     supports: frozenset = frozenset()
     benchmarked = True  # False: a scoring side only (reference), not an engine.
 
-    def refuse_unsupported(self, cfg):
+    def refuse_unsupported(self, cfg, supports=None):
+        """supports: the fields one launch mode carries, when the adapter has more than one."""
+        supports = self.supports if supports is None else supports
         defaults = EngineCfg()
         for f in fields(EngineCfg):
             value = getattr(cfg.engine, f.name)
-            if f.name in FACTS or f.name in self.supports or value == getattr(defaults, f.name):
+            if f.name in FACTS or f.name in supports or value == getattr(defaults, f.name):
                 continue
             path = f"engine.{f.name}"
             asked = [
